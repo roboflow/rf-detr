@@ -48,7 +48,7 @@ import torch
 from torch import Tensor
 
 from rfdetr.config import AugmentationBackend
-from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations, keypoint_flip_permutation
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -882,7 +882,8 @@ def build_kornia_pipeline(
         A ``kornia.augmentation.AugmentationSequential`` instance.
 
     Raises:
-        ValueError: If *aug_config* contains an unsupported augmentation key.
+        ValueError: If *aug_config* contains an unsupported augmentation key, or if *keypoint_flip_pairs* is
+            non-empty while *with_keypoints* is ``False``.
 
     Examples:
         >>> from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE
@@ -894,6 +895,10 @@ def build_kornia_pipeline(
 
     if (include_keypoints or with_keypoints) and keypoint_flip_pairs and len(keypoint_flip_pairs) % 2:
         raise ValueError("keypoint_flip_pairs must contain an even number of joint indices")
+    if keypoint_flip_pairs and not with_keypoints:
+        # Without the keypoints data key the caller never receives augmented joints to relabel, so the pairs would
+        # only keep horizontal flips enabled while silently doing nothing.
+        raise ValueError("keypoint_flip_pairs requires with_keypoints=True so flipped joints can be relabeled")
 
     filtered_aug_config = filter_keypoint_hflip_augmentations(
         aug_config,
@@ -1050,10 +1055,11 @@ def collate_masks(
 def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max: int) -> tuple[Tensor, Tensor]:
     """Pad keypoints to the box count and retain visibility separately.
 
-    Kornia transforms only xy coordinates. Its pixel-index convention uses
-    ``width - 1 - x`` for a horizontal flip, while RF-DETR's continuous
-    coordinates use ``width - x``. Moving points to pixel-centre coordinates
-    here and back in :func:`unpack_boxes` keeps the latter convention.
+    Kornia transforms only xy coordinates, so visibility travels outside the pipeline. Coordinates are copied
+    unchanged, in the same frame as the input keypoints; this function performs no frame shift. Kornia's pixel-index
+    convention flips ``x`` to ``width - 1 - x`` while RF-DETR's continuous coordinates flip to ``width - x``, so a
+    caller that needs the latter shifts points (and boxes) by ``-0.5`` before the pipeline and ``+0.5`` after it, as
+    ``RFDETRDataModule.on_after_batch_transfer`` does.
 
     Args:
         targets: Per-image targets with ``[N, K, 3]`` keypoints.
@@ -1061,7 +1067,7 @@ def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max
         n_max: Padded box count from :func:`collate_boxes`.
 
     Returns:
-        Kornia xy points ``[B, n_max * K, 2]`` and visibility
+        Kornia xy points ``[B, n_max * K, 2]`` in the input coordinate frame and visibility
         ``[B, n_max, K]``. Both are float32.
 
     Examples:
@@ -1069,7 +1075,7 @@ def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max
         ...     [{"keypoints": torch.tensor([[[3., 4., 2.]]])}], torch.device("cpu"), 1
         ... )
         >>> points.tolist(), visibility.tolist()
-        ([[[2.5, 3.5]]], [[[2.0]]])
+        ([[[3.0, 4.0]]], [[[2.0]]])
     """
     if not targets:
         return torch.zeros(0, 0, 2, device=device), torch.zeros(0, 0, 0, device=device)
@@ -1081,7 +1087,7 @@ def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max
         if keypoints.ndim != 3 or keypoints.shape[1:] != (k, 3) or keypoints.shape[0] > n_max:
             raise ValueError(f"Expected keypoints with shape (N <= {n_max}, {k}, 3), got {tuple(keypoints.shape)}")
         n = keypoints.shape[0]
-        points[i, :n] = keypoints[..., :2].to(device=device, dtype=torch.float32) - 0.5
+        points[i, :n] = keypoints[..., :2].to(device=device, dtype=torch.float32)
         visibility[i, :n] = keypoints[..., 2].to(device=device, dtype=torch.float32)
     return points.reshape(len(targets), n_max * k, 2), visibility
 
@@ -1145,7 +1151,9 @@ def unpack_boxes(
             (float32) from Kornia.  When provided, masks are filtered by the same ``keep`` mask as boxes, thresholded at
             ``> 0.5`` to bool, and stored under ``"masks"`` in each output target dict.  When ``None``, any existing
             ``"masks"`` entry in the target dict is preserved unchanged.
-        keypoints_aug: Optional Kornia xy points ``[B, N_max * K, 2]``.
+        keypoints_aug: Optional augmented xy points ``[B, N_max * K, 2]`` in the same coordinate frame as
+            *boxes_aug*; this function performs no frame shift, so a caller that moved points into Kornia's
+            pixel-index frame must move them back before calling.
         keypoint_visibility: Original visibility values ``[B, N_max, K]``.
         keypoint_flip_pairs: Flat left/right index pairs for slot relabeling.
         keypoint_flip_mask: Per-image horizontal-flip draws ``[B]``.
@@ -1204,18 +1212,13 @@ def unpack_boxes(
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
         if keypoints_aug is not None and keypoint_visibility is not None:
             k = keypoint_visibility.shape[2]
-            xy = keypoints_aug[i].reshape(valid.shape[1], k, 2)[:n_orig][keep] + 0.5
+            xy = keypoints_aug[i].reshape(valid.shape[1], k, 2)[:n_orig][keep]
             visibility = keypoint_visibility[i, :n_orig][keep]
             keypoints = torch.cat((xy, visibility.unsqueeze(-1)), dim=-1)
             inside = (xy[..., 0] >= 0) & (xy[..., 0] <= image_width) & (xy[..., 1] >= 0) & (xy[..., 1] <= image_height)
             keypoints = keypoints.masked_fill((~inside | (visibility <= 0)).unsqueeze(-1), 0)
             if keypoint_flip_mask is not None and bool(keypoint_flip_mask[i]) and keypoint_flip_pairs:
-                permutation = list(range(k))
-                for j in range(0, len(keypoint_flip_pairs), 2):
-                    left, right = keypoint_flip_pairs[j : j + 2]
-                    if left < k and right < k:
-                        permutation[left], permutation[right] = permutation[right], permutation[left]
-                keypoints = keypoints[:, permutation]
+                keypoints = keypoints[:, keypoint_flip_permutation(keypoint_flip_pairs, k)]
             t["keypoints"] = keypoints
 
         new_targets.append(t)

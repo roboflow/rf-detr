@@ -27,7 +27,7 @@ from torchvision import tv_tensors
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
-from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS
+from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, keypoint_flip_permutation
 
 # Fields skipped by the per-instance keep-mask filter. ``labels`` is deliberately NOT included:
 # this torchvision path filters ``labels`` directly with the keep mask (see
@@ -554,13 +554,7 @@ class RandomHorizontalFlip:
             invisible = (~visible).unsqueeze(-1)  # (N, K, 1) for masked_fill on (N, K, 3)
             keypoints[..., :2] = keypoints[..., :2].masked_fill(invisible, 0.0)
             if self.keypoint_flip_pairs:
-                pairs = self.keypoint_flip_pairs
-                perm = list(range(keypoints.shape[1]))
-                for i in range(0, len(pairs), 2):
-                    ai, bi = pairs[i], pairs[i + 1]
-                    if ai < keypoints.shape[1] and bi < keypoints.shape[1]:
-                        perm[ai], perm[bi] = perm[bi], perm[ai]
-                keypoints = keypoints[:, perm, :]
+                keypoints = keypoints[:, keypoint_flip_permutation(self.keypoint_flip_pairs, keypoints.shape[1]), :]
             target_out["keypoints"] = _mark_invisible_keypoints(keypoints, height, width)
         return image, target_out
 
