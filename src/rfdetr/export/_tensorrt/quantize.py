@@ -14,7 +14,8 @@ on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
   the rest of the graph to FP32, which is slower than FP16 before any INT8 kernel runs.
-* **Weight-bearing ``MatMul``/``Gemm``/``Conv`` inputs only**, in the backbone encoder and the decoder. The output of
+* **Weight-bearing ``MatMul``/``Gemm``/``Conv`` inputs**, in the backbone encoder and the decoder (plus the batched
+  multiplies of a block whose attention runs in INT8, below). The output of
   each quantized operation stays in floating point, so TensorRT fuses the bias, LayerScale and residual add into the
   INT8 kernel's epilogue and the quantize step into the preceding LayerNorm or GELU. The projector, the two-stage
   proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing.
@@ -54,6 +55,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rfdetr.export._runtime.calibration import warn_if_too_few_samples
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -131,9 +133,6 @@ _SCORE_PASSTHROUGH = frozenset({"Add", "Cast", "Div", "Mul", "Sub", "Where"})
 
 #: Ops that may sit between a ``Softmax`` and the multiply that reads its probabilities (eager attention casts them).
 _PROBABILITY_PASSTHROUGH = frozenset({"Cast", "Identity"})
-
-#: Ops a ``Softmax`` output may pass through on its way to a multiply; reaching one makes it look like attention.
-_SOFTMAX_FOLLOWERS = frozenset({"Cast", "Expand", "Identity", "Reshape", "Squeeze", "Transpose", "Unsqueeze"})
 
 
 @dataclass(frozen=True)
@@ -284,9 +283,9 @@ def _trace_projection(start: str, producers: Mapping[str, Any], initializers: Ma
     while frontier:
         tensor = frontier.pop()
         node = producers.get(tensor)
-        if node is None or node.name in seen:
+        if node is None or id(node) in seen:
             continue
-        seen.add(node.name)
+        seen.add(id(node))
         if _weight_name(node, initializers):
             return str(node.name)
         if node.op_type not in _PROJECTION_PASSTHROUGH:
@@ -372,6 +371,10 @@ def _context_matmul(softmax: Any, consumers: Mapping[str, list[Any]]) -> Any | N
 def _feeds_activation_matmul(softmax: Any, consumers: Mapping[str, list[Any]], initializers: Mapping[str, Any]) -> bool:
     """Return whether *softmax*'s output reaches a ``MatMul`` whose operands are both activations, as attention's does.
 
+    The walk follows every reader of the probabilities, whatever the op (scaling, masking, ``Where``, ``Dropout``,
+    shape ops), and stops only at an operation that carries a weight: a projection ends the attention path, and
+    anything past it is another block's business.
+
     Examples:
         >>> from onnx import helper
         >>> nodes = [helper.make_node("Softmax", ["s"], ["p"], "softmax"),
@@ -385,16 +388,19 @@ def _feeds_activation_matmul(softmax: Any, consumers: Mapping[str, list[Any]], i
             if id(reader) in seen:
                 continue
             seen.add(id(reader))
-            if reader.op_type == "MatMul":
-                if not any(name in initializers for name in reader.input):
-                    return True
-            elif reader.op_type in _SOFTMAX_FOLLOWERS:
+            weighted = any(name in initializers for name in reader.input)
+            if reader.op_type == "MatMul" and not weighted:
+                return True
+            if not (weighted and reader.op_type in ("Conv", "Gemm", "MatMul")):
                 frontier.extend(reader.output)
     return False
 
 
 def _attention_blocks(model: Any) -> list[_Attention]:
     """Find every ``MatMul -> Softmax -> MatMul`` attention block of *model*'s top-level graph.
+
+    Only the top-level graph is read: a ``Softmax`` inside an ``If``/``Loop`` subgraph is not seen, and RF-DETR's
+    exports contain none.
 
     A block can run its attention in INT8 when shape inference proves its head size is one of
     :data:`_FUSED_INT8_HEAD_SIZES` and both sequence lengths are at most :data:`_INT8_ATTENTION_MAX_TOKENS`; an unknown
@@ -407,7 +413,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
         One entry per attention block, with the names of the projections found around it.
 
     Raises:
-        ValueError: If a ``Softmax`` anywhere in the graph feeds an activation-by-activation multiply but is not
+        ValueError: If a top-level ``Softmax`` feeds an activation-by-activation multiply but is not
             recognised as a block, so its projections could not be kept out of INT8 with certainty.
     """
     import onnx
@@ -427,7 +433,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
         scores = _scores_matmul(softmax, producers, initializers)
         context = _context_matmul(softmax, consumers)
         if scores is None or context is None or any(name in initializers for name in (*scores.input, context.input[1])):
-            # Anywhere in the graph: a renamed Softmax must not hide an attention block from the projection rules.
+            # Whatever its name: a renamed Softmax must not hide an attention block from the projection rules.
             if _feeds_activation_matmul(softmax, consumers, initializers):
                 raise ValueError(
                     f"Cannot place INT8 safely: the Softmax {softmax.name!r} feeds a matrix multiply of two "
@@ -492,7 +498,7 @@ def plan_int8(model: Any) -> Int8Plan:
 
     Raises:
         ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR detector export; if an FP16
-            attention block's output projection cannot be identified; or if a ``Softmax`` anywhere in the graph feeds a
+            attention block's output projection cannot be identified; or if a top-level ``Softmax`` feeds a
             multiply of two activations without being a recognised attention block.
     """
     graph = model.graph
@@ -643,6 +649,8 @@ def calibrate_ranges(
 
     Raises:
         ValueError: If *batches* is empty or holds a NaN or infinite value.
+
+    Logs a warning, after the last batch, when fewer than ``MIN_CALIBRATION_SAMPLES`` images were seen.
     """
     import onnx
     import onnxruntime as ort
@@ -662,8 +670,16 @@ def calibrate_ranges(
         # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
         outputs = [o.name for o in session.get_outputs()][-len(tensors) :]
         ranges: NDArray[np.float64] = np.zeros(len(tensors), dtype=np.float64)
-        count = 0
-        for group in _graph_batches(batches, dimension if isinstance(dimension, int) else None):
+        count = images = 0
+
+        def tally(source: Iterable[NDArray[np.float32]]) -> Iterator[NDArray[np.float32]]:
+            """Pass *source* through, adding up the images it holds (the groups below repeat the last one to pad)."""
+            nonlocal images
+            for image in source:
+                images += len(image)
+                yield image
+
+        for group in _graph_batches(tally(batches), dimension if isinstance(dimension, int) else None):
             # onnxruntime's ReduceMax skips a NaN, so a NaN image would calibrate to a finite but wrong range.
             if not np.isfinite(group).all():
                 raise ValueError(f"Calibration batch {count + 1} holds NaN or infinite values.")
@@ -671,6 +687,7 @@ def calibrate_ranges(
             count += 1
         if count == 0:
             raise ValueError("Calibration data held no image.")
+        warn_if_too_few_samples(images)
         logger.info(f"Calibrated {len(tensors)} INT8 activation ranges over {count} batch(es)")
         return dict(zip(tensors, ranges.tolist()))
     finally:

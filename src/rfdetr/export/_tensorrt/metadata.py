@@ -46,8 +46,8 @@ logger = get_logger()
 #: it: a consumer ignores the keys it does not know.
 METADATA_SCHEMA_VERSION: Final[int] = 1
 
-#: dtype of every engine input and output. ``fp16`` builds keep FP32 I/O too: the FP16 cast graph restores FP32 at the
-#: boundary and the builder flag only changes the layers in between.
+#: dtype of every engine input and output. ``fp16`` and ``int8`` builds keep FP32 I/O too: the FP16 cast graph restores
+#: FP32 at the boundary and only the layers in between change precision.
 _IO_DTYPE: Final[str] = "float32"
 
 #: Largest file :func:`is_engine_description` reads. A description is a few kilobytes; a bigger file with the same name

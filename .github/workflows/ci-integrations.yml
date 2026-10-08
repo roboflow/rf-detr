@@ -222,7 +222,8 @@ jobs:
     # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
     # integration jobs this runs on the self-hosted GPU runner (same as ci-tests-gpu.yml).
     runs-on: Roboflow-GPU-VM-Runner
-    timeout-minutes: 25
+    # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
+    timeout-minutes: 35
     concurrency:
       group: pytest-tensorrt-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}

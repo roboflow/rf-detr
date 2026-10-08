@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+import pickle
 import sys
 import types
 from collections.abc import Iterator
@@ -176,6 +177,21 @@ def _export_graph(*extra_outputs: str) -> ExportGraph:
     )
 
 
+def _calibration_dir(root: Path) -> Path:
+    """Return a calibration directory under *root* that holds one image file, empty because only its suffix is read.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as root:
+        ...     [path.name for path in _calibration_dir(Path(root)).iterdir()]
+        ['image.jpg']
+    """
+    images = root / "images"
+    images.mkdir(exist_ok=True)
+    (images / "image.jpg").touch()
+    return images
+
+
 def _refuse_host(cls: type) -> None:
     """Stand in for ``_require_int8_host`` on a host that cannot build INT8.
 
@@ -212,7 +228,7 @@ class TestInt8Request:
 
     def test_calibration_data_without_int8_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="only read with quantization='int8'"):
-            TensorRTExporter(TensorRTConfig(calibration_data=str(tmp_path)))
+            TensorRTExporter(TensorRTConfig(calibration_data=str(_calibration_dir(tmp_path))))
 
     @pytest.mark.parametrize(
         ("settings", "reason"),
@@ -221,13 +237,14 @@ class TestInt8Request:
             pytest.param({"dynamic_batch": True, "max_batch_size": 4}, "static batch", id="dynamic-batch"),
             pytest.param({"backbone_only": True}, "backbone_only", id="backbone-only"),
             pytest.param({"max_images": 0}, "positive integer", id="no-images"),
+            pytest.param({"max_images": -1}, "positive integer", id="negative-images"),
             pytest.param({"max_images": True}, "positive integer", id="bool-images"),
             pytest.param({"max_images": 2.5}, "positive integer", id="float-images"),
             pytest.param({"max_images": np.bool_(True)}, "positive integer", id="numpy-bool-images"),
         ],
     )
     def test_unsupported_combination_is_refused(self, tmp_path: Path, settings: dict, reason: str) -> None:
-        config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), **settings)
+        config = TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), **settings)
         with pytest.raises(ValueError, match=reason):
             TensorRTExporter(config)
 
@@ -245,13 +262,42 @@ class TestInt8Request:
         with pytest.raises(ValueError, match="calibration_data"):
             TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=data))  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        ("layout", "message"),
+        [
+            pytest.param("missing", "does not exist", id="missing-path"),
+            pytest.param("empty-dir", "No calibration images found", id="empty-directory"),
+            pytest.param("text-file", r"must be a \.npy array", id="non-npy-file"),
+        ],
+    )
+    def test_unusable_calibration_path_is_refused_when_configured(
+        self, tmp_path: Path, layout: str, message: str
+    ) -> None:
+        data = {"missing": tmp_path / "missing", "empty-dir": tmp_path, "text-file": tmp_path / "notes.txt"}[layout]
+        if layout == "text-file":
+            data.write_text("not an array")
+        with pytest.raises(ValueError, match=message):
+            TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=data))
+
+    def test_empty_calibration_path_is_refused_when_configured(self) -> None:
+        with pytest.raises(ValueError, match="calibration_data to be a directory"):
+            TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=""))
+
     @pytest.mark.parametrize("max_images", [np.int64(5), 5])
     def test_integer_max_images_is_accepted(self, tmp_path: Path, max_images: int | np.integer) -> None:
-        TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), max_images=max_images))
+        TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), max_images=max_images)
+        )
 
     def test_export_keywords_reach_the_configuration(self, tmp_path: Path) -> None:
-        config = TensorRTExporter.build_config(quantization="int8", calibration_data=str(tmp_path), max_images=7)
-        assert (config.quantization, config.calibration_data, config.max_images) == ("int8", str(tmp_path), 7)
+        config = TensorRTExporter.build_config(
+            quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), max_images=7
+        )
+        assert (config.quantization, config.calibration_data, config.max_images) == (
+            "int8",
+            str(_calibration_dir(tmp_path)),
+            7,
+        )
 
     @pytest.mark.parametrize(
         ("onnx_path", "output_name", "engine"),
@@ -265,7 +311,9 @@ class TestInt8Request:
         ],
     )
     def test_engine_is_named_int8(self, tmp_path: Path, onnx_path: str, output_name: str | None, engine: str) -> None:
-        config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), output_name=output_name)
+        config = TensorRTConfig(
+            quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), output_name=output_name
+        )
         assert TensorRTExporter(config).build_engine(onnx_path, dry_run=True) == engine
 
     @pytest.mark.parametrize("fp16", [True, False])
@@ -304,17 +352,19 @@ class TestInt8Host:
         with pytest.raises(ImportError, match="onnxconverter-common"):
             TensorRTExporter._require_int8_host()
 
-    @pytest.mark.parametrize("form", ["str", "path", "empty"])
-    def test_missing_calibration_path_is_refused_before_the_onnx_export(
+    @pytest.mark.parametrize("form", ["str", "path"])
+    def test_calibration_path_that_vanished_is_refused_before_the_forward_pass(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, form: str
     ) -> None:
-        monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
-        monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: pytest.fail("ONNX export ran"))
-        missing = {"str": str(tmp_path / "missing"), "path": tmp_path / "missing", "empty": ""}[form]
-        config = TensorRTConfig(quantization="int8", calibration_data=missing)
+        images = _calibration_dir(tmp_path)
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(images) if form == "str" else images)
+        )
+        (images / "image.jpg").unlink()
+        images.rmdir()
         with pytest.raises(ValueError, match="does not exist"):
-            TensorRTExporter(config)._convert(_export_graph())
+            exporter.check_environment()
 
     @pytest.mark.parametrize(
         ("name", "content", "message"),
@@ -323,22 +373,21 @@ class TestInt8Host:
             pytest.param("image.npy", np.zeros((3, 8, 8), np.float32), "preprocessed", id="rank-3-npy"),
             pytest.param("empty.npy", np.zeros((0, 3, 8, 8), np.float32), "at least one image", id="no-image-npy"),
             pytest.param("broken.npy", b"", "could not read", id="unreadable-npy"),
-            pytest.param("notes.txt", b"not an array", "file to be a .npy array", id="not-npy"),
+            pytest.param("pickle.npy", pickle.dumps([1, 2, 3]), "could not read", id="pickle-npy"),
         ],
     )
-    def test_unusable_calibration_file_is_refused_before_the_onnx_export(
+    def test_unusable_calibration_file_is_refused_before_the_forward_pass(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, content: np.ndarray | bytes, message: str
     ) -> None:
-        monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
-        monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: pytest.fail("ONNX export ran"))
         path = tmp_path / name
         if isinstance(content, bytes):
             path.write_bytes(content)
         else:
             np.save(path, content)
+        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=path))
         with pytest.raises(ValueError, match=message):
-            TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=path))._convert(_export_graph())
+            exporter.check_environment()
 
     def test_preprocessed_npy_is_accepted(self, tmp_path: Path) -> None:
         path = tmp_path / "images.npy"
@@ -351,7 +400,10 @@ class TestInt8Host:
         monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
         monkeypatch.setattr(tensorrt_export, "int8_source_graph", lambda *_, **__: pytest.fail("calibration ran"))
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path / "missing")))
+        images = _calibration_dir(tmp_path)
+        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(images)))
+        (images / "image.jpg").unlink()
+        images.rmdir()
         with pytest.raises(ValueError, match="does not exist"):
             exporter.build_engine(str(tmp_path / "model.onnx"))
 
@@ -361,7 +413,9 @@ class TestInt8Host:
         monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(_refuse_host))
         monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: pytest.fail("ONNX export ran"))
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path)))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
+        )
         with pytest.raises(ImportError, match="host refused"):
             exporter._convert(_export_graph())
 
@@ -371,7 +425,9 @@ class TestInt8Host:
         monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(_refuse_host))
         monkeypatch.setattr(tensorrt_export, "int8_source_graph", lambda *_, **__: pytest.fail("calibration ran"))
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path)))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
+        )
         with pytest.raises(ImportError, match="host refused"):
             exporter.build_engine(str(tmp_path / "model.onnx"))
 
@@ -379,7 +435,9 @@ class TestInt8Host:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(_refuse_host))
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path)))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
+        )
         with pytest.raises(ImportError, match="host refused"):
             exporter.check_environment()
 
@@ -394,7 +452,9 @@ class TestInt8Host:
         monkeypatch.setattr(
             tensorrt_export, "write_engine_metadata", lambda engine_path, document: written.update(document) or tmp_path
         )
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), metadata=True))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), metadata=True)
+        )
         exporter._write_metadata(
             _export_graph(), str(tmp_path / "m_int8.trt"), fp16=True, engine_facts={"size": 1, "sha256": "0" * 64}
         )
@@ -407,7 +467,9 @@ class TestInt8Host:
         monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
         monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: pytest.fail("ONNX export ran"))
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path)))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
+        )
         with pytest.raises(NotImplementedError, match="detection models only"):
             exporter._convert(_export_graph(extra))
 
@@ -444,12 +506,14 @@ class TestInt8BuildWiring:
             lambda contents, dest, description=None: calls.setdefault("saved", (contents, dest)),
         )
 
-        config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), max_images=3, verbose=False)
+        config = TensorRTConfig(
+            quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), max_images=3, verbose=False
+        )
         engine_path = TensorRTExporter(config).build_engine(str(tmp_path / "model.onnx"))
 
         assert calls["source"] == (
             str(tmp_path / "model.onnx"),
-            {"calibration_data": str(tmp_path), "max_images": 3, "dynamic_batch": False},
+            {"calibration_data": str(_calibration_dir(tmp_path)), "max_images": 3, "dynamic_batch": False},
         )
         assert calls["parse"] == (str(tmp_path / "quantized.onnx"), {"strongly_typed": True})
         assert calls["saved"] == (("engine", ("config", {"fp16": False})), engine_path)
@@ -492,7 +556,7 @@ class TestInt8BuildWiring:
 
         config = TensorRTConfig(
             quantization="int8",
-            calibration_data=str(tmp_path),
+            calibration_data=str(_calibration_dir(tmp_path)),
             verbose=False,
             hardware_compatibility="same_compute_capability",
             version_compatible=True,
@@ -510,7 +574,7 @@ class TestInt8BuildWiring:
     def test_dry_run_names_an_int8_engine_with_its_portability_details(self, tmp_path: Path) -> None:
         config = TensorRTConfig(
             quantization="int8",
-            calibration_data=str(tmp_path),
+            calibration_data=str(_calibration_dir(tmp_path)),
             hardware_compatibility="ampere_plus",
             version_compatible=True,
         )
@@ -525,7 +589,7 @@ class TestInt8BuildWiring:
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
         monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: tmp_path / "model.onnx")
         monkeypatch.setattr(TensorRTExporter, "_build", lambda *_, **__: pytest.fail("the engine was built"))
-        config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), metadata=True)
+        config = TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), metadata=True)
         with pytest.raises(FileExistsError, match="model_int8.json"):
             TensorRTExporter(config)._convert(_export_graph())
 
@@ -611,6 +675,23 @@ class TestPlanInt8:
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, scaled_scores=True)
         next(node for node in model.graph.node if node.name.endswith("scale/Div")).op_type = "Max"
         next(node for node in model.graph.node if node.op_type == "Softmax").name = f"{HEAD}Softmax"
+        with pytest.raises(ValueError, match="not a recognised attention block"):
+            quantize.plan_int8(model)
+
+    @pytest.mark.parametrize("op", ["Mul", "Div", "Add", "Sub", "Dropout", "Relu"])
+    def test_attention_with_an_op_between_softmax_and_context_is_refused(self, op: str) -> None:
+        # The probabilities reach the context multiply through another op: not a block the planner knows, and a
+        # quantized output projection behind an FP16 attention is what TensorRT 11.3 computes wrongly.
+        model = _attention_and_mlp(DECODER, sequence=8, head_size=16)
+        context = next(node for node in model.graph.node if node.name.endswith("context/MatMul"))
+        context.input[0] = "p_after"
+        after = helper.make_node(
+            op, ["p"] if op in ("Dropout", "Relu") else ["p", "half"], ["p_after"], f"{DECODER}after/{op}"
+        )
+        nodes = list(model.graph.node)
+        nodes.insert(nodes.index(context), after)
+        del model.graph.node[:]
+        model.graph.node.extend(nodes)
         with pytest.raises(ValueError, match="not a recognised attention block"):
             quantize.plan_int8(model)
 
@@ -894,8 +975,22 @@ class TestGraphWalkers:
     def test_context_is_not_found_unless_probabilities_feed_one_multiply(self, nodes: list[Any]) -> None:
         assert quantize._context_matmul(nodes[0], _readers(nodes)) is None
 
-    @pytest.mark.parametrize("follower", ["Cast", "Expand", "Identity", "Reshape", "Squeeze", "Transpose", "Unsqueeze"])
-    def test_softmax_reaches_a_multiply_through_shape_ops(self, follower: str) -> None:
+    def test_projection_is_traced_through_unnamed_nodes(self) -> None:
+        weights = {"w": numpy_helper.from_array(np.zeros((4, 4), np.float32), "w")}
+        nodes = [
+            helper.make_node("MatMul", ["x", "w"], ["q"], "q_proj"),
+            helper.make_node("Reshape", ["q", "shape"], ["q_heads"]),
+            helper.make_node("Transpose", ["q_heads"], ["q_t"]),
+        ]
+        producers = {output: node for node in nodes for output in node.output}
+        assert quantize._trace_projection("q_t", producers, weights) == "q_proj"
+
+    @pytest.mark.parametrize(
+        "follower",
+        ["Abs", "Add", "Cast", "Clip", "Concat", "Div", "Dropout", "Identity", "Mul", "Relu", "Reshape", "Slice", "Sub"]
+        + ["Transpose", "Where"],
+    )
+    def test_softmax_reaches_a_multiply_through_any_op(self, follower: str) -> None:
         nodes = [
             _node("Softmax", ["s"], "p", "softmax"),
             _node(follower, ["p"], "p1", "follow"),
@@ -914,10 +1009,26 @@ class TestGraphWalkers:
             pytest.param(
                 [
                     _node("Softmax", ["s"], "p", "softmax"),
-                    _node("Mul", ["p", "p"], "m", "mul"),
-                    _node("MatMul", ["m", "v"], "c", "context"),
+                    _node("MatMul", ["p", "w"], "m", "projection"),
+                    _node("MatMul", ["m", "v"], "c", "later_block"),
                 ],
-                id="blocked-by-another-op",
+                id="blocked-by-a-projection",
+            ),
+            pytest.param(
+                [
+                    _node("Softmax", ["s"], "p", "softmax"),
+                    _node("Gemm", ["p", "w"], "m", "gemm_projection"),
+                    _node("MatMul", ["m", "v"], "c", "later_block"),
+                ],
+                id="blocked-by-a-gemm",
+            ),
+            pytest.param(
+                [
+                    _node("Softmax", ["s"], "p", "softmax"),
+                    _node("Conv", ["p", "w"], "m", "conv_projection"),
+                    _node("MatMul", ["m", "v"], "c", "later_block"),
+                ],
+                id="blocked-by-a-convolution",
             ),
             pytest.param(
                 [
@@ -1081,6 +1192,40 @@ class TestAttentionShapes:
                 node.input[1] = "unknown_shape"  # a runtime shape: inference cannot see the head layout
         plan = quantize.plan_int8(model)
         assert [n for n, _ in plan.activations if "/scores/" in n] == []
+
+    def test_symbolic_token_count_stays_float(self) -> None:
+        # The head size is known and fusable; only the token count is not, and an unknown count is not proven small.
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        model.graph.input[0].type.tensor_type.shape.dim[1].dim_param = "tokens"
+        heads = next(init for init in model.graph.initializer if init.name == "heads")
+        heads.CopyFrom(numpy_helper.from_array(np.array([1, -1, 2, 16], np.int64), "heads"))
+        plan = quantize.plan_int8(model)
+        assert [n for n, _ in plan.activations if "/scores/" in n] == []
+
+    @pytest.mark.parametrize(
+        ("queries", "keys", "fusable"),
+        [
+            pytest.param(8, 325, True, id="long-keys-at-the-limit"),
+            pytest.param(325, 8, True, id="long-queries-at-the-limit"),
+            pytest.param(8, 326, False, id="keys-over-the-limit"),
+            pytest.param(326, 8, False, id="queries-over-the-limit"),
+        ],
+    )
+    def test_each_sequence_length_is_held_to_the_token_limit(self, queries: int, keys: int, fusable: bool) -> None:
+        head = 16
+
+        shapes = {"q": (queries, head), "k": (head, keys), "v": (keys, head), "c": (queries, head)}
+        infos = {
+            name: helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 2, *dims]) for name, dims in shapes.items()
+        }
+        nodes = [
+            helper.make_node("MatMul", ["q", "k"], ["s"], f"{BACKBONE}scores/MatMul"),
+            helper.make_node("Softmax", ["s"], ["p"], f"{BACKBONE}Softmax", axis=-1),
+            helper.make_node("MatMul", ["p", "v"], ["c"], f"{BACKBONE}context/MatMul"),
+        ]
+        graph = helper.make_graph(nodes, "cross", [infos["q"], infos["k"], infos["v"]], [infos["c"]])
+        (block,) = quantize._attention_blocks(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]))
+        assert block.int8 is fusable
 
     def test_symbolic_dimension_is_unknown(self) -> None:
         info = helper.make_tensor_value_info("t", TensorProto.FLOAT, ["n", 4])
@@ -1252,6 +1397,13 @@ class TestInsertQdq:
         weight_dq = [n for n in model.graph.node if n.op_type == "DequantizeLinear" and n.input[0] in inits]
         assert len(weight_dq) == len(plan.weighted)
         assert {(inits[n.input[0]].data_type, n.attribute[0].i) for n in weight_dq} == {(TensorProto.INT8, 1)}
+
+    def test_weight_zero_point_is_int8_zero(self, quantized: tuple[Any, quantize.Int8Plan]) -> None:
+        model, _ = quantized
+        inits = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        weight_dq = [n for n in model.graph.node if n.op_type == "DequantizeLinear" and n.input[0] in inits]
+        points = [inits[n.input[2]] for n in weight_dq]
+        assert {(point.dtype, int(np.abs(point).max())) for point in points} == {(np.dtype(np.int8), 0)}
 
     def test_dequantized_weight_matches_the_original(self, quantized: tuple[Any, quantize.Int8Plan]) -> None:
         model, _ = quantized
@@ -1627,6 +1779,34 @@ class TestCalibration:
                 pass
         assert [inspect.getgeneratorstate(g) for g in generators] == [inspect.GEN_CLOSED]
 
+    @pytest.mark.parametrize(
+        ("images", "warned"),
+        [(1, True), (calibration.MIN_CALIBRATION_SAMPLES - 1, True), (calibration.MIN_CALIBRATION_SAMPLES, False)],
+    )
+    def test_too_few_images_are_warned_about(
+        self, monkeypatch: pytest.MonkeyPatch, image_graph: Path, images: int, warned: bool
+    ) -> None:
+        pytest.importorskip("onnxruntime")
+        messages: list[str] = []
+        monkeypatch.setattr(calibration.logger, "warning", messages.append)
+        samples = [np.zeros((1, 3, 4, 6), np.float32)] * images
+        quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], samples)
+        assert [m for m in messages if f"only {images} sample" in m] == (messages if warned else [])
+        assert bool(messages) is warned
+
+    def test_calibrated_range_becomes_the_scale(self, image_graph: Path) -> None:
+        pytest.importorskip("onnxruntime")
+        images = np.random.default_rng(0).standard_normal((3, 3, 4, 6)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(image_graph), calibration_data=images, max_images=10, dynamic_batch=False
+        ) as int8_path:
+            model = onnx.load(int8_path)
+        initializers = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}
+        (quantize_node,) = [n for n in model.graph.node if n.op_type == "QuantizeLinear"]
+        # The all-ones 1x1 kernel sums the three channels, so the quantized tensor's range is that sum's largest value.
+        expected = np.float16(np.abs(images.sum(axis=1)).max() / 127)
+        assert float(initializers[quantize_node.input[1]]) == float(expected)
+
     def test_no_image_is_refused(self, image_graph: Path) -> None:
         pytest.importorskip("onnxruntime")
         with pytest.raises(ValueError, match="no image"):
@@ -1661,6 +1841,21 @@ class TestCalibration:
         pytest.importorskip("onnxruntime")
         images = np.full((2, 3, 4, 6), 1e8, np.float32)  # finite, but 1e8 / 127 overflows FP16
         with pytest.raises(ValueError, match="does not fit an FP16 scale"):
+            with quantize.int8_source_graph(
+                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+            ):
+                pass
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    def test_range_that_is_not_finite_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, image_graph: Path, value: float
+    ) -> None:
+        pytest.importorskip("onnxruntime")
+        monkeypatch.setattr(
+            quantize, "calibrate_ranges", lambda _path, _model, tensors, _batches: dict.fromkeys(tensors, value)
+        )
+        images = np.ones((2, 3, 4, 6), np.float32)
+        with pytest.raises(ValueError, match="not finite"):
             with quantize.int8_source_graph(
                 str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
             ):

@@ -44,6 +44,7 @@ import torch
 from numpy.typing import NDArray
 
 from rfdetr.export._naming import resolve_export_stem
+from rfdetr.export._runtime.calibration_checks import check_calibration_data
 from rfdetr.export._tensorrt.metadata import (
     build_engine_metadata,
     gpu_facts,
@@ -116,8 +117,8 @@ _STRONG_TYPING_MAJOR = 11
 _QUANTIZATION_OP_TYPES = frozenset({"QuantizeLinear", "DequantizeLinear", "DynamicQuantizeLinear"})
 
 #: Oldest TensorRT major an INT8 engine is built on. INT8 engines are strongly typed builds of an explicitly quantized
-#: graph; 10.16 and 11.3 are the releases this was measured on (issue #1024), and earlier majors are refused rather than
-#: assumed to work.
+#: graph; 10.16 and 11.3 are the only releases this was measured on (issue #1024). Earlier majors are refused rather
+#: than assumed to work; the 10.x releases before 10.16 are admitted but untested.
 _INT8_MIN_TENSORRT_MAJOR = 10
 
 #: The graph outputs an INT8 export is measured for: a detector. Segmentation and keypoint models add outputs and are
@@ -183,17 +184,20 @@ def _describe(data: object) -> str:
 def _is_calibration_source(data: object) -> bool:
     """Return whether *data* has a form :func:`~rfdetr.export._runtime.calibration.calibration_batches` reads.
 
-    A path is checked later, just before the ONNX export; an array must already be preprocessed and hold at least one
-    image, so an integer image array (raw pixels, not normalized) or an empty one is refused here.
+    A path must be non-empty (what it names is judged by ``check_calibration_data``); an array must already be
+    preprocessed and hold at least one image, so an integer image array (raw pixels, not normalized) or an empty one
+    is refused here.
 
     Examples:
         >>> _is_calibration_source("images/"), _is_calibration_source(np.zeros((1, 3, 8, 8), np.float32))
         (True, True)
         >>> _is_calibration_source(np.zeros((1, 3, 8, 8), np.uint8)), _is_calibration_source(["a.jpg"])
         (False, False)
+        >>> _is_calibration_source("")
+        False
     """
     if isinstance(data, (str, os.PathLike)):
-        return True
+        return bool(os.fspath(data))
     return (
         isinstance(data, np.ndarray) and data.ndim == 4 and data.shape[0] > 0 and np.issubdtype(data.dtype, np.floating)
     )
@@ -1054,7 +1058,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ValueError: If *quantization* is not ``None`` or ``"int8"``; if *calibration_data* is given without
                 ``"int8"``; if ``"int8"`` comes without *calibration_data*, with ``fp16=False``, with
                 ``dynamic_batch``, with ``backbone_only``, or with a *max_images* that is not a positive integer; or if
-                *calibration_data* is neither a path nor a non-empty rank-4 floating-point array.
+                *calibration_data* is neither a non-empty path nor a non-empty rank-4 floating-point array, or is a
+                path that does not exist, a directory without an image, or a file that is not ``.npy``.
         """
         config = self.config
         if config.quantization not in (None, INT8):
@@ -1085,6 +1090,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         for refused, reason in refusals:
             if refused:
                 raise ValueError(f"TensorRT quantization='int8' {reason}.")
+        # What the path itself shows (missing, no image, not a .npy): the check ONNX and OpenVINO make at this point.
+        assert config.calibration_data is not None  # refused above
+        check_calibration_data(config.calibration_data)
 
     @classmethod
     def _require_int8_host(cls) -> None:
@@ -1116,28 +1124,24 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     def _require_calibration_path(self) -> None:
         """Refuse a *calibration_data* path that cannot be calibrated on, before any graph work reads it.
 
-        A ``.npy`` file is held to the rule an in-memory array meets in :meth:`_check_quantization`; it is opened
-        memory-mapped, so only its header is read here.
+        The path is judged again by :func:`~rfdetr.export._runtime.calibration_checks.check_calibration_data`, because
+        it can change between the configuration and the build. A ``.npy`` file is then held to the rule an in-memory
+        array meets in :meth:`_check_quantization`; it is opened memory-mapped, so only its header is read here.
 
         Raises:
-            ValueError: If *calibration_data* is a path that is empty or names nothing on disk, a file that is not
-                ``.npy``, a ``.npy`` that cannot be read, or one that does not hold a non-empty rank-4 floating-point
-                array.
+            ValueError: If *calibration_data* is a path that names nothing on disk, a directory without an image, a
+                file that is not ``.npy``, a ``.npy`` that cannot be read, or one that does not hold a non-empty
+                rank-4 floating-point array.
         """
         data = self.config.calibration_data
         if not isinstance(data, (str, os.PathLike)):
             return
+        check_calibration_data(data)
         path = Path(data)
-        if not os.fspath(data) or not path.exists():
-            raise ValueError(f"TensorRT quantization='int8': calibration_data path does not exist: {data!r}")
         if path.is_dir():
             return
-        if path.suffix.lower() != ".npy":
-            raise ValueError(
-                f"TensorRT quantization='int8' needs a calibration_data file to be a .npy array, got {path.name!r}."
-            )
         try:
-            array = np.load(path, mmap_mode="r")
+            array = np.load(path, mmap_mode="r", allow_pickle=False)
         except (ValueError, EOFError, OSError) as error:
             raise ValueError(
                 f"TensorRT quantization='int8' could not read {path.name!r} as a .npy array: {error}"
@@ -1217,7 +1221,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         """Refuse a request that this host cannot build, before the forward pass.
 
         That is a portability request the installed TensorRT cannot build, and an INT8 request on a host without
-        onnxruntime, the FP16 caster or TensorRT 10.
+        onnxruntime, the FP16 caster or TensorRT 10, or whose ``calibration_data`` path no longer holds usable data.
 
         ``RFDETR.export`` and ``Exporter.__call__`` call it after :meth:`check_dependencies`; :meth:`build_engine`, a
         public entry point that bypasses both, calls it too. A request that passes on a TensorRT older than 11 also
@@ -1228,10 +1232,13 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 ``quantization="int8"`` is set and onnxruntime or onnxconverter-common is missing or TensorRT is older
                 than 10.
             ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have, or is
-                ``"ampere_plus"`` while the current CUDA device is older than Ampere (compute capability below 8.0).
+                ``"ampere_plus"`` while the current CUDA device is older than Ampere (compute capability below 8.0);
+                or if ``quantization="int8"`` is set and ``calibration_data`` is a path that
+                :meth:`_require_calibration_path` refuses.
         """
         if self.config.quantization == INT8:
             self._require_int8_host()
+            self._require_calibration_path()
         self._require_lean_runtime()
         if self.config.hardware_compatibility is not None:
             self._hardware_compatibility_level(self.config.hardware_compatibility)
@@ -1250,9 +1257,10 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, or (for ``quantization="int8"``)
                 onnxruntime or onnxconverter-common is missing or TensorRT is older than 10, before the ONNX export
                 runs.
-            ValueError: If ``quantization="int8"`` names a *calibration_data* path that does not exist, a file that is
-                not ``.npy``, a ``.npy`` that cannot be read, or one that does not hold a non-empty rank-4
-                floating-point array.
+            ValueError: If ``quantization="int8"`` names a *calibration_data* path that has vanished since the
+                configuration was checked: :meth:`check_environment` refuses it before the forward pass when
+                ``Exporter.__call__`` runs it, but a direct call of ``_convert`` meets it only in :meth:`_build`, after
+                the ONNX export.
             NotImplementedError: If ``quantization="int8"`` is asked of a segmentation or keypoint model.
             FileExistsError: If ``metadata`` is set and the description's path holds something this exporter did not
                 write, before the engine is built.
@@ -1266,9 +1274,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # itself, which would otherwise learn of a missing TensorRT only from _build, after the ONNX export.
         self._require_tensorrt()
         if self.config.quantization == INT8:
-            # These refusals are cheap; make them before the ONNX export rather than inside _build after it.
+            # Exporter.__call__ has already run check_environment (host and calibration path); a caller of _convert
+            # itself would otherwise learn of a missing onnxruntime only from _build, after the ONNX export.
             self._require_int8_host()
-            self._require_calibration_path()
             if tuple(graph.output_names) != _INT8_OUTPUT_NAMES:
                 raise NotImplementedError(
                     f"TensorRT quantization='int8' is measured for detection models only; this model also outputs "
@@ -1484,7 +1492,6 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         fp16 = self.config.fp16
         if self.config.quantization == INT8:
             # Strongly typed whatever the TensorRT major: precision comes from the quantized FP16 graph.
-            self._require_calibration_path()
             strategy, trt_version = Fp16Strategy.CAST_GRAPH, ""
         else:
             strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")

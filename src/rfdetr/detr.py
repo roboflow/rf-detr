@@ -2486,9 +2486,12 @@ class RFDETR:
                 Also raised for ``format="tensorrt"`` when ``quantization`` is neither ``None`` nor ``"int8"``,
                 ``calibration_data`` is given without ``"int8"``, ``"int8"`` has no ``calibration_data``,
                 ``max_images`` is not a positive integer, or ``"int8"`` is combined with ``fp16=False``,
-                ``dynamic_batch=True`` or ``backbone_only=True``; a ``calibration_data`` path that does not exist is
-                refused before the ONNX export, and during the INT8 conversion, calibration data that yields no usable
-                image or a non-finite range, and attention INT8 cannot be placed around, also raise.
+                ``dynamic_batch=True`` or ``backbone_only=True``; ``calibration_data`` that is not a directory, a
+                ``.npy`` path or a non-empty ``(N, C, H, W)`` float array, a path that does not exist, a directory
+                without an image, a file that is not ``.npy`` and a ``.npy`` that does not hold such an array are all
+                refused before the forward pass. During the INT8 conversion, calibration data that yields no usable
+                image or a non-finite range, a range too large for an FP16 scale, and attention INT8 cannot be placed
+                around, also raise.
                 Also raised for ``format="tensorrt"`` when ``trt_metadata`` is not a ``bool``.
                 Also raised for ``format="tensorrt"`` when ``trt_hardware_compatibility`` is neither ``None``,
                 ``"ampere_plus"`` nor ``"same_compute_capability"``, when ``trt_version_compatible`` is not a

@@ -32,9 +32,10 @@ logger = get_logger()
 #: Image suffixes read from a *calibration_data* directory.
 IMAGE_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp"})
 
-#: Fewest calibration samples the ONNX and OpenVINO INT8 paths accept without a warning. A conservative heuristic
-#: floor, not a measured threshold: min/max activation ranges taken from a handful of images rarely cover what the
-#: model sees in deployment, and the resulting model still loads and runs, so the accuracy loss is otherwise silent.
+#: Fewest calibration samples the INT8 paths (ONNX, OpenVINO and TensorRT) accept without a warning. A conservative
+#: heuristic floor, not a measured threshold: min/max activation ranges taken from a handful of images rarely cover
+#: what the model sees in deployment, and the resulting model still loads and runs, so the accuracy loss is otherwise
+#: silent.
 MIN_CALIBRATION_SAMPLES: int = 32
 
 
