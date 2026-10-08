@@ -688,16 +688,38 @@ class TestKeypointAugmentationWarning:
 
         assert not [w for w in caught if "Keypoint mode" in str(w.message)]
 
-    def test_keypoint_mode_gpu_augmentation_raises(self, tmp_path):
-        """Setup('fit') should raise ValueError when keypoint mode uses a GPU augmentation backend."""
+    @kornia_only
+    def test_keypoint_mode_gpu_augmentation_builds_pipeline(self, tmp_path: Path) -> None:
+        """Setup('fit') builds a keypoint-enabled Kornia pipeline when the requested GPU backend is ready."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
         dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="gpu")
 
         with (
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
-            patch.object(dm, "_setup_kornia_pipeline"),
-            pytest.raises(ValueError, match="does not support keypoint transforms"),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+            patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", wraps=build_kornia_pipeline) as build,
         ):
             dm.setup("fit")
+
+        assert dm._resolved_augmentation_backend == AugmentationBackend.KORNIA
+        build.assert_called_once()
+        assert build.call_args.kwargs["with_keypoints"] is True
+        assert dm._kornia_pipeline is not None
+
+    @kornia_only
+    def test_keypoint_mode_auto_can_select_kornia(self, tmp_path: Path) -> None:
+        """Auto backend can resolve to Kornia for keypoints on a CUDA host."""
+        dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="auto")
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+            patch.object(dm, "_setup_kornia_pipeline") as setup_pipeline,
+        ):
+            dm.setup("fit")
+
+        assert dm._resolved_augmentation_backend == AugmentationBackend.KORNIA
+        setup_pipeline.assert_called_once()
 
     def test_non_keypoint_mode_no_augmentation_warning(self, tmp_path):
         """Setup('fit') should not emit the keypoint augmentation warning in detection mode."""
@@ -2249,8 +2271,8 @@ class TestOnAfterBatchTransfer:
 
         assert isinstance(result_samples, NestedTensor), f"Expected NestedTensor, got {type(result_samples).__name__}"
 
-    def test_gpu_augmentation_passes_through_keypoints_without_geometry(self, tmp_path):
-        """GPU augmentation path should leave keypoint coordinates unchanged in preview mode."""
+    def test_detection_gpu_augmentation_leaves_unrelated_keypoints_unchanged(self, tmp_path: Path) -> None:
+        """The unchanged detection route does not enable keypoint geometry."""
         dm = self._build_dm(tmp_path)
         dm = self._attach_mock_trainer(dm, training=True)
 
@@ -2270,6 +2292,161 @@ class TestOnAfterBatchTransfer:
 
         for idx, target in enumerate(result_targets):
             torch.testing.assert_close(target["keypoints"], input_keypoints[idx], rtol=1e-4, atol=1e-6)
+
+    @kornia_only
+    @pytest.mark.parametrize("device_name", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+    @pytest.mark.parametrize("height, width", [(16, 32), (32, 16)])
+    def test_keypoint_mode_real_pipeline_flips_and_normalizes(
+        self, tmp_path: Path, device_name: str, height: int, width: int
+    ) -> None:
+        """The public batch hook keeps box and joint geometry aligned on the requested device.
+
+        Non-square images make a swapped width/height in the mirror or the normalization visible: x is mirrored and
+        divided by the width, y is divided by the height.
+        """
+        if device_name == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA unavailable")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        mc = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[2])
+        tc = _base_train_config(tmp_path, keypoint_flip_pairs=[0, 1])
+        dm = self._attach_mock_trainer(RFDETRDataModule(mc, tc), training=True)
+        dm._kornia_pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}},
+            16,
+            with_masks=True,
+            include_keypoints=True,
+            with_keypoints=True,
+            keypoint_flip_pairs=[0, 1],
+        )
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        samples, targets = self._make_kornia_batch(batch_size=1, h=height, w=width)
+        targets[0]["keypoints"] = torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 1.0]]])
+        device = torch.device(device_name)
+        samples = NestedTensor(samples.tensors.to(device), samples.mask.to(device))
+        targets = [{key: value.to(device) for key, value in target.items()} for target in targets]
+
+        _, result = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        # Mirrored x is width - x; the flip swaps the pair, so slot 0 holds the former slot-1 joint.
+        expected_keypoints = torch.tensor(
+            [[[(width - 6) / width, 7 / height, 1], [(width - 3) / width, 4 / height, 2]]], device=device
+        )
+        # Box [2, 2, 10, 10] mirrors to [width - 10, 2, width - 2, 10], then becomes normalized cxcywh.
+        expected_boxes = torch.tensor([[(width - 6) / width, 6 / height, 8 / width, 8 / height]], device=device)
+        torch.testing.assert_close(result[0]["keypoints"], expected_keypoints)
+        torch.testing.assert_close(result[0]["boxes"], expected_boxes)
+
+    @kornia_only
+    def test_keypoint_mode_handles_all_empty_targets(self, tmp_path: Path) -> None:
+        """An annotation-free batch still reaches Kornia without its zero-point reshape crash."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        mc = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[2])
+        tc = _base_train_config(tmp_path, keypoint_flip_pairs=[0, 1])
+        dm = self._attach_mock_trainer(RFDETRDataModule(mc, tc), training=True)
+        dm._kornia_pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}},
+            16,
+            with_masks=True,
+            include_keypoints=True,
+            with_keypoints=True,
+            keypoint_flip_pairs=[0, 1],
+        )
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        samples, targets = self._make_kornia_batch(batch_size=1)
+        targets[0]["boxes"] = torch.zeros(0, 4)
+        targets[0]["labels"] = torch.zeros(0, dtype=torch.long)
+        targets[0]["keypoints"] = torch.zeros(0, 2, 3)
+
+        _, result = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result[0]["boxes"].shape == (0, 4)
+        assert result[0]["keypoints"].shape == (0, 2, 3)
+
+    @kornia_only
+    def test_keypoints_and_instance_masks_share_flip(self, tmp_path: Path) -> None:
+        """A combined target keeps its instance mask and joints with the flipped box."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        mc = _base_model_config(segmentation_head=True, use_grouppose_keypoints=True, num_keypoints_per_class=[2])
+        tc = _base_train_config(tmp_path, keypoint_flip_pairs=[0, 1])
+        dm = self._attach_mock_trainer(RFDETRDataModule(mc, tc), training=True)
+        dm._kornia_pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}},
+            16,
+            with_masks=True,
+            include_keypoints=True,
+            with_keypoints=True,
+            keypoint_flip_pairs=[0, 1],
+        )
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        samples, targets = self._make_kornia_batch_with_masks(batch_size=1)
+        targets[0]["masks"][:, :, :8] = False
+        targets[0]["keypoints"] = torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 1.0]]])
+
+        _, result = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result[0]["masks"][:, :, :8].all()
+        assert not result[0]["masks"][:, :, 8:].any()
+        torch.testing.assert_close(result[0]["keypoints"], torch.tensor([[[10 / 16, 7 / 16, 1], [13 / 16, 4 / 16, 2]]]))
+
+    def _build_dm_with_setup_pipeline(self, tmp_path: Path, keypoint_flip_pairs: list[int]) -> RFDETRDataModule:
+        """Build a keypoint DataModule whose Kornia pipeline comes from the real ``_setup_kornia_pipeline``.
+
+        Only CUDA detection and dataset construction are patched, so ``setup("fit")`` wires the pipeline exactly as it
+        does in training: a certain horizontal flip with the given left/right joint pairs.
+        """
+        mc = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[2])
+        tc = _base_train_config(
+            tmp_path,
+            augmentation_backend="gpu",
+            aug_config={"HorizontalFlip": {"p": 1.0}},
+            keypoint_flip_pairs=keypoint_flip_pairs,
+        )
+        dm = self._attach_mock_trainer(RFDETRDataModule(mc, tc), training=True)
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+        ):
+            dm.setup("fit")
+        return dm
+
+    def _run_setup_pipeline_batch(self, dm: RFDETRDataModule) -> dict[str, torch.Tensor]:
+        """Push a 16x16 batch with two joints (slot 0 at (3, 4), slot 1 at (6, 7)) through the batch hook."""
+        samples, targets = self._make_kornia_batch(batch_size=1)
+        targets[0]["keypoints"] = torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 1.0]]])
+
+        _, result = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        return result[0]
+
+    @kornia_only
+    def test_setup_pipeline_with_flip_pairs_swaps_left_right_keypoints(self, tmp_path: Path) -> None:
+        """A flipped sample relabels paired joints: slot 0 receives the mirrored slot-1 joint and vice versa."""
+        dm = self._build_dm_with_setup_pipeline(tmp_path, keypoint_flip_pairs=[0, 1])
+
+        target = self._run_setup_pipeline_batch(dm)
+
+        torch.testing.assert_close(target["keypoints"], torch.tensor([[[10 / 16, 7 / 16, 1], [13 / 16, 4 / 16, 2]]]))
+
+    @kornia_only
+    def test_setup_pipeline_without_flip_pairs_leaves_keypoints_unflipped(self, tmp_path: Path) -> None:
+        """Without flip pairs the flip is disabled, so joints keep their coordinates and slots (normalized by W, H)."""
+        dm = self._build_dm_with_setup_pipeline(tmp_path, keypoint_flip_pairs=[])
+
+        target = self._run_setup_pipeline_batch(dm)
+
+        torch.testing.assert_close(target["keypoints"], torch.tensor([[[3 / 16, 4 / 16, 2], [6 / 16, 7 / 16, 1]]]))
+
+    @kornia_only
+    def test_setup_pipeline_without_flip_pairs_leaves_boxes_unflipped(self, tmp_path: Path) -> None:
+        """Without flip pairs the box [2, 2, 10, 10] stays put: cxcywh (6, 6, 8, 8) / 16."""
+        dm = self._build_dm_with_setup_pipeline(tmp_path, keypoint_flip_pairs=[])
+
+        target = self._run_setup_pipeline_batch(dm)
+
+        torch.testing.assert_close(target["boxes"], torch.tensor([[6 / 16, 6 / 16, 8 / 16, 8 / 16]]))
 
 
 # ---------------------------------------------------------------------------
