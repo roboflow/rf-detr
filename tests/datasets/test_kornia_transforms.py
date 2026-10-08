@@ -1053,14 +1053,14 @@ class TestBuildKorniaPipelineWithMasks(_RequiresKornia):
         ]
         points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=1)
 
-        _, boxes_out, _, points_out = pipeline(image, boxes, masks, points)
+        _, boxes_out, _, points_out = pipeline(image, boxes - 0.5, masks, points - 0.5)
         result = unpack_boxes(
-            boxes_out,
+            boxes_out + 0.5,
             torch.tensor([[True]]),
             targets,
             16,
             16,
-            keypoints_aug=points_out,
+            keypoints_aug=points_out + 0.5,
             keypoint_visibility=visibility,
             keypoint_flip_pairs=[0, 1],
             keypoint_flip_mask=torch.tensor([True]),
@@ -1096,7 +1096,7 @@ class TestKeypointTargetTransport(_RequiresKornia):
         )
         points, visibility = collate_keypoints([target], torch.device("cpu"), 1)
         _, boxes, _, points = pipeline(
-            torch.zeros(1, 3, 16, 16), target["boxes"].unsqueeze(0) - 0.5, torch.zeros(1, 1, 16, 16), points
+            torch.zeros(1, 3, 16, 16), target["boxes"].unsqueeze(0) - 0.5, torch.zeros(1, 1, 16, 16), points - 0.5
         )
         gpu_target = unpack_boxes(
             boxes + 0.5,
@@ -1104,7 +1104,7 @@ class TestKeypointTargetTransport(_RequiresKornia):
             [target],
             16,
             16,
-            keypoints_aug=points,
+            keypoints_aug=points + 0.5,
             keypoint_visibility=visibility,
             keypoint_flip_pairs=[0, 1],
             keypoint_flip_mask=keypoint_horizontal_flip_mask(pipeline, 1, torch.device("cpu")),
@@ -1112,14 +1112,22 @@ class TestKeypointTargetTransport(_RequiresKornia):
         torch.testing.assert_close(cpu_target["keypoints"], torch.tensor([[[13.0, 8.0, 2.0], [16.0, 8.0, 2.0]]]))
         torch.testing.assert_close(gpu_target["keypoints"], cpu_target["keypoints"])
 
-    def test_flip_mask_tracks_each_image(self) -> None:
-        """A batch can flip one image without relabeling joints in another."""
+    def test_flip_mask_tracks_each_image(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A batch can flip one image without relabeling joints in another.
+
+        The pipeline is a real one-flip ``AugmentationSequential`` whose sampled draws are replaced by a known
+        per-image pattern, so the mask must follow the draw of each image.
+        """
         from types import SimpleNamespace
 
-        from rfdetr.datasets.kornia_transforms import keypoint_horizontal_flip_mask
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, keypoint_horizontal_flip_mask
 
+        pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 0.5}}, 16, with_masks=True, with_keypoints=True, keypoint_flip_pairs=[0, 1]
+        )
         draw = SimpleNamespace(name="RandomHorizontalFlip_0", data={"batch_prob": torch.tensor([1.0, 0.0])})
-        pipeline = SimpleNamespace(_rfdetr_has_keypoint_hflip=True, _params=[draw])
+        monkeypatch.setattr(pipeline, "_params", [draw], raising=False)
+
         assert keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu")).tolist() == [True, False]
 
     def test_flip_mask_tracks_each_image_on_a_real_two_image_kornia_batch(self) -> None:
@@ -1138,7 +1146,8 @@ class TestKeypointTargetTransport(_RequiresKornia):
         }
         targets = [target, target]
         points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=1)
-        boxes = torch.stack([target["boxes"], target["boxes"]])
+        points = points - 0.5
+        boxes = torch.stack([target["boxes"], target["boxes"]]) - 0.5
         image = torch.zeros(2, 3, 16, 16)
         masks = torch.zeros(2, 1, 16, 16)
 
@@ -1160,6 +1169,8 @@ class TestKeypointTargetTransport(_RequiresKornia):
         else:
             raise AssertionError("no seed in range(10) produced differing per-image Kornia flip draws")
 
+        boxes_aug = boxes_aug + 0.5
+        points_aug = points_aug + 0.5
         flipped_idx, identity_idx = (0, 1) if mask[0] else (1, 0)
         flipped_target = unpack_boxes(
             boxes_aug[flipped_idx : flipped_idx + 1],
@@ -1188,12 +1199,16 @@ class TestKeypointTargetTransport(_RequiresKornia):
         torch.testing.assert_close(identity_target["keypoints"], target["keypoints"])
 
     def test_flip_draws_fail_closed_when_kornia_params_are_unavailable(self) -> None:
-        """A changed Kornia parameter API cannot silently leave paired joints unswapped."""
-        from types import SimpleNamespace
+        """A changed Kornia parameter API cannot silently leave paired joints unswapped.
 
-        from rfdetr.datasets.kornia_transforms import keypoint_horizontal_flip_mask
+        A real pipeline holding a horizontal flip that has not run exposes no sampled draws, which is exactly what a
+        Kornia release hiding its parameters looks like to the caller.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, keypoint_horizontal_flip_mask
 
-        pipeline = SimpleNamespace(_rfdetr_has_keypoint_hflip=True, _params=[])
+        pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}}, 16, with_masks=True, with_keypoints=True, keypoint_flip_pairs=[0, 1]
+        )
         with pytest.raises(RuntimeError, match="horizontal-flip draws"):
             keypoint_horizontal_flip_mask(pipeline, 1, torch.device("cpu"))
 
@@ -1220,7 +1235,7 @@ class TestKeypointTargetTransport(_RequiresKornia):
         points, visibility = collate_keypoints(targets, torch.device("cpu"), 1)
         pipeline = build_kornia_pipeline(config, 16, with_masks=True, include_keypoints=True, with_keypoints=True)
         _, boxes_aug, _, points_aug = pipeline(
-            torch.zeros(1, 3, 16, 16), targets[0]["boxes"].unsqueeze(0) - 0.5, torch.zeros(1, 1, 16, 16), points
+            torch.zeros(1, 3, 16, 16), targets[0]["boxes"].unsqueeze(0) - 0.5, torch.zeros(1, 1, 16, 16), points - 0.5
         )
 
         result = unpack_boxes(
@@ -1229,7 +1244,7 @@ class TestKeypointTargetTransport(_RequiresKornia):
             targets,
             16,
             16,
-            keypoints_aug=points_aug,
+            keypoints_aug=points_aug + 0.5,
             keypoint_visibility=visibility,
         )
 
@@ -1238,45 +1253,118 @@ class TestKeypointTargetTransport(_RequiresKornia):
     @pytest.mark.parametrize(
         "config",
         [
-            {"Affine": {"rotate": (5, 5), "translate_percent": (0.05, 0.05), "scale": (1.0, 1.0), "p": 1.0}},
-            {"ShiftScaleRotate": {"shift_limit": 0.05, "scale_limit": 0.05, "rotate_limit": 5, "p": 1.0}},
-            {"Perspective": {"scale": (0.05, 0.05), "p": 1.0}},
+            {"Affine": {"rotate": (90, 90), "p": 1.0}},
+            {"ShiftScaleRotate": {"shift_limit": 0.0, "scale_limit": 0.0, "rotate_limit": (90, 90), "p": 1.0}},
         ],
     )
-    def test_other_geometric_transforms_keep_joint_inside_box(self, config: dict[str, dict[str, Any]]) -> None:
-        """Supported affine and perspective warps transport boxes and joints together."""
+    def test_fixed_rotation_moves_keypoint_to_analytic_position(self, config: dict[str, dict[str, Any]]) -> None:
+        """A 90-degree Affine or ShiftScaleRotate turns a joint about the image center.
+
+        With rotation pinned to ``(90, 90)`` and no shift or scale, the joint at ``(10, 12)`` on a 32-pixel image
+        sits at ``(-6, -4)`` from the center ``(16, 16)``. Kornia's ``RandomAffine`` maps ``(dx, dy)`` to
+        ``(-dy, dx)``, so the joint must land at ``(20, 10)``; an untransformed joint stays at ``(10, 12)``.
+        """
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
         pipeline = build_kornia_pipeline(config, 32, with_masks=True, with_keypoints=True)
         boxes = torch.tensor([[[4.0, 4.0, 20.0, 20.0]]]) - 0.5
-        point = torch.tensor([[[10.0, 10.0]]]) - 0.5
+        point = torch.tensor([[[10.0, 12.0]]]) - 0.5
+
+        _, _, _, point_out = pipeline(torch.zeros(1, 3, 32, 32), boxes, torch.zeros(1, 1, 32, 32), point)
+
+        torch.testing.assert_close(point_out + 0.5, torch.tensor([[[20.0, 10.0]]]))
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"Affine": {"rotate": (0, 0), "translate_percent": (0.25, 0.25), "scale": (1.0, 1.0), "p": 1.0}},
+            {"ShiftScaleRotate": {"shift_limit": 0.25, "scale_limit": 0.0, "rotate_limit": 0, "p": 1.0}},
+        ],
+    )
+    def test_translation_moves_keypoint_by_the_same_offset_as_its_box(self, config: dict[str, dict[str, Any]]) -> None:
+        """A pure translation shifts a joint by exactly the offset it shifts the box, within the configured bound.
+
+        The shift is sampled, so the offset is read off the box corner: the joint must move by the same nonzero
+        ``(dx, dy)``, and that offset can never exceed ``0.25 * 32 = 8`` pixels on either axis.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline(config, 32, with_masks=True, with_keypoints=True)
+        boxes = torch.tensor([[[4.0, 4.0, 20.0, 20.0]]]) - 0.5
+        point = torch.tensor([[[10.0, 12.0]]]) - 0.5
+
         _, boxes_out, _, point_out = pipeline(torch.zeros(1, 3, 32, 32), boxes, torch.zeros(1, 1, 32, 32), point)
-        x, y = (point_out[0, 0] + 0.5).tolist()
-        x1, y1, x2, y2 = (boxes_out[0, 0] + 0.5).tolist()
 
-        assert x1 <= x <= x2 and y1 <= y <= y2
+        box_offset = boxes_out[0, 0, :2] - boxes[0, 0, :2]
+        torch.testing.assert_close(point_out[0, 0] - point[0, 0], box_offset)
+        assert 0.5 < box_offset.abs().max() <= 8.0 + 1e-4, f"sampled offset {box_offset.tolist()} is not a real shift"
 
-    def test_collate_and_unpack_filters_removed_instances_and_invisible_points(self) -> None:
-        """A removed box removes its joints; invisible and outside joints become zero."""
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"Perspective": {"scale": (0.5, 0.5), "p": 1.0}},
+            {"Affine": {"rotate": (90, 90), "p": 1.0}},
+        ],
+    )
+    def test_keypoint_lands_on_the_warped_image_marker(self, config: dict[str, dict[str, Any]]) -> None:
+        """A one-hot marker pixel and the joint placed on it end up at the same warped position.
+
+        The marker sits at row 26, column 26 where the joint is. After the warp, the brightest pixel of the output
+        image must be within one pixel of the transported joint, and that joint must have moved well away from its
+        start so an untransformed joint cannot pass.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline(config, 32, with_keypoints=True)
+        image = torch.zeros(1, 3, 32, 32)
+        image[:, :, 26, 26] = 1.0
+        boxes = torch.tensor([[[4.0, 4.0, 28.0, 28.0]]])
+        point = torch.tensor([[[26.0, 26.0]]])
+
+        image_out, _, point_out = pipeline(image, boxes, point)
+
+        peak = image_out[0].mean(dim=0).flatten().argmax().item()
+        marker_xy = torch.tensor([peak % 32, peak // 32], dtype=torch.float32)
+        assert (point_out[0, 0] - point[0, 0]).abs().max() > 2.0, "joint barely moved; the check would be vacuous"
+        assert (marker_xy - point_out[0, 0]).abs().max() <= 1.0, (
+            f"joint {point_out[0, 0].tolist()} is not on the warped marker pixel {marker_xy.tolist()}"
+        )
+
+    def test_collate_keypoints_copies_coordinates_without_frame_shift(self) -> None:
+        """Collated joints keep the caller's coordinate frame; any half-pixel shift is the caller's job.
+
+        The data module shifts boxes and joints by ``-0.5`` around the pipeline itself, so the collate step must
+        hand over the annotation coordinates untouched and park the visibility values in a separate tensor.
+        """
+        from rfdetr.datasets.kornia_transforms import collate_keypoints
+
+        targets = [
+            {"keypoints": torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 0.0]], [[11.0, 12.0, 2.0], [13.0, 14.0, 1.0]]])}
+        ]
+
+        points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=2)
+
+        torch.testing.assert_close(points, torch.tensor([[[3.0, 4.0], [6.0, 7.0], [11.0, 12.0], [13.0, 14.0]]]))
+        torch.testing.assert_close(visibility, torch.tensor([[[2.0, 0.0], [2.0, 1.0]]]))
+
+    def test_dropped_leading_instance_leaves_the_trailing_survivor_keypoints(self) -> None:
+        """Dropping the first instance keeps the second instance's own joints, not the first's.
+
+        Instance 0 collapses to zero width while instance 1 stays visible and in bounds, so an unpacker that
+        keeps the first ``n_kept`` rows instead of the rows selected by the keep mask returns the wrong joints.
+        """
         from rfdetr.datasets.kornia_transforms import collate_keypoints, unpack_boxes
 
         targets = [
             {
                 "boxes": torch.tensor([[1.0, 1.0, 8.0, 8.0], [10.0, 10.0, 14.0, 14.0]]),
                 "labels": torch.tensor([1, 2]),
-                "keypoints": torch.tensor(
-                    [
-                        [[3.0, 4.0, 2.0], [6.0, 7.0, 0.0]],
-                        [[11.0, 12.0, 2.0], [13.0, 14.0, 1.0]],
-                    ]
-                ),
+                "keypoints": torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 2.0]], [[11.0, 12.0, 2.0], [13.0, 14.0, 1.0]]]),
             }
         ]
-        points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=2)
-        torch.testing.assert_close(points, torch.tensor([[[2.5, 3.5], [5.5, 6.5], [10.5, 11.5], [12.5, 13.5]]]))
-        boxes_aug = torch.tensor([[[1.0, 1.0, 8.0, 8.0], [10.0, 10.0, 10.0, 14.0]]])
+        _, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=2)
+        boxes_aug = torch.tensor([[[1.0, 1.0, 1.0, 8.0], [10.0, 10.0, 14.0, 14.0]]])
         points_aug = torch.tensor([[[3.0, 4.0], [6.0, 7.0], [11.0, 12.0], [13.0, 14.0]]])
-        points_aug[0, 0, 0] = 16.5
 
         result = unpack_boxes(
             boxes_aug,
@@ -1288,8 +1376,95 @@ class TestKeypointTargetTransport(_RequiresKornia):
             keypoint_visibility=visibility,
         )
 
-        assert result[0]["keypoints"].shape == (1, 2, 3)
-        torch.testing.assert_close(result[0]["keypoints"], torch.zeros(1, 2, 3))
+        torch.testing.assert_close(result[0]["boxes"], torch.tensor([[10.0, 10.0, 14.0, 14.0]]))
+        torch.testing.assert_close(result[0]["keypoints"], torch.tensor([[[11.0, 12.0, 2.0], [13.0, 14.0, 1.0]]]))
+
+    @pytest.mark.parametrize(
+        ("xy", "visibility"),
+        [
+            pytest.param((5.0, 6.0), 0.0, id="invisible-but-inside"),
+            pytest.param((16.5, 6.0), 2.0, id="visible-but-right-of-image"),
+            pytest.param((-0.5, 6.0), 2.0, id="visible-but-left-of-image"),
+            pytest.param((5.0, 16.5), 2.0, id="visible-but-below-image"),
+            pytest.param((5.0, -0.5), 2.0, id="visible-but-above-image"),
+        ],
+    )
+    def test_invisible_or_outside_joint_is_zeroed_while_its_neighbor_survives(
+        self, xy: tuple[float, float], visibility: float
+    ) -> None:
+        """A joint that is invisible or ends up outside the image is zeroed entirely, x, y and v.
+
+        The instance and its second joint stay valid, so the zeroing must be per joint and must not touch the
+        neighboring joint or drop the instance.
+        """
+        from rfdetr.datasets.kornia_transforms import collate_keypoints, unpack_boxes
+
+        targets = [
+            {
+                "boxes": torch.tensor([[1.0, 1.0, 8.0, 8.0]]),
+                "labels": torch.tensor([1]),
+                "keypoints": torch.tensor([[[*xy, visibility], [6.0, 7.0, 2.0]]]),
+            }
+        ]
+        _, visibility_tensor = collate_keypoints(targets, torch.device("cpu"), n_max=1)
+        points_aug = torch.tensor([[[*xy], [6.0, 7.0]]])
+
+        result = unpack_boxes(
+            torch.tensor([[[1.0, 1.0, 8.0, 8.0]]]),
+            torch.tensor([[True]]),
+            targets,
+            16,
+            16,
+            keypoints_aug=points_aug,
+            keypoint_visibility=visibility_tensor,
+        )
+
+        torch.testing.assert_close(result[0]["keypoints"], torch.tensor([[[0.0, 0.0, 0.0], [6.0, 7.0, 2.0]]]))
+
+    def test_joint_on_the_image_border_is_kept(self) -> None:
+        """A visible joint exactly on ``x == W`` and ``y == 0`` is inside the closed image and is kept."""
+        from rfdetr.datasets.kornia_transforms import unpack_boxes
+
+        targets = [{"boxes": torch.tensor([[1.0, 1.0, 8.0, 8.0]]), "labels": torch.tensor([1])}]
+
+        result = unpack_boxes(
+            torch.tensor([[[1.0, 1.0, 8.0, 8.0]]]),
+            torch.tensor([[True]]),
+            targets,
+            16,
+            16,
+            keypoints_aug=torch.tensor([[[16.0, 0.0]]]),
+            keypoint_visibility=torch.tensor([[[2.0]]]),
+        )
+
+        torch.testing.assert_close(result[0]["keypoints"], torch.tensor([[[16.0, 0.0, 2.0]]]))
+
+    def test_all_instances_dropped_leaves_empty_keypoints(self) -> None:
+        """When every box collapses, the target keeps no boxes and no keypoint rows but still reports K joints."""
+        from rfdetr.datasets.kornia_transforms import collate_keypoints, unpack_boxes
+
+        targets = [
+            {
+                "boxes": torch.tensor([[1.0, 1.0, 8.0, 8.0], [10.0, 10.0, 14.0, 14.0]]),
+                "labels": torch.tensor([1, 2]),
+                "keypoints": torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 2.0]], [[11.0, 12.0, 2.0], [13.0, 14.0, 1.0]]]),
+            }
+        ]
+        points_aug, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=2)
+        boxes_aug = torch.tensor([[[1.0, 1.0, 1.0, 8.0], [10.0, 10.0, 14.0, 10.0]]])
+
+        result = unpack_boxes(
+            boxes_aug,
+            torch.tensor([[True, True]]),
+            targets,
+            16,
+            16,
+            keypoints_aug=points_aug,
+            keypoint_visibility=visibility,
+        )
+
+        assert result[0]["boxes"].shape == (0, 4)
+        assert result[0]["keypoints"].shape == (0, 2, 3)
 
     def test_unequal_instance_counts_do_not_leak_padded_points(self) -> None:
         """Joint padding follows box padding for a mixed-size batch."""
