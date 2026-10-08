@@ -150,7 +150,9 @@ class TestArraysFromSamples:
         samples = np.random.default_rng(0).uniform(0, 255, (2, 3, 4, 4)).astype(np.float32)
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
             list(_arrays_from_samples(samples, height=4, width=4, channels=3))
-        assert [record.getMessage().split(" spans")[0] for record in caplog.records] == [
+        # pytest>=9.1 also attaches caplog to the non-propagating "rf-detr" logger, so with propagation forced on above
+        # each record is captured twice, as the same object; dropping repeated objects keeps a warning logged twice.
+        assert [record.getMessage().split(" spans")[0] for record in dict.fromkeys(caplog.records)] == [
             "Calibration sample 0",
             "Calibration sample 1",
         ]
@@ -165,7 +167,10 @@ class TestArraysFromSamples:
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
             batches = list(_arrays_from_samples(samples, height=4, width=4, channels=3))
         assert len(batches) == 1
-        assert [record.getMessage().split(" spans")[0] for record in caplog.records] == ["Calibration sample 0"]
+        # Repeated objects are one emission under pytest>=9.1; see test_each_unnormalized_sample_is_warned_about.
+        assert [record.getMessage().split(" spans")[0] for record in dict.fromkeys(caplog.records)] == [
+            "Calibration sample 0"
+        ]
 
     def test_normalized_extremes_are_not_warned_about(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
