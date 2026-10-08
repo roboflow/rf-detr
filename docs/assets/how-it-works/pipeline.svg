@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="380" viewBox="0 0 1000 380" role="img" aria-labelledby="title desc">
+  <!-- Sources: RF-DETR Small in src/rfdetr/config.py (resolution 512, patch_size 16, dec_layers 3, num_queries 300). -->
+  <title id="title">RF-DETR pipeline, shown for RF-DETR Small</title>
+  <desc id="desc">A 512 by 512 image is cut into 16 by 16 pixel patches, giving 1,024 tokens. A DINOv2 vision transformer with mostly windowed and a few global attention blocks processes them; four intermediate outputs feed a projector that produces a single stride-16 feature map called memory. The 300 highest-scoring memory tokens give the queries their reference boxes. Three deformable decoder layers turn the queries into boxes, class scores and optionally masks.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 17px; }
+    .s { font-size: 13px; fill: #B8B8B8; }
+    .card { fill: #22252C; stroke: #4A4F5A; stroke-width: 1.5; }
+    .arrow { stroke: #8A8F99; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .tap { stroke: #F4D345; stroke-width: 1.6; fill: none; marker-end: url(#tipY); }
+    .join { stroke: #F4D345; stroke-width: 1.6; fill: none; }
+    .win { fill: #1C758A; stroke: #58C4DD; stroke-width: 1; }
+    .glob { fill: #8A5A1C; stroke: #F0AC5F; stroke-width: 1; }
+    .tok { fill: #2C313A; stroke: #4A4F5A; stroke-width: .8; }
+    .pick { fill: #F4D345; stroke: #16181D; stroke-width: .8; }
+    .pulse { fill: #FFFFFF; opacity: 0; animation: travel 6s linear infinite; }
+    @keyframes travel {
+      0% { transform: translateX(0); opacity: 0; }
+      5% { opacity: .9; }
+      90% { opacity: .9; }
+      100% { transform: translateX(860px); opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8A8F99"/></marker>
+    <marker id="tipY" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#F4D345"/></marker>
+  </defs>
+  <rect width="1000" height="380" rx="16" fill="#16181D"/>
+
+  <!-- 1. image -->
+  <text class="h" x="24" y="40">1 · Image</text>
+  <rect x="24" y="70" width="100" height="100" rx="4" fill="#2A3B4A" stroke="#58C4DD" stroke-width="1.5"/>
+  <ellipse cx="62" cy="122" rx="20" ry="28" fill="#1C758A" stroke="#58C4DD"/>
+  <rect x="88" y="110" width="28" height="40" rx="4" fill="#8A5A1C" stroke="#F0AC5F"/>
+  <g stroke="#16181D" stroke-width="1.2" opacity=".7">
+    <line x1="44" y1="70" x2="44" y2="170"/><line x1="64" y1="70" x2="64" y2="170"/><line x1="84" y1="70" x2="84" y2="170"/><line x1="104" y1="70" x2="104" y2="170"/>
+    <line x1="24" y1="90" x2="124" y2="90"/><line x1="24" y1="110" x2="124" y2="110"/><line x1="24" y1="130" x2="124" y2="130"/><line x1="24" y1="150" x2="124" y2="150"/>
+  </g>
+  <text class="s" x="24" y="192">512 × 512 px</text>
+  <text class="s" x="24" y="210">cut into 16 × 16 patches</text>
+  <path class="arrow" d="M 132 120 L 160 120"/>
+
+  <!-- 2. backbone -->
+  <text class="h" x="168" y="40">2 · DINOv2 backbone</text>
+  <rect class="card" x="168" y="58" width="236" height="150" rx="8"/>
+  <g>
+    <rect class="win" x="180" y="72" width="12" height="70" rx="2"/><rect class="win" x="198" y="72" width="12" height="70" rx="2"/><rect class="win" x="216" y="72" width="12" height="70" rx="2"/>
+    <rect class="glob" x="234" y="72" width="12" height="70" rx="2"/>
+    <rect class="win" x="252" y="72" width="12" height="70" rx="2"/><rect class="win" x="270" y="72" width="12" height="70" rx="2"/>
+    <rect class="glob" x="288" y="72" width="12" height="70" rx="2"/>
+    <rect class="win" x="306" y="72" width="12" height="70" rx="2"/><rect class="win" x="324" y="72" width="12" height="70" rx="2"/>
+    <rect class="glob" x="342" y="72" width="12" height="70" rx="2"/>
+    <rect class="win" x="360" y="72" width="12" height="70" rx="2"/><rect class="win" x="378" y="72" width="12" height="70" rx="2"/>
+  </g>
+  <rect class="win" x="180" y="156" width="10" height="10" rx="2"/><text class="s" x="195" y="165">windowed</text>
+  <rect class="glob" x="262" y="156" width="10" height="10" rx="2"/><text class="s" x="277" y="165">global attention</text>
+  <text class="s" x="180" y="192">12 ViT blocks · 1,024 tokens</text>
+  <!-- taps after stages 3, 6, 9, 12 -->
+  <path class="tap" d="M 222 208 L 222 236 L 474 236 L 474 214"/>
+  <path class="join" d="M 276 208 L 276 236"/>
+  <path class="join" d="M 330 208 L 330 236"/>
+  <path class="join" d="M 384 208 L 384 236"/>
+  <text class="s" x="226" y="256" fill="#F4D345">4 intermediate feature maps</text>
+
+  <!-- 3. projector -->
+  <text class="h" x="420" y="40">3 · Projector</text>
+  <rect class="card" x="420" y="58" width="108" height="150" rx="8"/>
+  <text class="s" x="432" y="90">fuse 4 levels</text>
+  <text class="s" x="432" y="110">C2f blocks</text>
+  <text class="s" x="432" y="130">LayerNorm</text>
+  <rect x="440" y="146" width="68" height="44" rx="4" fill="#2C313A" stroke="#83C167" stroke-width="1.5"/>
+  <text class="s" x="448" y="165" fill="#83C167">memory</text><text class="s" x="448" y="182" fill="#83C167">stride 16</text>
+  <path class="arrow" d="M 532 130 L 556 130"/>
+
+  <!-- 4. two-stage proposals -->
+  <text class="h" x="562" y="40">4 · Pick queries</text>
+  <rect class="card" x="562" y="58" width="128" height="150" rx="8"/>
+  <g>
+    <rect class="tok" x="574" y="72" width="16" height="16"/><rect class="tok" x="592" y="72" width="16" height="16"/><rect class="pick" x="610" y="72" width="16" height="16"/><rect class="tok" x="628" y="72" width="16" height="16"/><rect class="tok" x="646" y="72" width="16" height="16"/><rect class="tok" x="664" y="72" width="16" height="16"/>
+    <rect class="tok" x="574" y="90" width="16" height="16"/><rect class="pick" x="592" y="90" width="16" height="16"/><rect class="pick" x="610" y="90" width="16" height="16"/><rect class="tok" x="628" y="90" width="16" height="16"/><rect class="tok" x="646" y="90" width="16" height="16"/><rect class="tok" x="664" y="90" width="16" height="16"/>
+    <rect class="tok" x="574" y="108" width="16" height="16"/><rect class="tok" x="592" y="108" width="16" height="16"/><rect class="tok" x="610" y="108" width="16" height="16"/><rect class="tok" x="628" y="108" width="16" height="16"/><rect class="pick" x="646" y="108" width="16" height="16"/><rect class="tok" x="664" y="108" width="16" height="16"/>
+    <rect class="tok" x="574" y="126" width="16" height="16"/><rect class="tok" x="592" y="126" width="16" height="16"/><rect class="tok" x="610" y="126" width="16" height="16"/><rect class="pick" x="628" y="126" width="16" height="16"/><rect class="pick" x="646" y="126" width="16" height="16"/><rect class="tok" x="664" y="126" width="16" height="16"/>
+    <rect class="tok" x="574" y="144" width="16" height="16"/><rect class="tok" x="592" y="144" width="16" height="16"/><rect class="tok" x="610" y="144" width="16" height="16"/><rect class="tok" x="628" y="144" width="16" height="16"/><rect class="tok" x="646" y="144" width="16" height="16"/><rect class="tok" x="664" y="144" width="16" height="16"/>
+  </g>
+  <text class="s" x="574" y="182">score every token,</text>
+  <text class="s" x="574" y="198">keep the top 300</text>
+  <text class="s" x="562" y="228">+ a first box guess each</text>
+  <path class="arrow" d="M 694 130 L 716 130"/>
+
+  <!-- 5. decoder -->
+  <text class="h" x="722" y="40">5 · Decoder</text>
+  <rect class="card" x="722" y="58" width="128" height="150" rx="8"/>
+  <rect x="734" y="70" width="104" height="36" rx="4" fill="#2C313A" stroke="#9A72AC"/><text class="s" x="742" y="93">layer 1</text>
+  <rect x="734" y="112" width="104" height="36" rx="4" fill="#2C313A" stroke="#9A72AC"/><text class="s" x="742" y="135">layer 2</text>
+  <rect x="734" y="154" width="104" height="36" rx="4" fill="#2C313A" stroke="#9A72AC"/><text class="s" x="742" y="177">layer 3</text>
+  <text class="s" x="722" y="250">self-attention among queries,</text>
+  <text class="s" x="722" y="267">deformable look at memory,</text>
+  <text class="s" x="722" y="284">predict each box</text>
+  <path class="arrow" d="M 854 130 L 876 130"/>
+
+  <!-- 6. output -->
+  <text class="h" x="880" y="40">6 · Output</text>
+  <rect x="880" y="70" width="100" height="100" rx="4" fill="#2A3B4A" stroke="#58C4DD" stroke-width="1.5"/>
+  <ellipse cx="918" cy="122" rx="20" ry="28" fill="#1C758A" stroke="#58C4DD"/>
+  <rect x="944" y="110" width="28" height="40" rx="4" fill="#8A5A1C" stroke="#F0AC5F"/>
+  <rect x="895" y="91" width="46" height="62" fill="none" stroke="#83C167" stroke-width="2.5"/>
+  <rect x="940" y="106" width="36" height="48" fill="none" stroke="#83C167" stroke-width="2.5"/>
+  <text class="s" x="880" y="192">boxes + classes</text>
+  <text class="s" x="880" y="210">+ masks or</text><text class="s" x="880" y="228">keypoints</text>
+
+  <!-- travelling pulse -->
+  <circle class="pulse" cx="74" cy="308" r="6"/>
+  <line x1="74" y1="308" x2="934" y2="308" stroke="#3A3F49" stroke-width="1.5" stroke-dasharray="3 6"/>
+  <text class="s" x="24" y="340">No separate transformer encoder: the pretrained ViT and the projector do the encoding.</text>
+  <text class="s" x="24" y="360">No NMS: the decoder output is the answer. Numbers shown are for RF-DETR Small.</text>
+</svg>
