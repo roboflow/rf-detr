@@ -2220,6 +2220,7 @@ class RFDETR:
         output_name: str | None = None,
         trt_timing_cache: str | os.PathLike[str] | None = None,
         coreml_precision: str | None = None,
+        coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
     ) -> Path:
@@ -2322,11 +2323,16 @@ class RFDETR:
                 * ``format="openvino"`` — one of ``None``, ``"fp32"``, ``"int8"``.  ``"int8"`` compresses the
                   converted IR with NNCF (``pip install nncf``, not part of the ``rfdetr[openvino]`` extra) before it
                   is written, so the ``.xml`` / ``.bin`` pair is already 8-bit, and **requires** *calibration_data*.
+                * ``format="tensorrt"`` — ``None`` (an FP16 or FP32 engine, as ``fp16`` says) or ``"int8"``: most of
+                  the backbone encoder and decoder run in INT8 and the rest in FP16 (placement in the TensorRT export
+                  guide), with activation ranges calibrated on *calibration_data*, which is then required.  Detection
+                  models only, static batch, ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
                 * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
                   raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
-            calibration_data: Representative data for static INT8.  **Required** for ``format="onnx"`` and
-                ``format="openvino"`` with ``quantization="int8"``, where activation ranges are collected from it,
-                and refused as missing there rather than defaulted.  Accepts:
+            calibration_data: Representative data for static INT8.  **Required** for ``format="onnx"``,
+                ``format="openvino"`` and ``format="tensorrt"`` with ``quantization="int8"``, where activation ranges
+                are collected from it, and refused as missing there rather than defaulted.  ``format="tensorrt"``
+                also refuses it without ``"int8"``.  Accepts:
 
                 * ``None`` — the default; no calibration data.
                 * A **directory path** (``str`` or :class:`~pathlib.Path`) containing images, preprocessed exactly as
@@ -2342,9 +2348,9 @@ class RFDETR:
                 never read, so a missing path or a malformed array does not fail the export. No data could change the
                 exported ``.tflite`` models: ``quantization="int8"`` produces a dynamic-range model whose weight
                 scales come from the weights themselves, and fp32/fp16 involve no calibration.
-            max_images: Maximum number of images to load from a *calibration_data* directory for ONNX / OpenVINO
-                static INT8.  Defaults to ``100``.  Only used when *calibration_data* is a directory path; ignored for
-                ``format="tflite"`` along with *calibration_data*.
+            max_images: Maximum number of images to load from a *calibration_data* directory (the first ones by file
+                name) for ONNX / OpenVINO / TensorRT static INT8.  Defaults to ``100``.  Only used when
+                *calibration_data* is a directory path; ignored for ``format="tflite"`` along with *calibration_data*.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
@@ -2422,6 +2428,12 @@ class RFDETR:
                 PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift) whose outputs are still float32. Bundles
                 declare iOS 15 / macOS 12 as the minimum OS. Ignored for every other format.
+            coreml_neural_engine: For ``format="coreml"``, export a graph for the Apple Neural Engine, with the same
+                weights: the backbone attention runs as one einsum pair per head in query chunks, and the two-stage
+                query selection as a one-hot matmul. In an fp16 export, only the deformable-attention ``resample`` and
+                its ``cast`` ops run on the CPU. This graph is faster than the default graph on the Neural Engine and
+                slower on the CPU and the GPU, so use it only with ``CPU_AND_NE`` or ``ALL`` compute units. Ignored for
+                every other format.
             coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
                 (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
                 float16 too. A float16 keypoint model warns: the asset aborts the process on the Neural Engine.
@@ -2471,6 +2483,15 @@ class RFDETR:
                 requests, if ``calibration_data`` points to a missing path, a file that is not ``.npy``, an
                 image-less directory, or an array that is not ``(N, C, H, W)`` or does not match the graph's
                 input size.
+                Also raised for ``format="tensorrt"`` when ``quantization`` is neither ``None`` nor ``"int8"``,
+                ``calibration_data`` is given without ``"int8"``, ``"int8"`` has no ``calibration_data``,
+                ``max_images`` is not a positive integer, or ``"int8"`` is combined with ``fp16=False``,
+                ``dynamic_batch=True`` or ``backbone_only=True``; ``calibration_data`` that is not a directory, a
+                ``.npy`` path or a non-empty ``(N, C, H, W)`` float array, a path that does not exist, a directory
+                without an image, a file that is not ``.npy`` and a ``.npy`` that does not hold such an array are all
+                refused before the forward pass. During the INT8 conversion, calibration data that yields no usable
+                image or a non-finite range, a range too large for an FP16 scale, and attention INT8 cannot be placed
+                around, also raise.
                 Also raised for ``format="tensorrt"`` when ``trt_metadata`` is not a ``bool``.
                 Also raised for ``format="tensorrt"`` when ``trt_hardware_compatibility`` is neither ``None``,
                 ``"ampere_plus"`` nor ``"same_compute_capability"``, when ``trt_version_compatible`` is not a
@@ -2484,8 +2505,9 @@ class RFDETR:
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
                 paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
-                other than ``None`` / ``"fp32"``; or if ``format="litert"`` is asked to export a keypoint
-                model (``backbone_only=True`` still converts).
+                other than ``None`` / ``"fp32"``; if ``format="litert"`` is asked to export a keypoint model
+                (``backbone_only=True`` still converts); or if ``format="tensorrt"`` with ``quantization="int8"`` is
+                asked to export a segmentation or keypoint model.
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
@@ -2498,10 +2520,12 @@ class RFDETR:
                 ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
-                ``fp16=False``. Each format's availability check runs before the model does, and so does the
-                check for TensorRT's lean runtime library that ``trt_version_compatible=True`` needs; what they do
-                not cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package,
-                ``onnxruntime`` or ``nncf`` for INT8) is found missing only during the conversion.
+                ``fp16=False``; and for ``format="tensorrt"`` with ``quantization="int8"`` without onnxruntime or
+                ``onnxconverter-common``, or on a TensorRT older than 10. Each format's availability check runs before
+                the model does, and so do the check for TensorRT's lean runtime library that
+                ``trt_version_compatible=True`` needs and the TensorRT INT8 host checks; what they do not cover (a
+                backend's extension, the TensorRT cast's packages, the Core AI runtime package, ``onnxruntime`` or
+                ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
             OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
@@ -2576,6 +2600,7 @@ class RFDETR:
             soc=soc,
             fp16=fp16,
             coreml_precision=coreml_precision,
+            coreml_neural_engine=coreml_neural_engine,
             coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
             quantization=quantization,
