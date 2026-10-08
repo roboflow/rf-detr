@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T14:26:55">
+  <meta property="article:modified_time" content="2026-10-08T16:29:28">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T14:26:55",
+    "dateModified": "2026-10-08T16:29:28",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3083,6 +3083,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span></code></pre></div>
 <h2 id="xnnpack-backend-portable-cpu-fp32">XNNPACK Backend (Portable CPU, fp32)<a class="headerlink" href="#xnnpack-backend-portable-cpu-fp32" title="Permanent link">&para;</a></h2>
 <p>The <code>"xnnpack"</code> backend targets any CPU platform and runs in fp32. It is the recommended, portable backend and requires only the standard <code>rfdetr[executorch]</code> wheel. <code>backend</code> has no default — it must always be passed explicitly for <code>format="executorch"</code>.</p>
+<p>On this backend the export rewrites attention without a mask as two batched matrix multiplications and a softmax, and computes the query, key and value slices of the decoder's packed <code>in_proj_weight</code> at export time. XNNPACK then runs the encoder and decoder attention, which <code>F.scaled_dot_product_attention</code> and <code>nn.MultiheadAttention</code> otherwise split into portable kernels between many small XNNPACK partitions. The outputs are the same to float32 rounding, and the median CPU latency is 33–54% lower (1.5–2.2x faster) in the measurements of the changelog entry for this change (ExecuTorch 1.5.1, 16 threads, Xeon and Apple M4 Max).</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -3197,7 +3198,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:26:55 UTC">2026-10-06 14:26:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 16:29:28 UTC">2026-10-08 16:29:28</span>
   </span>
 
     
