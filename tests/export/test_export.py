@@ -1768,6 +1768,13 @@ class TestExportRejectsBeforeForwardPass:
                 "names a directory",
                 id="tensorrt-timing-cache-directory",
             ),
+            pytest.param(
+                "tensorrt",
+                {"quantization": "int8"},
+                ValueError,
+                "calibration_data",
+                id="tensorrt-int8-without-calibration-data",
+            ),
             pytest.param("onnx", {"notes": float("nan")}, ValueError, "notes", id="notes-nan"),
             pytest.param("tflite", {"notes": float("nan")}, ValueError, "notes", id="tflite-notes-nan"),
             pytest.param("tensorrt", {"notes": float("nan")}, ValueError, "notes", id="tensorrt-notes-nan"),
