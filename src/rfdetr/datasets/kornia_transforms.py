@@ -53,7 +53,7 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-__doctest_requires__ = {"build_kornia_pipeline": ["kornia"]}
+__doctest_requires__ = {"build_kornia_pipeline": ["kornia"], "keypoint_horizontal_flip_mask": ["kornia"]}
 
 #: ImageNet channel-wise mean (RGB order).
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -922,12 +922,10 @@ def build_kornia_pipeline(
     data_keys = ["input", "bbox_xyxy", "mask"] if with_masks else ["input", "bbox_xyxy"]
     if with_keypoints:
         data_keys.append("keypoints")
-    pipeline = AugmentationSequential(
+    return AugmentationSequential(
         *transforms,
         data_keys=data_keys,
     )
-    pipeline._rfdetr_has_keypoint_hflip = with_keypoints and "HorizontalFlip" in filtered_aug_config
-    return pipeline
 
 
 def build_normalize(
@@ -1121,18 +1119,38 @@ def keypoint_horizontal_flip_mask(pipeline: Any, batch_size: int, device: torch.
             joints cannot be relabeled safely.
 
     Examples:
-        >>> keypoint_horizontal_flip_mask(None, 2, torch.device("cpu")).tolist()
+        >>> pipeline = build_kornia_pipeline({"VerticalFlip": {"p": 1.0}}, 16, with_keypoints=True)
+        >>> keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu")).tolist()
         [False, False]
     """
+    from kornia.augmentation import RandomHorizontalFlip
+
     flipped = torch.zeros(batch_size, dtype=torch.bool, device=device)
     found = False
-    for item in getattr(pipeline, "_params", []) or []:
+    for item in _sampled_param_items(pipeline):
         if item.name.startswith("RandomHorizontalFlip_"):
             found = True
             flipped ^= item.data["batch_prob"].to(device=device, dtype=torch.bool)
-    if getattr(pipeline, "_rfdetr_has_keypoint_hflip", False) and not found:
+    has_horizontal_flip = any(isinstance(child, RandomHorizontalFlip) for child in pipeline.children())
+    if has_horizontal_flip and not found:
         raise RuntimeError("Kornia did not expose horizontal-flip draws; cannot safely relabel paired keypoints")
     return flipped
+
+
+def _sampled_param_items(pipeline: Any) -> list[Any]:
+    """Return the per-transform parameters Kornia sampled on the pipeline's last forward pass.
+
+    Kornia exposes them only through the private ``AugmentationSequential._params`` attribute, a list of
+    ``ParamItem`` entries named ``<TransformClass>_<index>``. Reading it here keeps that private-API dependency in one
+    place.
+
+    Args:
+        pipeline: A Kornia ``AugmentationSequential``.
+
+    Returns:
+        The sampled ``ParamItem`` entries; empty before the first forward pass.
+    """
+    return list(getattr(pipeline, "_params", None) or [])
 
 
 def unpack_boxes(
@@ -1190,14 +1208,13 @@ def unpack_boxes(
             f"valid shape {tuple(valid.shape)}; ensure collate_masks is called with "
             "n_max=valid.shape[1] from collate_boxes"
         )
-    if keypoints_aug is not None:
-        if keypoint_visibility is None or keypoints_aug.shape[:2] != (
-            valid.shape[0],
-            valid.shape[1] * keypoint_visibility.shape[2],
-        ):
-            raise ValueError("keypoints_aug and keypoint_visibility must match the padded box and joint counts")
-    # Read every per-image flip draw with one device sync, and none at all when no pairs are configured.
-    flip_flags = keypoint_flip_mask.tolist() if keypoint_flip_pairs and keypoint_flip_mask is not None else None
+    _check_keypoint_inputs(keypoints_aug, keypoint_visibility, valid)
+    flip_flags: list[bool] = []
+    flip_permutation: list[int] = []
+    if keypoint_flip_pairs and keypoint_flip_mask is not None and keypoint_visibility is not None:
+        # Read every per-image flip draw with one device sync, and none at all when no pairs are configured.
+        flip_flags = keypoint_flip_mask.tolist()
+        flip_permutation = keypoint_flip_permutation(keypoint_flip_pairs, keypoint_visibility.shape[2])
     new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
@@ -1237,15 +1254,66 @@ def unpack_boxes(
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
         if keypoints_aug is not None and keypoint_visibility is not None:
             k = keypoint_visibility.shape[2]
-            xy = keypoints_aug[i].reshape(valid.shape[1], k, 2)[:n_orig][keep]
-            visibility = keypoint_visibility[i, :n_orig][keep]
-            keypoints = torch.cat((xy, visibility.unsqueeze(-1)), dim=-1)
-            inside = (xy[..., 0] >= 0) & (xy[..., 0] <= image_width) & (xy[..., 1] >= 0) & (xy[..., 1] <= image_height)
-            keypoints = keypoints.masked_fill((~inside | (visibility <= 0)).unsqueeze(-1), 0)
-            if keypoint_flip_pairs and flip_flags is not None and flip_flags[i]:
-                keypoints = keypoints[:, keypoint_flip_permutation(keypoint_flip_pairs, k)]
-            t["keypoints"] = keypoints
+            t["keypoints"] = _unpack_image_keypoints(
+                keypoints_aug[i].reshape(valid.shape[1], k, 2)[:n_orig][keep],
+                keypoint_visibility[i, :n_orig][keep],
+                image_height,
+                image_width,
+                flip_permutation if flip_flags and flip_flags[i] else None,
+            )
 
         new_targets.append(t)
 
     return new_targets
+
+
+def _check_keypoint_inputs(keypoints_aug: Tensor | None, keypoint_visibility: Tensor | None, valid: Tensor) -> None:
+    """Check that augmented keypoints line up with the padded boxes and the visibility tensor.
+
+    Args:
+        keypoints_aug: Augmented xy points ``[B, N_max * K, 2]``, or ``None`` when keypoints are not transported.
+        keypoint_visibility: Visibility ``[B, N_max, K]`` from :func:`collate_keypoints`.
+        valid: Boolean mask ``[B, N_max]`` from :func:`collate_boxes`.
+
+    Raises:
+        ValueError: If *keypoints_aug* is given without *keypoint_visibility*, or its batch and point dimensions
+            do not equal ``(B, N_max * K)``.
+    """
+    if keypoints_aug is None:
+        return
+    if keypoint_visibility is None or keypoints_aug.shape[:2] != (
+        valid.shape[0],
+        valid.shape[1] * keypoint_visibility.shape[2],
+    ):
+        raise ValueError("keypoints_aug and keypoint_visibility must match the padded box and joint counts")
+
+
+def _unpack_image_keypoints(
+    xy: Tensor,
+    visibility: Tensor,
+    image_height: int,
+    image_width: int,
+    flip_permutation: list[int] | None,
+) -> Tensor:
+    """Rebuild one image's ``[N, K, 3]`` keypoints after augmentation.
+
+    Visibility is decided once, from the final coordinates only: a joint is zeroed entirely (x, y and v) when it lies
+    outside ``[0, W] x [0, H]`` or its visibility is ``<= 0``.
+
+    Args:
+        xy: Augmented joint coordinates ``[N, K, 2]`` of the kept instances.
+        visibility: Original visibility ``[N, K]`` of the kept instances.
+        image_height: Augmented image height in pixels.
+        image_width: Augmented image width in pixels.
+        flip_permutation: Joint-slot permutation from :func:`keypoint_flip_permutation` when this image was
+            horizontally flipped, else ``None``.
+
+    Returns:
+        Float tensor ``[N, K, 3]`` of ``(x, y, v)`` rows.
+    """
+    keypoints = torch.cat((xy, visibility.unsqueeze(-1)), dim=-1)
+    inside = (xy[..., 0] >= 0) & (xy[..., 0] <= image_width) & (xy[..., 1] >= 0) & (xy[..., 1] <= image_height)
+    keypoints = keypoints.masked_fill((~inside | (visibility <= 0)).unsqueeze(-1), 0)
+    if flip_permutation is not None:
+        keypoints = keypoints[:, flip_permutation]
+    return keypoints

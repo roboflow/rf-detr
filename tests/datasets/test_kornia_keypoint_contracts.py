@@ -6,8 +6,9 @@
 """Input contracts of the Kornia keypoint augmentation helpers."""
 
 import pytest
+import torch
 
-from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, keypoint_horizontal_flip_mask
 from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
 
 kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
@@ -39,3 +40,33 @@ class TestBuildKorniaPipelineFlipPairs:
         )
 
         assert len(list(pipeline.children())) == 1
+
+
+@kornia_only
+class TestKeypointHorizontalFlipMask:
+    """``keypoint_horizontal_flip_mask`` detects horizontal flips from the pipeline's own transforms."""
+
+    def test_reads_flip_draws_after_forward(self):
+        """After a forward pass through an always-flip pipeline, every image is reported as flipped.
+
+        This is the normal training use: the DataModule runs the pipeline, then asks which images to relabel.
+        """
+        pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1]
+        )
+        pipeline(torch.zeros(2, 3, 16, 16), torch.zeros(2, 1, 4), torch.zeros(2, 1, 2))
+
+        assert keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu")).tolist() == [True, True]
+
+    def test_missing_flip_draws_raise(self):
+        """A pipeline holding a horizontal flip but no sampled draws raises instead of skipping relabeling.
+
+        Before any forward pass Kornia has sampled nothing, which is indistinguishable from a Kornia release that
+        stopped exposing the draws; silently returning "not flipped" would leave left/right joints swapped.
+        """
+        pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1]
+        )
+
+        with pytest.raises(RuntimeError, match="did not expose horizontal-flip draws"):
+            keypoint_horizontal_flip_mask(pipeline, 1, torch.device("cpu"))
