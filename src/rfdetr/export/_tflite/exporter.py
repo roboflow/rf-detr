@@ -513,6 +513,23 @@ def _check_tf_keras_available() -> None:
         raise ImportError(f"TFLite export requires tf-keras, which onnx2tf does not install. {_TFLITE_INSTALL_HINT}")
 
 
+def _check_onnx_graphsurgeon_available() -> None:
+    """Verify that ``onnx_graphsurgeon`` is installed, without importing it.
+
+    The GridSample rewrite needs it, and onnx2tf's own GridSample lowering produces wrong scores, so converting without
+    the rewrite yields a ``.tflite`` that looks fine and detects badly. ``rfdetr[onnx]`` does not install it.
+
+    Raises:
+        ImportError: If ``onnx_graphsurgeon`` is not installed.
+    """
+    if not is_installed("onnx_graphsurgeon"):
+        raise ImportError(
+            "TFLite export requires onnx_graphsurgeon for its GridSample rewrite; without it the .tflite produces "
+            'incorrect scores. Install it with: pip install onnx_graphsurgeon ("rfdetr[tflite]" includes it, on '
+            "Python 3.12)."
+        )
+
+
 def _check_onnx2tf_available() -> None:
     """Verify that a compatible ``onnx2tf`` package is importable.
 
@@ -965,15 +982,15 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
 
     @classmethod
     def check_dependencies(cls) -> None:
-        """Verify TensorFlow, ``tf_keras``, ``onnx`` and ``onnx2tf``, loading TensorFlow first so it comes before ONNX.
+        """Verify TensorFlow, ``tf_keras``, ``onnx``, ``onnx_graphsurgeon`` and ``onnx2tf``, loading TensorFlow first.
 
         Only the top-level ``onnx2tf`` package is imported here, which defines lazy wrappers and nothing else.
         ``onnx2tf.onnx2tf`` seeds ``random``/``numpy`` and silences every warning when it is imported, so it is left to
         :meth:`_prepare_onnx2tf`, after the forward pass and the ONNX stage.
 
         Raises:
-            ImportError: If TensorFlow, ``tf_keras`` or ``onnx`` is not installed, or ``onnx2tf`` cannot be imported or
-                is below 2.4.0.
+            ImportError: If TensorFlow, ``tf_keras``, ``onnx`` or ``onnx_graphsurgeon`` is not installed, or ``onnx2tf``
+                cannot be imported or is below 2.4.0.
         """
         from rfdetr.export._backend import check_onnx_available, preload_tensorflow_before_onnx
 
@@ -988,6 +1005,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         # check_onnx_available() imports onnx itself, lazily, only when called here -- after TensorFlow's preload
         # above, so the ordering preload_tensorflow_before_onnx() exists to protect still holds.
         check_onnx_available(_TFLITE_INSTALL_HINT, stage="TFLite export")
+        _check_onnx_graphsurgeon_available()
         _check_onnx2tf_available()
 
     def _convert(self, graph: ExportGraph) -> Path:

@@ -2277,10 +2277,22 @@ class TestExportDependencyCheck:
                 {
                     "rfdetr.export._backend.preload_tensorflow_before_onnx": lambda: None,
                     "rfdetr.export._tflite.exporter._check_tf_keras_available": lambda: None,
+                    "rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available": lambda: None,
                 },
                 {"tensorflow": types.ModuleType("tensorflow"), "onnx2tf": None},
                 r"onnx2tf is not installed.*rfdetr\[tflite\]",
                 id="tflite-onnx2tf",
+            ),
+            pytest.param(
+                "tflite",
+                {},
+                {
+                    "rfdetr.export._backend.preload_tensorflow_before_onnx": lambda: None,
+                    "rfdetr.export._tflite.exporter._check_tf_keras_available": lambda: None,
+                },
+                {"tensorflow": types.ModuleType("tensorflow"), "onnx_graphsurgeon": None},
+                r'requires onnx_graphsurgeon.*pip install onnx_graphsurgeon \("rfdetr\[tflite\]" includes it',
+                id="tflite-onnx_graphsurgeon",
             ),
             pytest.param(
                 "tflite",

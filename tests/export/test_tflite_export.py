@@ -1623,6 +1623,7 @@ class TestTFLiteDependencyCheckOrder:
         monkeypatch.setattr("rfdetr.export._backend.preload_tensorflow_before_onnx", lambda: None)
         monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
         monkeypatch.setattr("rfdetr.export._backend.check_onnx_available", lambda install_hint, *, stage: None)
+        monkeypatch.setattr("rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available", lambda: None)
         monkeypatch.syspath_prepend(str(tmp_path))
 
         # Restores sys.modules afterwards, dropping the stand-in package this test imports.
@@ -1796,10 +1797,12 @@ class TestTFLitePreloadOrdering:
                 "rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx",
                 side_effect=lambda *_a, **_kw: (calls.append("tflite"), tmp_path / "model_fp32.tflite")[1],
             ),
-            # The preload runs inside check_dependencies, which also wants TensorFlow, tf-keras and onnx2tf; the CPU job
-            # has none of them, so TensorFlow is a stand-in module and the other two checks are stubbed.
+            # The preload runs inside check_dependencies, which also wants TensorFlow, tf-keras, onnx_graphsurgeon and
+            # onnx2tf; the CPU job has none of them, so TensorFlow is a stand-in module and the other three checks are
+            # stubbed.
             mock.patch.dict(sys.modules, {"tensorflow": types.ModuleType("tensorflow")}),
             mock.patch("rfdetr.export._tflite.exporter._check_tf_keras_available"),
+            mock.patch("rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available"),
             mock.patch("rfdetr.export._tflite.exporter._check_onnx2tf_available"),
         ):
             exporter(graph)
