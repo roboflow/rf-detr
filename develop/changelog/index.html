@@ -2911,6 +2911,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Keypoint training accepts Kornia augmentation on CUDA. The default backend remains <code>cpu</code>; users can select <code>kornia</code>/<code>gpu</code> explicitly, or select <code>auto</code> to use Kornia when available. Image geometry, boxes, padding masks and keypoints share each augmentation draw; keypoint visibility, dropped instances and paired-joint flips stay synchronized. (<a href="https://github.com/roboflow/rf-detr/pull/1606">#1606</a>)</p>
+</li>
+<li>
 <p><code>TrainConfig.eval_backend="hotcoco_streaming"</code> matches each validation batch with hotcoco's <code>StreamingEval</code> as it arrives, so the end-of-epoch COCO evaluation only accumulates and summarizes. Metrics are bit-identical to <code>eval_backend="hotcoco"</code>. On an Apple M-series CPU with synthetic data, the end-of-epoch step dropped from 0.238 s to 0.025 s for 600,000 box detections and from 0.178 s to 0.005 s for a bbox+segm run of 20,000 detections. Total CPU time is higher for box-only runs (1.05 s vs 0.29 s) and about equal for bbox+segm (0.66 s vs 0.71 s), because matching moves into the validation step. Streaming applies to single-process runs whose labels fall within <code>[0, num_classes]</code>; under DDP, or after the metric is pickled mid-epoch, it evaluates in one batch as <code>"hotcoco"</code> does and logs why.</p>
 </li>
 <li>

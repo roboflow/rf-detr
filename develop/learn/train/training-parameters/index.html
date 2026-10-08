@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-08T12:20:40">
+  <meta property="article:modified_time" content="2026-10-08T21:29:25">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-08T12:20:40",
+    "dateModified": "2026-10-08T21:29:25",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4196,6 +4196,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <p>The current pydantic default for <code>keypoint_flip_pairs</code> is <code>[]</code>, matching the field definition in <code>src/rfdetr/config.py</code>. See <code>_build_torchvision_pipeline</code> in <code>src/rfdetr/datasets/coco.py</code> for the default-backend gating check, and <code>AlbumentationsWrapper.from_config</code> in <code>src/rfdetr/datasets/transforms.py</code> for the Albumentations-backend equivalent — both use the same <code>keypoint_flip_pairs is not None and not keypoint_flip_pairs</code> check.</p>
 </div>
+<p>Keypoint training also accepts <code>augmentation_backend="kornia"</code> on CUDA when Kornia is installed. The default remains <code>"cpu"</code>; <code>"gpu"</code> is an alias for <code>"kornia"</code>, and an explicit <code>"auto"</code> can select Kornia on CUDA. The GPU pipeline transforms keypoint coordinates with images and boxes, keeps visibility for joints inside the image, zeroes the x, y and visibility of joints outside the image or with visibility \&lt;= 0, and swaps paired joints after a horizontal flip. With an empty <code>keypoint_flip_pairs</code>, it disables horizontal flips, as the CPU backends do.</p>
+<p>Kornia follows the default torchvision path's continuous keypoint coordinates (<code>x</code> flips to <code>W - x</code>). The custom Albumentations path currently flips to <code>W - 1 - x</code>, so switching from it can move flipped joints by one pixel. The existing detection-only Kornia box path is unchanged; its box convention differs from the keypoint path's continuous frame. Aligning detection-only boxes would change existing training behaviour and is separate from this keypoint option. The libraries can also sample transforms differently, so this option does not promise identical augmentation distributions or a training-speed gain.</p>
 <div class="admonition note">
 <p class="admonition-title">OKS sigma values: flat vs per-keypoint</p>
 <p><code>infer_coco_keypoint_schema</code> and <code>infer_yolo_keypoint_schema</code> return a flat sigma of 0.1 for all inferred keypoints, and the keypoint demos pass those values explicitly for custom datasets. If <code>keypoint_oks_sigmas=None</code>, COCO person-keypoint evaluation uses the standard 17-keypoint COCO sigmas, while non-17 custom keypoint counts use RF-DETR's uniform custom fallback. Flat custom sigmas are not directly comparable to official COCO benchmark numbers.</p>
@@ -4697,7 +4699,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 12:20:40 UTC">2026-10-08 12:20:40</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 21:29:25 UTC">2026-10-08 21:29:25</span>
   </span>
 
     
