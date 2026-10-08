@@ -626,9 +626,9 @@ def test_rfdetr_export_tensorrt_without_tensorrt_fails_before_any_model_work(
 ) -> None:
     """Without ``tensorrt`` installed, ``format="tensorrt"`` reports it before any work on the model starts.
 
-    ``rfdetr[onnx]`` installs polygraphy but not ``tensorrt``; that host used to write the whole ONNX file first and
-    only then fail inside polygraphy. Preparing the export graph is the more expensive of the two stages that used to
-    precede the refusal — a full forward pass through the model — so both are guarded here.
+    A host with polygraphy but not ``tensorrt`` used to write the whole ONNX file first and only then fail inside
+    polygraphy. Preparing the export graph is the more expensive of the two stages that used to precede the refusal — a
+    full forward pass through the model — so both are guarded here.
     """
     model = _make_tensorrt_export_model()
 
@@ -2171,16 +2171,20 @@ class TestExportDependencyCheck:
 
         make_infer_image.assert_not_called()
 
-    def test_onnx_installed_after_the_exporter_module_loaded_is_found(
+    def test_onnx_installed_after_a_refused_check_is_found(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A retry after ``%pip install`` in the same process passes: the check imports ``onnx``, not a stale binding.
+        """A retry after ``%pip install`` in the same process passes: nothing remembers the first refusal.
 
-        The exporter module binds ``onnx`` to ``None`` when it is first imported without the package; a notebook user
-        who installs it and exports again must not be refused until the kernel restarts.
+        Hiding ``onnx`` from imports stands in for the host before the install. An availability flag or an ``onnx``
+        binding fixed when the module loads, such as the TensorRT exporter keeps for polygraphy, would let the first
+        check pass here, and would refuse a notebook user's retry until the kernel restarts.
         """
-        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None)
         exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))
+        with monkeypatch.context() as before_install:
+            before_install.setitem(sys.modules, "onnx", None)
+            with pytest.raises(ImportError, match=r"rfdetr\[onnx\]"):
+                exporter.check_dependencies()
 
         exporter.check_dependencies()
 
@@ -2274,10 +2278,22 @@ class TestExportDependencyCheck:
                 {
                     "rfdetr.export._backend.preload_tensorflow_before_onnx": lambda: None,
                     "rfdetr.export._tflite.exporter._check_tf_keras_available": lambda: None,
+                    "rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available": lambda: None,
                 },
                 {"tensorflow": types.ModuleType("tensorflow"), "onnx2tf": None},
                 r"onnx2tf is not installed.*rfdetr\[tflite\]",
                 id="tflite-onnx2tf",
+            ),
+            pytest.param(
+                "tflite",
+                {},
+                {
+                    "rfdetr.export._backend.preload_tensorflow_before_onnx": lambda: None,
+                    "rfdetr.export._tflite.exporter._check_tf_keras_available": lambda: None,
+                },
+                {"tensorflow": types.ModuleType("tensorflow"), "onnx_graphsurgeon": None},
+                r'requires onnx_graphsurgeon.*pip install onnx_graphsurgeon \("rfdetr\[tflite\]" includes it',
+                id="tflite-onnx_graphsurgeon",
             ),
             pytest.param(
                 "tflite",
@@ -2397,6 +2413,55 @@ class TestExportDependencyCheck:
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env)
 
         assert (result.returncode, result.stdout.strip().splitlines()[-1:]) == (0, ["False"]), result.stderr
+
+    @pytest.mark.parametrize(
+        "module, allowed",
+        [
+            pytest.param("rfdetr.export._onnx.exporter", [], id="onnx"),
+            pytest.param("rfdetr.export._tflite.exporter", [], id="tflite"),
+            pytest.param("rfdetr.export._tensorrt.exporter", ["polygraphy"], id="tensorrt"),
+        ],
+    )
+    def test_loading_the_exporter_imports_no_onnx_package(self, module: str, allowed: list[str]) -> None:
+        """Loading the ONNX, TFLite or TensorRT exporter module imports no ONNX package beyond ``allowed``.
+
+        The TFLite exporter must load TensorFlow before anything loads ``onnx`` (#1322), and it imports the ONNX
+        exporter at module scope, as the TensorRT exporter does. A finder first on ``sys.meta_path`` claims every
+        module of these packages, records each one an import executes and refuses it, so the result does not depend on
+        which of them the host has installed: CPU CI has no ``onnx_graphsurgeon``, so a test that only looked for
+        ``onnx`` in ``sys.modules`` would pass there with a guarded ``import onnx_graphsurgeon`` added. Its specs carry
+        an origin, so ``is_installed`` reports them installed and an import guarded by it still runs and is recorded;
+        the probe itself executes nothing. ``allowed`` names the packages a module imports on purpose: the TensorRT
+        exporter runs a guarded ``polygraphy`` import, and every other package stays refused. Runs in a fresh
+        interpreter because this suite has already imported them.
+        """
+        script = (
+            "import importlib.abc, importlib.util, sys\n"
+            f"allowed = {allowed!r}\n"
+            "class Refuse(importlib.abc.MetaPathFinder, importlib.abc.Loader):\n"
+            "    executed = []\n"
+            "    def find_spec(self, name, path, target=None):\n"
+            "        package = name.partition('.')[0]\n"
+            "        if package in {'onnx', 'onnx_graphsurgeon', 'onnxruntime', 'onnxsim', 'polygraphy'}:\n"
+            "            return importlib.util.spec_from_loader(name, self, origin='refused')\n"
+            "        return None\n"
+            "    def create_module(self, spec):\n"
+            "        return None\n"
+            "    def exec_module(self, module):\n"
+            "        self.executed.append(module.__name__)\n"
+            "        raise ImportError(module.__name__)\n"
+            "assert 'onnx' not in sys.modules, 'onnx was imported before the finder was installed'\n"
+            "sys.meta_path.insert(0, Refuse())\n"
+            f"import {module}\n"
+            "print(sorted(name for name in Refuse.executed if name.partition('.')[0] not in allowed))\n"
+        )
+        source_root = str(Path(_detr_module.__file__).resolve().parents[1])
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [source_root, os.environ.get("PYTHONPATH")]))}
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env, timeout=120
+        )
+
+        assert (result.returncode, result.stdout.strip().splitlines()[-1:]) == (0, ["[]"]), result.stderr
 
 
 class TestExportRefusalHasNoSideEffects:
