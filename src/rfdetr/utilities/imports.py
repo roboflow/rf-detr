@@ -30,6 +30,9 @@ _IS_FASTER_COCO_EVAL_INSTALLED = is_installed("faster_coco_eval")
 _IS_UFCOCO_INSTALLED = is_installed("ultrafast_pycocotools")
 _IS_VERNIER_INSTALLED = is_installed("vernier")
 
+#: Whether the optional Matplotlib package is installed.
 _IS_MATPLOTLIB_INSTALLED = is_installed("matplotlib")
+#: Whether the optional pandas package is installed.
 _IS_PANDAS_INSTALLED = is_installed("pandas")
+#: Whether the optional seaborn package is installed.
 _IS_SEABORN_INSTALLED = is_installed("seaborn")
