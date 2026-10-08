@@ -54,7 +54,7 @@ model.export(format="tensorrt", quantization="int8", calibration_data="path/to/i
 
 This writes `output/rfdetr-small_int8.trt` (next to the intermediate `output/rfdetr-small.onnx`). The export runs the first `max_images` (default `100`) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as `predict()` does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. `calibration_data` also accepts a `.npy` path or an array shaped `(N, C, H, W)`, already normalized the way `predict()` normalizes; an integer array, raw pixels, is refused. `max_images` caps only a directory of images; an array or `.npy` file is used whole, so pass as many samples as you want calibrated. Calibration runs the graph at the export's `batch_size`, so its host memory grows with the batch: about 9.5 GB for Nano at batch 32.
 
-Measured with TensorRT 11.3 on an RTX 5070 (sm_120) and a Tesla T4 (sm_75), calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from back-to-back `execute_async_v3` calls with no synchronization in between (the plain call) and from a captured CUDA graph. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is large only where the engine is launch-bound, at batch 1 on the RTX 5070 (1.675 ms plain against 0.922 ms graph for Nano), and small on the T4 and at larger batches. On the RTX 5070, Nano across batch sizes:
+Measured with TensorRT 11.3 on an RTX 5070 (sm_120) under WSL2 and a Tesla T4 (sm_75) on Colab, calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from back-to-back `execute_async_v3` calls with no synchronization in between (the plain call) and from a captured CUDA graph. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is large only where the engine is launch-bound, at batch 1 on the RTX 5070 (1.675 ms plain against 0.922 ms graph for Nano), and small on the T4 and at larger batches. The speedups and the AP differences in parentheses are computed from the unrounded values, so recomputing them from the rounded cells can differ in the last digit. The RTX 5070 ran under WSL2 and was not measured on native Linux, so how much of that launch time WSL2 adds is not known. On the RTX 5070, Nano across batch sizes:
 
 | Batch | Precision | AP    | AP50  | Latency, plain call | Latency, CUDA graph | Engine    |
 | ----- | --------- | ----- | ----- | ------------------- | ------------------- | --------- |
@@ -74,7 +74,7 @@ Every model at batch 1, measured the same way:
 | Medium | 54.69    | 53.84 (−0.85) | 2.536 ms         | 2.412 ms (1.05×) | 1.625 ms         | 1.370 ms (1.19×) | 71 MB        | 48 MB        |
 | Large  | 56.52    | 56.02 (−0.50) | 2.806 ms         | 2.682 ms (1.05×) | 2.000 ms         | 1.820 ms (1.10×) | 68 MB        | 51 MB        |
 
-The same on a Tesla T4, from a Colab notebook run (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):
+The same on a Tesla T4, from a Colab run of the same external harness (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):
 
 | Model, batch | AP, FP16 | AP, INT8      | Plain call, FP16 | Plain call, INT8 | CUDA graph, FP16 | CUDA graph, INT8 | Engine, FP16 | Engine, INT8 |
 | ------------ | -------- | ------------- | ---------------- | ---------------- | ---------------- | ---------------- | ------------ | ------------ |
@@ -86,6 +86,8 @@ The same on a Tesla T4, from a Colab notebook run (INT8 loses 0.55 to 0.85 AP, 1
 | Nano, 32     | 48.02    | 47.28 (−0.75) | 2.98 ms          | 2.33 ms (1.28×)  | 2.97 ms          | 2.31 ms (1.28×)  | 113 MB       | 366 MB       |
 
 The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).
+
+These tables come from a benchmark harness outside this repository. [Section 8 of the CUDA cookbook](../../cookbooks/export-cuda/#8-tensorrt-int8) runs the same kind of calibration (128 COCO images, there `val2017` images held out of the scored subset), export and FP16-against-INT8 comparison for Small at batch 1 on a `val2017` subset, from a synchronous call and a CUDA graph, so you can measure it on your own GPU; it does not regenerate these tables.
 
 !!! warning "Engine size on the T4"
 
@@ -104,7 +106,7 @@ Requirements and limits:
 
 - Detection models only. Segmentation and keypoint models raise `NotImplementedError`; export them with `quantization=None`.
 - A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. Only TensorRT 10.16 and 11.3 were measured; the 10.x releases before 10.16 are accepted but untested.
-- On the RTX 5070, at batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column above). The T4 gains about as much without a graph (1.09–1.22×).
+- On the RTX 5070 under WSL2, at batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column above). The T4 gains about as much without a graph (1.09–1.22×).
 - Measured on two GPUs (sm_120 and sm_75), without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`: those settings are accepted with `quantization="int8"`, but INT8 engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the gain relies on. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.
 
 !!! note "Who consumes the `.trt` engine?"
