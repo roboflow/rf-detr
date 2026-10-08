@@ -27,6 +27,7 @@ from rfdetr.training.coco_map import (
     OnePassCocoMeanAveragePrecision,
     _hotcoco,
     _ufcoco,
+    _ufcoco_evaluator_type,
     _UfcocoBackend,
     _vernier,
     _vernier_thread_budget,
@@ -273,8 +274,8 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
 class TestHoistedDetectionScores:
     """Prediction COCO datasets built with per-image score conversion instead of TorchMetrics' per-annotation read.
 
-    Pinned to ``faster_coco_eval``: box-only evaluation on the default hotcoco backend loads detections from an array
-    instead of building annotation dicts, so the hoist these tests describe only runs here and on the mask-only path.
+    Pinned to ``faster_coco_eval``: box-only evaluation on hotcoco and ufcoco loads detections from an array instead of
+    building annotation dicts, so the hoist these tests describe only runs here and on the mask-only path.
     """
 
     predictions = [
@@ -1656,6 +1657,16 @@ class TestUfcocoArraysMatchPycocotools:
     computed from. pycocotools is the reference ufcoco reproduces, and ``rfdetr[train]`` installs it.
     """
 
+    def test_evaluator_keeps_the_inherited_collect(self) -> None:
+        """The adapter's evaluator subclass must not define its own ``_collect``.
+
+        ufcoco keeps array-loaded detections in columns only while the evaluator's ``_collect`` is its own; an override
+        on the subclass would silently send every evaluation back through per-annotation dictionaries.
+        """
+        _require_backend("ufcoco")
+
+        assert "_collect" not in vars(_ufcoco_evaluator_type())
+
     @pytest.mark.parametrize("iou_type", ["bbox", "segm", pytest.param(("bbox", "segm"), id="both")])
     @pytest.mark.parametrize("max_dets", [100, 500])
     def test_evaluator_arrays_are_byte_identical(self, iou_type: Any, max_dets: int) -> None:
@@ -1685,12 +1696,17 @@ class TestUfcocoArraysMatchPycocotools:
                 torch.testing.assert_close(observed[key], expected[key], rtol=0, atol=0, equal_nan=True)
 
             coco_preds, coco_target, prediction_dataset = actual._coco_datasets(actual._observed_classes())
-            assert prediction_dataset is not None
-            oracle_gt, oracle_dt = pycocotools_coco(), pycocotools_coco()
+            oracle_gt = pycocotools_coco()
             oracle_gt.dataset = copy.deepcopy(coco_target.dataset)
-            oracle_dt.dataset = copy.deepcopy(prediction_dataset)
             oracle_gt.createIndex()
-            oracle_dt.createIndex()
+            if prediction_dataset is None:
+                # Box-only state loads detections from one array; pycocotools loads the same array.
+                assert tuple(actual.iou_type) == ("bbox",)
+                oracle_dt = oracle_gt.loadRes(actual._detection_results_array())
+            else:
+                oracle_dt = pycocotools_coco()
+                oracle_dt.dataset = copy.deepcopy(prediction_dataset)
+                oracle_dt.createIndex()
             for kind in actual.iou_type:
                 if len(actual.iou_type) > 1:
                     for dataset in (prediction_dataset, oracle_dt.dataset):
@@ -1709,6 +1725,164 @@ class TestUfcocoArraysMatchPycocotools:
                     assert np.asarray(evaluator.eval[key]).tobytes() == np.asarray(oracle.eval[key]).tobytes()
             reference.reset()
             actual.reset()
+
+
+@pytest.mark.parametrize(
+    ("backend", "iou_type", "from_array"),
+    [
+        ("ufcoco", "bbox", True),
+        ("hotcoco", "bbox", True),
+        ("faster_coco_eval", "bbox", False),
+        ("ufcoco", "segm", False),
+        pytest.param("ufcoco", ("bbox", "segm"), False, id="ufcoco-both"),
+    ],
+)
+def test_box_only_predictions_load_from_one_array(backend: str, iou_type: Any, from_array: bool) -> None:
+    """Box-only hotcoco and ufcoco state must reach ``loadRes`` as one array, never as one dict per detection.
+
+    faster-coco-eval's own ``loadRes`` is slower than the dict path, and an array carries no segmentation, so both keep
+    building the prediction dataset.
+    """
+    _require_backend(backend)
+    predictions, targets = _metric_inputs()
+    metric = OnePassCocoMeanAveragePrecision(backend=backend, iou_type=iou_type)
+    metric.update(copy.deepcopy(predictions), copy.deepcopy(targets))
+    metric.merge_distributed_state()
+    _, _, prediction_dataset = metric._coco_datasets(metric._observed_classes())
+    assert (prediction_dataset is None) is from_array
+
+
+class TestDetectionArrayLabelValidation:
+    """The detection-array path must reject floating-point labels the way upstream's annotation-dict path does.
+
+    The array's category column is float64 whatever the stored dtype, so nothing downstream of it sees a fractional
+    label: ufcoco evaluated ``3.5`` as a valid class, and hotcoco failed on it with a ``TypeError`` from its own
+    ``COCO`` constructor or ``loadRes`` instead of upstream's ``ValueError``.
+    """
+
+    @pytest.mark.parametrize("backend", ["hotcoco", "ufcoco"])
+    @pytest.mark.parametrize("label", [3.5, 3.0])
+    def test_rejects_floating_point_labels(self, backend: str, label: float) -> None:
+        """A floating-point detection label must raise upstream's ``ValueError``, whole-valued or not.
+
+        Upstream rejects any label that is not a Python ``int`` after conversion, so ``3.0`` fails as ``3.5`` does;
+        accepting the whole-valued one would make the two paths disagree on the same state.
+        """
+        _require_backend(backend)
+        metric = OnePassCocoMeanAveragePrecision(backend=backend, sync_on_compute=False)
+        metric.update(
+            [
+                {
+                    "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([label]),
+                }
+            ],
+            [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
+        )
+
+        with pytest.raises(ValueError, match="Invalid input class of sample 0"):
+            metric.compute()
+
+    def test_accepts_empty_floating_point_labels(self) -> None:
+        """An image with no detections must pass with a ``float32`` label tensor, as it does upstream.
+
+        ``torch.tensor([])`` defaults to ``float32``; upstream checks labels element by element, so an empty tensor has
+        nothing to reject, and a dtype check without that guard would refuse an ordinary empty prediction. hotcoco is
+        left out: the float tensor promotes every observed class ID to float, which its ``loadRes`` rejects whatever
+        the detection array's label dtype -- a separate limitation this check does not touch.
+        """
+        _require_backend("ufcoco")
+        metric = OnePassCocoMeanAveragePrecision(backend="ufcoco", sync_on_compute=False)
+        metric.update(
+            [
+                {"boxes": torch.empty((0, 4)), "scores": torch.empty(0), "labels": torch.empty(0)},
+                {
+                    "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([3]),
+                },
+            ],
+            [
+                {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])},
+                {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])},
+            ],
+        )
+
+        result = metric.compute()
+
+        assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
+
+
+class TestDetectionArrayEdgeCasesMatchFasterCocoEval:
+    """Edge cases of the detection array must evaluate as faster-coco-eval's annotation-dict path does.
+
+    hotcoco and ufcoco load box-only detections from one array built from the stored state; these pin the stored shape
+    the array construction reshapes and the row count the evaluator, not the array, has to truncate.
+    """
+
+    @pytest.mark.parametrize("backend", ["hotcoco", "ufcoco"])
+    def test_one_dimensional_empty_boxes(self, backend: str) -> None:
+        """An image whose prediction boxes are a 1-D empty tensor must count as zero detections, as upstream does.
+
+        TorchMetrics stores that tensor as ``(1, 0)``; without the array's reshape back to ``(0, 4)`` it would either
+        fail to concatenate or be counted as one detection, shifting later rows onto the wrong image ID.
+        """
+        _require_backend(backend)
+        predictions, targets = multiclass_detection_state()
+        predictions[1] = {"boxes": torch.empty(0), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)}
+        kwargs: dict[str, Any] = {"class_metrics": True, "sync_on_compute": False}
+        expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
+        actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs)
+        expected_metric.update(predictions, targets)
+        actual_metric.update(predictions, targets)
+
+        expected = expected_metric.compute()
+        actual = actual_metric.compute()
+
+        assert actual.keys() == expected.keys()
+        for key in actual:
+            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
+
+    @pytest.mark.parametrize("backend", ["hotcoco", "ufcoco"])
+    def test_detections_beyond_the_largest_detection_limit(self, backend: str) -> None:
+        """Rows past ``maxDets[-1]`` must reach the evaluator and be truncated there, as upstream truncates them.
+
+        The array carries every stored detection. With five same-class detections on one image and thresholds ``[1, 2,
+        3]``, the two lowest-scoring true positives fall past the limit, so recall is 0.5 rather than the 1.0 an
+        untruncated evaluation would report.
+        """
+        _require_backend(backend)
+        boxes = torch.tensor(
+            [
+                [0.0, 0.0, 10.0, 10.0],
+                [20.0, 20.0, 30.0, 30.0],
+                [40.0, 40.0, 50.0, 50.0],
+                [60.0, 60.0, 70.0, 70.0],
+                [80.0, 80.0, 90.0, 90.0],
+            ]
+        )
+        predictions = [
+            {"boxes": boxes, "scores": torch.tensor([0.9, 0.8, 0.7, 0.6, 0.5]), "labels": torch.full((5,), 3)}
+        ]
+        targets = [{"boxes": boxes[[0, 2, 3, 4]], "labels": torch.full((4,), 3)}]
+        kwargs: dict[str, Any] = {
+            "class_metrics": True,
+            "max_detection_thresholds": [1, 2, 3],
+            "sync_on_compute": False,
+        }
+        expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
+        actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs)
+        expected_metric.update(predictions, targets)
+        actual_metric.update(predictions, targets)
+
+        expected = expected_metric.compute()
+        actual = actual_metric.compute()
+
+        assert float(expected["mar_3"]) == 0.5
+        assert actual.keys() == expected.keys()
+        for key in actual:
+            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
 
 
 def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:

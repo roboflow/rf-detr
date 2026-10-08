@@ -17,7 +17,7 @@ repos:
       - id: check-toml
       - id: check-case-conflict
       - id: check-added-large-files
-        args: ["--maxkb=200", "--enforce-all"]
+        args: ["--maxkb=250", "--enforce-all"]
         exclude: uv.lock
       - id: detect-private-key
       - id: pretty-format-json
@@ -27,7 +27,7 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: v3.9.6 # using tag; previously pinned SHA when tags were not persistent
+    rev: v3.9.9 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
         files: \.(ya?ml|toml)$
@@ -35,7 +35,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.6
+    rev: v0.16.10
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]

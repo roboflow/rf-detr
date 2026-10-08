@@ -650,6 +650,7 @@ class ModelConfig(BaseConfig):
             subclass.
         dec_n_points: Deformable attention points per head per level in the decoder. Must be
             provided by concrete subclass.
+        dim_feedforward: Hidden width of the decoder feed-forward layers. Defaults to ``2048``.
         resolution: Square input resolution (pixels). Must be provided by concrete subclass.
         positional_encoding_size: Side length (in patches) of the sinusoidal positional grid.
             Must be provided by concrete subclass.
@@ -702,6 +703,7 @@ class ModelConfig(BaseConfig):
     sa_nheads: int
     ca_nheads: int
     dec_n_points: int
+    dim_feedforward: int = Field(default=2048, ge=1)
     num_queries: int = 300
     # ModelConfig is the sole owner of `num_select` for PTL/inference; it is read via `_namespace_from_configs`.
     num_select: int = 300
@@ -864,6 +866,7 @@ class ModelConfig(BaseConfig):
             "sa_nheads",
             "ca_nheads",
             "dec_n_points",
+            "dim_feedforward",
             "out_feature_indexes",
             "projector_scale",
             "bbox_reparam",

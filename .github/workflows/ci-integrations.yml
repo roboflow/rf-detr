@@ -259,6 +259,52 @@ jobs:
           print("tensorrt import OK")
         shell: python
 
+      - name: 🔎 Verify TensorRT major is 11 or newer
+        # The [tensorrt] extra floats at tensorrt>=8.6.1, but the host-code refusal parity test only runs on TensorRT 11+.
+        # An older resolution would skip it (false green), so fail red instead.
+        run: |
+          import tensorrt
+
+          major = int(tensorrt.__version__.split(".")[0])
+          assert major >= 11, f"TensorRT {tensorrt.__version__} resolved; the TensorRT job needs 11 or newer"
+          print(f"TensorRT {tensorrt.__version__} OK")
+        shell: python
+
+      - name: 🔎 Resolve the TensorRT lean runtime spec
+        # trt_version_compatible=True builds against TensorRT's lean runtime, a separate wheel the [tensorrt] extra does
+        # not install. Match the installed TensorRT's CUDA suffix and release; the lean wheel may add a .post suffix.
+        # The spec goes to the job env, so the install step is a plain shell command.
+        run: |
+          import importlib.metadata
+          import os
+          import re
+
+          names = {dist.metadata["Name"] or "" for dist in importlib.metadata.distributions()}
+          libs = sorted(name for name in names if re.fullmatch(r"tensorrt[-_]cu\d+[-_]libs", name))
+          assert len(libs) == 1, f"expected one tensorrt-cu*-libs distribution, found {libs}"
+          suffix = re.fullmatch(r"tensorrt[-_](cu\d+)[-_]libs", libs[0]).group(1)
+          release = re.match(r"\d+(\.\d+)*", importlib.metadata.version(libs[0])).group()
+          spec = f"tensorrt-lean-{suffix}-libs=={release}.*"
+          print(f"lean runtime spec: {spec}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"TENSORRT_LEAN_SPEC={spec}\n")
+        shell: python
+
+      - name: 📦 Install the TensorRT lean runtime
+        timeout-minutes: 5
+        run: uv pip install "${TENSORRT_LEAN_SPEC}"
+        shell: bash
+
+      - name: 🔎 Verify the lean runtime loads
+        # Same guard as the tensorrt import above: without the lean runtime the version-compatible parity tests skip
+        # (false green) instead of failing red.
+        run: |
+          from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter
+
+          TensorRTExporter(TensorRTConfig(version_compatible=True)).check_environment()
+          print("lean runtime OK")
+        shell: python
+
       - name: 🔗 Expose CUDA runtime (libcudart.so) to the loader
         # The engine build succeeds, but polygraphy's TrtRunner separately dlopen's the *unversioned*
         # `libcudart.so` for CUDA stream management. The GPU wheels ship it only as `libcudart.so.12`
@@ -303,7 +349,34 @@ jobs:
           uv run --no-sync pytest tests/export/test_tensorrt_export.py \
             -m e2e_tensorrt -n 1 \
             --timeout=600 \
-            --durations=20
+            --durations=20 \
+            -rs \
+            --junitxml="${RUNNER_TEMP}/tensorrt-e2e.xml"
+
+      - name: 🔎 Fail on unexpected skips
+        # A skipped parity test is a false green. The only skip this runner may produce is the AMPERE_PLUS one: the T4
+        # runner is compute capability 7.5, below the 8.0 that level needs. Anything else (a missing lean runtime, no
+        # HardwareCompatibilityLevel member, a TensorRT too old for the host-code refusal) means coverage silently
+        # vanished, so fail red. Cross-GPU and cross-release engine loading is not CI-verified: this job builds and
+        # loads on one GPU with one TensorRT release.
+        run: |
+          import os
+          import xml.etree.ElementTree as ET
+
+          allowed_prefixes = (
+              "AMPERE_PLUS engines need compute capability 8.0 or newer",
+              "needs two CUDA devices",  # the second-device inference test; one-GPU runners cannot run it
+          )
+          tree = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "tensorrt-e2e.xml"))
+          unexpected = []
+          for case in tree.iter("testcase"):
+              for skipped in case.iter("skipped"):
+                  message = skipped.get("message") or ""
+                  if not message.startswith(allowed_prefixes):
+                      unexpected.append(f"{case.get('classname')}::{case.get('name')}: {message}")
+          assert not unexpected, "non-whitelisted skips in the TensorRT job:\n" + "\n".join(unexpected)
+          print("no unexpected skips")
+        shell: python
 
       - name: Minimize uv cache
         continue-on-error: true

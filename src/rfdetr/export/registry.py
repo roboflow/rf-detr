@@ -68,7 +68,11 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "TFLiteExporter",
         "tflite",
         "TFLite",
-        supports_dynamic_batch=True,
+        dynamic_batch_reason=(
+            "(onnx2tf fails on the dynamic-batch graph: an Add of a constant, likely the position embedding,"
+            " against the dynamic-shaped encoder input reports mismatched dimensions)."
+            " Export one .tflite per batch size instead."
+        ),
         preimport="rfdetr.export._backend:preload_tensorflow_before_onnx",
     ),
     "tensorrt": ExporterEntry(
@@ -107,7 +111,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "OpenVINOExporter",
         "openvino",
         "OpenVINO",
-        dynamic_batch_reason="(the IR graph bakes a fixed input shape). Export one model per batch size instead.",
+        dynamic_batch_reason="(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size).",
     ),
     "litert": ExporterEntry(
         "rfdetr.export._litert.exporter",
