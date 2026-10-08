@@ -596,11 +596,26 @@ def _pixel_affine_padding_mode(params: dict[str, Any]) -> str:
 def _make_pixel_affine(params: dict[str, Any]) -> PixelTranslatedAffine:
     """Build a ``PixelTranslatedAffine`` from ``Affine`` aug_config params that set ``translate_px``.
 
+    Options that cannot change a whole-pixel shift are accepted and have no effect, as on Albumentations:
+    ``interpolation`` and ``mask_interpolation`` codes 0-4, ``keep_ratio``, ``balanced_scale``, ``rotate_method``, a
+    unit ``scale`` or zero ``shear`` (scalar, pair or per-axis mapping), and ``fill``/``fill_mask`` with a replicate
+    border.
+
     Args:
         params: The ``Affine`` aug_config params; ``translate_px`` must be set.
 
     Returns:
         A transform that shifts images, boxes and masks by whole pixels sampled from the configured bounds.
+
+    Raises:
+        ValueError: If a deprecated Albumentations 1.x alias ``cval``, ``cval_mask`` or ``mode`` is set (the message
+            names ``fill``, ``fill_mask`` or ``border_mode``); if ``rotate`` or ``shear`` is not fixed at ``0`` or
+            ``scale`` is not fixed at ``1``, where a per-axis mapping's missing axis counts as ``1`` as on
+            Albumentations; if ``fit_output`` is true; if ``interpolation`` or ``mask_interpolation`` is not an OpenCV
+            code 0-4; if ``border_mode`` is neither constant (``0``) nor replicate (``1``), or a constant border has a
+            nonzero ``fill`` or ``fill_mask``; or if ``translate_px`` has keys other than ``x``/``y``, an axis that is
+            neither an offset nor a two-element range, a boolean or fractional offset, a reversed range, or a bound
+            outside the signed 64-bit range.
     """
     from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
 
@@ -628,13 +643,25 @@ def _make_pixel_affine(params: dict[str, Any]) -> PixelTranslatedAffine:
 
 
 def _make_affine(params: dict[str, Any]) -> Any:
-    """Build a ``K.RandomAffine`` from aug_config params.
+    """Build a Kornia affine transform from ``Affine`` aug_config params.
 
-    Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)`` signed range. Kornia ``translate`` is a
-    non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``. The conversion
-    takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve Albumentations' fixed positive translation, so
-    this builder warns before approximating it with symmetric signed sampling. Albumentations ``scale`` also accepts a
-    scalar, while Kornia requires a range, so scalars become ``(v, v)``.
+    With ``translate_px`` set, the params go to :func:`_make_pixel_affine`, which applies whole-pixel shifts only and
+    refuses every other geometry. Otherwise: Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)``
+    signed range. Kornia ``translate`` is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled
+    from ``[-tx, tx]``. The conversion takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve
+    Albumentations' fixed positive translation, so this builder warns before approximating it with symmetric signed
+    sampling. Albumentations ``scale`` also accepts a scalar, while Kornia requires a range, so scalars become
+    ``(v, v)``.
+
+    Args:
+        params: The ``Affine`` aug_config params.
+
+    Returns:
+        A ``K.RandomAffine``; for ``translate_px``, its ``PixelTranslatedAffine`` subclass.
+
+    Raises:
+        ValueError: If both ``translate_px`` and ``translate_percent`` are set, for any ``translate_px`` refusal listed
+            in :func:`_make_pixel_affine`, or if a scalar ``scale`` normalization receives a malformed range.
     """
     from kornia.augmentation import RandomAffine
 

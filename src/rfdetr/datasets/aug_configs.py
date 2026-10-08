@@ -116,10 +116,17 @@ Note that
 Albumentations itself deprecates ``ShiftScaleRotate`` in favour of ``Affine``, which this backend already
 supports; new configs should prefer ``Affine``.
 
-``Affine(translate_px=...)`` accepts fixed integers, inclusive integer pairs, and per-axis ``x``/``y``
-mappings on Kornia. It applies whole-pixel shifts to images, boxes, instance masks and padding masks together.
-Only pure translation is supported in this form: nonzero rotation/shear, nonunit scale, nonzero fill, reflected
-borders and shape-changing options raise at pipeline construction. Use Albumentations for those combinations.
+``Affine(translate_px=...)`` accepts fixed offsets, inclusive ``(min, max)`` pairs, and per-axis ``x``/``y``
+mappings on Kornia; an offset may be any integer or an integral float such as ``4.0``. It applies whole-pixel
+shifts to images, boxes, instance masks and padding masks together. Options that cannot change a whole-pixel
+shift are accepted and have no effect: ``interpolation`` and ``mask_interpolation`` codes 0-4, ``keep_ratio``,
+``balanced_scale``, ``rotate_method``, a unit ``scale`` or zero ``shear``, and ``fill``/``fill_mask`` with a
+replicate border. Pipeline construction raises for nonzero rotation or shear, nonunit scale (a per-axis
+``scale``/``shear`` mapping's missing axis counts as ``1``, as on Albumentations, so ``shear={"x": 0}`` raises),
+``fit_output=True``, interpolation codes outside 0-4, border modes other than constant or replicate, a nonzero
+``fill``/``fill_mask`` with a constant border, the deprecated Albumentations 1.x aliases ``cval``, ``cval_mask``
+and ``mode`` (use ``fill``, ``fill_mask`` and ``border_mode``), and boolean, fractional, reversed or
+out-of-64-bit-range offsets. Use Albumentations for those combinations.
 The existing ``translate_percent`` mapping uses a size fraction; a scalar becomes a signed Kornia range instead
 of Albumentations' fixed positive shift and emits a warning. A scalar ``scale`` becomes ``(v, v)``.
 

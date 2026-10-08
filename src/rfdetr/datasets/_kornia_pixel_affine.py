@@ -68,7 +68,11 @@ class PixelTranslatedAffine(RandomAffine):  # type: ignore[misc]
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
-        """Index pixels directly so an integer shift cannot interpolate masks.
+        """Shift by whole pixels through direct indexing instead of grid sampling.
+
+        Kornia's ``apply_transform_mask`` already switches the ``resample`` flag to nearest before it calls this
+        method for masks. Indexing never reads that flag: it copies source pixels exactly, so the integer shift is
+        bit-exact for images as well as masks, and it avoids building a sampling grid.
 
         Args:
             input: Images or packed mask channels.
@@ -77,7 +81,9 @@ class PixelTranslatedAffine(RandomAffine):  # type: ignore[misc]
             transform: Unused matrix passed by the Kornia pipeline.
 
         Returns:
-            Translated values with the same shape and dtype as the input.
+            A new contiguous tensor shaped like ``input`` in which each image is moved by its sampled offset. Pixels
+            shifted in from outside the frame are zero with ``"zeros"`` padding and repeat the nearest edge pixel with
+            ``"border"`` padding.
         """
         batch_size, _, height, width = input.shape
         offsets = params["translations"].to(device=input.device, dtype=torch.long)
