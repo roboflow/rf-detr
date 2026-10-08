@@ -1173,6 +1173,8 @@ def unpack_boxes(
             valid.shape[1] * keypoint_visibility.shape[2],
         ):
             raise ValueError("keypoints_aug and keypoint_visibility must match the padded box and joint counts")
+    # Read every per-image flip draw with one device sync, and none at all when no pairs are configured.
+    flip_flags = keypoint_flip_mask.tolist() if keypoint_flip_pairs and keypoint_flip_mask is not None else None
     new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
@@ -1217,7 +1219,7 @@ def unpack_boxes(
             keypoints = torch.cat((xy, visibility.unsqueeze(-1)), dim=-1)
             inside = (xy[..., 0] >= 0) & (xy[..., 0] <= image_width) & (xy[..., 1] >= 0) & (xy[..., 1] <= image_height)
             keypoints = keypoints.masked_fill((~inside | (visibility <= 0)).unsqueeze(-1), 0)
-            if keypoint_flip_mask is not None and bool(keypoint_flip_mask[i]) and keypoint_flip_pairs:
+            if keypoint_flip_pairs and flip_flags is not None and flip_flags[i]:
                 keypoints = keypoints[:, keypoint_flip_permutation(keypoint_flip_pairs, k)]
             t["keypoints"] = keypoints
 
