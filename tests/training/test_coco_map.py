@@ -2061,21 +2061,30 @@ class TestHotcocoMultiIouTypeMatchesFasterCocoEval:
 
 
 def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions() -> None:
-    """A bbox+segm run on hotcoco must index the prediction set once, not once per IoU type.
+    """A bbox+segm run on hotcoco must build its datasets once, not once per IoU type.
 
     Before ``COCO.update_anns`` the only way to switch the active ``area`` on hotcoco was to build a new prediction
     dataset per IoU type. The area-bucket test above proves the switch still reaches the evaluator; this one pins
-    that it no longer costs a rebuild: one ground-truth and one prediction dataset for the whole computation.
+    that it no longer costs a rebuild: the array path builds one ground-truth and one prediction dataset for the whole
+    computation, bypasses ``_build_coco``, and only switches the area once per IoU type.
     """
     _require_backend("hotcoco")
     predictions, targets = _straddling_disc_records()
     metric = OnePassCocoMeanAveragePrecision(iou_type=("bbox", "segm"), backend="hotcoco", sync_on_compute=False)
     metric.update(predictions, targets)
 
-    with patch.object(metric, "_build_coco", wraps=metric._build_coco) as build_coco:
+    with (
+        patch.object(metric, "_build_coco", wraps=metric._build_coco) as build_coco,
+        patch.object(
+            metric, "_hotcoco_datasets_from_arrays", wraps=metric._hotcoco_datasets_from_arrays
+        ) as from_arrays,
+        patch.object(
+            metric, "_prediction_dataset_for_iou_type", wraps=metric._prediction_dataset_for_iou_type
+        ) as switch_area,
+    ):
         metric.compute()
 
-    assert build_coco.call_count == 2
+    assert (build_coco.call_count, from_arrays.call_count, switch_area.call_count) == (0, 1, 2)
 
 
 def _straddling_disc_records() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
