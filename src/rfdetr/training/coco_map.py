@@ -185,7 +185,7 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     failures still surface as exceptions.
 
     TODO(hotcoco): narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference, or
-    offers a quiet ``summarize()`` (rfdetr hotcoco proposals 7 and 8; still firing on 1.1.0). Two of the
+    offers a quiet ``summarize()`` (rfdetr hotcoco proposals 7 and 8; still firing on 1.2.0). Two of the
     four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32
     round-trip — and a third fires on empty state after ``evaluate()`` did run. Once an upstream release stops
     reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
