@@ -73,7 +73,7 @@ pre-commit run --all-files
 - Features: Write comprehensive tests → Implement → Refactor
 - Use test classes and `@pytest.mark.parametrize` for organization
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
-- No `pytest.importorskip`/`pytest.skip()`: gate optional-dependency tests with a `skipif` decorator (flag from `rfdetr.export.imports` / `rfdetr.utilities.imports`) and import the package locally inside the test
+- No `pytest.importorskip`, and no `pytest.skip()` for missing optional dependencies: gate optional-dependency tests with a `skipif` decorator (flag from `rfdetr.export.imports` / `rfdetr.utilities.imports`) and import the package locally inside the test. Reserve `pytest.skip()` for conditions discoverable only at runtime.
 
 **Testing Requirements:**
 

@@ -13,8 +13,13 @@ from __future__ import annotations
 
 from rfdetr.utilities.package import is_installed
 
+#: Whether the optional ONNX package is installed.
 _IS_ONNX_INSTALLED = is_installed("onnx")
+#: Whether the optional ONNX Runtime package is installed.
 _IS_ONNXRUNTIME_INSTALLED = is_installed("onnxruntime")
+#: Whether the optional OpenVINO package is installed.
 _IS_OPENVINO_INSTALLED = is_installed("openvino")
+#: Whether the optional NNCF package is installed.
 _IS_NNCF_INSTALLED = is_installed("nncf")
+#: Whether the optional LiteRT Torch package is installed.
 _IS_LITERT_TORCH_INSTALLED = is_installed("litert_torch")

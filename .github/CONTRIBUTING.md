@@ -242,9 +242,9 @@ def test_model_loading(model_variant):
     pass
 ```
 
-**Skip tests that need an optional dependency with a decorator, never `pytest.importorskip`:**
+**Gate tests that need an optional dependency with a decorator, never `pytest.importorskip`:**
 
-Do not call `pytest.importorskip(...)` (or `pytest.skip()`) at module level or inside a test or fixture body. Import the package's `_IS_<PACKAGE>_INSTALLED` flag from `rfdetr.export.imports` (export formats) or `rfdetr.utilities.imports` (everything else; add a new flag there rather than probing in the test file), build a named `skipif` decorator from it, and apply that decorator to the test or class (use `pytest.param(..., marks=...)` for parametrized cases; fixtures cannot carry `skipif`, so decorate their consumers). Import the optional package locally inside the test or helper that uses it. Helper doctests that need the package use `__doctest_requires__`.
+Do not call `pytest.importorskip(...)`, and do not use `pytest.skip()` merely because an optional package is missing. Import the package's `_IS_<PACKAGE>_INSTALLED` flag from `rfdetr.export.imports` (export formats) or `rfdetr.utilities.imports` (everything else; add a new flag there rather than probing in the test file), build a named `skipif` decorator from it, and apply that decorator to the test or class (use `pytest.param(..., marks=...)` for parametrized cases; fixtures cannot carry `skipif`, so decorate their consumers). Import the optional package locally inside the test or helper that uses it. Helper doctests that need the package use `__doctest_requires__`. Reserve in-body `pytest.skip()` for conditions that can only be determined at runtime.
 
 ```python
 import pytest

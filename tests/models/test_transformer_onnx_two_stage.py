@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 
 onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX export tests")
 
+__doctest_requires__ = {
+    ("find_single_input_concat_nodes", "find_zero_dim_float_concat_nodes"): ["onnx"],
+}
+
 _D_MODEL = 16
 _NUM_CLASSES = 3
 # A 4x4 feature map gives the two-stage selection 16 encoder proposals to choose from.
