@@ -834,9 +834,10 @@ def _assert_well_conditioned(
 ) -> None:
     """Fail with an explicit precondition message when the input's two-stage ranking has a near-tie.
 
-    The runtime and eager PyTorch round differently in fp32, so two neighbouring selection scores closer than their
-    difference can swap which queries ``torch.topk`` selects. Each selected proposal is paired with a positional learned
-    embedding, so a swap changes the decoder output and not only its order. Shared with the ExecuTorch suite.
+    The runtime and eager PyTorch round differently in fp32. Two neighbouring selection scores that sit closer
+    together than that fp32 drift can swap which queries ``torch.topk`` selects. Each selected proposal is paired with a
+    positional learned embedding, so a swap changes the decoder output and not only its order. Shared with the
+    ExecuTorch suite.
 
     Args:
         model: Export-mode module whose forward makes exactly one ``torch.topk`` call.

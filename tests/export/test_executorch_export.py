@@ -1012,11 +1012,13 @@ def _export_variant(
         variant's output names and parity bound.
 
     Examples:
-        Needs a real model and the ``executorch`` package, so only the helper itself is checked here.
-        See ``TestExecutorchEndToEnd`` for real invocations.
+        Skipped: needs a parametrized fixture request, a real model and the ``executorch`` package.
 
-        >>> callable(_export_variant)
-        True
+        >>> model, example, pte_path, validate_fn = _export_variant(  # doctest: +SKIP
+        ...     request, tmp_path_factory, pretrain_weights=None
+        ... )
+        >>> pte_path.suffix  # doctest: +SKIP
+        '.pte'
     """
     import rfdetr
 
@@ -1275,8 +1277,7 @@ class TestExecutorchXnnpackRuntimeSmoke:
 @pytest.mark.integration
 @pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:
-    """End-to-end export of a real RF-DETR model (detection, segmentation, keypoint), gated on the executorch
-    package."""
+    """End-to-end export of real RF-DETR detection, segmentation and keypoint models, gated on executorch."""
 
     def test_no_portable_addmm_kernel_calls(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """No ``aten::addmm`` may survive lowering as a portable kernel call.
