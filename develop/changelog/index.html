@@ -3042,6 +3042,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p><code>format="openvino", dynamic_batch=True</code> is still refused, but the message now explains that the converted IR already has a dynamic input shape, so one export runs at any batch size. (<a href="https://github.com/roboflow/rf-detr/pull/1585">#1585</a>)</p>
 </li>
+<li>
+<p>Segmentation validation and test runs encode masks to COCO RLE on the GPU. The COCO metric used TorchMetrics' update, which copies every predicted and ground-truth mask to host memory at full image resolution and encodes it there one mask at a time; on 2000x2000 px images that was 92% of a <code>model.evaluate()</code> run. The metric now encodes masks on CUDA when they are there and copies only the encoded runs to the host; masks on any other device go through the same code on the CPU. The stored RLE bytes are identical, so every metric is unchanged on every <code>eval_backend</code>. With <code>RFDETRSegMedium</code> on one RTX 4090, validating 500 COCO val2017 images takes 8.8 s instead of 59.1 s at their own size, and 24.7 s instead of 508.5 s upscaled 3x to about 1920x1440. (<a href="https://github.com/roboflow/rf-detr/pull/1615">#1615</a>)</p>
+</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>
