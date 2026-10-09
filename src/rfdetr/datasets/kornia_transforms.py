@@ -41,15 +41,21 @@ Usage::
 
 from __future__ import annotations
 
+import numbers
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import torch
 from torch import Tensor
 
 from rfdetr.config import AugmentationBackend
 from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations, keypoint_flip_permutation
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    # Annotation only: the module imports Kornia, an optional dependency, at import time.
+    from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
 
 logger = get_logger()
 
@@ -396,18 +402,283 @@ def _make_rotate(params: dict[str, Any]) -> Any:
     return rotation
 
 
-def _make_affine(params: dict[str, Any]) -> Any:
-    """Build a ``K.RandomAffine`` from aug_config params.
+#: Smallest and largest signed 64-bit integers. ``PixelTranslatedAffine`` samples offsets with
+#: ``torch.randint(lower, upper + 1)``, so a pixel bound must satisfy ``lower >= _INT64_MIN`` and
+#: ``upper < _INT64_MAX``.
+_INT64_MIN: int = torch.iinfo(torch.int64).min
+_INT64_MAX: int = torch.iinfo(torch.int64).max
 
-    Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)`` signed range. Kornia ``translate`` is a
-    non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``. The conversion
-    takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve Albumentations' fixed positive translation, so
-    this builder warns before approximating it with symmetric signed sampling. Albumentations ``scale`` also accepts a
-    scalar, while Kornia requires a range, so scalars become ``(v, v)``.
+#: Value Albumentations ``Affine`` gives an axis missing from a per-axis ``scale`` or ``shear`` mapping (the default of
+#: its ``_handle_dict_arg``). It is ``1.0`` for both, so ``shear={"x": 0}`` is a one-degree vertical shear there.
+_ALBUMENTATIONS_AFFINE_MISSING_AXIS: float = 1.0
+
+#: OpenCV interpolation codes Albumentations ``Affine`` accepts for ``interpolation`` and ``mask_interpolation``:
+#: nearest, linear, cubic, area and Lanczos-4. Each output pixel of a whole-pixel shift copies exactly one source pixel,
+#: so all five produce the same result there.
+_OPENCV_INTERPOLATION_CODES: tuple[int, ...] = (0, 1, 2, 3, 4)
+
+#: OpenCV ``border_mode`` codes a whole-pixel shift reproduces on Kornia, mapped to ``PixelTranslatedAffine`` padding
+#: modes: ``cv2.BORDER_CONSTANT`` and ``cv2.BORDER_REPLICATE``.
+_PIXEL_AFFINE_PADDING_MODES: dict[int, str] = {0: "zeros", 1: "border"}
+
+#: Deprecated Albumentations 1.x ``Affine`` aliases, mapped to the parameter that replaced each. Albumentations 1.x
+#: copies a set alias onto its replacement (2.x ignores it with a warning); no Kornia builder reads them, so a set alias
+#: would otherwise bypass the border and fill checks of the pixel-translation path.
+_ALBUMENTATIONS_1X_AFFINE_ALIASES: dict[str, str] = {"cval": "fill", "cval_mask": "fill_mask", "mode": "border_mode"}
+
+
+def _pixel_offset(value: Any) -> int:
+    """Read one Albumentations ``translate_px`` offset as an exact number of pixels.
+
+    Albumentations accepts any real number here and truncates it with ``int()`` when it samples. Integers of any type
+    (NumPy integers included) and integral floats such as ``4.0`` denote a whole-pixel offset and are accepted. A
+    fractional offset is refused rather than truncated, so the configured shift is never silently changed. Booleans are
+    integers to Python but never a deliberate offset.
+
+    Args:
+        value: One configured offset.
+
+    Returns:
+        The offset as a Python ``int``, the type ``torch.randint`` requires.
+
+    Raises:
+        ValueError: If ``value`` is a boolean, is not a real number, or is not a whole number.
+
+    Examples:
+        >>> _pixel_offset(4.0)
+        4
+    """
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"Affine translate_px offsets must be integers, not booleans; got {value!r}.")
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real) and float(value).is_integer():
+        return int(float(value))
+    raise ValueError(
+        f"Affine translate_px offsets must be whole pixels (integers or integral floats such as 4.0); got {value!r}. "
+        "Round a fractional offset explicitly: the Kornia backend does not truncate it."
+    )
+
+
+def _pixel_translation_bounds(value: Any) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Normalize Albumentations pixel translation to inclusive x/y ranges.
+
+    Args:
+        value: An offset, a ``(min, max)`` pair, or a mapping with ``x`` and/or ``y`` entries holding either; a missing
+            axis is ``0``. Each offset may be any integer or integral float, as read by :func:`_pixel_offset`.
+
+    Returns:
+        Separate horizontal and vertical ``int`` bounds.
+
+    Raises:
+        ValueError: If a mapping has keys other than ``x``/``y``, an axis is neither an offset nor a two-element range,
+            an offset is not a whole number of pixels, a range is reversed, or a bound does not fit the signed 64-bit
+            range ``torch.randint`` samples from.
+
+    Examples:
+        >>> _pixel_translation_bounds({"x": (-2, 4), "y": 3.0})
+        ((-2, 4), (3, 3))
+    """
+    if isinstance(value, dict):
+        if not value.keys() & {"x", "y"} or value.keys() - {"x", "y"}:
+            raise ValueError("Affine translate_px must have only 'x' and/or 'y' keys.")
+        components = (value.get("x", 0), value.get("y", 0))
+    else:
+        components = (value, value)
+
+    bounds: list[tuple[int, int]] = []
+    for component in components:
+        if not isinstance(component, (tuple, list)):
+            lower = upper = _pixel_offset(component)
+        elif len(component) == 2:
+            lower, upper = _pixel_offset(component[0]), _pixel_offset(component[1])
+        else:
+            raise ValueError(
+                "Affine translate_px axes must be a single offset or a two-element (min, max) range of integers; "
+                f"got {component!r}."
+            )
+        if lower > upper:
+            raise ValueError(f"Affine translate_px range minimum must not exceed maximum; got {component!r}.")
+        if lower < _INT64_MIN or upper >= _INT64_MAX:
+            raise ValueError(f"Affine translate_px offsets must fit in a signed 64-bit integer; got {component!r}.")
+        bounds.append((lower, upper))
+    return bounds[0], bounds[1]
+
+
+def _affine_range_is(value: Any, identity: float) -> bool:
+    """Return whether an Albumentations ``Affine`` geometry range is fixed at its identity value.
+
+    The value is read the way Albumentations reads it: a scalar ``v`` is ``(v, v)``, a pair is ``(min, max)``, and a
+    per-axis mapping holds a scalar or pair for ``x`` and ``y``, with a missing axis set to
+    :data:`_ALBUMENTATIONS_AFFINE_MISSING_AXIS`.
+
+    Args:
+        value: A configured ``rotate``, ``shear`` or ``scale``.
+        identity: The value at which the parameter leaves the image unchanged: ``0`` for ``rotate`` and ``shear``,
+            ``1`` for ``scale``.
+
+    Returns:
+        ``True`` when every axis is a two-element range whose endpoints both equal ``identity``.
+
+    Examples:
+        >>> _affine_range_is({"x": (1.0, 1.0)}, 1.0)
+        True
+        >>> _affine_range_is({"x": 0}, 0.0)
+        False
+    """
+    missing = _ALBUMENTATIONS_AFFINE_MISSING_AXIS
+    axes: tuple[Any, ...] = (value.get("x", missing), value.get("y", missing)) if isinstance(value, dict) else (value,)
+    for axis in axes:
+        endpoints = tuple(axis) if isinstance(axis, (list, tuple)) else (axis, axis)
+        if len(endpoints) != 2 or any(endpoint != identity for endpoint in endpoints):
+            return False
+    return True
+
+
+def _require_pure_pixel_translation(params: dict[str, Any]) -> None:
+    """Refuse ``Affine`` geometry other than translation, which ``PixelTranslatedAffine`` cannot apply.
+
+    Args:
+        params: The ``Affine`` aug_config params. An unset or ``None`` ``rotate``, ``shear`` or ``scale`` is the
+            identity.
+
+    Raises:
+        ValueError: If ``rotate`` or ``shear`` is not fixed at ``0``, or ``scale`` is not fixed at ``1``, read as
+            Albumentations reads them (see :func:`_affine_range_is`).
+
+    Examples:
+        >>> _require_pure_pixel_translation({"translate_px": 4, "scale": {"x": 1.0}, "shear": (0, 0)})
+    """
+    for name, identity in (("rotate", 0.0), ("shear", 0.0), ("scale", 1.0)):
+        value = params.get(name)
+        if value is not None and not _affine_range_is(value, identity):
+            raise ValueError(
+                f"Kornia Affine translate_px supports pure pixel translation only ({name}={identity:g}); "
+                f"got {name}={value!r}. Use the albumentations backend otherwise."
+            )
+
+
+def _pixel_affine_padding_mode(params: dict[str, Any]) -> str:
+    """Resolve the ``Affine`` border options to the ``PixelTranslatedAffine`` padding mode that reproduces them.
+
+    A replicate border never reads ``fill`` or ``fill_mask``, on Albumentations or here, so those are checked only for a
+    constant border, where the pixel-translation path can fill with zeros alone.
+
+    Args:
+        params: The ``Affine`` aug_config params.
+
+    Returns:
+        ``"zeros"`` for ``cv2.BORDER_CONSTANT`` and ``"border"`` for ``cv2.BORDER_REPLICATE``.
+
+    Raises:
+        ValueError: If ``border_mode`` is neither constant (``0``) nor replicate (``1``), or a constant border has a
+            nonzero ``fill`` or ``fill_mask``.
+
+    Examples:
+        >>> _pixel_affine_padding_mode({"border_mode": 1, "fill": 5})
+        'border'
+    """
+    border_mode = params.get("border_mode", 0)
+    if border_mode not in _PIXEL_AFFINE_PADDING_MODES:
+        raise ValueError(
+            "Kornia Affine translate_px supports only constant (0) or replicate (1) borders; "
+            f"got border_mode={border_mode!r}. Use the albumentations backend otherwise."
+        )
+    if border_mode == 0:
+        for name in ("fill", "fill_mask"):
+            # ``np.asarray`` lets an array-valued fill compare elementwise instead of failing on its truth value.
+            if np.any(np.asarray(params.get(name, 0)) != 0):
+                raise ValueError(
+                    f"Kornia Affine translate_px requires {name}=0 with a constant border; "
+                    f"got {name}={params[name]!r}. Use the albumentations backend otherwise."
+                )
+    return _PIXEL_AFFINE_PADDING_MODES[border_mode]
+
+
+def _make_pixel_affine(params: dict[str, Any]) -> PixelTranslatedAffine:
+    """Build a ``PixelTranslatedAffine`` from ``Affine`` aug_config params that set ``translate_px``.
+
+    Options that cannot change a whole-pixel shift are accepted and have no effect, as on Albumentations:
+    ``interpolation`` and ``mask_interpolation`` codes 0-4, ``keep_ratio``, ``balanced_scale``, ``rotate_method``, a
+    unit ``scale`` or zero ``shear`` (scalar, pair or per-axis mapping), and ``fill``/``fill_mask`` with a replicate
+    border.
+
+    Args:
+        params: The ``Affine`` aug_config params; ``translate_px`` must be set.
+
+    Returns:
+        A transform that shifts images, boxes and masks by whole pixels sampled from the configured bounds.
+
+    Raises:
+        ValueError: If a deprecated Albumentations 1.x alias ``cval``, ``cval_mask`` or ``mode`` is set (the message
+            names ``fill``, ``fill_mask`` or ``border_mode``); if ``rotate`` or ``shear`` is not fixed at ``0`` or
+            ``scale`` is not fixed at ``1``, where a per-axis mapping's missing axis counts as ``1`` as on
+            Albumentations; if ``fit_output`` is true; if ``interpolation`` or ``mask_interpolation`` is not an OpenCV
+            code 0-4; if ``border_mode`` is neither constant (``0``) nor replicate (``1``), or a constant border has a
+            nonzero ``fill`` or ``fill_mask``; or if ``translate_px`` has keys other than ``x``/``y``, an axis that is
+            neither an offset nor a two-element range, a boolean or fractional offset, a reversed range, or a bound
+            outside the signed 64-bit range.
+    """
+    from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+    for alias, replacement in _ALBUMENTATIONS_1X_AFFINE_ALIASES.items():
+        if params.get(alias) is not None:
+            raise ValueError(
+                "Kornia Affine translate_px does not accept the deprecated Albumentations 1.x alias "
+                f"{alias}={params[alias]!r}; use {replacement} instead."
+            )
+    _require_pure_pixel_translation(params)
+    if params.get("fit_output", False):
+        raise ValueError(f"Kornia Affine translate_px does not support fit_output={params['fit_output']!r}.")
+    for name in ("interpolation", "mask_interpolation"):
+        if params.get(name, 0) not in _OPENCV_INTERPOLATION_CODES:
+            raise ValueError(
+                f"Kornia Affine translate_px accepts only the OpenCV interpolation codes 0-4 for {name}; "
+                f"got {name}={params[name]!r}."
+            )
+    padding_mode = _pixel_affine_padding_mode(params)
+    return PixelTranslatedAffine(
+        _pixel_translation_bounds(params["translate_px"]),
+        p=params.get("p", 0.5),
+        padding_mode=padding_mode,
+    )
+
+
+def _make_affine(params: dict[str, Any]) -> Any:
+    """Build a Kornia affine transform from ``Affine`` aug_config params.
+
+    With ``translate_px`` set, the params go to :func:`_make_pixel_affine`, which applies whole-pixel shifts only and
+    refuses every other geometry. Otherwise: Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)``
+    signed range. Kornia ``translate`` is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled
+    from ``[-tx, tx]``. The conversion takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve
+    Albumentations' fixed positive translation, so this builder warns before approximating it with symmetric signed
+    sampling. Albumentations ``scale`` also accepts a scalar, while Kornia requires a range, so scalars become
+    ``(v, v)``.
+
+    Args:
+        params: The ``Affine`` aug_config params.
+
+    Returns:
+        A ``K.RandomAffine``; for ``translate_px``, its ``PixelTranslatedAffine`` subclass.
+
+    Raises:
+        ValueError: If both ``translate_px`` and ``translate_percent`` are set, for any ``translate_px`` refusal listed
+            in :func:`_make_pixel_affine`, or if a scalar ``scale`` normalization receives a malformed range.
     """
     from kornia.augmentation import RandomAffine
 
+    translate_px = params.get("translate_px")
     translate_percent = params.get("translate_percent")
+    if translate_px is not None and translate_percent is not None:
+        raise ValueError("Affine accepts either translate_px or translate_percent, not both.")
+
+    if translate_px is not None:
+        return _make_pixel_affine(params)
+
+    scale = params.get("scale")
+    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
+        scale = _as_range(scale)
+
     if isinstance(translate_percent, (int, float)) and not isinstance(translate_percent, bool):
         logger.warning(
             "GPU augmentation (Kornia) Affine scalar translate_percent=%s samples signed translations on both axes; "
@@ -421,10 +692,6 @@ def _make_affine(params: dict[str, Any]) -> Any:
         translate: float | tuple[float, float] | list[float] | None = (magnitude, magnitude)
     else:
         translate = translate_percent
-
-    scale = params.get("scale")
-    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
-        scale = _as_range(scale)
 
     return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),

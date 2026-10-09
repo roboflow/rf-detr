@@ -18,6 +18,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import AugmentationBackend, KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
+from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
@@ -2015,6 +2016,92 @@ class TestOnAfterBatchTransfer:
             torch.testing.assert_close(
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
+
+    @kornia_only
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")],
+            ),
+        ],
+    )
+    def test_pixel_affine_reaches_segmentation_training_batch(self, tmp_path: Path, device: str) -> None:
+        """The real transfer hook moves pixels, boxes, instance masks, and padding masks together."""
+        config = {"Affine": {"translate_px": {"x": (4, 4), "y": (0, 0)}, "p": 1.0}}
+        dm = RFDETRDataModule(
+            _base_model_config(segmentation_head=True),
+            _base_train_config(tmp_path, aug_config=config, augmentation_backend="kornia"),
+        )
+        dm._resolved_augmentation_backend = AugmentationBackend.KORNIA
+        dm._setup_kornia_pipeline()
+        dm = self._attach_mock_trainer(dm, training=True)
+        image = torch.zeros(1, 3, 64, 80, device=device)
+        image[:, :, 30:34, 30:34] = 1.0
+        padding = torch.zeros(1, 64, 80, device=device, dtype=torch.bool)
+        padding[:, :, 70:] = True
+        instance_mask = torch.zeros(1, 64, 80, device=device, dtype=torch.bool)
+        instance_mask[:, 30:34, 30:34] = True
+        target = {
+            "boxes": torch.tensor([[30.0, 30.0, 34.0, 34.0]], device=device),
+            "labels": torch.tensor([1], device=device),
+            "area": torch.tensor([16.0], device=device),
+            "iscrowd": torch.tensor([0], device=device),
+            "masks": instance_mask,
+        }
+
+        samples_out, targets_out = dm.on_after_batch_transfer((NestedTensor(image, padding), [target]), 0)
+
+        assert len(targets_out) == 1
+        torch.testing.assert_close(
+            targets_out[0]["boxes"],
+            torch.tensor([[0.45, 0.5, 0.05, 0.0625]], device=device),
+            rtol=0,
+            atol=1e-5,
+        )
+        expected_mask = torch.zeros_like(instance_mask)
+        expected_mask[:, 30:34, 34:38] = True
+        torch.testing.assert_close(targets_out[0]["masks"], expected_mask, rtol=0, atol=0)
+        expected_padding = torch.zeros_like(padding)
+        expected_padding[:, :, 4:] = padding[:, :, :-4]
+        torch.testing.assert_close(samples_out.mask, expected_padding, rtol=0, atol=0)
+        mean = torch.tensor(IMAGENET_MEAN, device=device)
+        std = torch.tensor(IMAGENET_STD, device=device)
+        # The white square moved onto column 34 (input 1.0) and vacated column 30 (input 0.0); ImageNet-normalized.
+        torch.testing.assert_close(samples_out.tensors[0, :, 30, 34], (1.0 - mean) / std, rtol=0, atol=1e-5)
+        torch.testing.assert_close(samples_out.tensors[0, :, 30, 30], (0.0 - mean) / std, rtol=0, atol=1e-5)
+
+    @kornia_only
+    def test_pixel_affine_drops_box_and_mask_shifted_out_of_frame(self, tmp_path: Path) -> None:
+        """A translated-out object must not remain as a zero-area training target."""
+        dm = RFDETRDataModule(
+            _base_model_config(segmentation_head=True),
+            _base_train_config(
+                tmp_path,
+                aug_config={"Affine": {"translate_px": {"x": 60}, "p": 1.0}},
+                augmentation_backend="kornia",
+            ),
+        )
+        dm._resolved_augmentation_backend = AugmentationBackend.KORNIA
+        dm._setup_kornia_pipeline()
+        dm = self._attach_mock_trainer(dm, training=True)
+        image = torch.zeros(1, 3, 64, 80)
+        mask = torch.zeros(1, 64, 80, dtype=torch.bool)
+        mask[:, 30:34, 30:34] = True
+        target = {
+            "boxes": torch.tensor([[30.0, 30.0, 34.0, 34.0]]),
+            "labels": torch.tensor([1]),
+            "area": torch.tensor([16.0]),
+            "iscrowd": torch.tensor([0]),
+            "masks": mask,
+        }
+
+        _, targets_out = dm.on_after_batch_transfer((NestedTensor(image, None), [target]), 0)
+
+        for key in ("boxes", "labels", "area", "iscrowd", "masks"):
+            assert targets_out[0][key].shape[0] == 0, key
 
     def test_training_uses_transformed_padding_mask(self, tmp_path) -> None:
         """The returned NestedTensor mask comes from the same Kornia geometry as the image."""
