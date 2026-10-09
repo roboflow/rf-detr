@@ -2920,6 +2920,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>TrainConfig.eval_backend="hotcoco_streaming"</code> matches each validation batch with hotcoco's <code>StreamingEval</code> as it arrives, so the end-of-epoch COCO evaluation only accumulates and summarizes. Metrics are bit-identical to <code>eval_backend="hotcoco"</code>. On an Apple M-series CPU with synthetic data, the end-of-epoch step dropped from 0.238 s to 0.025 s for 600,000 box detections and from 0.178 s to 0.005 s for a bbox+segm run of 20,000 detections. Total CPU time is higher for box-only runs (1.05 s vs 0.29 s) and about equal for bbox+segm (0.66 s vs 0.71 s), because matching moves into the validation step. Streaming applies to single-process runs whose labels fall within <code>[0, num_classes]</code>; under DDP, or after the metric is pickled mid-epoch, it evaluates in one batch as <code>"hotcoco"</code> does and logs why.</p>
 </li>
 <li>
+<p><code>format="coreml"</code> now embeds <code>notes</code> in the <code>.mlpackage</code> metadata (<code>MLModel.user_defined_metadata</code>, key <code>rfdetr_notes</code>, encoded as in the ONNX export) instead of warning and dropping it, and stamps the RF-DETR version under <code>rfdetr_version</code>. (<a href="https://github.com/roboflow/rf-detr/issues/1024">#1024</a>)</p>
+</li>
+<li>
 <p><code>rfdetr.RFDETRAtto</code>, <code>rfdetr.RFDETRFemto</code> and <code>rfdetr.RFDETRPico</code>: real-time detection models with a PE-Core-T backbone, provided by <code>rfdetr_plus</code> like the XLarge models (<code>pip install "rfdetr[plus]"</code>, Platform Model License 1.0). <code>RFDETR.from_checkpoint()</code> resolves their checkpoints; an outdated <code>rfdetr_plus</code> raises an upgrade hint, and a broken <code>rfdetr_plus</code> install no longer blocks loading core checkpoints.</p>
 </li>
 <li>
@@ -2964,6 +2967,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><code>format="coreml"</code> now validates <code>notes</code> before the forward pass, as the other formats that embed it do. A value JSON cannot encode used to export with a warning that <code>notes</code> was dropped; it now raises <code>ValueError</code> (<code>NaN</code>/<code>Infinity</code>, a circular reference) or <code>TypeError</code> (a non-JSON object such as a <code>pathlib.Path</code>). (<a href="https://github.com/roboflow/rf-detr/issues/1024">#1024</a>)</p>
+</li>
 <li>
 <p>The <code>hotcoco</code> evaluation backend requires hotcoco 1.2 (<code>hotcoco&gt;=1.2.0,&lt;1.3</code>, previously pinned to 1.0.1). A bbox+segm evaluation now switches prediction areas between IoU types with <code>COCO.update_anns</code> instead of rebuilding the prediction dataset per IoU type; its faster <code>compute()</code> is the combined effect of the hotcoco bump and <code>update_anns</code>. Box-only evaluation does not use <code>update_anns</code>; its gain comes from the hotcoco bump. No absolute timings are given, because they depend on the core count, which was not recorded.</p>
 </li>
