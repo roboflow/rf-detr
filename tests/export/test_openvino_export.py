@@ -11,7 +11,7 @@ Covers:
   ``sys.modules`` injection so these run without the real ``openvino`` package installed).
 * ``OpenVINOInference.__init__`` — dependency-missing path.
 * ``format="openvino"`` wiring through ``RFDETR.export()`` (heavy deps mocked, fast).
-* A real end-to-end export + numerical parity check, gated behind ``pytest.importorskip("openvino")``
+* A real end-to-end export + numerical parity check, gated behind the ``openvino_only`` skip
   so it only runs where the ``openvino`` package is installed.
 
 The dependency-missing tests make ``openvino`` unimportable through ``sys.modules`` (see the
@@ -37,6 +37,7 @@ from numpy.typing import NDArray
 
 from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.inference import OpenVINOInference
+from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
 from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _parity_input_from_image,
@@ -44,6 +45,8 @@ from tests.export.conftest import (
     eager_reference_tensors,
     max_abs_output_diffs,
 )
+
+openvino_only = pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
 
 
 def _infer_openvino_f32(xml_path: Path, input_array: NDArray[Any]) -> tuple[NDArray[Any], ...]:
@@ -335,6 +338,38 @@ class TestExportOpenvinoNaming:
         assert output_xml == tmp_path / f"{expected}.xml"
         assert ".." not in str(output_xml).removeprefix(str(tmp_path))
 
+    @pytest.mark.parametrize(
+        ("variant_name", "output_name", "backbone_only", "expected"),
+        [
+            pytest.param("rfdetr-nano", None, False, "rfdetr-nano_int8", id="variant"),
+            pytest.param(None, None, False, "inference_model_int8", id="bare-default"),
+            pytest.param("rfdetr-nano", None, True, "rfdetr-nano_int8-backbone", id="backbone-marker-after-token"),
+            pytest.param("rfdetr-nano", "my-model", False, "my-model", id="custom-name-verbatim"),
+        ],
+    )
+    def test_int8_appends_suffix_unless_name_is_custom(
+        self, tmp_path: Path, variant_name: str | None, output_name: str | None, backbone_only: bool, expected: str
+    ) -> None:
+        """INT8 must not overwrite the FP32 IR written under the same name, except for a verbatim ``output_name``."""
+        exporter = OpenVINOExporter(
+            OpenVINOConfig(
+                output_dir=tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                quantization="int8",
+                calibration_data=np.zeros((1, 3, 8, 8), dtype=np.float32),
+                verbose=False,
+            )
+        )
+        assert exporter._resolve_export_name(backbone_only=backbone_only) == expected
+
+    def test_fp32_quantization_keeps_plain_stem(self, tmp_path: Path) -> None:
+        """Only ``"int8"`` changes the artifact name; ``"fp32"`` is the unquantized export."""
+        exporter = OpenVINOExporter(
+            OpenVINOConfig(output_dir=tmp_path, variant_name="rfdetr-nano", quantization="fp32")
+        )
+        assert exporter._resolve_export_name(backbone_only=False) == "rfdetr-nano"
+
 
 class TestExportOpenvinoPrecision:
     """``precision``'s ``compress_to_fp16`` forwarding, exercised with a stubbed ``openvino`` module.
@@ -391,14 +426,15 @@ def _stub_openvino_runtime_module() -> tuple[types.ModuleType, mock.MagicMock]:
 
 @pytest.fixture
 def openvino_relu_xml(tmp_path: Path) -> Path:
-    """Write a one-op ReLU OpenVINO IR to ``tmp_path`` and return its ``.xml`` path (skips without ``openvino``).
+    """Write a one-op ReLU OpenVINO IR to ``tmp_path`` and return its ``.xml`` path (needs ``openvino``).
 
     Examples:
         Skipped as a live doctest because it needs pytest's fixture injection and a real ``openvino`` install.
 
         >>> def test_x(openvino_relu_xml): ...  # doctest: +SKIP
     """
-    ov = pytest.importorskip("openvino")
+    import openvino as ov
+
     param = ov.opset13.parameter([1, 3], ov.Type.f32)
     xml_path = tmp_path / "relu.xml"
     ov.save_model(ov.Model([ov.opset13.relu(param)], [param]), xml_path)
@@ -535,14 +571,17 @@ class TestOpenVINOInferenceDeviceAndCache:
         assert caller_dict == {"INFERENCE_NUM_THREADS": 3}
         assert [call.args[2]["INFERENCE_NUM_THREADS"] for call in core.compile_model.call_args_list] == [2, 3]
 
+    @openvino_only
     @pytest.mark.integration
     @pytest.mark.e2e_openvino
     def test_default_hint_is_float32_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
         """The CPU plugin reports f32 execution for the default wrapper, even on hosts whose own default is f16/bf16."""
-        ov = pytest.importorskip("openvino")
+        import openvino as ov
+
         compiled = OpenVINOInference(openvino_relu_xml, device="CPU").compiled_model
         assert compiled.get_property("INFERENCE_PRECISION_HINT") == ov.Type.f32
 
+    @openvino_only
     @pytest.mark.integration
     @pytest.mark.e2e_openvino
     def test_explicit_hint_in_config_is_honoured_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
@@ -554,7 +593,8 @@ class TestOpenVINOInferenceDeviceAndCache:
         Without this the f32 test above passes on x86 hosts where OpenVINO's own default is already f32, even if the
         wrapper dropped the hint entirely; reading back a hint that differs from the default cannot.
         """
-        ov = pytest.importorskip("openvino")
+        import openvino as ov
+
         if "FP16" not in ov.Core().get_property("CPU", "OPTIMIZATION_CAPABILITIES"):
             pytest.skip(
                 "CPU plugin has no FP16 compute (x86 without native f16): it falls back to f32 and reads back f32"
@@ -962,7 +1002,6 @@ def openvino_detection_export(
     tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
 ) -> tuple[Any, torch.Tensor, Path]:
     """Export RFDETRNano to OpenVINO IR once, shared across the gated detection e2e tests."""
-    pytest.importorskip("openvino")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("openvino_nano")
@@ -986,7 +1025,6 @@ def openvino_segmentation_export(
     backbone-only exports only, so ``ModelWrapper``'s 3-tuple (``dets, labels, masks``) path was
     never exercised end-to-end through a real ``convert_model`` call.
     """
-    pytest.importorskip("openvino")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("openvino_seg_nano")
@@ -1010,7 +1048,6 @@ def openvino_keypoint_export(
     backbone-only exports only, so ``ModelWrapper``'s 3-tuple (``dets, labels, keypoints``) path was
     never exercised end-to-end through a real ``convert_model`` call.
     """
-    pytest.importorskip("openvino")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("openvino_keypoint")
@@ -1027,7 +1064,6 @@ def openvino_keypoint_export(
 @pytest.fixture(scope="module")
 def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
     """Export RFDETRNano's backbone-only OpenVINO IR once, shared across the gated backbone e2e test."""
-    pytest.importorskip("openvino")
     import rfdetr
     from rfdetr.export._backend import _BackboneExport
 
@@ -1041,6 +1077,7 @@ def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[
     return reference_model, example, Path(xml_path)
 
 
+@openvino_only
 @pytest.mark.integration
 @pytest.mark.e2e_openvino
 class TestOpenVINOEndToEnd:
@@ -1158,6 +1195,7 @@ class TestOpenVINOEndToEnd:
         assert max(diffs) < 1e-2, f"OpenVINO backbone outputs diverge from PyTorch: max abs diff {max(diffs)}"
 
 
+@openvino_only
 class TestOpenVINOInferenceEndToEnd:
     """Real ``OpenVINOInference`` behaviour gated behind an actual ``openvino`` install."""
 
@@ -1167,6 +1205,5 @@ class TestOpenVINOInferenceEndToEnd:
         Unreachable without ``openvino`` installed (see ``TestOpenVINOInferenceMissingDependency`` for the ungated
         ``ImportError`` coverage of the same constructor when the import itself fails first).
         """
-        pytest.importorskip("openvino")
         with pytest.raises(FileNotFoundError, match="Model file not found"):
             OpenVINOInference(tmp_path / "does-not-exist.xml")

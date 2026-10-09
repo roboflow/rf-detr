@@ -31,8 +31,9 @@ RFDETR.export(format=..., **kwargs)
   |-- ExporterClass.build_config(**kwargs)           -> MyFormatConfig     (other formats' knobs dropped)
   |-- ExporterClass(config)                          -> exporter           (configuration and notes validated)
   |-- ExporterClass.check_dependencies()                                   (missing packages reported)
+  |-- exporter.check_environment()                                         (what the configuration needs of them)
   |-- prepare.prepare_export_graph(model, ...)       -> ExportGraph        (forward pass + prediction metadata)
-  |-- exporter(graph)                                -> Path to artifact   (_convert + metadata hooks)
+  \-- exporter(graph)                                -> Path to artifact   (both checks again, then _convert + metadata hooks)
 
 RFDETRInference(artifact)
   \-- registry.resolve_runtime_loader(format)       -> load_export_runtime (lazy runtime loading)
@@ -74,14 +75,14 @@ An entry also carries the few facts that must be known *before* the import: the 
 
 `Exporter.__call__` checks dependencies and enters export mode before `_convert`, then normalizes its result and publishes metadata through two hooks:
 
-- checks the format's packages (`check_dependencies`), so an exporter handed a graph directly fails the same way `RFDETR.export()` does
+- checks the format's packages (`check_dependencies`), then what the configuration needs of them (`check_environment`), so an exporter handed a graph directly fails the same way `RFDETR.export()` does
 - switches the model into its export-friendly forward — exactly once, and idempotently, so a two-stage format composing another exporter stays safe
 - normalizes whatever `_convert` returned into a `Path`
 - calls `_metadata_artifacts(path)` for every final file that needs metadata
 - calls `_metadata_for_artifact(metadata, path)` to adapt metadata when the format changes the exported interface
 - writes metadata and logs the success line; a metadata-write failure warns while preserving the successfully converted artifact
 
-`Exporter.__init__` validates the configuration against the class's declared capabilities, and checks that `notes` serialize for a format that embeds them, so an unsupported request is refused at construction. `prepare_export_graph` captures prediction metadata from the source model. Exporters that produce multiple final files or alter names, layout, or dtype override the metadata hooks; do not put format-specific metadata behavior in `prepare.py`. `RFDETR.export()` calls `check_dependencies()` before the caller pays for a full DINOv2 forward pass.
+`Exporter.__init__` validates the configuration against the class's declared capabilities, and checks that `notes` serialize for a format that embeds them, so an unsupported request is refused at construction. `prepare_export_graph` captures prediction metadata from the source model. Exporters that produce multiple final files or alter names, layout, or dtype override the metadata hooks; do not put format-specific metadata behavior in `prepare.py`. `RFDETR.export()` then calls `check_dependencies()`, so a missing package is reported too, and `check_environment()`, for a setting the installed packages or the host cannot build (TensorRT's `trt_version_compatible` without its lean runtime, or `trt_hardware_compatibility="ampere_plus"` on a GPU older than Ampere) — all before the caller pays for a full DINOv2 forward pass.
 
 ## Adding a format
 
@@ -174,8 +175,8 @@ If your format needs validation the class attributes above cannot express — an
 
 Four rules for `_convert`:
 
-- **Import the heavy dependency inside a method, never at module scope of a file the registry might import early.** Raise `ImportError` with the exact `pip install "rfdetr[myformat]"` command; the other formats route this through a small `_check_<dep>_available()` helper so tests can monkeypatch one choke point. Wrap that helper in a `@classmethod` override of `check_dependencies` (keep it cheap: a metadata probe such as `rfdetr.utilities.package.is_installed`, or an import the conversion performs anyway; run the probes first and import only once they pass, so a refused request loads nothing, as TensorRT does before importing `onnx`), and never call `check_dependencies` yourself: `RFDETR.export()` runs it before the forward pass, and `Exporter.__call__` again before `_convert`. Calling the helper itself inside the conversion is fine where a public entry point skips `__call__`, as TFLite's `convert_onnx()` does. Never check dependencies in `__init__` or `_check_capabilities` — a TensorRT `dry_run` and the stubbed-converter tests construct exporters without them.
-- **Refuse what only the graph shows first.** An output the converter cannot lower (LiteRT refuses the keypoint head this way) is refused at the top of `_convert`, before any conversion work. Anything the configuration or the installed packages already decide belongs in the two hooks above instead.
+- **Import the heavy dependency inside a method, never at module scope of a file the registry might import early.** Raise `ImportError` with the exact `pip install "rfdetr[myformat]"` command; the other formats route this through a small `_check_<dep>_available()` helper so tests can monkeypatch one choke point. Wrap that helper in a `@classmethod` override of `check_dependencies` (keep it cheap: a metadata probe such as `rfdetr.utilities.package.is_installed`, or an import the conversion performs anyway; run the probes first and import only once they pass, so a refused request loads nothing, as TensorRT does before importing `onnx`), and never call `check_dependencies` yourself: `RFDETR.export()` runs it before the forward pass, and `Exporter.__call__` again before `_convert`. Calling the helper itself inside the conversion is fine where a public entry point skips `__call__`, as TFLite's `convert_onnx()` does. Never check dependencies in `__init__` or `_check_capabilities` — a TensorRT `dry_run` and the stubbed-converter tests construct exporters without them. A setting that needs more of the installed packages or the host than the packages' presence (TensorRT's lean runtime for `trt_version_compatible`, an Ampere or newer GPU for `"ampere_plus"`) goes in a `check_environment` override instead: it is an instance method, so it sees the configuration, and it runs right after `check_dependencies` at the same two places.
+- **Refuse what only the graph shows first.** An output the converter cannot lower (LiteRT refuses the keypoint head this way) is refused at the top of `_convert`, before any conversion work. Anything the configuration or the installed packages already decide belongs in the two hooks above instead. A refusal that needs the filesystem or has side effects (TensorRT's timing-cache preflight creates its directory and lock file) also goes at the top of `_convert`, before any conversion work, and again in any public entry point that bypasses `_convert`, as TensorRT's `build_engine` does.
 - **Return the path, do not log the success line.** The base class does that, and doing it twice is how log output drifted between formats before.
 - **Do not switch the model into export mode.** It already is — `__call__` did it.
 
@@ -248,9 +249,10 @@ Most of those need no real model: build a throwaway `ExportGraph` around a `Magi
 TFLite and TensorRT do not convert from PyTorch. They run an ONNX export first and convert its output, which means they must hand the ONNX stage a configuration rather than re-deriving one:
 
 ```python
-def onnx_stage(self) -> Any:
-    from rfdetr.export._onnx.exporter import OnnxConfig
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 
+
+def onnx_stage(self) -> OnnxConfig:
     return OnnxConfig.derive(self, opset_version=self.opset_version)
 
 
@@ -259,7 +261,7 @@ def _convert(self, graph: ExportGraph) -> str:
     return self.build_engine(str(onnx_path))
 ```
 
-`OnnxConfig.derive` copies every shared setting, `notes` included, so the intermediate `.onnx` a two-stage export passes on is named and annotated exactly as a direct `format="onnx"` export would be. Composing the ONNX exporter is safe because the export-mode switch in `__call__` is idempotent.
+`OnnxConfig.derive` copies every shared setting, `notes` included, so the intermediate `.onnx` a two-stage export passes on is named and annotated exactly as a direct `format="onnx"` export would be. Composing the ONNX exporter is safe because the export-mode switch in `__call__` is idempotent, and importing it at module scope is safe because loading `rfdetr.export._onnx.exporter` imports no ONNX package — it imports `onnx` inside the methods that use it, so TFLite can still load TensorFlow first. `TestExportDependencyCheck` in `tests/export/test_export.py` pins that.
 
 ### Validating rather than copying a setting
 

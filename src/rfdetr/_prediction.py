@@ -12,6 +12,7 @@ import operator
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlparse
 
@@ -20,6 +21,15 @@ import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image
+
+try:
+    # torchvision 0.29 deprecated these codecs for removal in favour of TorchCodec. Once they are gone, local files
+    # passed to predict() decode through Pillow instead of ``import rfdetr`` failing.
+    from torchvision.io import ImageReadMode, decode_image
+
+    _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = True
+except ImportError:
+    _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.class_names import is_coco_pretrained
@@ -131,6 +141,70 @@ def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
     if image.ndim == 2:
         image = image[:, :, None]
     return torch.from_numpy(image.transpose((2, 0, 1)))
+
+
+#: Byte offset of the bit depth in a PNG file: the 8-byte signature, then the IHDR chunk's length, type, width and
+#: height (4 bytes each).
+_PNG_BIT_DEPTH_OFFSET = 24
+
+
+def _decode_local_image(path: str) -> torch.Tensor | None:
+    """Decode a local JPEG or PNG directly into RGB ``uint8`` CHW storage.
+
+    Pillow remains the compatibility path for every other format and for files that torchvision
+    cannot decode. Restricting the fast path to these two measured formats also avoids changing
+    animated-image semantics: torchvision represents animated GIFs as a four-dimensional tensor,
+    while Pillow exposes the first frame.
+
+    This is separate from :func:`rfdetr.datasets.io_utils.decode_image`, which the dataset readers use:
+    torchvision is a core dependency and yields the CHW tensor ``predict()`` consumes, whereas that
+    function's ``simplejpeg`` fast path needs the ``[train]`` extra and returns HWC NumPy arrays.
+
+    The file is read into memory once. Pillow validates the header of that in-memory buffer and
+    torchvision decodes the same buffer, so a file changed on disk after the read cannot skip
+    Pillow's decompression-bomb limit. The cost is that the whole encoded file is in memory before
+    Pillow inspects its header, whereas opening the path with Pillow reads only the header; a file
+    that ends up on the Pillow path pays that read before Pillow opens it again.
+
+    Unlike Pillow, torchvision's bundled libjpeg and libpng print their messages about corrupt data
+    (``Corrupt JPEG data: ...``) straight to the process's standard error. torchvision offers no hook to
+    route them through ``logging``, and redirecting file descriptor 2 would affect the whole process,
+    so they are left as is.
+
+    Args:
+        path: Local image path.
+
+    Returns:
+        An RGB ``uint8`` CHW tensor, or ``None`` when the caller should use Pillow.
+
+    Raises:
+        Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
+    """
+    if not _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE or Path(path).suffix.lower() not in {".jpeg", ".jpg", ".png"}:
+        return None
+    try:
+        stream = io.BytesIO(Path(path).read_bytes())
+        # Opening is lazy: Pillow validates the header (including its decompression-bomb limit),
+        # while torchvision still owns the expensive pixel decode below.
+        with Image.open(stream) as header:
+            if header.format not in {"JPEG", "PNG"} or getattr(header, "n_frames", 1) != 1:
+                return None
+            # torchvision 0.21+ decodes a 16-bit PNG to uint16 (older releases raise), and either way the result is
+            # rejected below, so read the bit depth first rather than pay for a full decode.
+            if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
+                return None
+        # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
+        # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
+        decoded = decode_image(torch.frombuffer(stream.getbuffer(), dtype=torch.uint8), mode=ImageReadMode.RGB)
+    except (OSError, RuntimeError, DeprecationWarning, AttributeError):
+        # A missing or unreadable path and bytes Pillow cannot identify raise OSError, torchvision raises RuntimeError
+        # for bytes it cannot decode, and torch raises AttributeError when the image operators were not loaded.
+        # torchvision 0.29+ also warns on every call that its codecs are deprecated, which ``-W error`` turns into a
+        # raised DeprecationWarning. The caller then opens the path with Pillow, which reports each of those cases
+        # with its usual error.
+        return None
+    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
+    return decoded if decoded.dtype == torch.uint8 else None
 
 
 def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
@@ -369,16 +443,26 @@ def predict(
 
     for img_input in images:
         img: Any = img_input
+        decoded_local_file = False
         if isinstance(img, str):
             if urlparse(img).scheme in ("http", "https"):
                 resp = requests.get(img, timeout=30)
                 resp.raise_for_status()
                 img = io.BytesIO(resp.content)
-            img = Image.open(img)
+            else:
+                decoded = _decode_local_image(img)
+                if decoded is not None:
+                    img = decoded
+                    decoded_local_file = True
+            if not decoded_local_file:
+                img = Image.open(img)
 
-        range_known_valid = False
-        deferred_widen = False
-        if not isinstance(img, torch.Tensor):
+        range_known_valid = decoded_local_file
+        deferred_widen = decoded_local_file
+        if decoded_local_file:
+            if include_source_image:
+                source_images.append(img.permute(1, 2, 0).numpy().copy())  # type: ignore[union-attr]
+        elif not isinstance(img, torch.Tensor):
             # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
             # etc.) to RGB before converting to tensor.  This matches the
             # standard detector API contract: callers passing a file path or

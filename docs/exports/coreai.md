@@ -30,7 +30,7 @@ model.export(format="coreai")
 
 This produces `output/rfdetr-nano_fp32.aimodel`. Segmentation and keypoint models export the same way. Pass `coreai_precision="float16"` for a half-size `rfdetr-nano_fp16.aimodel` whose input and outputs are float16 as well.
 
-The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` input, resized without antialiasing and ImageNet-normalized, as in the [ONNX Inference](onnx.md) example. Unlike CoreML, the tensors keep their names — `input`, then `dets` and `labels`, plus `masks` or `keypoints` — and any `notes` are stored in the asset metadata under `rfdetr_notes`.
+The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` input, resized without antialiasing and ImageNet-normalized, as in the [ONNX Inference](onnx.md) example. Unlike CoreML, the tensors keep their names — `input`, then `dets` and `labels`, plus `masks` or `keypoints`. Any `notes` are stored in the asset metadata under `rfdetr_notes`, as described in [Read Embedded Notes](advanced.md#read-embedded-notes).
 
 ## Predict with RFDETRInference
 

@@ -4,7 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import io
+import struct
 import warnings
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,24 @@ from .helpers import _DummyModel, _DummyRFDETR
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
 _HTTP_HOST = "images.cocodataset.org"
 _HTTP_PORT = 80
+
+
+def _record_model_inputs(sink: list[torch.Tensor]) -> Callable[[torch.nn.Module, tuple[torch.Tensor, ...]], None]:
+    """Return a forward pre-hook that appends a detached copy of each batch the model receives to ``sink``.
+
+    Args:
+        sink: List collecting one batch per forward call.
+
+    Returns:
+        A hook for ``torch.nn.Module.register_forward_pre_hook`` that leaves the module's inputs unchanged.
+
+    Examples:
+        >>> batches: list[torch.Tensor] = []
+        >>> _record_model_inputs(batches)(torch.nn.Identity(), (torch.zeros(1, 3, 2, 2),))
+        >>> [tuple(batch.shape) for batch in batches]
+        [(1, 3, 2, 2)]
+    """
+    return lambda _module, args: sink.append(args[0].detach().clone())
 
 
 class TestPredictReturnTypes:
@@ -635,18 +655,9 @@ class TestPredictImagePinning:
                 kwargs["device"] = torch.device("cpu")
             return real_tensor(data, **kwargs)
 
-        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
-            """Capture the normalized batch delivered to the model boundary.
-
-            Examples:
-                This test-local closure requires the enclosing capture list.
-                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
-            """
-            model_inputs.append(args[0].detach().clone())
-
         model_module = model.model.model
         assert model_module is not None
-        with model_module.register_forward_pre_hook(capture_model_input):
+        with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
             with (
                 patch.object(torch.Tensor, "pin_memory", pin_spy),
                 patch.object(torch.Tensor, "to", to_spy),
@@ -740,6 +751,409 @@ class TestPredictImagePinning:
 
 class TestPredictUint8Conversion:
     """The fused uint8 path must retain torchvision's exact conversion semantics."""
+
+    @pytest.mark.parametrize(
+        ("mode", "image_format", "save_options"),
+        [
+            pytest.param("RGB", "JPEG", {}, id="jpeg-rgb"),
+            pytest.param("L", "JPEG", {}, id="jpeg-grayscale"),
+            pytest.param("CMYK", "JPEG", {}, id="jpeg-cmyk"),
+            pytest.param("RGBA", "PNG", {}, id="png-rgba"),
+            pytest.param("P", "PNG", {}, id="png-palette"),
+            pytest.param("1", "PNG", {}, id="png-1-bit"),
+            # ``bits`` makes Pillow write a 2- or 4-bit palette; the expected pixels are read back from that file.
+            pytest.param("P", "PNG", {"bits": 2}, id="png-2-bit-palette"),
+            pytest.param("P", "PNG", {"bits": 4}, id="png-4-bit-palette"),
+            pytest.param("P", "PNG", {"transparency": 0}, id="png-palette-trns"),
+            pytest.param("LA", "PNG", {}, id="png-grayscale-alpha"),
+        ],
+    )
+    def test_local_image_decoder_matches_pillow(
+        self, tmp_path: Path, mode: str, image_format: str, save_options: dict[str, int]
+    ) -> None:
+        """The fast local-file decoder must produce Pillow's exact RGB bytes for supported formats."""
+        image_path = tmp_path / f"image.{image_format.lower()}"
+        rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 37 + 13) % 256).astype(np.uint8)
+        image = PIL.Image.fromarray(rgb).convert(mode)
+        if mode == "RGBA":
+            alpha = ((np.arange(17 * 29).reshape(17, 29) * 19 + 7) % 256).astype(np.uint8)
+            image.putalpha(PIL.Image.fromarray(alpha))
+        if mode == "CMYK":
+            # ``convert("CMYK")`` always writes K=0, which never exercises the black channel of the CMYK-to-RGB step.
+            black = ((np.arange(17 * 29).reshape(17, 29) * 19 + 7) % 256).astype(np.uint8)
+            image = PIL.Image.merge("CMYK", (*image.split()[:3], PIL.Image.fromarray(black)))
+        image.save(image_path, format=image_format, **save_options)
+        with PIL.Image.open(image_path) as image:
+            expected = np.array(image.convert("RGB"))
+
+        decoded = _prediction._decode_local_image(str(image_path))
+
+        assert decoded is not None
+        assert decoded.dtype is torch.uint8
+        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
+
+    @pytest.mark.parametrize("filename", ["PHOTO.JPG", "PHOTO.JPEG", "PHOTO.PNG"])
+    def test_local_image_decoder_accepts_upper_case_extensions(self, tmp_path: Path, filename: str) -> None:
+        """Cameras and Windows tools write upper-case extensions, and those files must not lose the native route."""
+        image_path = tmp_path / filename
+        rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 37 + 13) % 256).astype(np.uint8)
+        PIL.Image.fromarray(rgb).save(image_path)
+        with PIL.Image.open(image_path) as image:
+            expected = np.array(image.convert("RGB"))
+
+        decoded = _prediction._decode_local_image(str(image_path))
+
+        assert decoded is not None
+        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
+
+    def test_local_image_decoder_ignores_exif_orientation_like_pillow(self, tmp_path: Path) -> None:
+        """Pillow's conversion never rotates by EXIF orientation, so the native route must not either."""
+        image_path = tmp_path / "rotated.jpg"
+        rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 37 + 13) % 256).astype(np.uint8)
+        exif = PIL.Image.Exif()
+        exif[0x0112] = 6  # Orientation: a viewer that honours it would rotate this 29x17 image to 17x29.
+        PIL.Image.fromarray(rgb).save(image_path, format="JPEG", exif=exif)
+        with PIL.Image.open(image_path) as image:
+            assert image.getexif()[0x0112] == 6
+            expected = np.array(image.convert("RGB"))
+
+        decoded = _prediction._decode_local_image(str(image_path))
+
+        assert decoded is not None
+        assert expected.shape == (17, 29, 3)
+        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
+
+    @pytest.mark.parametrize("image_format", ["TIFF", "PNG"])
+    def test_local_image_decoder_returns_none_for_pillow_fallback(self, tmp_path: Path, image_format: str) -> None:
+        """Inputs outside the measured 8-bit JPEG/PNG envelope must keep the Pillow path."""
+        image_path = tmp_path / f"image.{image_format.lower()}"
+        if image_format == "PNG":
+            image = PIL.Image.fromarray(np.arange(29 * 17, dtype=np.uint16).reshape(17, 29))
+        else:
+            image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
+        image.save(image_path, format=image_format)
+
+        assert _prediction._decode_local_image(str(image_path)) is None
+
+    @pytest.mark.parametrize(
+        ("color_type", "channels", "pillow_mode"),
+        [
+            pytest.param(0, 1, "I;16", id="grayscale"),
+            pytest.param(2, 3, "RGB", id="rgb"),
+            pytest.param(6, 4, "RGBA", id="rgba"),
+        ],
+    )
+    def test_local_image_decoder_skips_the_native_decode_of_a_16_bit_png(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, color_type: int, channels: int, pillow_mode: str
+    ) -> None:
+        """Every 16-bit PNG is recognised from its header, although Pillow reports most of them as 8-bit modes."""
+        image_path = tmp_path / "image.png"
+        width, height = 29, 17
+        # Pillow cannot write a 16-bit RGB or RGBA PNG, so assemble one: signature, IHDR, unfiltered rows, IEND.
+        rows = b"".join(b"\x00" + bytes(range(width * channels * 2)) for _ in range(height))
+        chunks = (
+            (b"IHDR", struct.pack(">IIBBBBB", width, height, 16, color_type, 0, 0, 0)),
+            (b"IDAT", zlib.compress(rows)),
+            (b"IEND", b""),
+        )
+        image_path.write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + b"".join(
+                struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+                for kind, data in chunks
+            )
+        )
+        with PIL.Image.open(image_path) as header:
+            # An 8-bit-looking mode is the reason the bit depth is read from the file rather than from ``header.mode``.
+            assert header.mode == pillow_mode
+        decode = MagicMock()
+        monkeypatch.setattr(_prediction, "decode_image", decode)
+
+        assert _prediction._decode_local_image(str(image_path)) is None
+        decode.assert_not_called()
+
+    def test_local_image_decoder_rejects_a_decode_that_is_not_uint8(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Whatever the header checks let through, a decode that is not ``uint8`` must fall back to Pillow."""
+        image_path = tmp_path / "image.jpg"
+        PIL.Image.new("RGB", (29, 17)).save(image_path)
+        decode = MagicMock(return_value=torch.zeros(3, 17, 29, dtype=torch.float32))
+        monkeypatch.setattr(_prediction, "decode_image", decode)
+
+        assert _prediction._decode_local_image(str(image_path)) is None
+        decode.assert_called_once()
+
+    def test_predict_local_file_uses_pillow_without_torchvision_image_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once torchvision drops its deprecated image codecs, a local file must still predict through Pillow."""
+        image_path = tmp_path / "image.png"
+        expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+        decode = MagicMock()
+        monkeypatch.setattr(_prediction, "_IS_TORCHVISION_IMAGE_DECODE_AVAILABLE", False)
+        monkeypatch.setattr(_prediction, "decode_image", decode)
+
+        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        decode.assert_not_called()
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    @pytest.mark.parametrize(
+        ("filename", "image_format", "animated"),
+        [
+            pytest.param("animated.png", "PNG", True, id="animated-png"),
+            pytest.param("mislabelled.png", "GIF", False, id="gif-named-png"),
+        ],
+    )
+    def test_local_image_decoder_keeps_pillow_for_content_behind_a_supported_name(
+        self, tmp_path: Path, filename: str, image_format: str, animated: bool
+    ) -> None:
+        """A ``.png`` name is not enough: animated PNG and other formats behind it keep the Pillow path."""
+        image_path = tmp_path / filename
+        frames = [PIL.Image.new("RGB", (29, 17), color=(40 * index, 127, 255)) for index in range(3 if animated else 1)]
+        frames[0].save(image_path, format=image_format, save_all=animated, append_images=frames[1:])
+        with PIL.Image.open(image_path) as header:
+            assert header.format == image_format
+            assert getattr(header, "n_frames", 1) == len(frames)
+
+        assert _prediction._decode_local_image(str(image_path)) is None
+
+    @pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
+    def test_predict_truncated_local_file_raises_pillow_error(self, tmp_path: Path, image_format: str) -> None:
+        """A file the native decoder rejects must still fail with Pillow's error, not a decoder ``RuntimeError``."""
+        image_path = tmp_path / f"truncated.{image_format.lower()}"
+        rgb = ((np.arange(61 * 83 * 3).reshape(61, 83, 3) * 37 + 13) % 256).astype(np.uint8)
+        PIL.Image.fromarray(rgb).save(image_path, format=image_format)
+        image_path.write_bytes(image_path.read_bytes()[: image_path.stat().st_size // 2])
+
+        with pytest.raises(OSError, match="truncated"):
+            _DummyRFDETR().predict(str(image_path), include_source_image=False)
+
+    @pytest.mark.parametrize("image_format", ["PNG", "JPEG"])
+    def test_predict_local_file_preserves_decompression_bomb_guard(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, image_format: str
+    ) -> None:
+        """The native route must not bypass Pillow's established oversized-image rejection in ``predict()``."""
+        image_path = tmp_path / f"image.{image_format.lower()}"
+        PIL.Image.new("RGB", (10, 10)).save(image_path, format=image_format)
+        # 100 pixels exceed twice the limit, the point where Pillow raises instead of warning.
+        monkeypatch.setattr(PIL.Image, "MAX_IMAGE_PIXELS", 40)
+
+        with pytest.raises(PIL.Image.DecompressionBombError):
+            _DummyRFDETR().predict(str(image_path), include_source_image=False)
+
+    def test_predict_local_file_in_the_decompression_bomb_warning_band_still_predicts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An image between Pillow's limit and twice that limit must warn as Pillow does and still be predicted."""
+        image_path = tmp_path / "image.png"
+        expected = np.full((10, 10, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+        # 100 pixels exceed the limit but not twice the limit, so Pillow warns rather than raises.
+        monkeypatch.setattr(PIL.Image, "MAX_IMAGE_PIXELS", 60)
+
+        with pytest.warns(PIL.Image.DecompressionBombWarning):
+            detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    def test_local_image_decoder_decodes_the_bytes_pillow_validated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file replaced after its first read must reach neither Pillow's check nor the native decoder."""
+        image_path = tmp_path / "image.png"
+        expected = np.full((10, 10, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+        oversized_path = tmp_path / "oversized.png"
+        PIL.Image.new("RGB", (30, 30)).save(oversized_path)
+        # 100 pixels pass the guard, while 900 exceed twice the limit and would be rejected if Pillow saw them.
+        monkeypatch.setattr(PIL.Image, "MAX_IMAGE_PIXELS", 400)
+
+        def replace_file_after(function: Any) -> Any:
+            """Wrap ``function`` so the first call to finish swaps the file at ``image_path`` for the oversized one.
+
+            Examples:
+                This test-local closure requires the enclosing paths.
+                >>> replace_file_after(len)  # doctest: +SKIP
+            """
+
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                """Call ``function``, then replace the file if that has not happened yet.
+
+                Examples:
+                    This test-local closure requires the enclosing function and paths.
+                    >>> wrapper(len, [])  # doctest: +SKIP
+                """
+                result = function(*args, **kwargs)
+                if oversized_path.exists():
+                    oversized_path.replace(image_path)
+                return result
+
+            return wrapper
+
+        # Whichever of the two reads comes first, the second one sees a different file if it touches the path.
+        monkeypatch.setattr(PIL.Image, "open", replace_file_after(PIL.Image.open))
+        monkeypatch.setattr(Path, "read_bytes", replace_file_after(Path.read_bytes))
+
+        decoded = _prediction._decode_local_image(str(image_path))
+
+        assert not oversized_path.exists(), "the replacement never happened, so the race was not exercised"
+        assert decoded is not None
+        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
+
+    def test_predict_unidentified_local_file_raises_pillow_error_naming_the_path(self, tmp_path: Path) -> None:
+        """A ``.png`` that is not an image must fail with Pillow's error for that path, not for an in-memory buffer."""
+        image_path = tmp_path / "notes.png"
+        image_path.write_bytes(b"not an image")
+
+        with pytest.raises(PIL.UnidentifiedImageError) as pillow_error:
+            PIL.Image.open(str(image_path))
+
+        with pytest.raises(type(pillow_error.value)) as predict_error:
+            _DummyRFDETR().predict(str(image_path), include_source_image=False)
+
+        assert str(predict_error.value) == str(pillow_error.value)
+
+    @pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
+    def test_predict_unreadable_local_path_raises_the_error_pillow_raises(self, tmp_path: Path, kind: str) -> None:
+        """A path the native route cannot read must fail with the exception Pillow raises for that same path."""
+        image_path = tmp_path / f"{kind}.png"
+        if kind == "empty":
+            image_path.write_bytes(b"")
+        elif kind == "directory":
+            image_path.mkdir()
+        with pytest.raises(OSError) as pillow_error:
+            PIL.Image.open(str(image_path))
+
+        with pytest.raises(type(pillow_error.value)) as predict_error:
+            _DummyRFDETR().predict(str(image_path), include_source_image=False)
+
+        assert str(predict_error.value) == str(pillow_error.value)
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(AttributeError("image operators are not loaded"), id="missing-image-ops"),
+            pytest.param(DeprecationWarning("image codecs are deprecated"), id="deprecation-warning-as-error"),
+        ],
+    )
+    def test_predict_local_file_falls_back_to_pillow_when_native_decode_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+    ) -> None:
+        """A native decode failing with neither ``OSError`` nor ``RuntimeError`` must still leave the file to Pillow.
+
+        torch raises ``AttributeError`` when torchvision's image operators were not loaded, and ``-W error`` turns the
+        deprecation warning torchvision 0.29+ emits on every decode into a raised ``DeprecationWarning``.
+        """
+        image_path = tmp_path / "image.png"
+        expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+        monkeypatch.setattr(_prediction, "decode_image", MagicMock(side_effect=error))
+
+        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        assert isinstance(detections, sv.Detections)
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    @pytest.mark.filterwarnings("error:The image decoding and encoding capabilities of TorchVision:DeprecationWarning")
+    def test_predict_local_file_succeeds_when_torchvision_deprecation_is_an_error(self, tmp_path: Path) -> None:
+        """A suite that turns torchvision's codec deprecation warning into an error must still predict a local file.
+
+        The filter matches only that warning's message, so on torchvision releases that do not emit it the native decode
+        runs and the same result is expected.
+        """
+        image_path = tmp_path / "image.png"
+        expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+
+        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        assert isinstance(detections, sv.Detections)
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    def test_predict_mixed_inputs_keep_each_source_image_in_input_order(self, tmp_path: Path) -> None:
+        """A natively decoded file among other input types must not reorder or swap their source images.
+
+        The call mixes every route a string or image can take, each input with its own size and colour, so a result
+        attached to the wrong input changes the shape or the pixels.
+        """
+        native_path = tmp_path / "native.png"
+        native_pixels = np.full((11, 21, 3), (10, 20, 30), dtype=np.uint8)
+        PIL.Image.fromarray(native_pixels).save(native_path)
+        pil_image = PIL.Image.new("RGB", (22, 12), color=(40, 50, 60))
+        array = np.full((13, 23, 3), (70, 80, 90), dtype=np.uint8)
+        # Ones convert to 255 exactly in the source image, whatever the float rounding of other values.
+        tensor = torch.ones(3, 14, 24)
+        fallback_path = tmp_path / "fallback.gif"
+        PIL.Image.new("RGB", (25, 15), color=(255, 0, 0)).save(fallback_path)
+        with PIL.Image.open(fallback_path) as fallback_image:
+            fallback_pixels = np.array(fallback_image.convert("RGB"))
+        expected = [
+            native_pixels,
+            np.array(pil_image),
+            array,
+            np.full((14, 24, 3), 255, dtype=np.uint8),
+            fallback_pixels,
+        ]
+
+        detections = _DummyRFDETR().predict(
+            [str(native_path), pil_image, array, tensor, str(fallback_path)], include_source_image=True
+        )
+
+        sources = [result.metadata["source_image"] for result in detections]
+        assert [source.shape for source in sources] == [pixels.shape for pixels in expected]
+        assert all(np.array_equal(source, pixels) for source, pixels in zip(sources, expected, strict=True))
+
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    def test_predict_local_file_uses_fast_decoder(self, tmp_path: Path, include_source_image: bool) -> None:
+        """A supported local file must reach public prediction without a second Pillow decode."""
+        image_path = tmp_path / "image.png"
+        expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+        model = _DummyRFDETR()
+
+        with (
+            patch("rfdetr._prediction.decode_image", wraps=_prediction.decode_image) as decode_spy,
+            # Pillow may read the header, but must not decode the pixels the native decoder already returned.
+            patch("PIL.ImageFile.ImageFile.load", side_effect=AssertionError("Pillow decoded the pixels")),
+        ):
+            detections = model.predict(str(image_path), include_source_image=include_source_image)
+
+        decode_spy.assert_called_once()
+        assert isinstance(decode_spy.call_args.args[0], torch.Tensor)
+
+        if include_source_image:
+            source_image = detections.metadata["source_image"]
+            np.testing.assert_array_equal(source_image, expected)
+            assert source_image.flags.writeable
+            assert source_image.flags.owndata
+        else:
+            assert "source_image" not in detections.metadata
+
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    @pytest.mark.parametrize("image_format", ["PNG", "JPEG"])
+    def test_predict_local_file_delivers_the_same_model_batch_as_a_pil_image(
+        self, tmp_path: Path, image_format: str, include_source_image: bool
+    ) -> None:
+        """The model must receive the same normalized batch from a local file as from the PIL image Pillow opens."""
+        image_path = tmp_path / f"image.{image_format.lower()}"
+        # Every pixel and channel differs, so a flip, a channel swap or an off-by-one changes the batch.
+        rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 37 + 13) % 256).astype(np.uint8)
+        PIL.Image.fromarray(rgb).save(image_path, format=image_format)
+        model = _DummyRFDETR()
+        model_module = model.model.model
+        assert model_module is not None
+        model_inputs: list[torch.Tensor] = []
+
+        with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
+            model.predict(str(image_path), include_source_image=include_source_image)
+            with PIL.Image.open(image_path) as pillow_image:
+                model.predict(pillow_image, include_source_image=include_source_image)
+
+        assert len(model_inputs) == 2
+        torch.testing.assert_close(model_inputs[0], model_inputs[1])
 
     @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
     @pytest.mark.parametrize("grayscale", [False, True])
@@ -1045,18 +1459,9 @@ class TestPredictNegativeStrideNumpy:
         """
         batches: list[torch.Tensor] = []
 
-        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
-            """Capture the normalized batch delivered to the model boundary.
-
-            Examples:
-                This test-local closure requires the enclosing capture list.
-                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
-            """
-            batches.append(args[0].detach().clone())
-
         model_module = model.model.model
         assert model_module is not None
-        with model_module.register_forward_pre_hook(capture_model_input):
+        with model_module.register_forward_pre_hook(_record_model_inputs(batches)):
             detections = model.predict(image, include_source_image=include_source_image)
 
         assert len(batches) == 1, f"expected one forward call, got {len(batches)}"
@@ -1249,7 +1654,7 @@ class TestPredictPixelRangeValidation:
             model.predict([known_valid, out_of_range], include_source_image=False)
 
     def test_known_valid_file_path_skips_range_scans(self, tmp_path: Path) -> None:
-        """A file-path input is opened into a PIL image before the range check, so it skips the scan too."""
+        """A local file path decodes to known-valid ``uint8`` pixels, so it skips the range scan too."""
         img_path = tmp_path / "known_valid.png"
         PIL.Image.new("RGB", (8, 8), color=(255, 255, 255)).save(str(img_path))
         model = _DummyRFDETR()
@@ -1259,6 +1664,15 @@ class TestPredictPixelRangeValidation:
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(str(img_path), include_source_image=False)
+
+    def test_mixed_local_file_and_float_numpy_images_still_check_each_image(self, tmp_path: Path) -> None:
+        """A natively decoded file must not suppress a later float image's range error."""
+        img_path = tmp_path / "known_valid.png"
+        PIL.Image.new("RGB", (8, 8), color=(255, 255, 255)).save(str(img_path))
+        out_of_range = np.full((8, 8, 3), 1.5, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            _DummyRFDETR().predict([str(img_path), out_of_range], include_source_image=False)
 
     def test_known_valid_image_skips_range_scans_with_source_image_capture(self) -> None:
         """The scan skip must still apply under ``include_source_image=True``, the public default."""
@@ -1564,18 +1978,9 @@ class TestPredictResizeMatchesTrainingInterpolation:
         ]
         model_inputs: list[torch.Tensor] = []
 
-        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
-            """Capture the normalized batch delivered to the model boundary.
-
-            Examples:
-                This test-local closure requires the enclosing capture list.
-                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
-            """
-            model_inputs.append(args[0].detach().clone())
-
         model_module = model.model.model
         assert model_module is not None
-        with model_module.register_forward_pre_hook(capture_model_input):
+        with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
             model.predict(images)
             model.predict(images, antialias=True)
 

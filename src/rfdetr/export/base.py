@@ -202,6 +202,9 @@ class Exporter(ABC, Generic[_ConfigT]):
        package the format cannot run without. A subclass overrides it and never calls it: ``RFDETR.export`` calls it
        before the forward pass, and :meth:`__call__` calls it again before :meth:`_convert`, so an exporter handed a
        graph directly checks the same packages first.
+    4. :meth:`check_environment` then asks whether the installed packages can build what the configuration requests
+       (a separate runtime library, a feature of a newer release). It runs right after :meth:`check_dependencies`, at
+       the same two places, and is an instance method because the answer depends on the configuration.
 
     A refusal that depends on the prepared graph (an output the converter cannot lower, say) comes first in
     :meth:`_convert`, before the conversion runs.
@@ -362,6 +365,21 @@ class Exporter(ABC, Generic[_ConfigT]):
         """
         return
 
+    def check_environment(self) -> None:
+        """Refuse a configuration the installed packages cannot build, before any work on the model starts.
+
+        The default is a no-op. A format overrides it when a setting needs more than :meth:`check_dependencies` can
+        see, such as a runtime library that ships separately from the format's package.
+        :meth:`rfdetr.detr.RFDETR.export` and :meth:`__call__` call it right after :meth:`check_dependencies`, so an
+        override may import the format's packages, and it stays idempotent. A public entry point that bypasses
+        :meth:`__call__` calls it itself.
+
+        Raises:
+            ImportError: If an override finds that a library the configuration needs cannot be loaded.
+            ValueError: If an override finds that the installed package cannot honour a setting.
+        """
+        return
+
     def __call__(self, graph: ExportGraph) -> Path:
         """Export *graph* and return the path to the artifact.
 
@@ -372,10 +390,13 @@ class Exporter(ABC, Generic[_ConfigT]):
             Path to the exported artifact.
 
         Raises:
-            ImportError: If :meth:`check_dependencies` finds a package the format needs missing; checked before the
-                conversion starts, so a caller that hands the exporter a graph directly gets the same message.
+            ImportError: If :meth:`check_dependencies` finds a package the format needs missing, or
+                :meth:`check_environment` a library the configuration needs; both are checked before the conversion
+                starts, so a caller that hands the exporter a graph directly gets the same message.
+            ValueError: If :meth:`check_environment` finds that the installed package cannot honour a setting.
         """
         self.check_dependencies()
+        self.check_environment()
         # Once for every format — the model arrives from prepare_export_graph in its training forward, and the
         # switch is idempotent so a two-stage format composing another exporter stays safe.
         _switch_to_export_mode(graph.model)

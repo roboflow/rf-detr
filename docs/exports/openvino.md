@@ -143,3 +143,26 @@ The exported OpenVINO IR model produces the following outputs:
     - Output 0: Bounding boxes `[batch, 300, 4]`
     - Output 1: Class logits `[batch, 300, num_classes]`
     - Output 2: Keypoints (if keypoint head is present)
+
+## INT8 Quantization
+
+`quantization="int8"` compresses the IR with [NNCF](https://github.com/openvinotoolkit/nncf) before it is written, so the `.xml` / `.bin` pair on disk is already 8-bit:
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+model.export(format="openvino", quantization="int8", calibration_data="calibration_images/")
+```
+
+NNCF is a separate install — `pip install nncf` — rather than part of the `rfdetr[openvino]` extra, since only this mode needs it and it carries a heavyweight dependency set an FP32 or FP16 export has no use for.
+
+`calibration_data` is **required**: static quantization reads activation ranges from it, so it must be representative of your deployment domain. It accepts a directory of images (preprocessed exactly as `predict()` does, capped by `max_images`), a `.npy` file of shape `(N, C, H, W)` already normalized, or an equivalent array.
+
+!!! note "`quantization` and `openvino_precision` are different knobs"
+
+    `openvino_precision` controls how IR weights are *stored* (FP32 vs FP16 compression) and leaves arithmetic alone. `quantization="int8"` changes the arithmetic. Set them independently.
+
+!!! warning "The transformer recipe matters"
+
+    The export asks NNCF for `ModelType.TRANSFORMER` rather than its generic defaults. Measured on a 500-image COCO val2017 subset, plain `nncf.quantize(model, dataset)` cost **5.34 mAP on Nano and 6.18 on Small** — worse than a comparable ONNX Runtime configuration — because it quantizes normalization and the elementwise math around attention along with the matrix multiplies. The transformer recipe keeps those paths in float. Measure on your own data before deploying.

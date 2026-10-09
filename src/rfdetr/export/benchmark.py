@@ -288,6 +288,8 @@ def main(
     device: int = 0,
     run_benchmark: bool = False,
     disable_eval: bool = False,
+    *,
+    engine_host_code_allowed: bool = False,
 ) -> None:
     """Performance benchmark tool for ONNX/TRT models.
 
@@ -297,6 +299,9 @@ def main(
         device: CUDA device index.
         run_benchmark: Repeat inference 10x to measure latency.
         disable_eval: Skip COCO evaluation.
+        engine_host_code_allowed: Let TensorRT load a ``.trt`` engine that carries host code, which an engine built
+            by TensorRT 11 with ``trt_version_compatible=True`` does. Ignored for ``.onnx`` files. Turn it on only
+            for an engine you built yourself or otherwise trust.
     """
     logger.info(
         {
@@ -305,6 +310,7 @@ def main(
             "device": device,
             "run_benchmark": run_benchmark,
             "disable_eval": disable_eval,
+            "engine_host_code_allowed": engine_host_code_allowed,
         }
     )
     coco_gt = osp.join(coco_path, "annotations/instances_val2017.json")
@@ -335,7 +341,9 @@ def main(
         )
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     elif path.endswith((".trt", ".engine")):
-        model = _load_tensorrt_session(path, sync_mode=True, device=f"cuda:{device}")
+        model = _load_tensorrt_session(
+            path, sync_mode=True, device=f"cuda:{device}", engine_host_code_allowed=engine_host_code_allowed
+        )
         infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     else:
         raise NotImplementedError('Only model file names ending with ".onnx", ".trt", or ".engine" are supported.')
