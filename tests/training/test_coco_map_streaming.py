@@ -223,17 +223,50 @@ def test_empty_side_state_matches_batch_hotcoco(iou_type: Any, predicted: int, a
 
 
 @_requires_hotcoco
-@pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
-def test_float_detection_labels_raise_value_error(backend: str) -> None:
-    """Float detection labels raise a ``ValueError`` on both hotcoco backends, streamed or not."""
+@pytest.mark.parametrize("class_metrics", [True, False])
+def test_float_detection_labels_are_refused_while_streaming(class_metrics: bool) -> None:
+    """A whole-valued float detection label raises the batch path's ``ValueError`` as the batch is streamed.
+
+    hotcoco 1.2.1 rejects only a fractional id, so ``1.0`` would otherwise reach ``compute()``: an ``IndexError`` with
+    per-class metrics, a silently accepted label without them.
+    """
     predictions, targets = _disc_records(predicted=1, annotated=1)
     predictions[0]["labels"] = predictions[0]["labels"].float()
-    metric = OnePassCocoMeanAveragePrecision(iou_type="bbox", backend=backend, class_metrics=True, num_classes=2)
-    message = "expected integer labels" if backend == "hotcoco" else "row 0 has category_id"
+    metric = OnePassCocoMeanAveragePrecision(
+        iou_type="bbox", backend="hotcoco_streaming", class_metrics=class_metrics, num_classes=2
+    )
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="expected integer labels"):
         metric.update(predictions, targets)
+
+
+@_requires_hotcoco
+def test_float_detection_labels_are_refused_by_the_batch_backend() -> None:
+    """The batch backend raises the same ``ValueError`` at ``compute()``, so both paths agree on the message."""
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    predictions[0]["labels"] = predictions[0]["labels"].float()
+    metric = OnePassCocoMeanAveragePrecision(iou_type="bbox", backend="hotcoco", class_metrics=True, num_classes=2)
+    metric.update(predictions, targets)
+
+    with pytest.raises(ValueError, match="expected integer labels"):
         metric.compute()
+
+
+@_requires_hotcoco
+def test_float_detection_labels_in_a_later_batch_name_their_epoch_wide_sample() -> None:
+    """A float label arriving after a valid batch is refused with its index in the whole epoch, as on the batch path.
+
+    The second batch's image is sample ``1`` of the epoch; a batch-local count would call it sample ``0``.
+    """
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    metric = OnePassCocoMeanAveragePrecision(
+        iou_type="bbox", backend="hotcoco_streaming", class_metrics=False, num_classes=2
+    )
+    metric.update(predictions[:1], targets[:1])
+    predictions[1]["labels"] = predictions[1]["labels"].float()
+
+    with pytest.raises(ValueError, match=r"sample 1 \(expected integer labels"):
+        metric.update(predictions[1:2], targets[1:2])
 
 
 @_requires_hotcoco

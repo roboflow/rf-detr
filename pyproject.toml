@@ -58,14 +58,16 @@ train = [
     # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
     # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
     # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
-    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The floor is the release
-    # that added the column-form APIs the adapter builds its datasets with: `COCO.from_arrays` for the ground truth,
-    # `COCO.load_res(array, segmentation=...)` for box and mask predictions, and `COCO.update_anns(ids=..., area=...)`
-    # to switch prediction areas between IoU types in place (its `dataset` getter returns a copy, so an edit through
-    # it never lands). Version 1.2.1 also validates fractional IDs in array inputs. `_HotCocoBackend` refuses an older
-    # install at construction. The ceiling keeps the parity-tested 1.2 line until the next minor is verified against
-    # the adapter. Installing it also puts a
-    # generically-named `coco` console script on PATH.
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The floor is 1.2.1.
+    # Release 1.2.0 added the column-form APIs the adapter builds its datasets with: `COCO.from_arrays` for the ground
+    # truth, `COCO.load_res(array, segmentation=...)` for box and mask predictions, and
+    # `COCO.update_anns(ids=..., area=...)` to switch prediction areas between IoU types in place (its `dataset` getter
+    # returns a copy, so an edit through it never lands). Release 1.2.1 stops warning about the float32 threshold
+    # grids, which the narrowed warning filter in `_silenced_backend_diagnostics` assumes, and raises `ValueError` for
+    # a NaN score. `_HotCocoBackend` refuses an older install at construction, by missing symbol and by version. 1.2.1
+    # rejects a fractional category or image id but accepts a whole-valued float one, so the adapter checks label
+    # dtypes itself. The ceiling keeps the parity-tested 1.2 line until the next minor is verified against the
+    # adapter. Installing it also puts a generically-named `coco` console script on PATH.
     "hotcoco>=1.2.1,<1.3",
     "faster-coco-eval>=1.7.2",
     # Third COCO evaluation backend, selected with TrainConfig.eval_backend="ufcoco" (BSD-2-Clause, numpy-only runtime

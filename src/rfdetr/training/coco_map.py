@@ -45,6 +45,7 @@ import inspect
 import io
 import operator
 import os
+import re
 import warnings
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, cast
@@ -287,15 +288,34 @@ class _PackageCocoBackend(_RfdetrCocoBackend):
         return self._package().mask
 
 
+def _release_tuple(version: str) -> tuple[int, ...]:
+    """Return the leading numeric release components of a version string.
+
+    Args:
+        version: A version string such as ``"1.2.1"``; a pre-release or post-release suffix is ignored.
+
+    Returns:
+        Up to the first three integer components, which order releases of a ``major.minor.patch`` project.
+
+    Examples:
+        >>> _release_tuple("1.2.1")
+        (1, 2, 1)
+        >>> _release_tuple("1.2.1.post1") >= _release_tuple("1.2.1") > _release_tuple("1.2.0")
+        True
+    """
+    return tuple(int(part) for part in re.findall(r"\d+", version)[:3])
+
+
 class _HotCocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``.
 
-    The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an
-    older venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()``
-    after a whole validation epoch. The constructor refuses such an install up front instead. It checks the symbols
-    the adapter calls rather than parsing a version string, which also refuses an older release for the single-IoU
-    box runs that would not have reached the missing symbol: one actionable error at construction beats a run that
-    works or fails depending on the IoU types.
+    The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an older
+    venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()`` after a
+    whole validation epoch, or run on behavior the adapter no longer accounts for. The constructor refuses such an
+    install up front instead. It checks the symbols the adapter calls, which also refuses an older release for the
+    single-IoU box runs that would not have reached the missing symbol, and then the installed version against
+    :attr:`minimum_version`, for a release that has every symbol but still differs in behavior the adapter relies on.
+    One actionable error at construction beats a run that works or fails depending on the IoU types.
     """
 
     # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter always
@@ -305,13 +325,17 @@ class _HotCocoBackend(_PackageCocoBackend):
     #: hotcoco attributes, dotted from the package, that this backend calls and whose absence means the installed
     #: release predates the ``rfdetr[train]`` floor.
     required_symbols: tuple[str, ...] = ("COCO.update_anns", "COCO.from_arrays")
+    #: Oldest hotcoco release whose behavior this adapter relies on, matching the ``rfdetr[train]`` floor. Since 1.2.1
+    #: the float32 threshold grids no longer warn, which :func:`_silenced_backend_diagnostics` assumes, and a NaN
+    #: score raises ``ValueError`` from ``load_res()``.
+    minimum_version = "1.2.1"
 
     def __init__(self) -> None:
-        """Import hotcoco and refuse an installed release that lacks a symbol this backend calls.
+        """Import hotcoco and refuse an installed release this backend cannot run on.
 
         Raises:
-            ImportError: If hotcoco is not installed, or if the installed release is too old to provide every
-                entry of :attr:`required_symbols`.
+            ImportError: If hotcoco is not installed, if the installed release is too old to provide every entry of
+                :attr:`required_symbols`, or if its version is below :attr:`minimum_version`.
         """
         super().__init__()
         package = self._package()
@@ -321,15 +345,20 @@ class _HotCocoBackend(_PackageCocoBackend):
                 operator.attrgetter(symbol)(package)
             except AttributeError:
                 missing.append(f"hotcoco.{symbol}")
+        # Read from the distribution, not the module: hotcoco 1.1 exposes no `__version__`.
+        try:
+            installed: str | None = importlib.metadata.version("hotcoco")
+        except importlib.metadata.PackageNotFoundError:
+            installed = None
         if missing:
-            # Read from the distribution, not the module: hotcoco 1.1 exposes no `__version__`.
-            try:
-                installed = importlib.metadata.version("hotcoco")
-            except importlib.metadata.PackageNotFoundError:
-                installed = "(unknown version)"
             raise ImportError(
-                f"the installed hotcoco {installed} is too old for RF-DETR's COCO evaluation: it lacks "
-                f"{', '.join(missing)}. Upgrade it with: pip install -U 'rfdetr[train]'"
+                f"the installed hotcoco {installed or '(unknown version)'} is too old for RF-DETR's COCO evaluation: "
+                f"it lacks {', '.join(missing)}. Upgrade it with: pip install -U 'rfdetr[train]'"
+            )
+        if installed is not None and _release_tuple(installed) < _release_tuple(self.minimum_version):
+            raise ImportError(
+                f"the installed hotcoco {installed} is older than {self.minimum_version}, the oldest release RF-DETR's "
+                f"COCO evaluation is verified against. Upgrade it with: pip install -U 'rfdetr[train]'"
             )
 
     def _package(self) -> Any:
@@ -759,9 +788,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             self._stop_streaming("StreamingEval cannot merge state across distributed ranks")
             return
         categories = cast(list[dict[str, Any]], self._stream_categories)
-        # Unlike detection arrays, target annotations are passed as dictionaries; keep the batch path's explicit
-        # validation rather than letting hotcoco report its lower-level conversion error.
-        self._validate_detection_labels(self.groundtruth_labels[-num_images:])
+        # Restate the batch path's dtype check for both streamed sides. hotcoco 1.2.1 rejects only a fractional id, so
+        # a whole-valued float detection label would reach `compute()` as an `IndexError` or pass silently, and an
+        # out-of-range float ground-truth label would fall back to batch evaluation instead of raising. The start
+        # index keeps a reported sample number global, as on the batch path.
+        first_image = len(self.groundtruth_labels) - num_images
+        self._validate_detection_labels(self.detection_labels[-num_images:], start=first_image)
+        self._validate_detection_labels(self.groundtruth_labels[-num_images:], start=first_image)
         labels = torch.cat([*self.detection_labels[-num_images:], *self.groundtruth_labels[-num_images:]])
         if labels.numel() and (int(labels.min()) < 0 or int(labels.max()) >= len(categories)):
             # hotcoco rejects an undeclared category with `KeyError`, but a negative id in the detection array
@@ -1368,8 +1401,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 )
 
     @staticmethod
-    def _validate_detection_labels(labels: list[Tensor]) -> None:
-        """Restate the per-annotation label check TorchMetrics performs during conversion, for the array paths.
+    def _validate_detection_labels(labels: list[Tensor], start: int = 0) -> None:
+        """Restate TorchMetrics' per-annotation label check for the array paths, batch and streamed alike.
 
         Upstream rejects any detection or target label that is not a Python ``int`` once converted, one annotation
         at a time -- a whole-valued ``3.0`` included. The array paths never make that conversion: the detection
@@ -1380,11 +1413,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         Args:
             labels: Per-image labels, as stored in ``detection_labels`` or ``groundtruth_labels``.
+            start: Index of the first image of ``labels`` within the stored state, so a streamed batch reports the same
+                sample number as the batch path.
 
         Raises:
             ValueError: If a non-empty image's labels are a floating-point or complex tensor.
         """
-        for image_id, image_labels in enumerate(labels):
+        for image_id, image_labels in enumerate(labels, start=start):
             if image_labels.numel() > 0 and (torch.is_floating_point(image_labels) or torch.is_complex(image_labels)):
                 raise ValueError(
                     f"Invalid input class of sample {image_id} (expected integer labels, got {image_labels.dtype})"

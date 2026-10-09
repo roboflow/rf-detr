@@ -25,9 +25,9 @@ from torchmetrics.detection.helpers import CocoBackend
 from rfdetr.config import CocoEvalBackend
 from rfdetr.training.coco_map import (
     _BACKENDS,
-    _silenced_backend_diagnostics,
     OnePassCocoMeanAveragePrecision,
     _hotcoco,
+    _silenced_backend_diagnostics,
     _ufcoco,
     _ufcoco_evaluator_type,
     _UfcocoBackend,
@@ -1028,9 +1028,9 @@ def test_hotcoco_evaluation_raises_no_warnings(backend: str) -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
 
     hotcoco reports RF-DETR's configured ``maxDets`` as a warning; its 1.2.1 release no longer reports the float32
-    threshold grids. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
-    channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run. ``hotcoco_streaming`` matches
-    in ``update()``, so the window covers it too.
+    threshold grids. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning channel
+    reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run. ``hotcoco_streaming`` matches in
+    ``update()``, so the window covers it too.
     """
     predictions, targets = multiclass_detection_state()
     metric = OnePassCocoMeanAveragePrecision(
@@ -1054,6 +1054,19 @@ def test_hotcoco_suppresses_only_the_max_dets_warning() -> None:
             warnings.warn("unrelated diagnostic", UserWarning)
 
     assert [str(warning.message) for warning in raised] == ["unrelated diagnostic"]
+
+
+@hotcoco_only
+def test_hotcoco_backend_refuses_a_release_below_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hotcoco release with every required symbol but an older version is refused at construction.
+
+    1.2.0 provides ``COCO.update_anns`` and ``COCO.from_arrays``, so only the version check keeps it out: the narrowed
+    warning filter does not cover its float32-grid warning, which would otherwise repeat every validation epoch.
+    """
+    monkeypatch.setattr("rfdetr.training.coco_map.importlib.metadata.version", lambda name: "1.2.0")
+
+    with pytest.raises(ImportError, match="hotcoco 1.2.0 is older than 1.2.1"):
+        _BACKENDS["hotcoco"]()
 
 
 @ufcoco_only
