@@ -38,6 +38,7 @@ _MASK_CASES = [
     "non_contiguous",
     "mask_innermost_row",
 ]
+#: Devices every parity test runs on; the CUDA case needs the ``gpu`` marker and a visible device.
 _DEVICES = [
     "cpu",
     pytest.param(
@@ -45,7 +46,7 @@ _DEVICES = [
         marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")],
     ),
 ]
-# The reference is stock TorchMetrics, which encodes through faster-coco-eval's `mask.encode`.
+#: Arguments for the adapter and its reference, stock TorchMetrics, which encodes masks with faster-coco-eval.
 _KWARGS: dict[str, Any] = {"iou_type": ("bbox", "segm"), "backend": "faster_coco_eval"}
 
 
