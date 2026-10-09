@@ -9,9 +9,9 @@ Three of the five export backends (ONNX, CoreML, ExecuTorch) resolve their outpu
 :func:`resolve_export_stem`, choosing between a user-supplied full override (``output_name``), a model variant
 identifier (``variant_name``), and a generic default, with consistent path-traversal sanitization. The other two differ:
 TFLite takes no ``output_name`` at all (it inherits its stem from the already-resolved ONNX filename), and TensorRT
-delegates only the ``output_name`` sanitize step here while still building its own engine path and ``_fp16``/``_fp32``
-precision suffix. Centralizing the precedence + sanitization keeps the backends that share it consistent instead of each
-re-implementing it.
+delegates only the ``output_name`` sanitize step here while still building its own engine path and
+``_fp16``/``_fp32``/``_int8`` precision suffix. Centralizing the precedence + sanitization keeps the backends that share
+it consistent instead of each re-implementing it.
 """
 
 from __future__ import annotations

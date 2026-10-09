@@ -30,7 +30,7 @@ PathLikeStr: TypeAlias = str | Path
 AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
 #: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
 #: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
-CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco", "vernier"]
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "hotcoco_streaming", "faster_coco_eval", "ufcoco", "vernier"]
 #: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
 #: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
 _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
@@ -156,18 +156,21 @@ class AugmentationBackend(str, Enum):
         """Resolve a string to a concrete backend, auto-picking the best installed one.
 
         Legacy string aliases (``"gpu"``, ``"tv"``, ``"albu"``) are mapped to their current form
-        first. ``"cpu"`` auto-picks the best *installed* CPU backend: Albumentations > Kornia
-        (CPU) > torchvision. ``"auto"`` additionally prefers Kornia first when ``has_cuda=True``
-        and Kornia is installed, then falls back to the same CPU priority. The concrete backend
-        ``"cpu"``/``"auto"`` resolve to can therefore vary across environments — pass
-        ``"torchvision"`` explicitly to force torchvision regardless of what's installed.
+        first. ``"cpu"`` auto-picks the best *installed* backend: Albumentations > Kornia >
+        torchvision, where Kornia is eligible only when ``has_cuda=True``. ``"auto"`` additionally
+        prefers Kornia first when ``has_cuda=True`` and Kornia is installed, then falls back to the
+        same priority. Neither ever resolves to Kornia without CUDA, because the Kornia training path
+        refuses to run without a CUDA device. The concrete backend ``"cpu"``/``"auto"`` resolve to
+        can therefore vary across environments — pass ``"torchvision"`` explicitly to force
+        torchvision regardless of what's installed.
 
         Args:
             value: Backend name string.
-            has_cuda: Whether a CUDA device is available. Only consulted for ``"auto"`` — callers
-                that care about CUDA-gated GPU selection (e.g. dataset builders) compute this via
-                their own fork-safe CUDA check and pass it in; this function does not probe CUDA
-                itself to avoid importing device-detection code from other modules.
+            has_cuda: Whether a CUDA device is available. Consulted for ``"cpu"`` and ``"auto"``,
+                which only pick Kornia when it is ``True`` — callers that care about CUDA-gated GPU
+                selection (e.g. dataset builders) compute this via their own fork-safe CUDA check and
+                pass it in; this function does not probe CUDA itself to avoid importing
+                device-detection code from other modules.
 
         Returns:
             Concrete ``AugmentationBackend`` member.
@@ -187,7 +190,7 @@ class AugmentationBackend(str, Enum):
                 return cls.KORNIA
             if cls.ALBU._is_available():
                 return cls.ALBU
-            if cls.KORNIA._is_available():
+            if has_cuda and cls.KORNIA._is_available():
                 return cls.KORNIA
             return cls.TV
         try:
@@ -1372,9 +1375,15 @@ class TrainConfig(BaseConfig):
     eval_backend: CocoEvalBackend = Field(
         default="vernier",
         description=(
-            "COCO evaluation backend used for validation and test mAP. All four ship with 'rfdetr[train]' and "
+            "COCO evaluation backend used for validation and test mAP. All of them ship with 'rfdetr[train]' and "
             "produce identical metrics; 'vernier' is the default and computes fastest, both several times "
-            "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
+            "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools. "
+            "'hotcoco_streaming' is the same evaluator as 'hotcoco' in a different execution mode, best-effort with a "
+            "fallback to 'hotcoco': it matches each validation batch as it arrives, which shortens the end-of-epoch "
+            "evaluation but costs more CPU time in total. It keeps the stored evaluation state for the fallback "
+            "and adds the stream's matching state during the epoch, but skips the full COCO dataset build at the "
+            "end; peak memory has not been measured. It applies to single-process runs and otherwise evaluates in "
+            "one batch like 'hotcoco'."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during

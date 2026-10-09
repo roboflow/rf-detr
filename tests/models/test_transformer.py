@@ -40,7 +40,7 @@ from rfdetr.models.transformer import (
 )
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
-from tests._markers import cuda_marks, requires_cuda
+from tests._markers import cuda_marks, onnx_and_onnxruntime_only, requires_cuda
 from tests.models._transformer_support import decoder_layer, record_apply_calls
 
 # Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
@@ -1105,6 +1105,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         assert output_memory.shape == (batch_size, total_hw, dim)
         assert output_proposals.shape == (batch_size, total_hw, 4)
 
+    @onnx_and_onnxruntime_only
     @pytest.mark.parametrize("batch_size", [1, 4, 8])
     def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
@@ -1112,8 +1113,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as a constant ONNX node,
         causing TRT engines to fail at inference for any batch != 8. Skipped when onnx or onnxruntime is not installed.
         """
-        pytest.importorskip("onnx")
-        onnxruntime = pytest.importorskip("onnxruntime")
+        import onnxruntime
 
         ht, wd, dim = 4, 4, 8
         spatial_shapes_list = [(ht, wd)]
@@ -3223,7 +3223,7 @@ _LINEAR_RELU_CASES = [
 class TestLinearReLU:
     """Fused linear + ReLU autograd function against relu(linear)."""
 
-    @pytest.mark.usefixtures("float32_matmul_precision")
+    @pytest.mark.usefixtures("float32_matmul_precision", "mkldnn_disabled")
     @pytest.mark.parametrize("dim_feedforward", [64, 63])
     @pytest.mark.parametrize(("device", "dtype"), _LINEAR_RELU_CASES)
     def test_is_bitwise_relu_of_linear_forward_and_backward(
