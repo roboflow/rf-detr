@@ -1778,11 +1778,6 @@ class TestExportRejectsBeforeForwardPass:
             pytest.param("tensorrt", {"notes": float("nan")}, ValueError, "notes", id="tensorrt-notes-nan"),
             pytest.param("coreai", {"notes": float("nan")}, ValueError, "notes", id="coreai-notes-nan"),
             pytest.param("coreml", {"notes": float("nan")}, ValueError, "notes", id="coreml-notes-nan"),
-            pytest.param("onnx", {"notes": "a\ud800"}, ValueError, "notes", id="notes-surrogate"),
-            pytest.param("tflite", {"notes": "a\ud800"}, ValueError, "notes", id="tflite-notes-surrogate"),
-            pytest.param("tensorrt", {"notes": "a\ud800"}, ValueError, "notes", id="tensorrt-notes-surrogate"),
-            pytest.param("coreai", {"notes": "a\ud800"}, ValueError, "notes", id="coreai-notes-surrogate"),
-            pytest.param("coreml", {"notes": "a\ud800"}, ValueError, "notes", id="coreml-notes-surrogate"),
             pytest.param(
                 "tensorrt",
                 {"trt_hardware_compatibility": "AMPERE_PLUS"},

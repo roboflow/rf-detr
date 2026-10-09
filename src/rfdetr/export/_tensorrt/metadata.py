@@ -225,8 +225,7 @@ def build_engine_metadata(
         A JSON-serializable dict.
 
     Raises:
-        ValueError: If ``config.notes`` holds a non-finite float or a circular reference, or is a string holding a
-            surrogate code point.
+        ValueError: If ``config.notes`` holds a non-finite float or a circular reference.
         TypeError: If ``config.notes`` holds a value JSON cannot encode.
 
     Examples:
