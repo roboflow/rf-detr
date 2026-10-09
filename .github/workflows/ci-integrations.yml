@@ -106,6 +106,11 @@ jobs:
               os: "macos-latest",
               python-version: "3.13",
             }
+          # tflite: every [tflite] dependency carries a python_version >= '3.12' and < '3.13' marker (onnx2tf's numpy
+          # pin, see pyproject.toml), so the extra installs nothing on 3.10/3.13 and the e2e_tflite tests would only
+          # skip there. Single 3.12 row; the extra also conflicts with executorch, litert and coreai, so it never
+          # shares an environment with another format.
+          - { format: "tflite", os: "ubuntu-latest", python-version: "3.12" }
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -190,6 +195,17 @@ jobs:
           import onnxruntime
 
           print(f"onnx {onnx.__version__} (IR {onnx.IR_VERSION}) / onnxruntime {onnxruntime.__version__} import OK")
+        shell: python
+
+      - name: 🔎 Verify onnx2tf and TensorFlow imports
+        if: matrix.format == 'tflite'
+        run: |
+          import tensorflow as tf
+
+          from rfdetr.export._tflite import _IS_ONNX2TF_AVAILABLE
+
+          assert _IS_ONNX2TF_AVAILABLE, "onnx2tf installed but not detected as available"
+          print(f"onnx2tf import OK / tensorflow {tf.__version__}")
         shell: python
 
       # Real export/convert + load/inference per format is heavy; single-worker. Target is
@@ -448,9 +464,9 @@ jobs:
 
   export-priority-guardian:
     runs-on: ubuntu-latest
-    # export-parity is a single matrix job now (13 format/os/python rows, see above); GitHub sets
+    # export-parity is a single matrix job now (14 format/os/python rows, see above); GitHub sets
     # its overall `result` to failure if any row fails regardless of fail-fast, so one need covers
-    # all 13 — the per-row breakdown lives in the Actions UI (each row's own check run), not here.
+    # all 14 — the per-row breakdown lives in the Actions UI (each row's own check run), not here.
     needs: [export-parity, tensorrt-parity]
     if: always()
     steps:
@@ -468,4 +484,4 @@ jobs:
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx; plus tensorrt) completed successfully."
+        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx, tflite; plus tensorrt) completed successfully."
