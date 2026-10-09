@@ -224,20 +224,21 @@ def test_empty_side_state_matches_batch_hotcoco(iou_type: Any, predicted: int, a
 
 @_requires_hotcoco
 @pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
-def test_float_detection_labels_raise_the_batch_path_error(backend: str) -> None:
-    """Float labels are refused with the same ``ValueError`` on both hotcoco backends, streamed or not."""
+def test_float_detection_labels_raise_value_error(backend: str) -> None:
+    """Float detection labels raise a ``ValueError`` on both hotcoco backends, streamed or not."""
     predictions, targets = _disc_records(predicted=1, annotated=1)
     predictions[0]["labels"] = predictions[0]["labels"].float()
     metric = OnePassCocoMeanAveragePrecision(iou_type="bbox", backend=backend, class_metrics=True, num_classes=2)
+    message = "expected integer labels" if backend == "hotcoco" else "row 0 has category_id"
 
-    with pytest.raises(ValueError, match="expected integer labels"):
+    with pytest.raises(ValueError, match=message):
         metric.update(predictions, targets)
         metric.compute()
 
 
 @_requires_hotcoco
 def test_float_ground_truth_labels_are_refused_while_streaming() -> None:
-    """A float target label fails at ``update()`` rather than as a raw ``IndexError`` in ``compute()``."""
+    """A float target label in dictionary-backed ground truth fails before hotcoco's lower-level conversion error."""
     predictions, targets = _disc_records(predicted=1, annotated=1)
     targets[0]["labels"] = targets[0]["labels"].float()
     metric = OnePassCocoMeanAveragePrecision(

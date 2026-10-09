@@ -25,6 +25,7 @@ from torchmetrics.detection.helpers import CocoBackend
 from rfdetr.config import CocoEvalBackend
 from rfdetr.training.coco_map import (
     _BACKENDS,
+    _silenced_backend_diagnostics,
     OnePassCocoMeanAveragePrecision,
     _hotcoco,
     _ufcoco,
@@ -1026,10 +1027,8 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str], ba
 def test_hotcoco_evaluation_raises_no_warnings(backend: str) -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
 
-    hotcoco reports every evaluator parameter differing from the COCO defaults as a Python warning (and prints a summary
-    table on ``sys.stdout``). RF-DETR overrides ``maxDets``, and torchmetrics keeps its thresholds in float32, so the
-    IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per ``compute()`` on a
-    real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
+    hotcoco reports RF-DETR's configured ``maxDets`` as a warning; its 1.2.1 release no longer reports the float32
+    threshold grids. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
     channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run. ``hotcoco_streaming`` matches
     in ``update()``, so the window covers it too.
     """
@@ -1044,6 +1043,17 @@ def test_hotcoco_evaluation_raises_no_warnings(backend: str) -> None:
         metric.compute()
 
     assert [str(warning.message) for warning in raised] == []
+
+
+def test_hotcoco_suppresses_only_the_max_dets_warning() -> None:
+    """Suppress hotcoco's intentional detection-limit warning without hiding unrelated warnings."""
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        with _silenced_backend_diagnostics():
+            warnings.warn("hotcoco: max_dets differ from expected ([1, 10, 100])", UserWarning)
+            warnings.warn("unrelated diagnostic", UserWarning)
+
+    assert [str(warning.message) for warning in raised] == ["unrelated diagnostic"]
 
 
 @ufcoco_only

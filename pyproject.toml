@@ -62,10 +62,11 @@ train = [
     # that added the column-form APIs the adapter builds its datasets with: `COCO.from_arrays` for the ground truth,
     # `COCO.load_res(array, segmentation=...)` for box and mask predictions, and `COCO.update_anns(ids=..., area=...)`
     # to switch prediction areas between IoU types in place (its `dataset` getter returns a copy, so an edit through
-    # it never lands). `_HotCocoBackend` refuses an older install at construction. The ceiling keeps the
-    # parity-tested 1.2 line until the next minor is verified against the adapter. Installing it also puts a
+    # it never lands). Version 1.2.1 also validates fractional IDs in array inputs. `_HotCocoBackend` refuses an older
+    # install at construction. The ceiling keeps the parity-tested 1.2 line until the next minor is verified against
+    # the adapter. Installing it also puts a
     # generically-named `coco` console script on PATH.
-    "hotcoco>=1.2.0,<1.3",
+    "hotcoco>=1.2.1,<1.3",
     "faster-coco-eval>=1.7.2",
     # Third COCO evaluation backend, selected with TrainConfig.eval_backend="ufcoco" (BSD-2-Clause, numpy-only runtime
     # dependency, wheels for CPython 3.8+ on manylinux x86_64/aarch64, macOS x86_64/arm64 and win_amd64).

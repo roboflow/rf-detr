@@ -173,31 +173,21 @@ def _hotcoco() -> Any:
 
 @contextlib.contextmanager
 def _silenced_backend_diagnostics() -> Iterator[None]:
-    """Silence the configuration diagnostics hotcoco reports while an evaluation runs.
+    """Silence hotcoco's intentional ``max_dets`` warning and summary output.
 
-    hotcoco reports every evaluator parameter that differs from the COCO defaults, plus a summary table. RF-DETR
-    overrides ``maxDets`` on every evaluation and hands over thresholds torchmetrics stores in float32, which
-    hotcoco reads as off-reference by ~2.4e-8, so those messages describe intended configuration and would
-    otherwise repeat each validation epoch and each IoU type.
+    RF-DETR overrides ``maxDets`` on every evaluation, so hotcoco's warning about that setting describes intentional
+    configuration and would otherwise repeat each validation epoch and each IoU type. Since hotcoco 1.2.1, the
+    float32 threshold grids no longer produce warnings. The summary table goes through :data:`sys.stdout`, so ordinary
+    Python-level redirection catches it.
 
-    Each message fires once, as a :class:`UserWarning`, and ``summarize()``'s table goes through
-    :data:`sys.stdout`, so ordinary Python-level redirection catches both. Every ``UserWarning`` raised inside
-    the window is dropped rather than an enumerated set of messages: hotcoco has four of them today, one firing
-    only on empty state, and matching on text would silently stop working when a release rewords one. Nothing
-    but the three backend calls runs inside the window, so no other source can be caught by it, and genuine
-    failures still surface as exceptions.
-
-    TODO(hotcoco): narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference, or
-    offers a quiet ``summarize()`` (rfdetr hotcoco proposals 7 and 8; still firing on 1.2.0). Two of the
-    four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32
-    round-trip — and a third fires on empty state after ``evaluate()`` did run. Once an upstream release stops
-    reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
+    Only the known ``max_dets`` :class:`UserWarning` is filtered. Any other warning raised inside the window remains
+    visible, and genuine failures still surface as exceptions.
 
     Yields:
         Nothing; standard output and the warning filter are restored on exit.
     """
     with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-        warnings.simplefilter("ignore", UserWarning)
+        warnings.filterwarnings("ignore", message=r"^hotcoco: max_dets differ from expected", category=UserWarning)
         yield
 
 
@@ -769,16 +759,15 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             self._stop_streaming("StreamingEval cannot merge state across distributed ranks")
             return
         categories = cast(list[dict[str, Any]], self._stream_categories)
-        # The batch path makes this check in `_detection_results_array`; without it a float label reaches
-        # `StreamingEval` as a raw `IndexError` at `compute()`, or is accepted silently without `class_metrics`.
-        self._validate_detection_labels(self.detection_labels[-num_images:])
+        # Unlike detection arrays, target annotations are passed as dictionaries; keep the batch path's explicit
+        # validation rather than letting hotcoco report its lower-level conversion error.
         self._validate_detection_labels(self.groundtruth_labels[-num_images:])
         labels = torch.cat([*self.detection_labels[-num_images:], *self.groundtruth_labels[-num_images:]])
         if labels.numel() and (int(labels.min()) < 0 or int(labels.max()) >= len(categories)):
-            # hotcoco 1.2 rejects an undeclared category with `KeyError`, but a negative id in the detection array
+            # hotcoco rejects an undeclared category with `KeyError`, but a negative id in the detection array
             # with `ValueError`. One range check ahead of `update()` keeps both ends of the label range on the same
             # fallback without catching a genuine input error. A NaN score is not caught here: `load_res()` raises
-            # `RuntimeError` for it.
+            # `ValueError` for it.
             self._stop_streaming(f"a label falls outside the declared categories [0, {len(categories) - 1}]")
             return
         if self._streams is None:
