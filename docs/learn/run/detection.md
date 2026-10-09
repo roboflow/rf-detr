@@ -4,14 +4,17 @@ description: Run RF-DETR object detection on images, video, and streams. Nano to
 
 # Run an RF-DETR Object Detection Model
 
-RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.
+RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone (a PE-Core-T backbone for Atto, Femto and Pico). The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.
 
 ## Pre-trained Checkpoints
 
-RF-DETR offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr-plus) extension (`pip install rfdetr[plus]`) under the Platform Model License 1.0 and require a Roboflow account.
+RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. Atto, Femto, Pico, XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr-plus) extension (`pip install rfdetr[plus]`) under the Platform Model License 1.0 and require a Roboflow account.
 
 | Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+|  A   |    `RFDETRAtto` △     | `rfdetr-atto`           |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    | `rfdetr-femto`          |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     | `rfdetr-pico`           |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |  N   |     `RFDETRNano`      | `rfdetr-nano`           |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |  S   |     `RFDETRSmall`     | `rfdetr-small`          |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |  M   |    `RFDETRMedium`     | `rfdetr-medium`         |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |
@@ -64,7 +67,17 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79). For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
 
-For long-running inference with the `rfdetr` package, a fixed batch size, and a fixed resolution, opt into the PyTorch Inductor backend. Compilation has a higher one-time setup cost than the default TorchScript backend, but can reduce steady-state latency. This example requires a compatible CUDA device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+`predict()` resizes without antialiasing by default (`antialias=False`), which matches checkpoints trained with the default CPU augmentation backend when `rfdetr[augment]` is installed (Albumentations). Pass `antialias=True` for checkpoints trained with torchvision resizing: the Kornia/GPU augmentation backend, the CPU backend without `rfdetr[augment]`, or older RF-DETR releases. Antialiasing costs a little extra preprocessing time per image. Exported models and the `rfdetr.export` runtime helpers always resize without antialiasing, so `antialias=True` results will not match them unless you pre-resize the image with antialiasing yourself. On MPS with PyTorch older than 2.7, `antialias=True` resizes on the CPU because MPS has no antialiased resize kernel there.
+
+For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. Capture allocates a graph-private memory pool holding the captured forward's intermediates plus the static input/output buffers; it persists for the graph's lifetime and scales with batch size, resolution and model, so this backend uses more device memory than the default TorchScript backend. The backend was measured on detection RF-DETR Nano at batch size 1; segmentation and keypoint models use the same path but are unmeasured, and replay/clone memory cost grows with masks and batch size. Outputs are cloned before they leave the graph, so predictions returned by an earlier call are not overwritten by the next one. The default stays `"torchscript"`:
+
+```python
+model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
+```
+
+An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
+
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but Inductor can apply broader graph optimizations and later processes may reuse its disk cache. Both examples require a compatible CUDA device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support. The external `inference` package API shown above does not expose `RFDETR.inference()`:
 
 ```python
 model.inference(compile_backend="inductor", batch_size=1, dtype="float16")

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -16,17 +17,171 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
+from rfdetr.config import AugmentationBackend, ModelConfig, MultiScale, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
 from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
+from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import PackedTargets, make_collate_fn
 
 logger = get_logger()
+
+
+def _extra_names_above_a_class(names: list[str], dataset_names: list[str]) -> list[str]:
+    """Return the entries of *names* that push the dataset's own names out of their label positions.
+
+    A shift needs *dataset_names* to appear in *names* in order with at least one other entry above one of them —
+    the shape a ``class_names`` read from every category of a Roboflow COCO export has, where each unannotated
+    grouping category sits above the classes it groups and moves every one of them down a slot. Extra entries below
+    the last dataset name leave every position intact, so they are not returned: that list is longer than the label
+    space, not shifted against it.
+
+    Args:
+        names: Explicit ``class_names``.
+        dataset_names: Label-indexed names read from the dataset.
+
+    Returns:
+        The extra entries above the dataset's names, in order. Empty when *dataset_names* is not an ordered
+        subsequence of *names*, or when nothing sits above it.
+
+    Examples:
+        >>> _extra_names_above_a_class(["animals", "cat", "dog"], ["cat", "dog"])
+        ['animals']
+        >>> _extra_names_above_a_class(["person", "vehicle", "car"], ["person", "car"])
+        ['vehicle']
+
+        A trailing extra name shifts nothing, and neither does a list that reorders or renames instead:
+
+        >>> _extra_names_above_a_class(["cat", "dog", "bird"], ["cat", "dog"])
+        []
+        >>> _extra_names_above_a_class(["cat", "bird"], ["cat", "dog"])
+        []
+    """
+    extra_names: list[str] = []
+    matched = 0
+    for name in names:
+        if matched == len(dataset_names):
+            # Every dataset name has found its position; whatever is left only lengthens the list.
+            break
+        if name == dataset_names[matched]:
+            matched += 1
+        else:
+            extra_names.append(name)
+    if matched < len(dataset_names):
+        return []
+    return extra_names
+
+
+def _check_class_names_match_dataset(
+    class_names: Sequence[str] | None,
+    dataset_class_names: Sequence[str] | None,
+    *,
+    labels_remapped: bool,
+) -> None:
+    """Fail fast when ``TrainConfig.class_names`` cannot line up with the dataset's labels.
+
+    Explicit ``class_names`` name the model's classes by position, in checkpoints and in ``predict()`` output. A list
+    that holds the dataset's names in order with extra entries above them is what a Roboflow COCO export gives when
+    every entry of its ``categories`` list is read: a grouping category (``"animals"`` over ``"cat"``, ``"dog"``) has
+    no annotations and is not part of the label space (#609), so every class below it is off by one. Such an export
+    may group anywhere in the list and more than once — :func:`~rfdetr.datasets.coco.filter_parent_categories` drops
+    every unannotated parent it finds, not just a leading one — so any number of extra entries above a class raises,
+    naming each. A difference in length that shifts nothing warns instead. A list of the same length is a rename and
+    passes, unless it is the dataset's own names reordered — that warns too, because a reorder labels every moved
+    class as the one that took its place, and only the caller can say whether renaming one class to another's name
+    was the intent.
+
+    Only a dataset that remaps its category ids to contiguous label indices is compared at all — a Roboflow COCO
+    export (:func:`~rfdetr.datasets.coco.build_roboflow_from_coco`) or a webdataset packed with
+    ``category_ids="remap"``. A raw-id dataset (``dataset_file="coco"`` or ``"o365"``, a ``"raw"``-packed webdataset)
+    labels every object by its source category id, so the names read from it are ordered by that id rather than
+    indexed by label, and positions do not line up: the ``class_names`` that is correct there carries a placeholder
+    for every unused id — a leading one for the id ``0`` no COCO export uses — which is indistinguishable from the
+    Roboflow shift above. Comparing the two would reject a correct list and name the wrong remediation.
+
+    A remapped dataset that reserves label ``0`` as an unnamed background slot (keypoint models) is compared like any
+    other: the slot makes the two lists differ in length, which warns. An empty name used to skip the comparison
+    outright, which disabled it for every dataset carrying a category literally named ``""`` — and filtering the empty
+    entries out instead would renumber the very positions being checked.
+
+    Args:
+        class_names: ``TrainConfig.class_names``, or ``None`` when not set.
+        dataset_class_names: Label-indexed names read from the dataset, or ``None`` when unknown.
+        labels_remapped: Whether the dataset assigns labels by remapping category ids to contiguous indices, which
+            is what makes *dataset_class_names* indexed by label. ``False`` skips the comparison entirely.
+
+    Raises:
+        ValueError: If ``class_names`` holds the dataset's names in order with one or more extra entries above them.
+
+    Warns:
+        A ``WARNING`` record on the ``rf-detr`` logger — not a :mod:`warnings` warning, which a ``stacklevel`` could
+        only ever attribute to Lightning's own hook dispatcher — when ``class_names`` differs from the dataset's
+        names in a way that shifts nothing: the dataset's own names reordered, or any other difference in length.
+        Emitted once per run rather than once per rank.
+
+    Examples:
+        >>> _check_class_names_match_dataset(["cat", "dog"], ["cat", "dog"], labels_remapped=True)
+        >>> _check_class_names_match_dataset(["Katze", "Hund"], ["cat", "dog"], labels_remapped=True)
+
+        Raw category ids, where the correct list carries a placeholder for the unused id ``0``:
+
+        >>> _check_class_names_match_dataset(["", "cat", "dog"], ["cat", "dog"], labels_remapped=False)
+
+        >>> names, dataset_names = ["animals", "cat", "dog"], ["cat", "dog"]
+        >>> _check_class_names_match_dataset(names, dataset_names, labels_remapped=True)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: class_names has 3 entries but the dataset has 2 classes ['cat', 'dog']. ...
+
+        A parent listed between two classes shifts the ones below it just the same:
+
+        >>> names, dataset_names = ["person", "vehicle", "car"], ["person", "car"]
+        >>> _check_class_names_match_dataset(names, dataset_names, labels_remapped=True)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: ... The extra entries — 'vehicle' — are not classes the dataset annotates, ...
+    """
+    if class_names is None or not dataset_class_names or not labels_remapped:
+        return
+    names, dataset_names = list(class_names), list(dataset_class_names)
+    if sorted(names) == sorted(dataset_names) and names != dataset_names:
+        # Same names, different order: the length check below cannot see this, and it is the one mismatch that
+        # gives every moved class the name of the class that took its place.
+        message = (
+            f"class_names {names} holds the dataset's own names in a different order ({dataset_names}). Predictions "
+            "and checkpoints name classes by their position in class_names, so every moved class is labelled as the "
+            "one now standing in its place. Leave class_names unset to take the dataset's order, unless this order "
+            "is a deliberate renaming of one class to another's name."
+        )
+    elif len(names) == len(dataset_names):
+        return
+    elif extra_names := _extra_names_above_a_class(names, dataset_names):
+        listed = ", ".join(repr(name) for name in extra_names)
+        shift = "one" if len(extra_names) == 1 else str(len(extra_names))
+        raise ValueError(
+            f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
+            f"The extra entries — {listed} — are not classes the dataset annotates, the way a Roboflow COCO export "
+            "lists a top-level category above the classes it groups, so every class name below them would be shifted "
+            f"by {shift}. Pass class_names={dataset_names!r}, or leave class_names unset to use the dataset's names."
+        )
+    else:
+        message = (
+            f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
+            "Predictions and checkpoints name classes by their position in class_names, so the names may not match "
+            "the dataset's labels."
+        )
+    # ``setup("fit")`` is a per-rank hook, and the dataset-grid render in ``RFDETR.train`` calls it before
+    # ``trainer.fit()`` initializes ``torch.distributed``, where ``get_rank()`` reports 0 in every process.
+    # :func:`~rfdetr.utilities.distributed.is_main_process` answers the first case from the real global rank and
+    # ``_is_launcher_main_process`` the second from the launcher's environment, so a run emits this once rather
+    # than once per rank.
+    if is_main_process() and _is_launcher_main_process():
+        logger.warning(message)
+
 
 _MIN_TRAIN_BATCHES = 5
 
@@ -233,19 +388,6 @@ class RFDETRDataModule(LightningDataModule):
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
             requested_backend = self.train_config.augmentation_backend
-            # Keypoint transforms are incompatible with the Kornia GPU pipeline outright, so an
-            # explicit 'kornia'/'gpu' request is rejected here -- before the CUDA readiness check
-            # below -- so a keypoint model without CUDA still sees the keypoint error, not an
-            # unrelated "no CUDA" one.
-            if self.model_config.use_grouppose_keypoints and requested_backend in (
-                AugmentationBackend.KORNIA,
-                "kornia",
-                "gpu",
-            ):
-                raise ValueError(
-                    f"augmentation_backend={requested_backend!r} does not support keypoint transforms. "
-                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
-                )
             from rfdetr.datasets.kornia_transforms import (
                 is_gpu_postprocess,
                 require_gpu_backend_ready,
@@ -269,11 +411,6 @@ class RFDETRDataModule(LightningDataModule):
             # ALBU forces Albumentations even when aug_config is None
             if resolved == AugmentationBackend.ALBU and ns.aug_config is None:
                 ns.aug_config = AUG_CONFIG
-            if self.model_config.use_grouppose_keypoints and is_gpu_postprocess(resolved):
-                raise ValueError(
-                    f"augmentation_backend='{resolved}' does not support keypoint transforms. "
-                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
-                )
             if self.train_config.pad_targets_to is not None and is_gpu_postprocess(resolved):
                 # The Kornia GPU pipeline's own collate_boxes/unpack_boxes (kornia_transforms.py)
                 # rebuild their own real/filler mask from each image's box count -- they don't know
@@ -285,10 +422,27 @@ class RFDETRDataModule(LightningDataModule):
                     f"augmentation_backend='{resolved}' does not support pad_targets_to. "
                     "Set pad_targets_to=None or augmentation_backend='cpu'/'albumentations'."
                 )
+            if self.model_config.use_grouppose_keypoints and is_gpu_postprocess(resolved):
+                multi_scale = MultiScale.from_value(self.train_config.multi_scale)
+                if not self.train_config.square_resize_div_64 or multi_scale is MultiScale.PER_SAMPLE:
+                    # on_after_batch_transfer normalizes Kornia-augmented keypoints by the padded batch canvas, not by
+                    # each image's own size. Aspect-ratio resize (square_resize_div_64=False) and per-sample random
+                    # resize both collate images of different sizes into that canvas, so every smaller image would get
+                    # its joints shrunk toward the origin. Reject the combination instead of training on wrong targets.
+                    raise ValueError(
+                        f"augmentation_backend='{resolved}' does not support keypoint training with padded batches "
+                        f"(square_resize_div_64={self.train_config.square_resize_div_64}, "
+                        f"multi_scale='{multi_scale.value}'). Set square_resize_div_64=True and "
+                        "multi_scale='per-batch' or 'off', or use augmentation_backend='cpu'/'albumentations'."
+                    )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+            dataset_class_names, labels_remapped = self._dataset_label_space()
+            _check_class_names_match_dataset(
+                self.train_config.class_names, dataset_class_names, labels_remapped=labels_remapped
+            )
             # Build Kornia pipeline (once); use _kornia_setup_done so fallback paths
             # (pipeline stays None) do not re-run on repeated setup("fit") calls.
             if not self._kornia_setup_done:
@@ -815,11 +969,15 @@ class RFDETRDataModule(LightningDataModule):
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
+        pipeline_kwargs: dict[str, Any] = {"with_masks": True}
+        if self.model_config.use_grouppose_keypoints:
+            pipeline_kwargs.update(
+                include_keypoints=True, with_keypoints=True, keypoint_flip_pairs=self.train_config.keypoint_flip_pairs
+            )
         self._kornia_pipeline = build_kornia_pipeline(
             self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
-            # The padding mask must receive every geometric warp, even for detection-only batches.
-            with_masks=True,
+            **pipeline_kwargs,
         )
         self._kornia_normalize = build_normalize()
         logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
@@ -846,7 +1004,13 @@ class RFDETRDataModule(LightningDataModule):
         if self.trainer is None or not self.trainer.training or kornia_pipeline is None or kornia_normalize is None:
             return batch
 
-        from rfdetr.datasets.kornia_transforms import collate_boxes, collate_masks, unpack_boxes
+        from rfdetr.datasets.kornia_transforms import (
+            collate_boxes,
+            collate_keypoints,
+            collate_masks,
+            keypoint_horizontal_flip_mask,
+            unpack_boxes,
+        )
         from rfdetr.utilities.tensors import NestedTensor
 
         samples, targets = batch
@@ -856,29 +1020,64 @@ class RFDETRDataModule(LightningDataModule):
         kornia_pipeline.to(img.device)
         kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
+        points_padded = visibility = None
+        if self.model_config.use_grouppose_keypoints:
+            points_padded, visibility = collate_keypoints(targets, img.device, valid.shape[1])
+            # Kornia's geometric kernels use pixel-index coordinates (a horizontal flip maps x to width - 1 - x), while
+            # RF-DETR boxes and keypoints use continuous coordinates (width - x), as the CPU transforms do. Shift both
+            # into the pixel-index frame here and back right after the pipeline, before unpack_boxes clamps boxes and
+            # zeroes out-of-image joints, so a zeroed joint stays exactly 0.
+            boxes_padded = boxes_padded - 0.5
+            points_padded = points_padded - 0.5
+        # Kornia's keypoint transformer cannot reshape a [B, 0, 2] input.
+        # Carry one disposable point through an all-empty batch; target unpacking
+        # below ignores it because every image has zero valid boxes.
+        empty_keypoint_batch = points_padded is not None and points_padded.shape[1] == 0
+        if empty_keypoint_batch:
+            points_padded = img.new_zeros(img.shape[0], 1, 2)
         padding_mask = samples.mask
         if padding_mask is None:
             padding_mask = torch.zeros(img.shape[0], *img.shape[-2:], dtype=torch.bool, device=img.device)
         padding_masks = padding_mask.unsqueeze(1).to(torch.float32)
 
+        # Instance masks (segmentation only) ride in front of the padding mask, so the padding mask is always the last
+        # auxiliary channel and every model shares one pipeline call.
+        masks_aug: torch.Tensor | None = None
+        auxiliary_masks = padding_masks
         if self.model_config.segmentation_head:
             image_height, image_width = img.shape[-2:]
             masks_padded = collate_masks(
                 targets, img.device, n_max=valid.shape[1], image_height=image_height, image_width=image_width
             )
             auxiliary_masks = torch.cat((masks_padded, padding_masks), dim=1)
-            img_aug, boxes_aug, auxiliary_masks_aug = kornia_pipeline(img, boxes_padded, auxiliary_masks)
+        pipeline_inputs = [img, boxes_padded, auxiliary_masks]
+        if points_padded is not None:
+            pipeline_inputs.append(points_padded)
+        img_aug, boxes_aug, auxiliary_masks_aug, *points_out = kornia_pipeline(*pipeline_inputs)
+        points_aug = points_out[0] if points_out and not empty_keypoint_batch else None
+        if self.model_config.segmentation_head:
             masks_aug = auxiliary_masks_aug[:, : valid.shape[1]]
-            padding_mask_aug = auxiliary_masks_aug[:, valid.shape[1]] > 0.5
-            img_aug = kornia_normalize(img_aug)
-            aug_height, aug_width = img_aug.shape[-2:]
-            targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width, masks_aug=masks_aug)
-        else:
-            img_aug, boxes_aug, padding_masks_aug = kornia_pipeline(img, boxes_padded, padding_masks)
-            padding_mask_aug = padding_masks_aug[:, 0] > 0.5
-            img_aug = kornia_normalize(img_aug)
-            aug_height, aug_width = img_aug.shape[-2:]
-            targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width)
+        padding_mask_aug = auxiliary_masks_aug[:, -1] > 0.5
+        if points_padded is not None:
+            boxes_aug = boxes_aug + 0.5
+        if points_aug is not None:
+            points_aug = points_aug + 0.5
+        img_aug = kornia_normalize(img_aug)
+        aug_height, aug_width = img_aug.shape[-2:]
+        targets = unpack_boxes(
+            boxes_aug,
+            valid,
+            targets,
+            aug_height,
+            aug_width,
+            masks_aug=masks_aug,
+            keypoints_aug=points_aug,
+            keypoint_visibility=visibility,
+            keypoint_flip_pairs=self.train_config.keypoint_flip_pairs,
+            keypoint_flip_mask=keypoint_horizontal_flip_mask(kornia_pipeline, img.shape[0], img.device)
+            if points_aug is not None
+            else None,
+        )
 
         height, width = img_aug.shape[-2:]
         for target in targets:
@@ -887,6 +1086,12 @@ class RFDETRDataModule(LightningDataModule):
                 continue
             scale = boxes.new_tensor([width, height, width, height])
             target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
+        if self.model_config.use_grouppose_keypoints:
+            for target in targets:
+                keypoints = target["keypoints"].clone()
+                keypoints[..., 0] /= width
+                keypoints[..., 1] /= height
+                target["keypoints"] = keypoints
         batch = (NestedTensor(img_aug, padding_mask_aug), targets)
         return batch
 
@@ -904,6 +1109,20 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             Sorted list of class name strings, or ``None``.
         """
+        return self._dataset_label_space()[0]
+
+    def _dataset_label_space(self) -> tuple[list[str] | None, bool]:
+        """Return the dataset's class names together with whether its labels are remapped category ids.
+
+        Both answers come from the same dataset — the first of train, val and test that carries category information —
+        because they are only meaningful together: the names are indexed by label when the dataset remaps its category
+        ids to contiguous indices (a Roboflow COCO export, or a webdataset packed with ``category_ids="remap"``), and
+        ordered by category id when it does not. :func:`_check_class_names_match_dataset` compares positions, so it
+        needs to know which of the two it was handed.
+
+        Returns:
+            The class names of that dataset, or ``None`` when none exposes any, and whether its labels are remapped.
+        """
         for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
@@ -912,7 +1131,7 @@ class RFDETRDataModule(LightningDataModule):
             if isinstance(dataset, WebDatasetDetection):
                 own_names = dataset.class_names
                 if own_names:
-                    return own_names
+                    return own_names, dataset.index.category_ids == "remap"
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
                 label2cat = getattr(dataset, "label2cat", None)
@@ -925,9 +1144,11 @@ class RFDETRDataModule(LightningDataModule):
                         category = coco.cats.get(category_id)
                         if category is not None:
                             names[label] = category["name"]
-                    return names
-                return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
-        return None
+                    # A label2cat mapping is what remapping produces: the label is the index, the category id the value.
+                    return names, True
+                # No mapping — CocoDetection left labels as the raw category ids, so these names follow those ids.
+                return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())], False
+        return None, False
 
     def transfer_batch_to_device(
         self, batch: tuple[Any, Any], device: torch.device, dataloader_idx: int

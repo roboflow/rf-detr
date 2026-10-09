@@ -20,9 +20,10 @@ The result is an :class:`ExportGraph`: everything a converter needs, and nothing
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import operator
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, SupportsIndex, cast
 
 import numpy as np
 import torch
@@ -71,6 +72,18 @@ class ExportModelConfig(Protocol):
         """Whether the model predicts keypoints."""
 
 
+class _ExportShapeAware(Protocol):
+    """A non-DINOv2 encoder that bakes its position embeddings for a fixed export shape.
+
+    Encoders plugged in through :func:`rfdetr.models.backbone.register_backbone` implement this when their forward
+    would otherwise resample position embeddings at a shape other than their native one (see
+    :meth:`rfdetr.models.backbone.backbone.Backbone._build_encoder`).
+    """
+
+    def set_export_shape(self, shape: tuple[int, int]) -> None:
+        """Freeze position embeddings to *shape* before tracing."""
+
+
 @dataclass(frozen=True, slots=True)
 class ExportGraph:
     """A model prepared for export, together with the graph metadata every backend needs.
@@ -92,6 +105,90 @@ class ExportGraph:
     dynamic_axes: Mapping[str, Mapping[int, str]] | None
     shape: tuple[int, int]
     backbone_only: bool
+
+
+def validate_batch_size(batch_size: object) -> int:
+    """Validate the ``batch_size`` argument of :meth:`rfdetr.detr.RFDETR.export` and return it as a plain ``int``.
+
+    Accepts every integer type :func:`operator.index` does, numpy's included, so the export sizes its example batch the
+    same way whatever integer type the caller holds. A boolean is refused, as for the other sizes ``export`` checks:
+    Python's, numpy's (which numpy 1.x still converts to an index) and a boolean tensor alike.
+
+    Args:
+        batch_size: The value the caller passed.
+
+    Returns:
+        The batch size as a plain ``int``.
+
+    Raises:
+        ValueError: If *batch_size* is a boolean, is not an integer, or is below 1.
+
+    Examples:
+        >>> validate_batch_size(np.int64(2))
+        2
+        >>> validate_batch_size(0)
+        Traceback (most recent call last):
+        ...
+        ValueError: batch_size must be a positive integer, got 0.
+    """
+    is_boolean = isinstance(batch_size, (bool, np.bool_)) or (
+        isinstance(batch_size, torch.Tensor) and batch_size.dtype == torch.bool
+    )
+    try:
+        value = None if is_boolean else operator.index(cast(SupportsIndex, batch_size))
+    except TypeError:
+        value = None
+    if value is None or value < 1:
+        raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}.")
+    return value
+
+
+def validate_export_shape(
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    model_config: object,
+    resolution: int,
+    *,
+    resolve_patch_size: Callable[[int | None, object, str], int],
+    validate_shape_dims: Callable[[object, int, int, int], tuple[int, int]],
+) -> tuple[int, int]:
+    """Resolve and validate the ``shape``/``patch_size`` arguments of :meth:`rfdetr.detr.RFDETR.export`.
+
+    ``resolve_patch_size`` and ``validate_shape_dims`` are injected rather than imported: both are module-private to
+    ``rfdetr.detr`` because :meth:`~rfdetr.detr.RFDETR.predict` shares them too, so this function borrows the caller's
+    copies instead of duplicating or publicizing them.
+
+    Args:
+        shape: ``(height, width)`` supplied by the caller, or ``None`` to default to a square at *resolution*.
+        patch_size: Backbone patch size supplied by the caller, or ``None`` to read it from *model_config*.
+        model_config: The model's configuration object; read for ``patch_size`` and ``num_windows``.
+        resolution: The model's default resolution, used when *shape* is ``None``.
+        resolve_patch_size: ``rfdetr.detr._resolve_patch_size``.
+        validate_shape_dims: ``rfdetr.detr._validate_shape_dims``.
+
+    Returns:
+        The validated ``(height, width)`` shape, both dimensions divisible by ``patch_size * num_windows``.
+
+    Raises:
+        ValueError: If ``num_windows`` is not a positive integer, if *shape* is ``None`` and the model's default
+            resolution is not divisible by ``patch_size * num_windows``, or if an explicit *shape* fails
+            ``validate_shape_dims``.
+    """
+    patch_size = resolve_patch_size(patch_size, model_config, "export")
+    num_windows = getattr(model_config, "num_windows", 1)
+    if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+        raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
+    block_size = patch_size * num_windows
+    if shape is None:
+        shape = (resolution, resolution)
+        if shape[0] % block_size != 0:
+            raise ValueError(
+                f"Model's default resolution ({resolution}) is not divisible by "
+                f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                f"Provide an explicit shape divisible by {block_size}.",
+            )
+        return shape
+    return validate_shape_dims(shape, block_size, patch_size, num_windows)
 
 
 def make_infer_image(
@@ -239,7 +336,8 @@ def prepare_export_graph(
 ) -> ExportGraph:
     """Prepare *model* for tracing and describe the graph a backend is about to write.
 
-    Runs, in order: freeze every DINOv2 backbone's position embeddings to *shape*; build the example input;
+    Runs, in order: freeze every DINOv2 backbone's position embeddings to *shape* (and call ``set_export_shape(shape)``
+    on any other module defining it); build the example input;
     wrap the backbone when *backbone_only* is set; resolve names and dynamic axes; run one forward pass to
     surface a broken graph here; move everything to CPU, where every backend traces.
 
@@ -273,6 +371,10 @@ def prepare_export_graph(
         if isinstance(backbone_module, DinoV2):
             backbone_module.shape = shape
             backbone_module.export()
+        elif callable(getattr(type(backbone_module), "set_export_shape", None)):
+            # Encoders plugged in through ``rfdetr.models.backbone.register_backbone`` opt in to the same freeze. The
+            # lookup is on the type so wrappers that forward attributes (PEFT/LoRA) do not freeze the encoder again.
+            cast(_ExportShapeAware, backbone_module).set_export_shape(shape)
 
     # Resolve the device once, up front: everything below — the example input, the model, the sanity pass — has to
     # land on the same one, and a CUDA request on a machine without CUDA has to degrade here rather than surface as

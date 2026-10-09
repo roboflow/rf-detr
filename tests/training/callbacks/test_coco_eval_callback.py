@@ -18,6 +18,11 @@ from torch.utils.data import DistributedSampler, SequentialSampler
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _UfcocoBackend, _VernierBackend
+from rfdetr.utilities.imports import _IS_UFCOCO_INSTALLED, _IS_VERNIER_INSTALLED
+from tests._markers import requires_torch_xla
+
+ufcoco_only = pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed")
+vernier_only = pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed")
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -182,21 +187,20 @@ class TestSetup:
 
     @pytest.mark.parametrize("segmentation", [False, True])
     @pytest.mark.parametrize(
-        "eval_backend, package, backend_type",
+        "eval_backend, backend_type",
         [
-            pytest.param("ufcoco", "ultrafast_pycocotools", _UfcocoBackend, id="ufcoco"),
-            pytest.param("vernier", "vernier", _VernierBackend, id="vernier"),
+            pytest.param("ufcoco", _UfcocoBackend, id="ufcoco", marks=ufcoco_only),
+            pytest.param("vernier", _VernierBackend, id="vernier", marks=vernier_only),
         ],
     )
     def test_optional_eval_backend_reaches_every_metric(
-        self, segmentation: bool, eval_backend: str, package: str, backend_type: type
+        self, segmentation: bool, eval_backend: str, backend_type: type
     ) -> None:
         """The ufcoco and vernier backends must reach the validation, train-split and EMA metrics alike.
 
         Same three call sites as ``test_eval_backend_reaches_every_metric``, asserted positively on the backend type so
         that a call site falling back to the default would fail here rather than evaluate part of a run on vernier.
         """
-        pytest.importorskip(package)
         cb = COCOEvalCallback(segmentation=segmentation, eval_backend=eval_backend)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
@@ -581,6 +585,7 @@ class TestValidationBatchEndDeviceRouting:
             cb._sync_xla_metric_inputs(SimpleNamespace(device=torch.device("cpu")))
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_sync_xla_metric_inputs_runs_against_real_torch_xla(self) -> None:
         """Real PJRT execution: the fully-mocked ordering tests below stand in for ``torch_xla.sync``, so they cannot
         catch a signature mismatch with the actual installed API.
@@ -588,7 +593,6 @@ class TestValidationBatchEndDeviceRouting:
         This calls the real function against a real XLA device and confirms the graph is left in a readable state
         afterward.
         """
-        pytest.importorskip("torch_xla")
         import torch_xla
 
         device = torch_xla.device()
@@ -893,6 +897,29 @@ class TestMetricsTablePrinting:
         assert render_tables.call_args_list[0].args[1].startswith(title_pfx)
         assert "(Epoch" in render_tables.call_args_list[0].args[1]
         assert render_tables.call_args_list[0].args[2] == "overall-1"
+
+    @pytest.mark.parametrize("name", ["sign[/]", "helmet[red]", "price:dollar:"])
+    @patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", return_value="overall")
+    def test_terminal_prints_hostile_class_name_through_real_console(self, _mock_0, name: str) -> None:
+        """A class name that looks like Rich markup prints verbatim through a real console without aborting.
+
+        ``sign[/]`` used to raise ``MarkupError`` out of ``_print_metrics_tables``, which nothing between the callback
+        and Lightning catches, so the existing mocked-console tests could not see the training abort.
+        """
+        import io
+
+        from rich.console import Console
+
+        console = Console(file=io.StringIO(), width=200, color_system=None)
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+        per_class = [{"name": name, "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}]
+
+        with patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, per_class)
+
+        assert name in console.file.getvalue()
 
     @patch("rfdetr.training.callbacks.coco_eval._get_rich_console")
     @patch("rfdetr.training.callbacks.coco_eval.logger.warning")

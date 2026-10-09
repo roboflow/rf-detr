@@ -37,6 +37,7 @@ from typing import Any
 import torch
 from torch import nn
 
+from rfdetr.export._litert.sampling import pixel_row_sampling
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -150,9 +151,19 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             raise NotImplementedError(
                 f"LiteRT export writes a float32 .tflite; quantization={quantization!r} is not supported on this "
                 "route yet. Use format='tflite' for its fp16/int8 modes, or quantize the exported file with "
-                "ai-edge-quantizer."
+                "ai-edge-quantizer, leaving the deformable-attention sampling in float32 (its pixel indices are exact "
+                "only in float32)."
             )
         return {}
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``litert_torch`` is installed.
+
+        Raises:
+            ImportError: If ``litert_torch`` is not installed.
+        """
+        _check_litert_available()
 
     def _import_converter(self) -> ModuleType:
         """Verify ``litert_torch`` is installed and return the module the conversion calls into.
@@ -242,7 +253,7 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             RuntimeError: If ``torch.export`` capture, lowering, or writing the file otherwise fails.
         """
         try:
-            with torch.no_grad():
+            with torch.no_grad(), pixel_row_sampling(wrapped_model):
                 edge_model = litert_torch.convert(wrapped_model, (input_tensors,))
                 edge_model.export(str(output_file))
         except (ImportError, NotImplementedError, TypeError):
@@ -257,7 +268,25 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             raise RuntimeError(f"Failed to export model to LiteRT: {e}") from e
 
     def _convert(self, graph: ExportGraph) -> Path:
-        """Write the ``.tflite`` and return its path."""
+        """Write the ``.tflite`` and return its path.
+
+        Args:
+            graph: The prepared model and its graph metadata.
+
+        Returns:
+            Path to the written ``.tflite``.
+
+        Raises:
+            NotImplementedError: If *graph* has a ``keypoints`` output, which litert-torch cannot lower.
+        """
+        # Refused before the conversion starts: litert-torch 0.9.4 rejects the rank-4 batch_matmul the keypoint head's
+        # nn.Linear lowers to, and only after a full torch.export capture. A backbone-only export of a keypoint model
+        # has no keypoints output and still converts.
+        if "keypoints" in graph.output_names:
+            raise NotImplementedError(
+                "LiteRT export does not support keypoint models: litert-torch rejects the rank-4 batch_matmul the "
+                "keypoint head lowers to. Use format='tflite' or format='onnx' for keypoint models."
+            )
         litert_torch = self._import_converter()
         output_dir = self._prepare_output_dir()
         output_file = output_dir / f"{self._resolve_export_name(backbone_only=graph.backbone_only)}.tflite"

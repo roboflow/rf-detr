@@ -6,8 +6,9 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -30,7 +31,15 @@ from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.trainer import (
     _accelerator_resolves_to_xla,
     _ForceLastEpochValidationCallback,
+    _requests_multiple_devices,
     _xla_resolves_to_single_device,
+)
+from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED, _IS_TRANSFORMER_ENGINE_INSTALLED
+from tests._markers import requires_torch_xla
+
+hotcoco_only = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed")
+transformer_engine_only = pytest.mark.skipif(
+    not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires the 'cuda' extra (transformer-engine)"
 )
 
 
@@ -164,12 +173,27 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
 
-    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco", "vernier"])
+    @pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming", "faster_coco_eval", "ufcoco", "vernier"])
     def test_coco_eval_uses_eval_backend(self, tmp_path: Path, backend: str) -> None:
         """COCOEvalCallback receives every eval_backend value TrainConfig accepts."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend=backend), _mc())
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._eval_backend == backend
+
+    @hotcoco_only
+    def test_streaming_backend_receives_the_model_class_count(self, tmp_path: Path) -> None:
+        """``hotcoco_streaming`` gets ``num_classes`` from the model config, so it streams rather than falling back.
+
+        ``StreamingEval`` needs every category before the first batch; without the class count the metric would evaluate
+        in one batch on every run and the backend would never stream in production.
+        """
+        model_config = _mc()
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), model_config)
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
+
+        assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
@@ -588,6 +612,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=False),
+            mock.patch("torch.cuda.get_device_capability", return_value=(6, 1)),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured_trainer_kwargs["precision"] == "16-mixed"
@@ -599,6 +624,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured_trainer_kwargs["precision"] == "bf16-mixed"
@@ -621,6 +647,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
@@ -715,6 +742,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
@@ -738,6 +766,7 @@ class TestBuildTrainerPrecision:
         assert captured_trainer_kwargs["precision"] == "32-true"
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
         """Resolves plan Sec 1.3 caveat #1: PTL's 'tpu' accelerator needs real TPU chips, not just torch_xla+PJRT.
 
@@ -748,7 +777,6 @@ class TestBuildTrainerPrecision:
         not launchable under the T1 (CPU-PJRT) CI lane -- only the device-gated unit tests (Tasks 1.1/1.3/1.6/1.7/1.8,
         which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.accelerators import XLAAccelerator
 
         if XLAAccelerator.is_available():
@@ -766,16 +794,23 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu")
 
     @patch("torch.cuda.is_available", return_value=True)
-    @patch("torch.cuda.is_bf16_supported", return_value=False)
+    @patch("torch.cuda.is_bf16_supported", side_effect=lambda including_emulation=True: including_emulation)
+    @patch("torch.cuda.get_device_capability", return_value=(7, 5))
     @patch("rfdetr.training.trainer.Trainer")
     def test_amp_true_ddp_notebook_probes_bf16_normally(
-        self, mock_trainer: MagicMock, _mock_bf16: MagicMock, _mock_cuda: MagicMock, tmp_path
+        self,
+        mock_trainer: MagicMock,
+        _mock_capability: MagicMock,
+        _mock_bf16: MagicMock,
+        _mock_cuda: MagicMock,
+        tmp_path,
     ):
         """ddp_notebook uses standard precision probing (spawn makes CUDA init safe).
 
         With spawn-based DDP, child processes start fresh — CUDA init in the parent does not propagate.  So
         ``is_bf16_supported()`` is safe to call and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
-        bf16 emulation path.  Simulates pre-Ampere GPU: CUDA available, bf16 NOT supported.
+        bf16 emulation path.  Simulates a pre-Ampere GPU as real PyTorch reports it: CUDA available, bf16 supported only
+        through emulation.
         """
         captured: dict = {}
 
@@ -839,6 +874,7 @@ class TestBuildTrainerAmpDtype:
         *,
         cuda: bool,
         bf16: bool = False,
+        bf16_emulated: bool = False,
         mps: bool = False,
         amp_dtype: str | None = "auto",
         amp: bool = True,
@@ -852,7 +888,9 @@ class TestBuildTrainerAmpDtype:
         Args:
             tmp_path: pytest temporary directory fixture.
             cuda: Value returned by the mocked ``torch.cuda.is_available``.
-            bf16: Value returned by the mocked ``torch.cuda.is_bf16_supported``.
+            bf16: Whether the mocked CUDA device supports bfloat16 natively.
+            bf16_emulated: Whether the mocked ``torch.cuda.is_bf16_supported`` also reports bfloat16 through emulation,
+                as PyTorch does on pre-Ampere GPUs such as the T4 (``including_emulation=True`` is its default).
             mps: Value returned by the mocked ``torch.backends.mps.is_available``.
             amp_dtype: The ``TrainConfig.amp_dtype`` value under test.
             amp: The deprecated ``ModelConfig.amp`` value under test.
@@ -868,10 +906,17 @@ class TestBuildTrainerAmpDtype:
             captured.update(kwargs)
             return mock.MagicMock()
 
+        def _is_bf16_supported(including_emulation: bool = True) -> bool:
+            return bf16 or (bf16_emulated and including_emulation)
+
+        capability = (8, 0) if bf16 else (7, 5) if bf16_emulated else (6, 1)
+
         with (
             mock.patch("torch.cuda.is_available", return_value=cuda),
-            mock.patch("torch.cuda.is_bf16_supported", return_value=bf16),
+            mock.patch("torch.cuda.is_bf16_supported", side_effect=_is_bf16_supported),
+            mock.patch("torch.cuda.get_device_capability", return_value=capability),
             mock.patch("torch.backends.mps.is_available", return_value=mps),
+            mock.patch("torch.version.hip", None),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=amp_dtype), _mc(amp=amp))
@@ -908,6 +953,91 @@ class TestBuildTrainerAmpDtype:
         with pytest.warns(UserWarning, match=warn_match):
             precision = self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype)
         assert precision == "16-mixed"
+
+    def test_auto_uses_fp16_on_gpu_with_emulated_bf16(self, tmp_path: Path) -> None:
+        """``amp_dtype="auto"`` on a GPU whose bfloat16 is only emulated (T4, V100) trains in fp16.
+
+        ``torch.cuda.is_bf16_supported()`` counts emulation, so it returns ``True`` on such a GPU and ``"auto"`` used to
+        pick ``bf16-mixed``. On a Colab T4 that was about 2x slower per RF-DETR Nano training step than ``16-mixed``.
+        """
+        precision = self._resolved_precision(tmp_path, cuda=True, bf16_emulated=True, amp_dtype="auto")
+        assert precision == "16-mixed", f"amp_dtype='auto' on an emulated-bf16 GPU resolved to {precision!r}"
+
+    def test_explicit_bf16_on_gpu_with_emulated_bf16_is_kept_with_a_warning(self, tmp_path: Path) -> None:
+        """An explicit ``amp_dtype="bf16"`` is honoured on an emulated-bf16 GPU, with a warning that names the faster
+        options instead of a silent switch to fp16."""
+        with pytest.warns(UserWarning, match="emulation"):
+            precision = self._resolved_precision(tmp_path, cuda=True, bf16_emulated=True, amp_dtype="bf16")
+        assert precision == "bf16-mixed", f"explicit bf16 on an emulated-bf16 GPU resolved to {precision!r}"
+
+    @pytest.mark.parametrize(
+        ("devices", "expected"),
+        [
+            pytest.param("1,", "bf16-mixed", id="a100-at-index-1"),
+            pytest.param("0,", "16-mixed", id="t4-at-index-0"),
+            pytest.param(2, "16-mixed", id="both-gpus"),
+            pytest.param([1], "bf16-mixed", id="a100-by-index-list"),
+        ],
+    )
+    def test_auto_checks_the_gpus_the_run_trains_on(
+        self, tmp_path: Path, devices: int | str | list[int], expected: str
+    ) -> None:
+        """On a host with a T4 at index 0 and an A100 at index 1, ``"auto"`` follows the GPUs the run trains on.
+
+        Selecting a GPU by index (``devices="1,"``, or the ``[1]`` that ``RFDETR.train(device="cuda:1")`` forwards) does
+        not change the current device, so checking only the current device would pick fp16 for the A100 run here, and
+        bf16 for a T4 run on a host whose index 0 is an A100. A run across both GPUs uses fp16.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        capabilities = {0: (7, 5), 1: (8, 0)}
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.device_count", return_value=2),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", side_effect=lambda device=None: capabilities[device or 0]),
+            mock.patch("torch.version.hip", None),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(), devices=devices)
+        assert captured["precision"] == expected, f"devices={devices!r} resolved to {captured['precision']!r}"
+
+    def test_explicit_bf16_checks_the_gpus_the_run_trains_on(self, tmp_path: Path) -> None:
+        """An explicit ``amp_dtype="bf16"`` is granted on the strength of the training GPU, not the current device.
+
+        The host here has a pre-Ampere GPU at index 0 and an A100 at index 1 on a CUDA build without bfloat16 emulation,
+        so ``torch.cuda.is_bf16_supported()`` — which only ever looks at the current device — says no. A run pinned to
+        the A100 with ``devices=[1]`` must still get ``bf16-mixed``, and no emulation warning.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        capabilities = {0: (7, 5), 1: (8, 0)}
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.device_count", return_value=2),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=False),
+            mock.patch("torch.cuda.get_device_capability", side_effect=lambda device=None: capabilities[device or 0]),
+            mock.patch("torch.version.hip", None),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="bf16"), _mc(), devices=[1])
+
+        assert captured["precision"] == "bf16-mixed"
+        assert not [warning for warning in caught if "bf16" in str(warning.message)]
 
     def test_explicit_amp_dtype_overrides_deprecated_amp_false(self, tmp_path):
         """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored.
@@ -1002,8 +1132,8 @@ class TestBuildTrainerAmpDtype:
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
 
-    def test_fp8_rejects_if_any_visible_device_unsupported(self, tmp_path):
-        """Multi-GPU FP8 must validate every visible device, not just the first."""
+    def test_fp8_rejects_if_any_training_device_unsupported(self, tmp_path):
+        """Multi-GPU FP8 must validate every device the run trains on, not just the first."""
         capabilities = {0: (9, 0), 1: (7, 5)}  # Hopper + T4
         with (
             patch("torch.cuda.is_available", return_value=True),
@@ -1012,7 +1142,30 @@ class TestBuildTrainerAmpDtype:
             patch("torch.cuda.get_device_name", return_value="NVIDIA T4"),
             pytest.raises(ValueError, match="cuda:1 \\(NVIDIA T4\\)"),
         ):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), devices=2)
+
+    def test_fp8_accepts_a_capable_device_on_a_mixed_host(self, tmp_path):
+        """A run pinned to the fp8-capable GPU is not rejected for an older GPU it never touches.
+
+        On a host with a Hopper at index 0 and a T4 at index 1, ``devices=[0]`` — the shape
+        ``RFDETR.train(device="cuda:0")`` forwards — trains only on hardware Transformer Engine supports, so scanning
+        every *visible* device would refuse a run that is perfectly valid.
+        """
+        capabilities = {0: (9, 0), 1: (7, 5)}  # Hopper + T4
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.device_count", return_value=2),
+            patch("torch.cuda.get_device_capability", side_effect=lambda index: capabilities[index]),
+            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), devices=[0])
+        assert captured["precision"] == "transformer-engine"
 
     @patch("torch.cuda.get_device_capability", return_value=(8, 9))
     @patch("torch.cuda.device_count", return_value=1)
@@ -1065,6 +1218,7 @@ class TestBuildTrainerFP8Smoke:
     """
 
     @pytest.mark.gpu
+    @transformer_engine_only
     @pytest.mark.skipif(
         not _cuda_supports_fp8(),
         reason="FP8 requires a Transformer Engine-supported GPU (Ada, Hopper, or newer; compute capability >= 8.9)",
@@ -1076,8 +1230,6 @@ class TestBuildTrainerFP8Smoke:
         ``transformer_engine.pytorch`` extension being unimportable, unbuilt, or incompatible with the installed
         CUDA/PyTorch stack only fails here, on real hardware, never in the CPU-only unit tests above.
         """
-        pytest.importorskip("transformer_engine.pytorch", reason="requires the 'cuda' extra (transformer-engine)")
-
         from rfdetr.training.module_data import RFDETRDataModule
         from rfdetr.training.module_model import RFDETRModelModule
 
@@ -1363,6 +1515,27 @@ class TestBuildTrainerEMAXLAGuard:
             )
 
         assert not any("EMA disabled" in str(warning.message) for warning in caught)
+
+
+class TestRequestsMultipleDevices:
+    """``_requests_multiple_devices`` gates the distributed branch, so every ``devices`` form must reach an answer."""
+
+    @pytest.mark.parametrize(
+        ("devices", "expected"),
+        [
+            pytest.param([1], False, id="single-index-list"),
+            pytest.param([0, 1], True, id="two-index-list"),
+            pytest.param((0, 1), True, id="two-index-tuple"),
+            pytest.param([], False, id="empty-list"),
+        ],
+    )
+    def test_an_index_sequence_is_measured_by_its_length(self, devices: Sequence[int], expected: bool) -> None:
+        """A sequence of device indices is counted instead of being parsed as a string.
+
+        ``devices=[1]`` is what ``RFDETR.train(device="cuda:1")`` forwards; it used to reach the string branch's
+        ``.strip()`` and raise ``AttributeError: 'list' object has no attribute 'strip'`` before training started.
+        """
+        assert _requests_multiple_devices(devices) is expected
 
 
 class TestXlaResolvesToSingleDevice:
@@ -1812,6 +1985,7 @@ class TestBuildTrainerKeypointDistributed:
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.device_count", return_value=2),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
         ):
             build_trainer(tc, mc)
 
@@ -2279,11 +2453,11 @@ class TestAcceleratorResolvesToXLA:
 class TestMultiDeviceXLAStrategy:
     """`XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`.
 
-    The first four tests are marked ``xla`` and guarded with ``importorskip`` because they exercise ``build_trainer``'s
-    real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is touched, so the CPU-
-    PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the ``accelerator="auto"`` case,
-    ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so they run on every lane without
-    needing real ``torch_xla``.
+    The first four tests are marked ``xla`` and guarded with ``requires_torch_xla`` because they exercise
+    ``build_trainer``'s real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is
+    touched, so the CPU-PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the
+    ``accelerator="auto"`` case, ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so
+    they run on every lane without needing real ``torch_xla``.
 
     RF-DETR's generic ``strategy="auto"`` distributed branch creates ``DDPStrategy`` before Lightning can resolve an XLA
     accelerator. The guard therefore selects ``"xla"`` only when multiple local XLA devices are requested; one-device-
@@ -2294,26 +2468,25 @@ class TestMultiDeviceXLAStrategy:
     """
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_multiple_xla_devices_select_the_xla_strategy(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
         """Without this, asking for more than one chip fails with `found DDPStrategy`."""
-        pytest.importorskip("torch_xla")
-
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4)
 
         assert captured_trainer_kwargs["strategy"] == "xla"
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_single_xla_device_keeps_auto(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """One chip already resolves to SingleDeviceXLAStrategy, so nothing should be overridden."""
-        pytest.importorskip("torch_xla")
-
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
 
         assert captured_trainer_kwargs["strategy"] == "auto"
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_an_explicit_strategy_is_never_overridden(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """A caller who names a strategy owns that choice, even on multi-device XLA.
 
@@ -2322,7 +2495,6 @@ class TestMultiDeviceXLAStrategy:
         above), which always turns it into a ``DDPStrategy`` object -- on XLA and off it alike. Asserting the literal
         string ``"ddp"`` here would be wrong regardless of this PR.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4, strategy="ddp")
@@ -2332,6 +2504,7 @@ class TestMultiDeviceXLAStrategy:
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
@@ -2342,7 +2515,6 @@ class TestMultiDeviceXLAStrategy:
         deliberately excluded from the fix and keeps hitting the pre-existing `DDPStrategy`/`XLAAccelerator` mismatch
         rather than running unverified.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
         build_trainer(_kp_tc(tmp_path, use_ema=False), _mc(use_grouppose_keypoints=True), accelerator="tpu", devices=4)
@@ -2355,7 +2527,7 @@ class TestMultiDeviceXLAStrategy:
         A caller who leaves ``accelerator`` unset passes literal ``"auto"`` here. Without
         ``_accelerator_resolves_to_xla``, RF-DETR's generic distributed branch would create ``DDPStrategy`` before
         Lightning resolves that value to XLA, causing the `XLAAccelerator`/`DDPStrategy` mismatch. Not marked
-        ``xla``/``importorskip``:
+        ``xla``/``requires_torch_xla``:
         follows ``TestBuildTrainerPrecision.test_xla_accelerator_uses_xla_precision_plugin_not_precision_string``'s
         pattern of patching ``XLAPrecision`` and (here) ``XLAAccelerator.is_available`` directly, so this runs on
         every CI lane rather than only the CPU-PJRT one.

@@ -7,6 +7,8 @@
 
 import subprocess
 import sys
+import types
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -14,7 +16,34 @@ import torch
 
 from rfdetr.models import criterion
 from rfdetr.utilities import box_ops
-from rfdetr.utilities.package import get_sha
+from rfdetr.utilities.package import get_sha, is_installed
+
+
+class TestIsInstalled:
+    """``is_installed`` answers from import metadata and never raises on an unusual ``sys.modules`` entry."""
+
+    def test_a_stub_module_without_a_spec_is_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``sys.modules`` stub is not an install, and asking about one must not raise.
+
+        ``find_spec`` raises ``ValueError`` — not ``ImportError`` — for an entry whose ``__spec__`` is ``None``, which
+        is what a bare ``types.ModuleType`` left in ``sys.modules`` by a test or a library looks like. Unguarded, that
+        aborts the import of whichever module probes for the optional package.
+        """
+        monkeypatch.setitem(sys.modules, "tensorrt", types.ModuleType("tensorrt"))
+
+        assert is_installed("tensorrt") is False
+
+    def test_a_bare_directory_is_not_installed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A namespace package — a directory carrying the name with no module in it — is not an install.
+
+        An export folder named after the format it writes is the realistic case: it sits on ``sys.path`` and answers
+        ``find_spec`` with an ``origin``-less spec, which must not be read as the optional package being present.
+        """
+        (tmp_path / "tensorrt").mkdir()
+        monkeypatch.delitem(sys.modules, "tensorrt", raising=False)
+        monkeypatch.setattr(sys, "path", [str(tmp_path)])
+
+        assert is_installed("tensorrt") is False
 
 
 def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() -> None:

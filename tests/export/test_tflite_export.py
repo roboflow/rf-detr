@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
+import re
 import sys
 import sysconfig
 import types
@@ -43,6 +43,7 @@ from rfdetr.export._tflite.exporter import (
     TFLiteConfig,
     TFLiteExporter,
     _check_onnx2tf_available,
+    _check_tf_keras_available,
     _get_onnx_input_info,
     _interpreter_scripts_on_path,
     _load_calibration_images,
@@ -50,6 +51,8 @@ from rfdetr.export._tflite.exporter import (
     _patch_validation_download,
     _prepare_calibration_data,
 )
+from rfdetr.export.imports import _IS_ONNX_GRAPHSURGEON_INSTALLED, _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
+from tests._markers import onnx_only
 
 onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 
@@ -237,8 +240,48 @@ def tflite_output(tmp_path: Path, onnx_model: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# TestExportTfliteConverter
+# TestTFLiteQuantizationCheck, TestExportTfliteConverter
 # ---------------------------------------------------------------------------
+
+
+class TestTFLiteQuantizationCheck:
+    """An unknown ``quantization`` is refused when the exporter is built, before the ONNX stage and without onnx2tf."""
+
+    @pytest.mark.parametrize("quantization", ["q4", "int8_static", "full_int8", "integer_quant"])
+    def test_unknown_mode_is_refused_at_construction(self, tmp_path: Path, quantization: str) -> None:
+        """Static / full-integer INT8 spellings get the same refusal: only dynamic-range ``"int8"`` is offered."""
+        with pytest.raises(ValueError, match=r"Unsupported quantization mode .* Static / full-integer INT8 is not"):
+            TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization=quantization))
+
+
+class TestTFLiteCalibrationDataWarning:
+    """``calibration_data`` never changes the ``.tflite`` artifact, so passing it warns when the exporter is built."""
+
+    @pytest.mark.parametrize("quantization", [None, "fp16", "int8"])
+    def test_calibration_data_warns_at_construction(self, tmp_path: Path, quantization: str | None) -> None:
+        with pytest.warns(UserWarning, match=r"`calibration_data` has no effect on the exported \.tflite"):
+            TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization=quantization, calibration_data=tmp_path))
+
+    def test_no_calibration_data_does_not_warn(self, tmp_path: Path) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
+        assert not [w for w in caught if "calibration_data" in str(w.message)]
+
+    def test_configured_calibration_data_is_never_read(self, tmp_path: Path, mock_prepare_calib: Any) -> None:
+        """A configured ``calibration_data`` never reaches ``_prepare_calibration_data``; ``None`` is passed instead.
+
+        The value is documented as ignored, so it must not be read or validated either: forwarding it would turn a
+        missing path into a ``FileNotFoundError`` raised after the full forward pass and ONNX stage. Runs without
+        ``onnx2tf``, so the CPU job covers it.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, calibration_data="/nonexistent/calib.npy"))
+
+        exporter._prepare_calibration(tmp_path / "model.onnx", tmp_path)
+
+        assert mock_prepare_calib.call_args[0][1] is None  # second positional arg
 
 
 @onnx2tf_available
@@ -248,26 +291,6 @@ class TestExportTfliteConverter:
     def test_missing_onnx_raises_file_not_found(self, tmp_path: Path, fake_onnx2tf: Any) -> None:
         with pytest.raises(FileNotFoundError, match="ONNX model not found"):
             _run_convert_onnx(tmp_path / "nope.onnx", tmp_path / "out")
-
-    def test_invalid_quantization_raises_value_error(self, onnx_model: Path, tmp_path: Path, fake_onnx2tf: Any) -> None:
-        with pytest.raises(ValueError, match="Unsupported quantization"):
-            _run_convert_onnx(onnx_model, tmp_path / "out", quantization="q4")
-
-    @pytest.mark.parametrize(
-        "static_mode",
-        [
-            pytest.param("int8_static", id="int8_static"),
-            pytest.param("full_int8", id="full_int8"),
-            pytest.param("integer_quant", id="integer_quant"),
-        ],
-    )
-    def test_static_int8_raises(self, onnx_model: Path, tmp_path: Path, fake_onnx2tf: Any, static_mode: str) -> None:
-        """A static / full-integer INT8 request must raise a ValueError.
-
-        Static INT8 is intentionally unsupported; only dynamic-range 'int8' is offered.
-        """
-        with pytest.raises(ValueError, match="[Ss]tatic / full-integer INT8 is not supported"):
-            _run_convert_onnx(onnx_model, tmp_path / "out", quantization=static_mode)
 
     def test_default_quantization_calls_convert(
         self,
@@ -512,19 +535,6 @@ class TestExportTfliteConverter:
         result = _run_convert_onnx(onnx_model, tflite_output)
         assert isinstance(result, Path)
 
-    def test_calibration_data_forwarded_to_prepare(
-        self,
-        onnx_model: Path,
-        tflite_output: Path,
-        fake_onnx2tf: Any,
-        mock_prepare_calib: Any,
-    ) -> None:
-        """Verify that calibration_data is passed to _prepare_calibration_data."""
-        calib_path = "/some/calib.npy"
-        _run_convert_onnx(onnx_model, tflite_output, calibration_data=calib_path)
-        call_args = mock_prepare_calib.call_args
-        assert call_args[0][1] == calib_path  # second positional arg
-
     def test_max_images_forwarded_to_prepare(
         self,
         onnx_model: Path,
@@ -624,6 +634,8 @@ class TestExportFormatParameter:
                 return_value=tmp_path / "inference_model_fp32.tflite",
             )
         )
+        # The CPU job has no onnx2tf, which RFDETR.export() checks for before the forward pass.
+        self._mock_stack.enter_context(mock.patch("rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies"))
         yield
         self._mock_stack.close()
 
@@ -664,47 +676,33 @@ class TestExportFormatParameter:
     def test_tflite_format_preloads_tensorflow_before_first_onnx_package_import(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """TensorFlow is preloaded before importing the module that first loads ONNX.
+        """TensorFlow is preloaded before anything in the export imports ``onnx``.
 
-        The usual ``OnnxExporter._convert`` patch imports the ONNX exporter while arranging the test, which masks a
-        regression that moves the preload below that import.  Intercepting the first ``onnx`` import instead keeps it
-        inside the action under test.
+        ``onnx`` is dropped from ``sys.modules``, so the export has to import it again, and a finder first on
+        ``sys.meta_path`` stops it there. The finder sees an ``import`` statement and ``importlib.import_module`` alike;
+        with this class's stubs, that first import is the ONNX stage's own dependency check. Loading the ONNX exporter
+        module imports no ONNX package; ``TestExportDependencyCheck`` pins that.
 
-        ``RFDETR.export()`` legitimately preloads twice — the registry's ``preimport`` runs before it imports the
-        exporter module, and ``TFLiteExporter._convert`` runs before its ONNX stage — so this pins the ordering, not the
-        count.
+        ``RFDETR.export()`` legitimately preloads more than once — the registry's ``preimport`` runs before it imports
+        the exporter module, and ``TFLiteExporter.check_dependencies`` runs it again — so this pins the ordering, not
+        the count. This class stubs ``check_dependencies``, so the preload observed here is the registry's; the check's
+        own ordering is pinned by ``TestTFLiteDependencyCheckOrder``.
         """
         obj = self._make_rfdetr()
-        calls: list[str] = []
-        original_import = __import__
+        preloads: list[str] = []
+        monkeypatch.delitem(sys.modules, "onnx", raising=False)
+        monkeypatch.setattr(sys, "meta_path", [types.SimpleNamespace(find_spec=_stop_at_onnx_import), *sys.meta_path])
 
-        def import_with_exporter_probe(
-            name: str,
-            globals: dict[str, object] | None = None,
-            locals: dict[str, object] | None = None,
-            fromlist: tuple[str, ...] = (),
-            level: int = 0,
-        ) -> object:
-            """Stop at and record the first ONNX package import."""
-            if name == "onnx":
-                calls.append("first_onnx_package_import")
-                raise RuntimeError("onnx import probe")
-            return original_import(name, globals, locals, fromlist, level)
-
-        monkeypatch.delitem(sys.modules, "rfdetr.export._onnx.exporter", raising=False)
         with (
             mock.patch(
                 "rfdetr.export._backend.preload_tensorflow_before_onnx",
-                side_effect=lambda: calls.append("preload"),
+                side_effect=lambda: preloads.append("preload"),
             ),
-            mock.patch("builtins.__import__", side_effect=import_with_exporter_probe),
+            pytest.raises(RuntimeError, match="first onnx import"),
         ):
-            with pytest.raises(RuntimeError, match="onnx import probe"):
-                obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
+            obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
 
-        assert calls[-1] == "first_onnx_package_import" and calls[:-1] and set(calls[:-1]) == {"preload"}, (
-            f"Expected every preload before the first ONNX package import, got {calls}"
-        )
+        assert preloads, "the export imported onnx before it preloaded TensorFlow"
 
     def test_onnx_format_does_not_preload_tensorflow(self) -> None:
         """Non-TFLite formats never import TensorFlow."""
@@ -747,15 +745,27 @@ class TestExportFormatParameter:
             obj.export(format="banana", output_dir=str(self._tmp_path / "out"))
 
     def test_calibration_data_forwarded(self) -> None:
-        """Verify calibration_data kwarg reaches the TFLite conversion."""
+        """Verify calibration_data kwarg reaches the TFLite exporter's config, warning that it is ignored."""
         obj = self._make_rfdetr()
         calib = "/my/calib.npy"
-        obj.export(
-            format="tflite",
-            output_dir=str(self._tmp_path / "out"),
-            calibration_data=calib,
-        )
+        with pytest.warns(UserWarning, match=r"`calibration_data` has no effect on the exported \.tflite"):
+            obj.export(
+                format="tflite",
+                output_dir=str(self._tmp_path / "out"),
+                calibration_data=calib,
+            )
         assert self._exported_config().calibration_data == calib
+
+    def test_calibration_data_warning_points_at_the_export_call(self) -> None:
+        """The ignored-``calibration_data`` warning is attributed to the line calling ``RFDETR.export``.
+
+        A ``stacklevel`` off by one frame reports ``detr.py`` (or an exporter module) instead, which breaks
+        ``warnings.filterwarnings(..., module=...)`` filters and hides which notebook cell passed the argument.
+        """
+        obj = self._make_rfdetr()
+        with pytest.warns(UserWarning, match=r"`calibration_data` has no effect") as record:
+            obj.export(format="tflite", output_dir=str(self._tmp_path / "out"), calibration_data="/my/calib.npy")
+        assert [w.filename for w in record if "calibration_data" in str(w.message)] == [__file__]
 
     def test_max_images_forwarded(self) -> None:
         """Verify max_images kwarg reaches the TFLite conversion."""
@@ -920,12 +930,14 @@ class TestPatchValidationDownload:
             sys.modules.update(saved)
 
 
+@onnx_only
 class TestGetOnnxInputInfo:
     """Tests for ``_get_onnx_input_info()``."""
 
     def test_reads_input_name_and_shape(self, tmp_path: Path) -> None:
         """Build a minimal ONNX model and verify we read back its metadata."""
-        onnx = pytest.importorskip("onnx", reason="onnx not installed")
+        import onnx
+
         TensorProto, helper = onnx.TensorProto, onnx.helper  # noqa: N806
 
         inp = helper.make_tensor_value_info("images", TensorProto.FLOAT, [1, 3, 560, 560])
@@ -942,7 +954,8 @@ class TestGetOnnxInputInfo:
 
     def test_different_input_shape(self, tmp_path: Path) -> None:
         """Verify non-square resolution reads correctly."""
-        onnx = pytest.importorskip("onnx", reason="onnx not installed")
+        import onnx
+
         TensorProto, helper = onnx.TensorProto, onnx.helper  # noqa: N806
 
         inp = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 448, 640])
@@ -1209,9 +1222,7 @@ class TestCheckOnnx2tfAvailable:
 # ---------------------------------------------------------------------------
 
 onnx_gs_available = pytest.mark.skipif(
-    not all(
-        __import__("importlib").util.find_spec(p) is not None for p in ("onnx", "onnx_graphsurgeon", "onnxruntime")
-    ),
+    not (_IS_ONNX_INSTALLED and _IS_ONNX_GRAPHSURGEON_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx, onnx_graphsurgeon, and onnxruntime required",
 )
 
@@ -1267,6 +1278,28 @@ class TestGridSampleOnnxRewrite:
     def test_module_import_does_not_raise(self) -> None:
         """Importing the converter module must succeed regardless of onnx2tf version."""
         import rfdetr.export._tflite.exporter  # noqa: F401
+
+    def test_skipped_rewrite_names_the_package_to_install(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """Without ``onnx_graphsurgeon``, the warning advises only an install that works on every Python version.
+
+        ``rfdetr[onnx]`` does not install it, and ``rfdetr[tflite]`` installs nothing outside Python 3.12, so advice
+        naming only the extra leaves an ``onnx2tf`` installed next to ``rfdetr[onnx]`` without the rewrite. The warning
+        quotes the rewrite's own error, so the real import failure runs here, not a stub of the rewrite: a second
+        "Install with" in that error would contradict the warning's.
+        """
+        monkeypatch.setitem(sys.modules, "onnx_graphsurgeon", None)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            exporter._rewrite_gridsample(tmp_path / "model.onnx", tmp_path)
+
+        # pytest>=9.1 also attaches caplog to the non-propagating "rf-detr" logger, so with propagation forced on above
+        # each record is captured twice, as the same object; dropping repeated objects keeps a warning logged twice.
+        messages = [record.getMessage() for record in dict.fromkeys(caplog.records)]
+        assert [re.findall(r"Install with: pip install (\S+)", m) for m in messages] == [["onnx_graphsurgeon"]]
 
     @onnx_gs_available
     def test_no_gridsample_nodes_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
@@ -1449,6 +1482,8 @@ class TestPreloadTensorflowBeforeOnnx:
         ``onnx`` first is unrecoverable in-process, so the deadlock risk is logged.  ``tensorflow`` first — the safe
         order — must stay quiet, otherwise the warning trains callers who did the right thing to ignore it.
         """
+        # The warning is logged once per process, so every case starts from an unwarned module.
+        monkeypatch.setattr("rfdetr.export._backend._ONNX_ORDER_WARNED", False)
         for package in ("onnx", "tensorflow"):
             _drop_from_sys_modules(monkeypatch, package)
         for package in preloaded:
@@ -1492,10 +1527,116 @@ class TestExportTflitePreloadOrder:
                 "rfdetr.export._tflite.exporter._check_onnx2tf_available",
                 side_effect=lambda: calls.append("check"),
             ),
+            mock.patch("rfdetr.export._tflite.exporter._check_tf_keras_available"),
         ):
             _run_convert_onnx(onnx_model, tflite_output)
 
         assert calls == ["preload", "check"], f"Expected preload before the onnx2tf check, got {calls}"
+
+
+class TestTFKerasCheck:
+    """``_check_tf_keras_available`` passes an installed tf-keras; a missing one is covered in ``test_export``.
+
+    No CI job installs the ``[tflite]`` extra, so these stand in for the real package the check must not refuse.
+    """
+
+    def test_installed_tf_keras_passes_without_being_imported(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A findable ``tf_keras`` passes, and is left for the conversion to import: Keras need not load earlier."""
+        (tmp_path / "tf_keras").mkdir()
+        (tmp_path / "tf_keras" / "__init__.py").write_text("")
+        monkeypatch.delitem(sys.modules, "tf_keras", raising=False)
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        _check_tf_keras_available()
+
+        assert "tf_keras" not in sys.modules
+
+    def test_already_imported_tf_keras_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``tf_keras`` already in ``sys.modules`` passes, even one without the ``__spec__`` a lookup would need."""
+        monkeypatch.setitem(sys.modules, "tf_keras", types.ModuleType("tf_keras"))
+
+        _check_tf_keras_available()
+
+
+def _stop_at_onnx_import(name: str, path: object, target: object = None) -> None:
+    """``find_spec`` of a ``sys.meta_path`` finder that raises at an import of ``onnx`` and passes on every other one.
+
+    Returning ``None`` hands the import to the next finder, so only ``onnx`` is affected.
+
+    Args:
+        name: Fully qualified name of the module being imported.
+        path: Parent package's ``__path__``, or ``None`` for a top-level import.
+        target: Module object being reloaded, if any.
+
+    Examples:
+        >>> _stop_at_onnx_import("json", None) is None
+        True
+        >>> _stop_at_onnx_import("onnx", None)
+        Traceback (most recent call last):
+        ...
+        RuntimeError: stopped at the first onnx import
+    """
+    if name == "onnx":
+        raise RuntimeError("stopped at the first onnx import")
+
+
+class TestTFLiteDependencyCheckOrder:
+    """``TFLiteExporter.check_dependencies`` loads TensorFlow before anything imports onnx (issue #1322), and imports
+    nothing whose import has side effects the forward pass must not see.
+
+    Not gated on ``onnx2tf``: TensorFlow is a stand-in module and the tf-keras check is stubbed, so this runs in the CPU
+    job.
+    """
+
+    def test_tensorflow_is_loaded_before_onnx_is_imported(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The preload runs before the first import of ``onnx``.
+
+        ``onnx`` is dropped from ``sys.modules``, so the check has to import it again, and a finder first on
+        ``sys.meta_path`` stops the check the moment ``onnx`` is asked for: a preload placed after that import never
+        runs. The finder sees an ``import`` statement and ``importlib.import_module`` alike; recording calls alone would
+        miss an import placed above the preload.
+        """
+        events: list[str] = []
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+        monkeypatch.delitem(sys.modules, "onnx", raising=False)
+        monkeypatch.setitem(sys.modules, "tensorflow", types.ModuleType("tensorflow"))
+        monkeypatch.setattr("rfdetr.export._backend.preload_tensorflow_before_onnx", lambda: events.append("preload"))
+        monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
+        monkeypatch.setattr(sys, "meta_path", [types.SimpleNamespace(find_spec=_stop_at_onnx_import), *sys.meta_path])
+
+        with pytest.raises(RuntimeError, match="first onnx import"):
+            exporter.check_dependencies()
+
+        assert events == ["preload"], "the check imported onnx before it preloaded TensorFlow"
+
+    def test_onnx2tf_converter_module_is_not_imported(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The check imports the top-level ``onnx2tf`` only, never its converter module ``onnx2tf.onnx2tf``.
+
+        Importing the converter module seeds ``random``/``numpy`` and installs a warnings filter, which must wait until
+        after the forward pass. A stand-in ``onnx2tf`` package that has both modules is put first on ``sys.path``.
+        """
+        package = tmp_path / "onnx2tf"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "onnx2tf.py").write_text("")
+        monkeypatch.setattr("rfdetr.export._backend.preload_tensorflow_before_onnx", lambda: None)
+        monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
+        monkeypatch.setattr("rfdetr.export._backend.check_onnx_available", lambda install_hint, *, stage: None)
+        monkeypatch.setattr("rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available", lambda: None)
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        # Restores sys.modules afterwards, dropping the stand-in package this test imports.
+        with mock.patch.dict(sys.modules, {"tensorflow": types.ModuleType("tensorflow")}):
+            sys.modules.pop("onnx2tf", None)
+            sys.modules.pop("onnx2tf.onnx2tf", None)
+            TFLiteExporter.check_dependencies()
+            converter_imported = "onnx2tf.onnx2tf" in sys.modules
+
+        assert not converter_imported
 
 
 class TestExportTfliteAppliesInterpreterPath:
@@ -1514,6 +1655,7 @@ class TestExportTfliteAppliesInterpreterPath:
     ) -> None:
         """``onnx2tf.convert`` runs with the interpreter script directory first on ``PATH``."""
         monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
         seen: list[str] = []
         _, convert_mock = fake_onnx2tf
 
@@ -1633,28 +1775,10 @@ class TestTFLitePreloadOrdering:
     ``onnx``'s C extension and TensorFlow both statically link Abseil and export its symbols weakly, so whichever loads
     first supplies them to both. When ONNX wins, the TFLite conversion blocks forever restoring the SavedModel bundle —
     a 0%-CPU hang with no traceback (issue #1322). ``TFLiteExporter`` guards that by calling
-    ``preload_tensorflow_before_onnx()`` before it touches the ONNX stage. Both halves of the guard are pinned here:
-    that nothing imports ONNX earlier, and that the preload really does run first.
+    ``preload_tensorflow_before_onnx()`` before it touches the ONNX stage. This class pins that the preload really does
+    run first; that loading the exporter module imports no ONNX package is pinned by
+    ``TestExportDependencyCheck::test_loading_the_exporter_imports_no_onnx_package`` in ``test_export.py``.
     """
-
-    def test_importing_the_exporter_does_not_load_onnx_first(self) -> None:
-        """Importing the TFLite exporter module must not put ONNX ahead of TensorFlow in ``sys.modules``.
-
-        Runs in a fresh interpreter because this suite has already imported ONNX by the time it executes. The
-        regression it catches is a plain-looking one: hoisting ``OnnxExporter``'s import to module scope in
-        ``rfdetr.export._tflite.exporter`` would load ONNX at import time, long before the preload runs, and the
-        symptom would surface as an unexplained CI timeout rather than a failure.
-        """
-        script = (
-            "import rfdetr.export._tflite.exporter\n"
-            "from rfdetr.export._backend import _onnx_imported_before_tensorflow\n"
-            "print(_onnx_imported_before_tensorflow())\n"
-        )
-        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
-
-        assert result.stdout.strip().splitlines()[-1] == "False", (
-            f"importing the TFLite exporter loaded onnx ahead of tensorflow: {result.stdout!r}"
-        )
 
     def test_preload_runs_before_the_onnx_stage(self, tmp_path: Path) -> None:
         """``TFLiteExporter`` must call the preload before it runs its ONNX export, not after."""
@@ -1676,6 +1800,13 @@ class TestTFLitePreloadOrdering:
                 "rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx",
                 side_effect=lambda *_a, **_kw: (calls.append("tflite"), tmp_path / "model_fp32.tflite")[1],
             ),
+            # The preload runs inside check_dependencies, which also wants TensorFlow, tf-keras, onnx_graphsurgeon and
+            # onnx2tf; the CPU job has none of them, so TensorFlow is a stand-in module and the other three checks are
+            # stubbed.
+            mock.patch.dict(sys.modules, {"tensorflow": types.ModuleType("tensorflow")}),
+            mock.patch("rfdetr.export._tflite.exporter._check_tf_keras_available"),
+            mock.patch("rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available"),
+            mock.patch("rfdetr.export._tflite.exporter._check_onnx2tf_available"),
         ):
             exporter(graph)
 

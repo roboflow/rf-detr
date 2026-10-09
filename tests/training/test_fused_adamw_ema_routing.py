@@ -252,6 +252,25 @@ class TestFusedAdamWEMARouting:
 
         assert module._use_fused_adamw_ema is False
 
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_keypoints_do_not_exclude_the_plain_fused_optimizer(
+        self, mock_cuda_available: MagicMock, mock_bf16_supported: MagicMock, tmp_path: Path
+    ) -> None:
+        """``use_grouppose_keypoints`` excludes the combined EMA update but not the plain fused AdamW path.
+
+        ``_use_fused_adamw_ema`` explicitly excludes keypoints; ``_use_fused_optimizer`` (the branch
+        :meth:`RFDETRModelModule.configure_gradient_clipping` uses for its non-EMA ``clip_grad_norm_`` call) has no
+        such exclusion, so a bf16 keypoint run on CUDA reaches that fused-clip branch — a combination the suite's
+        other fused-routing tests never construct.
+        """
+        module, _ = _setup_module(tmp_path)
+        module._trainer.precision = "bf16-mixed"
+        module.model_config.use_grouppose_keypoints = True
+
+        assert module._use_fused_optimizer is True
+        assert module._use_fused_adamw_ema is False
+
     @patch("rfdetr.training.module_model._has_fused_adamw_ema_kernel", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
@@ -419,6 +438,6 @@ class TestFusedAdamWEMARouting:
         optimizer.optimizer = optimizer
         optimizer.set_max_grad_norm = MagicMock()
 
-        module.clip_gradients(optimizer, gradient_clip_val=0.25, gradient_clip_algorithm="norm")
+        module.configure_gradient_clipping(optimizer, gradient_clip_val=0.25, gradient_clip_algorithm="norm")
 
         optimizer.set_max_grad_norm.assert_called_once_with(0.25)

@@ -5,8 +5,11 @@
 # ------------------------------------------------------------------------
 """Tests for RFDETR.from_checkpoint classmethod.
 
-The inference logic is isolated by patching ``torch.load`` and the target model class inside ``rfdetr.variants`` (or
-``rfdetr.platform.models`` for plus models).  No model weights are downloaded or GPU memory allocated.
+Most tests isolate the inference logic by patching ``torch.load`` and the target model class inside ``rfdetr.variants``
+(or ``rfdetr.platform.models`` for plus models). The round-trip cases in ``TestFromCheckpointStrippedBestTotal`` instead
+build a real, small CPU model (Nano or keypoint preview) and run it through a real ``strip_checkpoint`` +
+``from_checkpoint`` cycle, to prove a working model actually comes out the other end. Either way, no model weights are
+downloaded and no GPU memory is allocated.
 """
 
 from __future__ import annotations
@@ -14,17 +17,22 @@ from __future__ import annotations
 import argparse
 import logging
 import warnings
+from collections.abc import Iterable, Sequence
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 
 from rfdetr.config import PretrainWeightsCompatibilityWarning
-from rfdetr.detr import RFDETR
+from rfdetr.detr import _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES, _CHECKPOINT_PLUS_STEM_ENTRIES, RFDETR
 from rfdetr.detr import logger as detr_logger
-from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
-from rfdetr.variants import RFDETRSmall
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE, _PLUS_EXPORTS
+from rfdetr.training.checkpoint import convert_legacy_checkpoint
+from rfdetr.utilities.state_dict import strip_checkpoint
+from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSmall
 
 
 class _CustomObj:
@@ -75,10 +83,10 @@ def _call_from_checkpoint(ckpt: dict, path: Path, cls_patch_target: str, **kwarg
 
     Examples:
         This helper patches ``torch.load`` and a model class — it cannot be run without a real
-        ``Path`` argument or live imports, so the doctest is illustrative only.
+        ``Path`` argument or live imports, so the example below is illustrative only.
 
-        >>> callable(_call_from_checkpoint)  # doctest: +SKIP
-        True
+        callable(_call_from_checkpoint)
+        # True
     """
     mock_instance = MagicMock()
     with (
@@ -234,12 +242,37 @@ class TestFromCheckpointEdgeCases:
             with pytest.raises(ImportError):
                 RFDETR.from_checkpoint(tmp_path / "rf-detr-xlarge-starter.pth")
 
-    def test_characterization_missing_args_key_raises_key_error(self, tmp_path: Path) -> None:
-        """Checkpoint without 'args' key raises KeyError."""
+    def test_missing_args_key_names_where_the_settings_are(self, tmp_path: Path) -> None:
+        """A checkpoint recording no ``args`` is refused with the same guidance whatever its extension.
+
+        The refusal used to require a ``pytorch-lightning_version`` key as well, which every rfdetr ``.pth`` writes and
+        no converted ``.ckpt`` does, so files in between fell through to a bare ``KeyError: 'args'``.
+        """
         ckpt = {"model": {}}
         with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(KeyError):
+            with pytest.raises(ValueError, match="training_config.json"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_converted_legacy_checkpoint_is_refused_with_guidance(self, tmp_path: Path) -> None:
+        """``convert_legacy_checkpoint`` output stores args under ``hyper_parameters``, so it names no model.
+
+        Real files, no mocked loader: the converted ``.ckpt`` carries neither ``args`` nor ``pytorch-
+        lightning_version``, which is exactly the combination that used to escape the check.
+        """
+        source = tmp_path / "legacy.pth"
+        torch.save({"model": {"class_embed.weight": torch.zeros(4, 8)}, "args": {"num_classes": 3}}, source)
+        converted = tmp_path / "converted.ckpt"
+        convert_legacy_checkpoint(str(source), str(converted))
+
+        with pytest.raises(ValueError, match="training_config.json"):
+            RFDETR.from_checkpoint(converted)
+
+    def test_lightning_ckpt_without_args_points_at_training_config(self, tmp_path: Path) -> None:
+        """A ``.ckpt`` from 1.11.0 or earlier records no model; the error names where its settings are (#1552)."""
+        ckpt = {"state_dict": {"model.class_embed.weight": torch.zeros(4, 8)}, "pytorch-lightning_version": "2.6.6"}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ValueError, match="training_config.json"):
+                RFDETR.from_checkpoint(tmp_path / "last.ckpt")
 
     def test_characterization_callable_on_subclass(self, tmp_path: Path) -> None:
         """from_checkpoint can be called on a concrete subclass (RFDETRSmall)."""
@@ -922,3 +955,657 @@ class TestFromCheckpointWeightInference:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["num_keypoints_per_class"] == [0, 33]
         assert call_kwargs["num_classes"] == 2
+
+
+# ---------------------------------------------------------------------------
+# checkpoint_best_total.pth after strip_checkpoint
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointStrippedBestTotal:
+    """``checkpoint_best_total.pth`` goes through ``strip_checkpoint``; reloading it must keep the architecture."""
+
+    def test_stripped_checkpoint_restores_trained_resolution(self, tmp_path: Path) -> None:
+        """A model trained at a non-default resolution reloads at that resolution and predicts the same boxes."""
+        torch.manual_seed(0)
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=3, resolution=224)
+        path = tmp_path / "checkpoint_best_total.pth"
+        # The payload BestModelCallback writes before on_fit_end strips it into checkpoint_best_total.pth.
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b", "c"]},
+                "model_name": "RFDETRNano",
+                "model_config": model.model_config.model_dump(),
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path, device="cpu")
+
+        assert loaded.model_config.resolution == 224, "resolution must survive strip_checkpoint"
+        image = torch.rand(3, 160, 200, generator=torch.Generator().manual_seed(0))
+        expected = model.predict(image, threshold=0.0)
+        actual = loaded.predict(image, threshold=0.0)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-4, err_msg="boxes differ after reload")
+
+    def test_stripped_checkpoint_does_not_forward_training_host_device(self, tmp_path: Path) -> None:
+        """The training host's device is never restored, even through a real strip_checkpoint round trip.
+
+        A ``device="cpu"`` build with a plain ``device="cpu"`` reload cannot fail whether or not the skip clause in
+        ``from_checkpoint`` fires, since the checkpoint value and the explicit kwarg already agree. This test instead
+        simulates a checkpoint written on a GPU training host (``model_config["device"] = "cuda"``) and reloads with
+        no ``device=`` override, so only the host-policy skip clause — not kwarg precedence — can make it pass.
+        """
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=3, resolution=224)
+        model_config_dict = model.model_config.model_dump()
+        model_config_dict["device"] = "cuda"  # simulate a checkpoint written on a GPU training host
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b", "c"]},
+                "model_name": "RFDETRNano",
+                "model_config": model_config_dict,
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path)
+
+        assert loaded.model_config.device != "cuda", "the training host's device must not be restored"
+
+    def test_stripped_checkpoint_restores_keypoint_model_resolution(self, tmp_path: Path) -> None:
+        """A real (unmocked) keypoint model trained at a non-default resolution reloads and predicts at it.
+
+        The existing mocked coverage (``test_checkpoint_model_config_forwarded_to_constructor``) only proves the
+        restored fields are forwarded as kwargs to a ``MagicMock`` constructor, never that a real keypoint model
+        (a non-default schema, unlike plain detection) actually builds and runs from them — the exact gap the
+        CHANGELOG's own keypoint-model repro describes.
+        """
+        torch.manual_seed(0)
+        model = RFDETRKeypointPreview(
+            pretrain_weights=None,
+            device="cpu",
+            resolution=96,
+            num_queries=4,
+            num_classes=2,
+            num_keypoints_per_class=[3, 3],
+        )
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b"]},
+                "model_name": "RFDETRKeypointPreview",
+                "model_config": model.model_config.model_dump(),
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path, device="cpu")
+
+        assert loaded.model_config.resolution == 96, "resolution must survive strip_checkpoint for keypoint models"
+        image = torch.rand(3, 120, 160, generator=torch.Generator().manual_seed(0))
+        result = loaded.predict(image, threshold=0.0)
+        assert hasattr(result, "xy"), "restored keypoint model must actually predict at the restored resolution"
+
+    @pytest.mark.parametrize(
+        ("extra", "kwargs", "expected_file"),
+        [
+            pytest.param({"best_total_source": "ema"}, {}, "checkpoint_best_ema.pth", id="old-best-total-ema"),
+            pytest.param(
+                {"best_total_source": "regular"}, {}, "checkpoint_best_regular.pth", id="old-best-total-regular"
+            ),
+            pytest.param(
+                {"best_total_source": "ema", "model_config": {"resolution": 224}}, {}, None, id="model-config-present"
+            ),
+            pytest.param({}, {}, None, id="no-best-total-source"),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224},
+                "checkpoint_best_ema.pth",
+                id="caller-passes-only-resolution",
+            ),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224, "num_select": 50, "dec_layers": 3},
+                None,
+                id="caller-passes-every-silent-field",
+            ),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224, "num_select": 50, "dec_layers": 3, "segmentation_head": True},
+                "checkpoint_best_ema.pth",
+                id="segmentation-still-missing-mask-downsample-ratio",
+            ),
+        ],
+    )
+    def test_missing_model_config_warning(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        extra: dict,
+        kwargs: dict,
+        expected_file: str | None,
+    ) -> None:
+        """An old stripped best-total file warns and names its source until the caller passes every setting it lost."""
+        ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", **extra}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano", **kwargs)
+
+        warnings_about_config = [record.message for record in caplog.records if "no model_config" in record.message]
+        if expected_file is None:
+            assert not warnings_about_config, f"unexpected warning: {warnings_about_config}"
+        else:
+            assert any(expected_file in message for message in warnings_about_config), (
+                f"expected a warning naming {expected_file}, got {warnings_about_config}"
+            )
+
+    def test_missing_model_config_warning_names_the_settings_still_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Passing some settings keeps the warning, which lists only the settings still falling back to defaults."""
+        ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", "best_total_source": "ema"}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(
+                ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano", resolution=224
+            )
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert messages, "expected the missing model_config warning"
+        assert "defaults: num_select, dec_layers." in messages[0], f"missing settings not listed: {messages[0]}"
+        assert "resolution" not in messages[0], f"resolution was passed but is still listed: {messages[0]}"
+
+    def test_strip_checkpoint_without_model_config_key_still_warns_on_reload(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """strip_checkpoint on a file with no model_config key adds no phantom key, and the reload still warns.
+
+        Every other test in this module supplies a model_config key (present, present-but-empty, or absent only through
+        mocked construction); this exercises a real strip_checkpoint round trip on a file that never had the key at all,
+        which must not invent one, and must still round-trip into the best-total-source warn path.
+        """
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save({"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano"}, path)
+
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        stripped = torch.load(path, weights_only=False)
+        assert "model_config" not in stripped, "strip_checkpoint must not invent a model_config key"
+
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(stripped, path, "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert any("checkpoint_best_ema.pth" in message for message in messages), (
+            f"expected the best-total warning naming the ema sibling, got {messages}"
+        )
+
+    def test_missing_model_config_warning_empty_dict_restores_nothing_and_does_not_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An empty model_config dict is still a dict, so it takes the restore branch and skips the warning branch.
+
+        Documents current behavior at the boundary: ``model_config: {}`` passes ``isinstance(value, dict)``, so
+        ``from_checkpoint`` never falls through to the ``best_total_source`` warning check even though the empty
+        dict restores zero fields — the caller silently gets class defaults with no warning either way.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {},
+            "best_total_source": "ema",
+        }
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _, mock_cls = _call_from_checkpoint(
+                ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano"
+            )
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert not messages, f"unexpected warning despite the model_config key being present: {messages}"
+        call_kwargs = mock_cls.call_args.kwargs
+        assert not {"resolution", "num_select", "dec_layers"} & call_kwargs.keys(), (
+            f"an empty model_config unexpectedly restored fields: {call_kwargs}"
+        )
+
+    def test_missing_model_config_warning_fires_for_rfdetr_version_without_best_total_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A resolvable rfdetr_version with no best_total_source still warns, citing the version.
+
+        This is the 1.7.0-1.8.x shape the union discriminator (``"rfdetr_version" in ckpt or "best_total_source" in
+        ckpt``) exists to catch: model_config persistence started in 1.7.0 but best_total_source was only added in
+        1.9.0, so a checkpoint from that window has no best_total_source to key off yet still lost model_config.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "rfdetr_version": "1.7.0",
+        }
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert messages, "expected the missing model_config warning to fire from rfdetr_version alone"
+        assert "written by rfdetr 1.7.0" in messages[0], f"warning should cite the rfdetr_version: {messages[0]}"
+
+    def test_training_host_device_is_not_restored(self, tmp_path: Path) -> None:
+        """A checkpoint trained on a GPU host must not force ``device="cuda"`` on the loading host."""
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {"device": "cuda", "resolution": 224},
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        assert "device" not in mock_cls.call_args.kwargs, "the training host's device must not be forwarded"
+
+    def test_training_host_optimization_flags_are_restored(self, tmp_path: Path) -> None:
+        """Unlike device, compile/cuda_graphs/gradient_checkpointing/freeze_encoder ARE restored from model_config.
+
+        The host-policy skip list in ``from_checkpoint`` only excludes ``pretrain_weights`` and ``device``; every other
+        ``model_config`` field, including these training-time performance flags, is forwarded to the constructor like
+        any other schema field.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {
+                "device": "cuda",
+                "resolution": 224,
+                "compile": True,
+                "cuda_graphs": True,
+                "gradient_checkpointing": True,
+                "freeze_encoder": True,
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["compile"] is True
+        assert call_kwargs["cuda_graphs"] is True
+        assert call_kwargs["gradient_checkpointing"] is True
+        assert call_kwargs["freeze_encoder"] is True
+        assert "device" not in call_kwargs, "device stays host policy, unlike the other flags"
+        assert mock_cls.call_args.kwargs["resolution"] == 224, "other model_config fields must still be restored"
+
+
+# ---------------------------------------------------------------------------
+# PE-Core-T plus models (RFDETRAtto / RFDETRFemto / RFDETRPico)
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointPEPlusModels:
+    """Resolution of the PE-Core-T plus models, independent of which rfdetr_plus (if any) is installed.
+
+    ``rfdetr.platform.models`` is patched into one of three states: a plus release that ships the PE models, an older
+    plus release without them (only the XLarge models), and no plus at all.
+    """
+
+    _PE_SYMBOLS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
+
+    @pytest.fixture
+    def platform_models(self, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+        """Patch ``rfdetr.platform.models`` so every plus symbol is controlled by the test.
+
+        Examples:
+            Fixture execution is managed by pytest, so this example cannot run standalone.
+            >>> platform_models(monkeypatch)  # doctest: +SKIP
+        """
+        import rfdetr.platform
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        for symbol in (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"):
+            monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
+        return platform_models
+
+    def _install(
+        self, monkeypatch: pytest.MonkeyPatch, platform_models: ModuleType, symbols: Iterable[str]
+    ) -> dict[str, MagicMock]:
+        """Expose a fake class for each of *symbols* on *platform_models*, as an installed rfdetr_plus would.
+
+        Examples:
+            >>> import rfdetr.platform.models as platform_models
+            >>> monkeypatch = pytest.MonkeyPatch()
+            >>> fakes = TestFromCheckpointPEPlusModels()._install(monkeypatch, platform_models, ["RFDETRAtto"])
+            >>> platform_models.RFDETRAtto is fakes["RFDETRAtto"]
+            True
+            >>> monkeypatch.undo()
+        """
+        fakes = {}
+        for symbol in symbols:
+            fakes[symbol] = MagicMock(name=symbol)
+            fakes[symbol].__name__ = symbol
+            monkeypatch.setitem(platform_models.__dict__, symbol, fakes[symbol])
+        return fakes
+
+    @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
+    def test_model_name_resolves_the_plus_class(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
+        fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        fakes[model_name].assert_called_once()
+        assert result is fakes[model_name].return_value
+
+    @pytest.mark.parametrize(
+        "pretrain_weights, expected",
+        [
+            ("rf-detr-atto.pth", "RFDETRAtto"),
+            ("rf-detr-femto.pth", "RFDETRFemto"),
+            ("/cache/rfdetr/rf-detr-pico.pth", "RFDETRPico"),
+        ],
+    )
+    def test_pretrain_weights_name_resolves_the_plus_class(
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str
+    ) -> None:
+        fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights)):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert result is fakes[expected].return_value
+
+    @pytest.mark.parametrize(
+        "pretrain_weights",
+        [
+            pytest.param("/data/epicode/rf-detr-nano.pth", id="pico-inside-directory"),
+            pytest.param("/data/tomatto/rf-detr-nano.pth", id="atto-inside-directory"),
+        ],
+    )
+    def test_size_words_inside_paths_do_not_match(
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str
+    ) -> None:
+        """Only release-filename stems select a PE model; a bare size word elsewhere in the path does not."""
+        self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        result, mock_cls = _call_from_checkpoint(
+            _ns(pretrain_weights), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
+        )
+
+        assert result is mock_cls.return_value
+
+    @pytest.mark.parametrize(
+        "pretrain_weights",
+        [
+            pytest.param("/models/rf-detr-pico/rf-detr-nano.pth", id="posix-path"),
+            pytest.param(r"c:\models\rf-detr-pico\rf-detr-nano.pth", id="windows-path"),
+        ],
+    )
+    @pytest.mark.parametrize("plus", ["current", "older", "missing"])
+    def test_release_stem_in_a_directory_name_does_not_match(
+        self, monkeypatch, platform_models, tmp_path: Path, plus: str, pretrain_weights: str
+    ) -> None:
+        """A Nano file inside an ``rf-detr-pico`` directory is a Nano checkpoint, whichever rfdetr_plus is installed.
+
+        The checkpoint records the path it was trained from, so a Windows run stores backslash separators; the stem scan
+        must strip those directories too, on every host.
+        """
+        if plus == "missing":
+            import rfdetr.platform
+
+            monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", False)
+        else:
+            pe_symbols = self._PE_SYMBOLS if plus == "current" else ()
+            self._install(monkeypatch, platform_models, (*pe_symbols, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        result, mock_cls = _call_from_checkpoint(
+            _ns(pretrain_weights), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
+        )
+
+        assert result is mock_cls.return_value
+
+    @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
+    def test_older_plus_model_name_raises_upgrade_hint(
+        self, monkeypatch, platform_models, tmp_path: Path, model_name: str
+    ) -> None:
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="predates it"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_older_plus_pretrain_weights_name_raises_upgrade_hint(
+        self, monkeypatch, platform_models, tmp_path: Path
+    ) -> None:
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth")):
+            with pytest.raises(ImportError, match="predates it"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_older_plus_upgrade_hint_chains_the_missing_symbol_error(
+        self, monkeypatch, platform_models, tmp_path: Path
+    ) -> None:
+        """The upgrade hint keeps the lookup error that explains why the PE model is missing."""
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80}, "model_name": "RFDETRAtto"}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="predates it") as raised:
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert isinstance(raised.value.__cause__, ImportError)
+        assert "RFDETRAtto" in str(raised.value.__cause__)
+
+    def test_upgrade_hint_chains_a_broken_pe_import(self, monkeypatch, platform_models, tmp_path: Path) -> None:
+        """A PE import that failed for another reason stays reachable through the upgrade hint's cause chain.
+
+        Without it, a broken rfdetr_plus dependency reads as an outdated install and the real failure is lost.
+        """
+        broken = ImportError("broken dependency")
+        monkeypatch.setattr(platform_models, "_PLUS_PE_IMPORT_ERROR", broken)
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth")):
+            with pytest.raises(ImportError, match="predates it") as raised:
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert raised.value.__cause__.__cause__ is broken
+
+    def test_older_plus_still_resolves_xlarge(self, monkeypatch, platform_models, tmp_path: Path) -> None:
+        fakes = self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRXLarge"}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert result is fakes["RFDETRXLarge"].return_value
+
+    @pytest.mark.parametrize(
+        "pretrain_weights, expected",
+        [
+            ("/data/xlarge_runs/rf-detr-pico.pth", "RFDETRPico"),
+            ("/runs/seg-large-sweep/rf-detr-atto.pth", "RFDETRAtto"),
+            ("rfdetr-femto.pth", "RFDETRFemto"),
+        ],
+    )
+    def test_release_stems_win_over_other_names_in_the_path(
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str
+    ) -> None:
+        fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights)):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert result is fakes[expected].return_value
+
+    def test_older_plus_stem_does_not_fall_back_to_a_core_size_word(
+        self, monkeypatch, platform_models, tmp_path: Path
+    ) -> None:
+        """``rf-detr-pico-small-ft.pth`` contains "small"; with an old plus it must not resolve to RFDETRSmall."""
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-pico-small-ft.pth")):
+            with pytest.raises(ImportError, match="RFDETRPico is not available"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    @pytest.fixture
+    def broken_plus_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """rfdetr_plus is installed, but importing it fails on one of its own dependencies.
+
+        Examples:
+            Fixture execution is managed by pytest, so this example cannot run standalone.
+            >>> broken_plus_import(monkeypatch)  # doctest: +SKIP
+        """
+        import importlib.abc
+        import sys
+
+        import rfdetr.platform
+
+        class _FailingFinder(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None) -> None:
+                """Fail the ``rfdetr.platform.models`` import as a missing ``timm`` would; defer the rest."""
+                if fullname == "rfdetr.platform.models":
+                    raise ModuleNotFoundError("No module named 'timm'", name="timm")
+                return None
+
+        monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.delitem(sys.modules, "rfdetr.platform.models", raising=False)
+        monkeypatch.setattr(sys, "meta_path", [_FailingFinder(), *sys.meta_path])
+
+    def test_broken_plus_import_does_not_block_core_checkpoints(self, broken_plus_import, tmp_path: Path) -> None:
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRNano"}
+
+        result, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+
+        assert result is mock_cls.return_value
+
+    @pytest.mark.parametrize("model_name", ["RFDETRAtto", "RFDETRXLarge"])
+    def test_broken_plus_import_is_raised_for_plus_checkpoints(
+        self, broken_plus_import, tmp_path: Path, model_name: str
+    ) -> None:
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="failed to import") as excinfo:
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+        assert excinfo.value.__cause__.name == "timm"
+
+    def test_broken_plus_import_warns_once(
+        self, broken_plus_import, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Loading core checkpoints repeatedly with a broken rfdetr_plus logs the import failure only once.
+
+        Each ``from_checkpoint`` call retries the plus import, so a plain warning would repeat on every load of a loop.
+        """
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRNano"}
+        monkeypatch.setattr(detr_logger, "_warned_once", set())
+        # Spy on the logger itself rather than caplog: pytest >= 9.1 attaches its capture handler to non-propagating
+        # loggers, so forcing propagate on makes caplog record each emission twice.
+        warning = MagicMock()
+        monkeypatch.setattr(detr_logger, "warning", warning)
+
+        _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+        _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+
+        messages = [call.args[0] for call in warning.call_args_list if "failed to import" in call.args[0]]
+        assert len(messages) == 1, messages
+
+    @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
+    def test_without_plus_raises_install_hint(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
+        import rfdetr.platform
+
+        monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", False)
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="rfdetr_plus package"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+
+class TestPlusExportsSingleSource:
+    """Every plus-model lookup reads the one ``rfdetr.platform._PLUS_EXPORTS`` set instead of a hand-synced copy."""
+
+    def test_modules_share_the_platform_set(self) -> None:
+        """``rfdetr``, ``rfdetr.platform.models`` and ``rfdetr.detr`` hold the very same set object.
+
+        A module that redefines its own copy drifts the next time a plus model is added, which is how only two of the
+        five plus symbols ended up covered by tests.
+        """
+        import rfdetr
+        import rfdetr.detr
+        import rfdetr.platform.models as platform_models
+
+        assert rfdetr._PLUS_EXPORTS is _PLUS_EXPORTS
+        assert platform_models._PLUS_EXPORTS is _PLUS_EXPORTS
+        assert rfdetr.detr._PLUS_EXPORTS is _PLUS_EXPORTS
+
+    @pytest.mark.parametrize(
+        "class_symbol",
+        sorted({symbol for _, symbol in (*_CHECKPOINT_PLUS_MODEL_MAP_ENTRIES, *_CHECKPOINT_PLUS_STEM_ENTRIES)}),
+    )
+    def test_checkpoint_tables_name_only_plus_exports(self, class_symbol: str) -> None:
+        """Each class a plus checkpoint-name or release-stem entry resolves to is a listed plus export.
+
+        ``from_checkpoint`` only fetches the symbols in the set from ``rfdetr.platform.models``, so an entry naming
+        anything else could never resolve to its plus class.
+        """
+        assert class_symbol in _PLUS_EXPORTS
+
+
+class TestPlatformModelsPEExports:
+    """``rfdetr.platform.models`` / ``rfdetr`` surface for the PE-Core-T plus models."""
+
+    @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
+    def test_listed_as_plus_exports(self, symbol: str) -> None:
+        import rfdetr
+        import rfdetr.platform.models as platform_models
+
+        assert symbol in rfdetr._PLUS_EXPORTS
+        assert symbol in platform_models._PLUS_EXPORTS
+
+    @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
+    def test_older_plus_access_raises_upgrade_hint(self, monkeypatch: pytest.MonkeyPatch, symbol: str) -> None:
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
+
+        with pytest.raises(ImportError, match="predates it"):
+            getattr(platform_models, symbol)
+
+    def test_top_level_access_with_older_plus_raises_upgrade_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import rfdetr
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.delitem(platform_models.__dict__, "RFDETRAtto", raising=False)
+        monkeypatch.delitem(rfdetr.__dict__, "RFDETRAtto", raising=False)
+
+        with pytest.raises(ImportError, match="predates it"):
+            rfdetr.RFDETRAtto
+
+    @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
+    def test_missing_plus_access_raises_install_hint(self, monkeypatch: pytest.MonkeyPatch, symbol: str) -> None:
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", False)
+        monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
+
+        with pytest.raises(ImportError, match="plus"):
+            getattr(platform_models, symbol)

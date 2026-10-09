@@ -101,10 +101,10 @@ RF-DETR provides several optional extras for additional functionality:
 | `coreml`     | `pip install "rfdetr[coreml]"`                          | Native CoreML export (.mlpackage; macOS only)                                                                                                                              |
 | `tensorrt`   | `pip install "rfdetr[tensorrt]"`                        | TensorRT inference (tensorrt, polygraphy, onnxruntime-gpu, plus onnx and onnxconverter-common to cast the graph to FP16 on TensorRT 11+; pycuda lives in `tensorrt-bench`) |
 | `augment`    | `pip install "rfdetr[augment]"`                         | Custom CPU (Albumentations) + GPU (Kornia) augmentations                                                                                                                   |
-| `lora`       | `pip install "rfdetr[lora]"`                            | LoRA fine-tuning with PEFT                                                                                                                                                 |
+| `lora`       | `pip install "rfdetr[lora]"`                            | LoRA fine-tuning with PEFT, and loading a checkpoint trained with `backbone_lora=True`                                                                                     |
 | `visual`     | `pip install "rfdetr[visual]"`                          | Visualization utilities (matplotlib, pandas, seaborn)                                                                                                                      |
 | `cli`        | `pip install "rfdetr[cli]"`                             | CLI with typed argument parsing (jsonargparse)                                                                                                                             |
-| `plus`       | `pip install "rfdetr[plus]"`                            | XLarge and 2XLarge detection models (PML 1.0 license)                                                                                                                      |
+| `plus`       | `pip install "rfdetr[plus]"`                            | Atto, Femto, Pico, XLarge and 2XLarge detection models (PML 1.0 license)                                                                                                   |
 
 ## Additional Notes
 

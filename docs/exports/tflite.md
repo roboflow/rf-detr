@@ -32,6 +32,8 @@ Export your model to TFLite for deployment on mobile devices, microcontrollers, 
 pip install "rfdetr[tflite]"
 ```
 
+The `tflite` extra installs on Python 3.12 only: every package it pins carries a Python 3.12 marker, so on another interpreter it installs none of the TFLite packages.
+
 ## Basic TFLite Export (FP32)
 
 === "Object Detection"
@@ -58,11 +60,11 @@ This produces both `output/inference_model_fp32.tflite` and `output/inference_mo
 
 ## INT8 Quantization
 
-`quantization="int8"` produces a **dynamic-range** INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that *would* need representative data, is intentionally unsupported because RF-DETR's transformer activations do not survive it.
+`quantization="int8"` produces a **dynamic-range** INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that *would* need representative data, is intentionally unsupported because RF-DETR's transformer activations are not expected to survive TFLite's full-integer mode, which gives every activation a per-tensor 8-bit scale — no TFLite full-integer measurement exists yet to confirm this; it is the current best understanding, not a proven fact. Other toolchains can be configured to keep transformer-sensitive ops in float during 8-bit quantization — ONNX Runtime's QDQ `quantize_static` via `op_types_to_quantize`/`nodes_to_exclude`, OpenVINO's NNCF via `model_type=ModelType.TRANSFORMER` (NNCF excludes Softmax by default; ORT does not) — so this is a limit of the TFLite route, not of 8-bit post-training quantization in general.
 
 Dynamic-range INT8 requires a float-capable runtime and is not suitable for integer-only accelerators such as the Coral Edge TPU or integer-only NPUs.
 
-`calibration_data` accepts a directory of JPEG, PNG, BMP or WebP images, a path to an `.npy` file of shape `(N, H, W, 3)` (float32, values in `[0, 1]`), or a NumPy array in that format; `max_images` caps how many images are read from a directory. These arguments are not consumed when building the generated `.tflite` models. Omitting them is the normal path:
+`calibration_data` and `max_images` are accepted for backward compatibility but ignored: neither is read, validated or used when building the generated `.tflite` models, so a missing path does not fail the export. Passing `calibration_data` raises a `UserWarning` that says so; `max_images` has no effect and raises nothing. Omit both:
 
 ```python
 from rfdetr import RFDETRSmall

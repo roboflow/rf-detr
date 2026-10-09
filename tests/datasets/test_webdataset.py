@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for the WebDataset shard pack and streaming-load package.
 
-Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind an
-``importorskip`` on the optional ``data`` extra — streaming, sizing and parity against the loose-file
+Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a ``skipif``
+decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
 
@@ -50,7 +50,17 @@ from rfdetr.datasets.webdataset.load import (
     plan_samples_per_worker,
 )
 from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards, tar_member_bytes
+from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PYTORCH_LIGHTNING_INSTALLED, _IS_WEBDATASET_INSTALLED
 from rfdetr.utilities.tensors import make_collate_fn
+from tests.datasets._memory import peak_traced_bytes
+
+webdataset_only = pytest.mark.skipif(
+    not _IS_WEBDATASET_INSTALLED, reason="webdataset not installed; skip streaming tests (optional `data` extra)"
+)
+pytorch_lightning_only = pytest.mark.skipif(
+    not _IS_PYTORCH_LIGHTNING_INSTALLED, reason="pytorch_lightning not installed; skip DataModule tests"
+)
+matplotlib_only = pytest.mark.skipif(not _IS_MATPLOTLIB_INSTALLED, reason="matplotlib not installed; skip sample grid")
 
 _CATEGORIES = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
 
@@ -642,18 +652,9 @@ def _pack(tmp_path: Path, **kwargs: Any) -> Path:
     return shard_dir
 
 
+@webdataset_only
 class TestWebDatasetDetection:
     """Streaming a packed split reproduces the loose-file dataset it was packed from."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @pytest.mark.parametrize(
         ("path", "expected"),
@@ -674,9 +675,11 @@ class TestWebDatasetDetection:
         assert urlparse(_shard_url(path)).path == expected
 
     def test_webdataset_opens_every_shard_url_this_dataset_emits(self, tmp_path: Path) -> None:
+        from webdataset.cache import StreamingOpen
+
         shard_dir = _pack(tmp_path / "shard dir", count=4)
         dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
-        opener = pytest.importorskip("webdataset.cache").StreamingOpen()
+        opener = StreamingOpen()
         opened = [source["stream"].read() for source in opener(dataset._shard_urls())]
         assert opened == [(shard_dir / name).read_bytes() for name in dataset.index.shards]
 
@@ -685,8 +688,9 @@ class TestWebDatasetDetection:
         image_ids = [int(target["image_id"]) for _, target in dataset]
         assert sorted(image_ids) == list(range(1000, 1012))
 
-    def test_output_matches_the_loose_file_dataset(self, tmp_path: Path) -> None:
-        image_dir, annotations = _build_coco_split(tmp_path, count=6)
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_output_matches_the_loose_file_dataset(self, tmp_path: Path, extension: str) -> None:
+        image_dir, annotations = _build_coco_split(tmp_path, count=6, extension=extension)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", max_shard_bytes=4096)
         transforms = make_coco_transforms("val", 224)
@@ -755,6 +759,41 @@ class TestWebDatasetDetection:
         loose_image, loose_target = loose[0]
         assert torch.equal(streamed_image, loose_image)
         assert torch.equal(streamed_target["boxes"], loose_target["boxes"])
+
+    @pytest.mark.parametrize("extension", ["png", "bmp"])
+    def test_png_or_bmp_member_is_not_copied_through_numpy(self, tmp_path: Path, extension: str) -> None:
+        """A PNG or BMP shard member reaches the transforms without a frame-sized NumPy copy (#1544).
+
+        PNG's encoded bytes, which the tar reader holds in memory, stay far below the 1.44 MB frame because the gradient
+        compresses well; BMP has no compression, so its encoded bytes are already about one frame plus whatever Pillow's
+        decode buffer and mandatory RGB ``convert()`` copy add on top. The bound below is the on-disk size plus two
+        frames, wide enough for that legitimate BMP overhead while still catching the further frame-sized copy a round
+        trip through ``np.array`` and ``Image.fromarray`` would add.
+        """
+        image_dir = tmp_path / "images"
+        image_dir.mkdir()
+        rows, columns = np.mgrid[0:600, 0:800]
+        gradient = np.stack([columns % 256, rows % 256, (rows + columns) % 256], axis=-1).astype(np.uint8)
+        file_name = f"img_0000.{extension}"
+        image_path = image_dir / file_name
+        Image.fromarray(gradient).save(image_path)
+        encoded_size = image_path.stat().st_size
+        annotations = tmp_path / "annotations.json"
+        annotations.write_text(
+            json.dumps(
+                {
+                    "images": [{"id": 1000, "file_name": file_name, "height": 600, "width": 800}],
+                    "annotations": [],
+                    "categories": list(_CATEGORIES),
+                }
+            ),
+            encoding="utf-8",
+        )
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+
+        assert peak_traced_bytes(lambda: next(iter(dataset))) < encoded_size + 2 * (800 * 600 * 3)
 
     def test_segmentation_masks_match_the_loose_file_dataset(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=4, segmentation=True)
@@ -866,6 +905,7 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
             tar.addfile(member, BytesIO(payload))
 
 
+@webdataset_only
 class TestStreamingShuffle:
     """Shard-order shuffling has to stay a partition within an epoch and change between epochs."""
 
@@ -899,16 +939,6 @@ class TestStreamingShuffle:
             assert sorted(rank_ids[0] + rank_ids[1]) == list(range(1000, 1024))
             epochs.append(rank_ids)
         assert set(epochs[0][0]) != set(epochs[1][0])
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @pytest.mark.parametrize("num_workers", [pytest.param(0, id="main-process"), pytest.param(2, id="two-workers")])
     def test_sample_order_changes_between_epochs(self, tmp_path: Path, num_workers: int) -> None:
@@ -1027,18 +1057,9 @@ class TestPlanSamplesPerWorker:
             plan_samples_per_worker(79, batch_size=4, num_workers=2, grad_accum_steps=20)
 
 
+@webdataset_only
 class TestBuildWebdatasetLoader:
     """Training plans a fixed epoch; evaluation passes over every sample exactly once."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @pytest.mark.parametrize("num_workers", [pytest.param(0, id="main-process"), pytest.param(2, id="two-workers")])
     def test_training_length_matches_the_batches_produced(self, tmp_path: Path, num_workers: int) -> None:
@@ -1366,18 +1387,9 @@ def _id_collate(batch: list[tuple[Any, Any]]) -> list[int]:
     return [int(target["image_id"]) for _, target in batch]
 
 
+@webdataset_only
 class TestBuildWebdataset:
     """The dataset builder mirrors the loose-file builders' conventions."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @staticmethod
     def _namespace(dataset_dir: Path, **overrides: Any) -> types.SimpleNamespace:
@@ -1511,19 +1523,10 @@ class TestBuildWebdataset:
         assert isinstance(dataset, WebDatasetDetection)
 
 
+@webdataset_only
+@pytorch_lightning_only
 class TestDataModuleStreaming:
     """The DataModule routes a streaming split away from the sampler-based loaders."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data``/``train`` extras are absent.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
-        pytest.importorskip("pytorch_lightning")
 
     @pytest.fixture
     def datamodule(self, tmp_path: Path) -> Any:
@@ -1655,7 +1658,7 @@ class TestDataModuleStreaming:
     def test_datamodule_reports_the_shard_index_class_names(self, datamodule: Any) -> None:
         assert datamodule.class_names == ["cat", "dog"]
 
+    @matplotlib_only
     def test_sample_grid_rejects_a_streaming_split(self, datamodule: Any) -> None:
-        pytest.importorskip("matplotlib")
         with pytest.raises(TypeError, match="map-style dataset"):
             datamodule._show_samples(2, split="train")

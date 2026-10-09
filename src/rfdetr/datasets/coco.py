@@ -43,7 +43,7 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.io_utils import decode_image
+from rfdetr.datasets.io_utils import decode_pil_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
@@ -306,10 +306,11 @@ def draft_size_for_transforms(
 ) -> int | None:
     """Return the source extent below which the transform pipeline starts losing detail.
 
-    :meth:`CocoDetection._decode_image` passes this to ``PIL.Image.draft`` so JPEG sources far larger than the training
-    resolution are decoded at a reduced DCT scale instead of at full size. ``draft`` never returns an image smaller
-    than the requested box, so the box preserves the largest direct-resize target. Scale jitter also preserves its
-    600-pixel pre-crop resize floor, avoiding an extra upsample after JPEG decoding.
+    :meth:`CocoDetection._decode_image` passes this to the decoder, which applies the reduction ``PIL.Image.draft``
+    would pick, so JPEG sources far larger than the training resolution are decoded at a reduced DCT scale instead of at
+    full size. ``draft`` never returns an image smaller than the requested box, so the box preserves the largest
+    direct-resize target. Scale jitter also preserves its 600-pixel pre-crop resize floor, avoiding an extra upsample
+    after JPEG decoding.
 
     Two cases return ``None`` (decode at full resolution):
 
@@ -698,7 +699,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         )
 
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
-        """Decode one image through :func:`decode_image`, drafting when ``draft_size`` is set.
+        """Decode one image through :func:`decode_pil_image`, drafting when ``draft_size`` is set.
 
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
         deliberately not named the same: it returns a decode scale alongside the image.
@@ -710,8 +711,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
         path = self.coco.loadImgs(image_id)[0]["file_name"]
-        pixels, scales = decode_image(Path(self.root) / path, self._draft_size)
-        return Image.fromarray(pixels), scales
+        return decode_pil_image(Path(self.root) / path, self._draft_size)
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]
@@ -836,6 +836,8 @@ class ConvertCoco:
                     keypoint_tensors.append(torch.zeros((num_keypoints, 3), dtype=torch.float32))
                     continue
 
+                # Taken as-is, with no +0.5 shift: keypoints are treated as continuous image coordinates, the same
+                # convention as boxes, and the horizontal flip mirrors them as ``width - x``.
                 keypoint_tensor = torch.as_tensor(raw_keypoints, dtype=torch.float32).reshape(-1, 3)
                 if keypoint_tensor.shape[0] < num_keypoints:
                     padded = torch.zeros((num_keypoints, 3), dtype=torch.float32)
@@ -856,17 +858,13 @@ class ConvertCoco:
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
-            if len(anno) > 0 and "segmentation" in anno[0]:
-                segmentations = [obj.get("segmentation", []) for obj in anno]
-                masks = convert_coco_poly_to_mask(segmentations, h, w)
-                if masks.numel() > 0:
-                    target["masks"] = masks[keep]
-                else:
-                    target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-            else:
-                target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-
-            target["masks"] = target["masks"].bool()
+            # Build one mask per annotation unconditionally, not gated on whether any annotation
+            # in the image has a segmentation key: convert_coco_poly_to_mask already falls back to
+            # a zero mask per box-only annotation, so gating the whole build on any(...) is what
+            # left an all-box-only image with (0, H, W) masks against K>0 kept boxes.
+            segmentations = [obj.get("segmentation", []) for obj in anno]
+            masks = convert_coco_poly_to_mask(segmentations, h, w)
+            target["masks"] = masks[keep].bool()
             if keypoint_keep is not None:
                 target["masks"] = target["masks"][keypoint_keep]
 

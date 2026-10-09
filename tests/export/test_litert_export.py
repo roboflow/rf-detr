@@ -10,15 +10,17 @@ Covers:
   whether or not the package is installed), naming / path-traversal sanitization, error tiers, the ``quantization``
   guard on ``build_config``, and the internal ``ModelWrapper`` (``litert_torch.convert`` stubbed via ``sys.modules``
   injection so these run without the real package installed).
+* The keypoint refusal: a graph with a ``keypoints`` output never reaches the converter.
 * ``format="litert"`` wiring through ``RFDETR.export()`` (heavy deps mocked, fast).
 * The single-level deformable-attention core emitting no one-output ``split`` under ``torch.export`` — the only op
   litert-torch 0.9.4 could not lower on RF-DETR's export graph.
 * A real end-to-end export + numerical parity check, gated behind the ``e2e_litert`` marker and
-  ``pytest.importorskip("litert_torch")`` so it only runs where the ``[litert]`` extra is installed.
+  the ``litert_only`` skip so it only runs where the ``[litert]`` extra is installed.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import types
@@ -31,14 +33,20 @@ import pytest
 import torch
 from numpy.typing import NDArray
 
+from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.export._litert.exporter import LiteRTConfig, LiteRTExporter, ModelWrapper
-from rfdetr.export.prepare import ExportGraph
+from rfdetr.export.imports import _IS_LITERT_TORCH_INSTALLED
+from rfdetr.export.prepare import ExportGraph, prepare_export_graph
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
     eager_reference_tensors,
     max_abs_output_diffs,
+)
+
+litert_only = pytest.mark.skipif(
+    not _IS_LITERT_TORCH_INSTALLED, reason="litert_torch not installed; skip LiteRT e2e tests"
 )
 
 
@@ -349,18 +357,52 @@ class TestExportLitertErrorTiers:
             exporter(_export_graph(dict_model))
 
 
+class TestLiteRTKeypointRefusal:
+    """A graph with a ``keypoints`` output is refused before conversion: litert-torch cannot lower the keypoint head."""
+
+    def test_keypoint_graph_is_refused_before_the_conversion_starts(self, tmp_path: Path) -> None:
+        """The refusal comes before the converter is set up, let alone run: litert-torch cannot convert the graph."""
+        graph = dataclasses.replace(_export_graph(), output_names=("dets", "labels", "keypoints"))
+        exporter = LiteRTExporter(LiteRTConfig(output_dir=tmp_path, verbose=False))
+        with (
+            mock.patch.object(LiteRTExporter, "check_dependencies"),
+            mock.patch.object(LiteRTExporter, "_import_converter") as import_converter,
+            pytest.raises(NotImplementedError, match="keypoint"),
+        ):
+            exporter(graph)
+        import_converter.assert_not_called()
+
+    def test_graph_without_keypoints_output_is_converted(self, tmp_path: Path) -> None:
+        """A backbone-only export of a keypoint model names its outputs ``features*``, and still converts."""
+        fake = _stub_litert_torch_module()
+        graph = dataclasses.replace(_export_graph(backbone_only=True), output_names=("features",))
+        with mock.patch.dict(sys.modules, {"litert_torch": fake}):
+            LiteRTExporter(LiteRTConfig(output_dir=tmp_path, verbose=False))(graph)
+        fake.convert.assert_called_once()
+
+    def test_keypoint_model_is_refused_through_the_public_export(self, tmp_path: Path) -> None:
+        """``RFDETR.export`` names the keypoint output from the model's config, which is what the refusal keys on."""
+        with (
+            mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
+            mock.patch.object(LiteRTExporter, "check_dependencies"),
+            mock.patch.dict(sys.modules, {"litert_torch": None}),
+            pytest.raises(NotImplementedError, match="keypoint"),
+        ):
+            _make_rfdetr(use_grouppose_keypoints=True).export(format="litert", output_dir=str(tmp_path / "out"))
+
+
 # ---------------------------------------------------------------------------
 # format="litert" wiring through RFDETR.export() (heavy deps mocked)
 # ---------------------------------------------------------------------------
 
 
-def _make_rfdetr(*, segmentation_head: bool = False) -> Any:
+def _make_rfdetr(*, segmentation_head: bool = False, use_grouppose_keypoints: bool = False) -> Any:
     """Create a minimal ``RFDETR`` instance with mocked internals (mirrors the CoreML/ExecuTorch/OpenVINO suites).
 
     Examples:
-        >>> obj = _make_rfdetr()
-        >>> obj.size, obj.model.resolution
-        ('rfdetr-nano', 560)
+        >>> obj = _make_rfdetr(use_grouppose_keypoints=True)
+        >>> obj.size, obj.model.resolution, obj.model_config.use_grouppose_keypoints
+        ('rfdetr-nano', 560, True)
     """
     from rfdetr.detr import RFDETR
 
@@ -371,7 +413,7 @@ def _make_rfdetr(*, segmentation_head: bool = False) -> Any:
     obj.model.model.to.return_value = obj.model.model
     obj.model_config = mock.MagicMock()
     obj.model_config.segmentation_head = segmentation_head
-    obj.model_config.use_grouppose_keypoints = False
+    obj.model_config.use_grouppose_keypoints = use_grouppose_keypoints
     obj.model_config.patch_size = 14
     obj.model_config.num_windows = 1
     obj.model_config.num_channels = 3
@@ -401,6 +443,8 @@ class TestExportFormatParameter:
             autospec=True,
             return_value=tflite_out,
         ).start()
+        # The CPU job has no litert-torch, which RFDETR.export() checks for before the forward pass.
+        mock.patch("rfdetr.export._litert.exporter.LiteRTExporter.check_dependencies").start()
 
         yield
 
@@ -578,7 +622,6 @@ def litert_detection_export(
     tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
 ) -> tuple[Any, torch.Tensor, Path]:
     """Export RFDETRNano to LiteRT once, shared across the gated detection e2e tests."""
-    pytest.importorskip("litert_torch")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("litert_nano")
@@ -597,7 +640,6 @@ def litert_segmentation_export(
     tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
 ) -> tuple[Any, torch.Tensor, Path]:
     """Export RFDETRSegNano to LiteRT once, shared across the gated segmentation e2e test."""
-    pytest.importorskip("litert_torch")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("litert_seg_nano")
@@ -614,7 +656,6 @@ def litert_segmentation_export(
 @pytest.fixture(scope="module")
 def litert_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
     """Export RFDETRNano's backbone-only LiteRT graph once, shared across the gated backbone e2e test."""
-    pytest.importorskip("litert_torch")
     import rfdetr
     from rfdetr.export._backend import _BackboneExport
 
@@ -628,6 +669,7 @@ def litert_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     return reference_model, example, Path(tflite_path)
 
 
+@litert_only
 @pytest.mark.integration
 @pytest.mark.e2e_litert
 class TestLiteRTEndToEnd:
@@ -694,15 +736,28 @@ class TestLiteRTEndToEnd:
         diffs = max_abs_output_diffs(eager_tensors, litert_tensors, check_shape=True)
         assert max(diffs) < 1e-3, f"LiteRT backbone outputs diverge from PyTorch: max abs diff {max(diffs)}"
 
-    def test_keypoint_export_is_rejected_by_converter(self, tmp_path: Path) -> None:
+    def test_keypoint_head_is_still_rejected_by_the_converter(self, tmp_path: Path) -> None:
         """Pins the documented limitation: litert-torch 0.9.4 rejects the keypoint head's rank-4 ``batch_matmul``.
 
-        When a litert-torch release lowers it, this test fails — that is the cue to drop the keypoint caveat from the
-        ``format="litert"`` docs and add a keypoint parity test next to the detection one.
+        ``LiteRTExporter._convert`` refuses a keypoint graph before converting it, so this drives the exporter's own
+        capture step on the prepared keypoint graph directly. When a litert-torch release lowers the head, this test
+        fails. That is the cue to lift the refusal, drop the keypoint caveat from the ``format="litert"`` docs, and add
+        a keypoint parity test next to the detection one.
         """
-        pytest.importorskip("litert_torch")
+        import litert_torch
+
         import rfdetr
 
         detector = rfdetr.RFDETRKeypointPreview(pretrain_weights=None)
-        with pytest.raises(RuntimeError, match="Failed to export model to LiteRT"):
-            detector.export(output_dir=str(tmp_path), format="litert", verbose=False)
+        resolution = int(detector.model.resolution)
+        graph = prepare_export_graph(
+            detector.model.model.to("cpu"),
+            detector.model_config,
+            shape=(resolution, resolution),
+            device=torch.device("cpu"),
+        )
+        _switch_to_export_mode(graph.model)
+        exporter = LiteRTExporter(LiteRTConfig(output_dir=tmp_path, verbose=False))
+        wrapped_model, input_tensors = exporter._prepare_module_for_tracing(graph)
+        with pytest.raises(RuntimeError, match=r"Failed to export model to LiteRT: .*'tfl\.batch_matmul'"):
+            exporter._convert_and_save(litert_torch, wrapped_model, input_tensors, tmp_path / "keypoint.tflite")

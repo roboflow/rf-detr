@@ -9,7 +9,9 @@
 """This tool provides performance benchmarks by using ONNX Runtime and TensorRT to run inference on a given model with
 the COCO validation set.
 
-It offers reliable measurements of inference latency using ONNX Runtime or TensorRT on the device.
+It offers reliable measurements of inference latency using ONNX Runtime or TensorRT on the device. For timing any other
+callable — one export runtime, one batch size — use :func:`measure_latency` and :func:`measure_memory`, which the export
+cookbooks use for every row they report.
 """
 
 import importlib
@@ -24,18 +26,15 @@ from PIL import Image
 from torch import Tensor
 from tqdm.auto import tqdm
 
-try:
-    import tensorrt as trt
-except ImportError:
-    trt = None
-
-try:
-    import pycuda.driver as cuda
-except ImportError:
-    cuda = None
-
+from rfdetr.export._benchmark import BenchmarkResult as BenchmarkResult
+from rfdetr.export._benchmark import MemoryResult as MemoryResult
+from rfdetr.export._benchmark import measure_latency as measure_latency
+from rfdetr.export._benchmark import measure_memory as measure_memory
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
 from rfdetr.utilities.logger import get_logger
+
+# The public surface is the timing API only; the LW-DETR CLI helpers below stay importable by name but are not exported.
+__all__ = ["BenchmarkResult", "MemoryResult", "measure_latency", "measure_memory"]
 
 logger = get_logger()
 
@@ -284,6 +283,8 @@ def main(
     device: int = 0,
     run_benchmark: bool = False,
     disable_eval: bool = False,
+    *,
+    engine_host_code_allowed: bool = False,
 ) -> None:
     """Performance benchmark tool for ONNX/TRT models.
 
@@ -293,6 +294,9 @@ def main(
         device: CUDA device index.
         run_benchmark: Repeat inference 10x to measure latency.
         disable_eval: Skip COCO evaluation.
+        engine_host_code_allowed: Let TensorRT load a ``.trt`` engine that carries host code, which an engine built
+            by TensorRT 11 with ``trt_version_compatible=True`` does. Ignored for ``.onnx`` files. Turn it on only
+            for an engine you built yourself or otherwise trust.
     """
     logger.info(
         {
@@ -301,6 +305,7 @@ def main(
             "device": device,
             "run_benchmark": run_benchmark,
             "disable_eval": disable_eval,
+            "engine_host_code_allowed": engine_host_code_allowed,
         }
     )
     coco_gt = osp.join(coco_path, "annotations/instances_val2017.json")
@@ -320,7 +325,7 @@ def main(
         coco_evaluator = CocoEvaluator(COCO(coco_gt), ["bbox"])
     else:
         coco_evaluator = None
-    time_profile = TimeProfiler()
+    time_profile = TimeProfiler(device=f"cuda:{device}")
 
     if path.endswith(".onnx"):
         import onnxruntime as nxrun
@@ -331,7 +336,9 @@ def main(
         )
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     elif path.endswith((".trt", ".engine")):
-        model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
+        model = TRTInference(
+            path, sync_mode=True, device=f"cuda:{device}", engine_host_code_allowed=engine_host_code_allowed
+        )
         infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     else:
         raise NotImplementedError('Only model file names ending with ".onnx", ".trt", or ".engine" are supported.')

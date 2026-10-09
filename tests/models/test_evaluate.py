@@ -24,6 +24,7 @@ import pytest
 import torch
 
 from rfdetr import RFDETR, RFDETRNano
+from rfdetr.detr import _device_move_lock
 
 
 def _num_classes(dataset_dir: Path) -> int:
@@ -163,6 +164,49 @@ def _mock_trainer() -> Any:
     return trainer
 
 
+class _LockTrackingLiveModel(torch.nn.Module):
+    """Live-module stand-in that records the device-move lock state at every ``.to()`` call instead of moving.
+
+    Parameter-free on purpose: the deferred restore in ``evaluate()``'s ``finally`` then finds nothing left to move,
+    so the recorded calls are exactly the outbound transplant move this stand-in is here to observe.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock_held: list[bool] = []
+
+    def to(self, *args: Any, **kwargs: Any) -> "_LockTrackingLiveModel":
+        """Record whether the device-move lock was held, without performing any move."""
+        self.lock_held.append(_device_move_lock(self).locked())
+        return self
+
+
+def test_evaluate_moves_the_live_model_under_the_device_move_lock(tmp_path: Path) -> None:
+    """``evaluate()``'s move of the live weights to CPU for the transplant must hold that module's move lock.
+
+    The transplant frees accelerator memory for the freshly built eval module by moving the *live* module — the one
+    ``predict()`` runs on — to CPU. That is the same in-place parameter rewrite the deferred first-use move performs, so
+    a thread reaching its first ``predict()`` must not be able to run it concurrently.
+    """
+    live_model = _LockTrackingLiveModel()
+    mock_self = MagicMock()
+    mock_self.model.model = live_model
+    # Anything but "cpu": the transplant's CPU move is skipped for a model that already lives there.
+    mock_self.model.device = torch.device("meta")
+    trainer = _mock_trainer()
+
+    with (
+        patch("rfdetr.training.RFDETRModelModule"),
+        patch("rfdetr.training.RFDETRDataModule"),
+        patch("rfdetr.training.build_trainer", return_value=trainer),
+    ):
+        RFDETR.evaluate(mock_self, dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+
+    assert live_model.lock_held == [True], (
+        f"expected one live-model move, taken under the module's move lock, got lock states {live_model.lock_held!r}"
+    )
+
+
 class TestEvaluateSplitDispatch:
     """``split`` selects ``trainer.test`` vs ``trainer.validate`` and validates the value."""
 
@@ -284,10 +328,14 @@ class TestEvaluateTrainerBoundary:
     """Evaluate() drives build_trainer and maps its results at the trainer boundary."""
 
     def test_device_index_forwarded_and_eval_mode(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """Device='cuda:1' maps to accelerator='gpu'/devices=[1] and the trainer is built in eval mode."""
+        """Device='cuda:1' maps to accelerator='gpu'/devices=[1] and the trainer is built in eval mode.
+
+        The rebuilt module also skips upstream encoder weights: ``evaluate()`` transplants every weight into it, so a
+        fetch would be wasted I/O.
+        """
         trainer = _mock_trainer()
         with (
-            patch("rfdetr.training.RFDETRModelModule"),
+            patch("rfdetr.training.RFDETRModelModule") as mock_module,
             patch("rfdetr.training.RFDETRDataModule"),
             patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build,
         ):
@@ -296,6 +344,7 @@ class TestEvaluateTrainerBoundary:
             )
         _, build_kwargs = mock_build.call_args
         assert build_kwargs == {"include_training_callbacks": False, "accelerator": "gpu", "devices": [1]}
+        assert mock_module.call_args.kwargs["load_encoder_weights"] is False
 
     def test_empty_results_returns_empty_dict(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
         """When the trainer yields no metrics, evaluate() returns an empty dict."""
