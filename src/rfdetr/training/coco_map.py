@@ -775,7 +775,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             # hotcoco rejects an undeclared category with `KeyError`, but a negative id in the detection array
             # with `ValueError`. One range check ahead of `update()` keeps both ends of the label range on the same
             # fallback without catching a genuine input error. A NaN score is not caught here: `load_res()` raises
-            # `ValueError` for it.
+            # `RuntimeError` for it.
             self._stop_streaming(f"a label falls outside the declared categories [0, {len(categories) - 1}]")
             return
         if self._streams is None:
