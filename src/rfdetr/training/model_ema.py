@@ -9,6 +9,7 @@ import json
 import math
 from collections.abc import Callable
 from copy import deepcopy
+from typing import Literal
 
 import torch
 
@@ -63,13 +64,12 @@ class ModelEma(torch.nn.Module):
 
 
 class BestMetricSingle:
-    def __init__(self, init_res: float = 0.0, better: str = "large") -> None:
+    def __init__(self, init_res: float = 0.0, better: Literal["large", "small"] = "large") -> None:
+        if better not in ("large", "small"):
+            raise ValueError(f"'better' must be 'large' or 'small', got {better!r}")
         self.init_res = init_res
         self.best_res = init_res
         self.best_ep = -1
-
-        if better not in ("large", "small"):
-            raise ValueError(f"'better' must be 'large' or 'small', got {better!r}")
         self.better = better
 
     def isbetter(self, new_res: float, old_res: float) -> bool:
@@ -101,7 +101,12 @@ class BestMetricSingle:
 
 
 class BestMetricHolder:
-    def __init__(self, init_res: float = 0.0, better: str = "large", use_ema: bool = False) -> None:
+    def __init__(
+        self,
+        init_res: float = 0.0,
+        better: Literal["large", "small"] = "large",
+        use_ema: bool = False,
+    ) -> None:
         self.best_all = BestMetricSingle(init_res, better)
         self.use_ema = use_ema
         if use_ema:
