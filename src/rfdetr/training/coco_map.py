@@ -173,31 +173,25 @@ def _hotcoco() -> Any:
 
 @contextlib.contextmanager
 def _silenced_backend_diagnostics() -> Iterator[None]:
-    """Silence the configuration diagnostics hotcoco reports while an evaluation runs.
+    """Silence hotcoco's intentional ``max_dets`` warning and summary output.
 
-    hotcoco reports every evaluator parameter that differs from the COCO defaults, plus a summary table. RF-DETR
-    overrides ``maxDets`` on every evaluation and hands over thresholds torchmetrics stores in float32, which
-    hotcoco reads as off-reference by ~2.4e-8, so those messages describe intended configuration and would
-    otherwise repeat each validation epoch and each IoU type.
+    RF-DETR overrides ``maxDets`` on every evaluation, so hotcoco's warning about that setting describes intentional
+    configuration and would otherwise repeat each validation epoch and each IoU type. Since hotcoco 1.2.1, the
+    float32 threshold grids no longer produce warnings. The summary table goes through :data:`sys.stdout`, so ordinary
+    Python-level redirection catches it.
 
-    Each message fires once, as a :class:`UserWarning`, and ``summarize()``'s table goes through
-    :data:`sys.stdout`, so ordinary Python-level redirection catches both. Every ``UserWarning`` raised inside
-    the window is dropped rather than an enumerated set of messages: hotcoco has four of them today, one firing
-    only on empty state, and matching on text would silently stop working when a release rewords one. Nothing
-    but the three backend calls runs inside the window, so no other source can be caught by it, and genuine
-    failures still surface as exceptions.
+    Only the known ``max_dets`` :class:`UserWarning` is filtered. Any other warning raised inside the window remains
+    visible, and genuine failures still surface as exceptions.
 
-    TODO(hotcoco): narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference, or
-    offers a quiet ``summarize()`` (rfdetr hotcoco proposals 7 and 8; still firing on 1.2.0). Two of the
-    four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32
-    round-trip — and a third fires on empty state after ``evaluate()`` did run. Once an upstream release stops
-    reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
+    The filter matches the text of that message, not a warning category, so if a hotcoco release rewords it the warning
+    returns on every validation epoch. ``test_hotcoco_suppresses_only_the_max_dets_warning`` and
+    ``test_hotcoco_evaluation_raises_no_warnings`` are the canaries for such a rewording.
 
     Yields:
         Nothing; standard output and the warning filter are restored on exit.
     """
     with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-        warnings.simplefilter("ignore", UserWarning)
+        warnings.filterwarnings("ignore", message=r"^hotcoco: max_dets differ from expected", category=UserWarning)
         yield
 
 
@@ -300,12 +294,12 @@ class _PackageCocoBackend(_RfdetrCocoBackend):
 class _HotCocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``.
 
-    The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an
-    older venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()``
-    after a whole validation epoch. The constructor refuses such an install up front instead. It checks the symbols
-    the adapter calls rather than parsing a version string, which also refuses an older release for the single-IoU
-    box runs that would not have reached the missing symbol: one actionable error at construction beats a run that
-    works or fails depending on the IoU types.
+    The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an older
+    venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()`` after a
+    whole validation epoch. The constructor refuses such an install up front instead. It checks the symbols the adapter
+    calls rather than parsing a version string, which also refuses an older release for the single-IoU box runs that
+    would not have reached the missing symbol: one actionable error at construction beats a run that works or fails
+    depending on the IoU types.
     """
 
     # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter always
@@ -769,11 +763,19 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             self._stop_streaming("StreamingEval cannot merge state across distributed ranks")
             return
         categories = cast(list[dict[str, Any]], self._stream_categories)
+        # Restate the batch path's dtype check for both streamed sides. hotcoco 1.2.1 rejects only a fractional id, so
+        # a whole-valued float detection label would reach `compute()` as an `IndexError` or pass silently, and an
+        # out-of-range float ground-truth label would fall back to batch evaluation instead of raising. The start
+        # index keeps a reported sample number global, as on the batch path.
+        first_image = len(self.groundtruth_labels) - num_images
+        self._validate_detection_labels(self.detection_labels[-num_images:], start=first_image)
+        self._validate_detection_labels(self.groundtruth_labels[-num_images:], start=first_image)
         labels = torch.cat([*self.detection_labels[-num_images:], *self.groundtruth_labels[-num_images:]])
         if labels.numel() and (int(labels.min()) < 0 or int(labels.max()) >= len(categories)):
-            # hotcoco 1.2 rejects an undeclared category with `KeyError`, but a negative id in the detection array
-            # with `ValueError`, the type it also raises for a NaN score. One range check ahead of `update()` keeps
-            # both ends of the label range on the same fallback without catching a genuine input error.
+            # hotcoco rejects an undeclared category with `KeyError`, but a negative id in the detection array
+            # with `ValueError`. One range check ahead of `update()` keeps both ends of the label range on the same
+            # fallback without catching a genuine input error. A NaN score is not caught here: `load_res()` raises
+            # `RuntimeError` for it.
             self._stop_streaming(f"a label falls outside the declared categories [0, {len(categories) - 1}]")
             return
         if self._streams is None:
@@ -1374,8 +1376,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 )
 
     @staticmethod
-    def _validate_detection_labels(labels: list[Tensor]) -> None:
-        """Restate the per-annotation label check TorchMetrics performs during conversion, for the array paths.
+    def _validate_detection_labels(labels: list[Tensor], start: int = 0) -> None:
+        """Restate TorchMetrics' per-annotation label check for the array paths, batch and streamed alike.
 
         Upstream rejects any detection or target label that is not a Python ``int`` once converted, one annotation
         at a time -- a whole-valued ``3.0`` included. The array paths never make that conversion: the detection
@@ -1386,11 +1388,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         Args:
             labels: Per-image labels, as stored in ``detection_labels`` or ``groundtruth_labels``.
+            start: Index of the first image of ``labels`` within the stored state, so a streamed batch reports the same
+                sample number as the batch path.
 
         Raises:
             ValueError: If a non-empty image's labels are a floating-point or complex tensor.
         """
-        for image_id, image_labels in enumerate(labels):
+        for image_id, image_labels in enumerate(labels, start=start):
             if image_labels.numel() > 0 and (torch.is_floating_point(image_labels) or torch.is_complex(image_labels)):
                 raise ValueError(
                     f"Invalid input class of sample {image_id} (expected integer labels, got {image_labels.dtype})"

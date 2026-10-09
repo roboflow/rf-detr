@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -194,6 +195,52 @@ class TestBuildTrainerCallbacks:
         coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
 
         assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
+
+    @hotcoco_only
+    def test_streaming_backend_receives_the_model_class_count_on_the_ema_metric(self, tmp_path: Path) -> None:
+        """The EMA metric streams too: dropping its ``num_classes`` would silently make it evaluate in one batch."""
+        model_config = _mc()
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, eval_backend="hotcoco_streaming"), model_config)
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
+
+        coco_cb._prepare_ema_metric(trainer)
+
+        assert len(coco_cb.map_metric_ema._stream_categories) == model_config.num_classes + 1
+
+    @pytest.mark.parametrize(
+        ("num_classes", "expected"),
+        [
+            pytest.param(np.int64(3), 3, id="numpy-int64"),
+            pytest.param(np.int32(3), 3, id="numpy-int32"),
+            (0, 0),
+            (True, None),
+            pytest.param(np.bool_(True), None, id="numpy-bool"),
+            (3.0, None),
+            pytest.param(torch.tensor(3), None, id="zero-dim-tensor"),
+            ("3", None),
+            (None, None),
+        ],
+    )
+    def test_class_count_coercion(self, tmp_path: Path, num_classes: Any, expected: int | None) -> None:
+        """An integer-like class count reaches the metric as an ``int``; a ``bool`` or non-integer becomes ``None``."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=SimpleNamespace(num_classes=num_classes)), stage="fit")
+
+        assert coco_cb._num_classes == expected
+        assert type(coco_cb._num_classes) is type(expected)
+
+    @hotcoco_only
+    def test_numpy_class_count_keeps_the_streaming_backend_streaming(self, tmp_path: Path) -> None:
+        """A NumPy class count still declares every category to the streaming metric, instead of disabling streaming."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=SimpleNamespace(num_classes=np.int64(3))), stage="fit")
+
+        assert len(coco_cb.map_metric._stream_categories) == 4
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""

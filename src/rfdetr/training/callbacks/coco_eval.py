@@ -11,6 +11,7 @@ import contextlib
 import importlib
 import io
 import logging
+import numbers
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
@@ -293,7 +294,13 @@ class COCOEvalCallback(Callback):
         kwargs["backend"] = self._eval_backend
         # Only `hotcoco_streaming` reads it; unit shims may give a model_config without an integer class count.
         num_classes = getattr(model_config, "num_classes", None)
-        self._num_classes = num_classes if isinstance(num_classes, int) else None
+        # `Integral` admits `np.int64`, which a plain `int` check would turn into a logged streaming fallback. `bool`
+        # is excluded because it is not a class count.
+        self._num_classes = (
+            int(num_classes)
+            if isinstance(num_classes, numbers.Integral) and not isinstance(num_classes, bool)
+            else None
+        )
         kwargs["num_classes"] = self._num_classes
         self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         # The train split evaluates in one batch: streaming it would put matching inside every training step, which
