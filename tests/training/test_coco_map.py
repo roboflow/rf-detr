@@ -1056,19 +1056,6 @@ def test_hotcoco_suppresses_only_the_max_dets_warning() -> None:
     assert [str(warning.message) for warning in raised] == ["unrelated diagnostic"]
 
 
-@hotcoco_only
-def test_hotcoco_backend_refuses_a_release_below_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hotcoco release with every required symbol but an older version is refused at construction.
-
-    1.2.0 provides ``COCO.update_anns`` and ``COCO.from_arrays``, so only the version check keeps it out: the narrowed
-    warning filter does not cover its float32-grid warning, which would otherwise repeat every validation epoch.
-    """
-    monkeypatch.setattr("rfdetr.training.coco_map.importlib.metadata.version", lambda name: "1.2.0")
-
-    with pytest.raises(ImportError, match="hotcoco 1.2.0 is older than 1.2.1"):
-        _BACKENDS["hotcoco"]()
-
-
 @ufcoco_only
 def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None:
     """``map`` must be a real number, equal to faster-coco-eval's, when ``eval_max_dets`` is not 100.

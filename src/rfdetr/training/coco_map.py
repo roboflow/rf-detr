@@ -45,7 +45,6 @@ import inspect
 import io
 import operator
 import os
-import re
 import warnings
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, cast
@@ -292,34 +291,15 @@ class _PackageCocoBackend(_RfdetrCocoBackend):
         return self._package().mask
 
 
-def _release_tuple(version: str) -> tuple[int, ...]:
-    """Return the leading numeric release components of a version string.
-
-    Args:
-        version: A version string such as ``"1.2.1"``; a pre-release or post-release suffix is ignored.
-
-    Returns:
-        Up to the first three integer components, which order releases of a ``major.minor.patch`` project.
-
-    Examples:
-        >>> _release_tuple("1.2.1")
-        (1, 2, 1)
-        >>> _release_tuple("1.2.1.post1") >= _release_tuple("1.2.1") > _release_tuple("1.2.0")
-        True
-    """
-    return tuple(int(part) for part in re.findall(r"\d+", version)[:3])
-
-
 class _HotCocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``.
 
     The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an older
     venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()`` after a
-    whole validation epoch, or run on behavior the adapter no longer accounts for. The constructor refuses such an
-    install up front instead. It checks the symbols the adapter calls, which also refuses an older release for the
-    single-IoU box runs that would not have reached the missing symbol, and then the installed version against
-    :attr:`minimum_version`, for a release that has every symbol but still differs in behavior the adapter relies on.
-    One actionable error at construction beats a run that works or fails depending on the IoU types.
+    whole validation epoch. The constructor refuses such an install up front instead. It checks the symbols the adapter
+    calls rather than parsing a version string, which also refuses an older release for the single-IoU box runs that
+    would not have reached the missing symbol: one actionable error at construction beats a run that works or fails
+    depending on the IoU types.
     """
 
     # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter always
@@ -329,17 +309,13 @@ class _HotCocoBackend(_PackageCocoBackend):
     #: hotcoco attributes, dotted from the package, that this backend calls and whose absence means the installed
     #: release predates the ``rfdetr[train]`` floor.
     required_symbols: tuple[str, ...] = ("COCO.update_anns", "COCO.from_arrays")
-    #: Oldest hotcoco release whose behavior this adapter relies on, matching the ``rfdetr[train]`` floor. Since 1.2.1
-    #: the float32 threshold grids no longer warn, which :func:`_silenced_backend_diagnostics` assumes, and a NaN
-    #: score raises ``ValueError`` from ``load_res()``.
-    minimum_version = "1.2.1"
 
     def __init__(self) -> None:
-        """Import hotcoco and refuse an installed release this backend cannot run on.
+        """Import hotcoco and refuse an installed release that lacks a symbol this backend calls.
 
         Raises:
-            ImportError: If hotcoco is not installed, if the installed release is too old to provide every entry of
-                :attr:`required_symbols`, or if its version is below :attr:`minimum_version`.
+            ImportError: If hotcoco is not installed, or if the installed release is too old to provide every
+                entry of :attr:`required_symbols`.
         """
         super().__init__()
         package = self._package()
@@ -349,20 +325,15 @@ class _HotCocoBackend(_PackageCocoBackend):
                 operator.attrgetter(symbol)(package)
             except AttributeError:
                 missing.append(f"hotcoco.{symbol}")
-        # Read from the distribution, not the module: hotcoco 1.1 exposes no `__version__`.
-        try:
-            installed: str | None = importlib.metadata.version("hotcoco")
-        except importlib.metadata.PackageNotFoundError:
-            installed = None
         if missing:
+            # Read from the distribution, not the module: hotcoco 1.1 exposes no `__version__`.
+            try:
+                installed = importlib.metadata.version("hotcoco")
+            except importlib.metadata.PackageNotFoundError:
+                installed = "(unknown version)"
             raise ImportError(
-                f"the installed hotcoco {installed or '(unknown version)'} is too old for RF-DETR's COCO evaluation: "
-                f"it lacks {', '.join(missing)}. Upgrade it with: pip install -U 'rfdetr[train]'"
-            )
-        if installed is not None and _release_tuple(installed) < _release_tuple(self.minimum_version):
-            raise ImportError(
-                f"the installed hotcoco {installed} is older than {self.minimum_version}, the oldest release RF-DETR's "
-                f"COCO evaluation is verified against. Upgrade it with: pip install -U 'rfdetr[train]'"
+                f"the installed hotcoco {installed} is too old for RF-DETR's COCO evaluation: it lacks "
+                f"{', '.join(missing)}. Upgrade it with: pip install -U 'rfdetr[train]'"
             )
 
     def _package(self) -> Any:
