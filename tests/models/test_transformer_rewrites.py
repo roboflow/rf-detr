@@ -470,7 +470,7 @@ def bf16_gate(monkeypatch: pytest.MonkeyPatch, forced_eager_cuda_gate: None) -> 
 
     def ffn_spy(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
         calls.ffn.append((x, weight, bias))
-        return F.relu(F.linear(x, weight, bias)).float()
+        return F.relu(F.linear(x.float(), weight.float(), bias.float()))
 
     def sine_spy(pos_tensor: torch.Tensor, dim: int = 128, out_dtype: torch.dtype | None = None) -> torch.Tensor:
         calls.sine_dtypes.append(out_dtype)
