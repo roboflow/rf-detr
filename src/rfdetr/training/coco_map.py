@@ -184,6 +184,10 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     Only the known ``max_dets`` :class:`UserWarning` is filtered. Any other warning raised inside the window remains
     visible, and genuine failures still surface as exceptions.
 
+    The filter matches the text of that message, not a warning category, so if a hotcoco release rewords it the warning
+    returns on every validation epoch. ``test_hotcoco_suppresses_only_the_max_dets_warning`` and
+    ``test_hotcoco_evaluation_raises_no_warnings`` are the canaries for such a rewording.
+
     Yields:
         Nothing; standard output and the warning filter are restored on exit.
     """
