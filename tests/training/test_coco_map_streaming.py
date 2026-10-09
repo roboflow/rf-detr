@@ -270,16 +270,24 @@ def test_float_detection_labels_in_a_later_batch_name_their_epoch_wide_sample() 
 
 
 @_requires_hotcoco
-def test_float_ground_truth_labels_are_refused_while_streaming() -> None:
-    """A float target label in dictionary-backed ground truth fails before hotcoco's lower-level conversion error."""
+@pytest.mark.parametrize("label", [1.0, 5.0])
+def test_float_ground_truth_labels_are_refused_while_streaming(label: float) -> None:
+    """A float target label in dictionary-backed ground truth raises, and streaming stays on.
+
+    ``5.0`` lies outside the two declared categories: without the check it would take the range fallback and abandon
+    streaming silently instead of raising, which is the behavior the check changes. ``1.0`` is in range, where
+    TorchMetrics' own conversion error would otherwise name the label instead.
+    """
     predictions, targets = _disc_records(predicted=1, annotated=1)
-    targets[0]["labels"] = targets[0]["labels"].float()
+    targets[0]["labels"] = torch.tensor([label])
     metric = OnePassCocoMeanAveragePrecision(
         iou_type="bbox", backend="hotcoco_streaming", class_metrics=False, num_classes=2
     )
 
     with pytest.raises(ValueError, match="expected integer labels"):
         metric.update(predictions, targets)
+
+    assert not metric._stream_stopped
 
 
 @_requires_hotcoco

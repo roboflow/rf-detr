@@ -196,9 +196,9 @@ class TestBuildTrainerCallbacks:
 
         assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
 
+    @hotcoco_only
     def test_streaming_backend_receives_the_model_class_count_on_the_ema_metric(self, tmp_path: Path) -> None:
         """The EMA metric streams too: dropping its ``num_classes`` would silently make it evaluate in one batch."""
-        pytest.importorskip("hotcoco")
         model_config = _mc()
         trainer = build_trainer(_tc(tmp_path, use_ema=True, eval_backend="hotcoco_streaming"), model_config)
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
@@ -211,10 +211,15 @@ class TestBuildTrainerCallbacks:
     @pytest.mark.parametrize(
         ("num_classes", "expected"),
         [
-            pytest.param(np.int64(3), 3),
-            pytest.param(True, None),
-            pytest.param("3", None),
-            pytest.param(None, None),
+            pytest.param(np.int64(3), 3, id="numpy-int64"),
+            pytest.param(np.int32(3), 3, id="numpy-int32"),
+            (0, 0),
+            (True, None),
+            pytest.param(np.bool_(True), None, id="numpy-bool"),
+            (3.0, None),
+            pytest.param(torch.tensor(3), None, id="zero-dim-tensor"),
+            ("3", None),
+            (None, None),
         ],
     )
     def test_class_count_coercion(self, tmp_path: Path, num_classes: Any, expected: int | None) -> None:
@@ -226,6 +231,16 @@ class TestBuildTrainerCallbacks:
 
         assert coco_cb._num_classes == expected
         assert type(coco_cb._num_classes) is type(expected)
+
+    @hotcoco_only
+    def test_numpy_class_count_keeps_the_streaming_backend_streaming(self, tmp_path: Path) -> None:
+        """A NumPy class count still declares every category to the streaming metric, instead of disabling streaming."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=SimpleNamespace(num_classes=np.int64(3))), stage="fit")
+
+        assert len(coco_cb.map_metric._stream_categories) == 4
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""

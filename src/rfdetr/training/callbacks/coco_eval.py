@@ -294,7 +294,8 @@ class COCOEvalCallback(Callback):
         kwargs["backend"] = self._eval_backend
         # Only `hotcoco_streaming` reads it; unit shims may give a model_config without an integer class count.
         num_classes = getattr(model_config, "num_classes", None)
-        # `Integral` admits `np.int64`, which a plain `int` check would turn into a silent streaming fallback.
+        # `Integral` admits `np.int64`, which a plain `int` check would turn into a logged streaming fallback. `bool`
+        # is excluded because it is not a class count.
         self._num_classes = (
             int(num_classes)
             if isinstance(num_classes, numbers.Integral) and not isinstance(num_classes, bool)
