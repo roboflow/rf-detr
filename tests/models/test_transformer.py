@@ -436,6 +436,33 @@ def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> N
     torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("width", [2, 4])
+@pytest.mark.parametrize(
+    ("dtype", "atol"),
+    [pytest.param(torch.float16, 1e-2, id="float16"), pytest.param(torch.bfloat16, 5e-2, id="bfloat16")],
+)
+def test_gen_sineembed_for_position_compiles_with_inductor_in_half_precision(
+    dtype: torch.dtype, atol: float, width: int
+) -> None:
+    """``inference(compile_backend="inductor", dtype="float16")`` compiles this function with half-precision positions.
+
+    torch 2.14 lowers a half-precision ``dim_t // 2`` to ``libdevice.isinf`` on a float16 or bfloat16 operand, which
+    Triton cannot compile (pytorch/pytorch#197002), so the compile failed. Inductor keeps the arithmetic in float32
+    where eager rounds each step to ``dtype``, hence the tolerance of a few half-precision steps.
+    """
+    # A fresh Dynamo cache per case, so each one compiles instead of falling back to eager at the recompile limit.
+    torch._dynamo.reset()
+    torch.manual_seed(0)
+    pos_tensor = torch.rand(2, 300, width, device="cuda", dtype=dtype)
+
+    compiled = torch.compile(gen_sineembed_for_position)(pos_tensor, 128)
+
+    assert compiled.dtype == dtype
+    torch.testing.assert_close(compiled, gen_sineembed_for_position(pos_tensor, 128), rtol=0, atol=atol)
+
+
 def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch) -> None:
     """Wrong meshgrid indexing (xy vs ij) produces different proposals for non-square spatial shapes."""
     original_meshgrid = torch.meshgrid

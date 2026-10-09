@@ -311,9 +311,12 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     """Sine/cosine positional embedding of box coordinates, ``dim`` values per coordinate.
 
     CUDA eager execution takes :func:`_sineembed_interleaved`. Every other case (CPU, MPS, XLA, ``torch.compile`` and
-    tracing) runs the plain ops, values and gradients unchanged: compiled and traced graphs keep them (Inductor fuses
-    them itself and the exporters expect no custom autograd function), and the interleaved write is a CUDA rewrite,
-    not one to run unmeasured elsewhere.
+    tracing) runs the plain ops: compiled and traced graphs keep them (Inductor fuses them itself and the exporters
+    expect no custom autograd function), and the interleaved write is a CUDA rewrite, not one to run unmeasured
+    elsewhere. The plain ops build the frequency table in at least float32 and round it once to the positions' dtype.
+    float16, float32 and float64 keep the values and gradients they always had. In bfloat16, 10 of the 128 frequencies
+    at the default ``dim`` are float32 values rounded once rather than values computed in bfloat16, which moves the
+    outputs and coordinate gradients that use them slightly.
 
     Args:
         pos_tensor: Coordinates of shape ``(bs, n_query, 2)`` or ``(bs, n_query, 4)`` in ``[0, 1]``.
@@ -333,8 +336,12 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
-    dim_t = torch.arange(dim, dtype=pos_tensor.dtype, device=pos_tensor.device)
-    dim_t = 10000 ** (2 * (dim_t // 2) / dim)
+    # Computed in at least float32, as PositionEmbeddingSine does, then cast once to the positions' dtype. torch
+    # 2.14 lowers a half-precision ``dim_t // 2`` to ``libdevice.isinf`` on a float16 or bfloat16 operand, which
+    # Triton cannot compile (pytorch/pytorch#197002), so ``inference(dtype="float16",
+    # compile_backend="inductor")`` failed. float32 and float64 positions compute in their own dtype as before.
+    dim_t = torch.arange(dim, dtype=torch.promote_types(pos_tensor.dtype, torch.float32), device=pos_tensor.device)
+    dim_t = (10000 ** (2 * (dim_t // 2) / dim)).to(pos_tensor.dtype)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
     pos_x = x_embed[:, :, None] / dim_t
