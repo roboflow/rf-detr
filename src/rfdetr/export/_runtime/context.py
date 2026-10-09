@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ def load_exported_context(
     *,
     device: str,
     metadata: dict[str, Any] | str | os.PathLike[str] | None,
+    runtime_options: Mapping[str, Any] | None = None,
 ) -> PredictionContext:
     """Load one runtime and the artifact's prediction rules.
 
@@ -29,6 +31,7 @@ def load_exported_context(
         path: Exported file or model bundle.
         device: Runtime device policy.
         metadata: Missing legacy metadata or a JSON path.
+        runtime_options: Format runtime settings forwarded to the format's loader.
 
     Returns:
         A context that owns the runtime through its bound execution method.
@@ -39,7 +42,7 @@ def load_exported_context(
     contract = read_metadata(path, Path(metadata) if isinstance(metadata, os.PathLike) else metadata)
     if contract.task == "backbone":
         raise ValueError("Backbone-only exports have no prediction head and cannot produce detections.")
-    runtime = load_runtime(path, contract, device=device)
+    runtime = load_runtime(path, contract, device=device, options=runtime_options)
     return PredictionContext(
         config=contract,
         device=runtime.device,

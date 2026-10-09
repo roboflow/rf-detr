@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -17,6 +18,7 @@ import torch
 from supervision import Detections
 
 from rfdetr.detr import RFDETR
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
 from rfdetr.variants import RFDETRNano
 
@@ -43,8 +45,8 @@ def nano_model() -> RFDETRNano:
 class TestLiveModelDevicePolicy:
     """Borrowed models always keep their own device policy."""
 
-    @pytest.mark.parametrize("device", ["cpu", "not_a_device"])
-    def test_explicit_device_is_rejected(self, nano_model: RFDETRNano, device: str) -> None:
+    @pytest.mark.parametrize("device", ["cpu", "not_a_device", pytest.param(torch.device("cpu"), id="torch-device")])
+    def test_explicit_device_is_rejected(self, nano_model: RFDETRNano, device: str | torch.device) -> None:
         """Even a matching device must be configured on the native source itself."""
         with pytest.raises(ValueError, match="live model.*device"):
             RFDETRInference(nano_model, device=device)
@@ -177,6 +179,84 @@ class TestCheckpointSource:
         """Native checkpoint paths do not accept exported inference metadata."""
         with pytest.raises(ValueError, match="metadata"):
             RFDETRInference(tmp_path / "model.pt", metadata={"task": "detect"})
+
+
+@pytest.fixture
+def stopped_runtime_load(monkeypatch: pytest.MonkeyPatch) -> tuple[ExportMetadata, Mock]:
+    """Stop an exported-artifact load at the runtime loader, returning the metadata it reads and the loader mock.
+
+    Examples:
+        The pytest runner must create this fixture before a test can use it.
+
+        >>> stopped_runtime_load()  # doctest: +SKIP
+    """
+    contract = ExportMetadata(
+        format="tensorrt",
+        task="detect",
+        input_shape=(1, 3, 8, 8),
+        outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        class_names=["object"],
+        num_classes=1,
+        num_select=1,
+        trace_alpha=0.2,
+        patch_size=1,
+        num_windows=1,
+    )
+    load_runtime = Mock(side_effect=RuntimeError("stop after runtime load"))
+    # Patch the module the facade's call-time import resolves (sys.modules), not a parent-package attribute: a
+    # sys.modules restore in another test can leave the two pointing at different module objects.
+    context_module = importlib.import_module("rfdetr.export._runtime.context")
+    monkeypatch.setattr(context_module, "read_metadata", Mock(return_value=contract))
+    monkeypatch.setattr(context_module, "load_runtime", load_runtime)
+    return contract, load_runtime
+
+
+class TestExportedDeviceArgument:
+    """The device argument reaches an exported artifact's loader as a string."""
+
+    def test_torch_device_is_passed_as_string(
+        self, stopped_runtime_load: tuple[ExportMetadata, Mock], tmp_path: Path
+    ) -> None:
+        """A torch.device, which RFDETR accepts, reaches the format loader as the string every loader compares.
+
+        Loaders call string methods such as startswith on the device, so passing the torch.device through would fail
+        with AttributeError instead of selecting the device.
+        """
+        contract, load_runtime = stopped_runtime_load
+        artifact = tmp_path / "model.engine"
+
+        with pytest.raises(RuntimeError, match="stop after runtime load"):
+            RFDETRInference(artifact, device=torch.device("cuda", 1))
+
+        load_runtime.assert_called_once_with(artifact, contract, device="cuda:1", options=None)
+
+
+class TestRuntimeOptionsRouting:
+    """Runtime options reach an exported artifact's loader and are refused for native sources."""
+
+    def test_live_model_rejects_runtime_options(self, nano_model: RFDETRNano) -> None:
+        """A live model has no exported runtime to configure, so even an empty mapping is refused."""
+        with pytest.raises(ValueError, match="runtime_options is only valid for exported artifacts"):
+            RFDETRInference(nano_model, runtime_options={})
+
+    def test_checkpoint_path_rejects_runtime_options_before_loading(self, tmp_path: Path) -> None:
+        """The refusal comes before the checkpoint is read: the path does not exist, yet no FileNotFoundError."""
+        with pytest.raises(ValueError, match="runtime_options is only valid for exported artifacts"):
+            RFDETRInference(tmp_path / "model.pt", runtime_options={"verbose": True})
+
+    def test_exported_artifact_forwards_runtime_options(
+        self, stopped_runtime_load: tuple[ExportMetadata, Mock], tmp_path: Path
+    ) -> None:
+        """The facade passes its runtime options, unchanged, through the context builder to the runtime loader."""
+        contract, load_runtime = stopped_runtime_load
+        artifact = tmp_path / "model.engine"
+
+        with pytest.raises(RuntimeError, match="stop after runtime load"):
+            RFDETRInference(artifact, runtime_options={"verbose": True})
+
+        load_runtime.assert_called_once_with(artifact, contract, device="auto", options={"verbose": True})
 
 
 class TestOptimizedNativeSource:

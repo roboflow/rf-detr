@@ -12,6 +12,7 @@ Nothing decodes detections here, same division of responsibility as :mod:`rfdetr
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -49,9 +50,11 @@ def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward"
     return Runtime.get().load_program(str(pte_path)).load_method(method_name)
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load an ExecuTorch method with its embedded delegate policy."""
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+    """Load an ExecuTorch method with its embedded delegate policy; it reads no runtime options."""
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple, _runtime_options
+
+    _runtime_options("ExecuTorch", options, ())
 
     delegate = (metadata.backend or "xnnpack").lower()
     if delegate == "xnnpack":

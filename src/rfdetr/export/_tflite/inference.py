@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -93,12 +94,13 @@ def _run_interpreter_raw(
     return details, [interp.get_tensor(item["index"]) for item in details]
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load a TFLite or LiteRT artifact through the shared interpreter."""
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+    """Load a TFLite or LiteRT artifact through the shared interpreter; it reads no runtime options."""
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _runtime_options
+
+    _runtime_options("TFLite" if metadata.format.lower() == "tflite" else "LiteRT", options, ())
     if device not in {"auto", "cpu"}:
         raise ValueError("TFLite inference supports cpu or auto only.")
-
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array
 
     session = _create_interpreter(path)
     (input_info,) = session.get_input_details()

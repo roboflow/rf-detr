@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import threading
 import weakref
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -83,9 +84,11 @@ class _CoreAILoopBridge:
             return asyncio.run_coroutine_threadsafe(operation, self.loop).result()
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load Core AI with a validated compute policy."""
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+    """Load Core AI with a validated compute policy; it reads no runtime options."""
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple, _runtime_options
+
+    _runtime_options("Core AI", options, ())
 
     _require_apple("Core AI")
     try:

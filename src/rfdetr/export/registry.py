@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from rfdetr.export._runtime.metadata import ExportMetadata
     from rfdetr.export.base import Exporter
 
-RuntimeLoader = Callable[[Path, "ExportMetadata", str], "ExportRuntime"]
+#: ``load_export_runtime(path, metadata, device, options)``: *options* is ``RFDETRInference(runtime_options=...)``.
+RuntimeLoader = Callable[[Path, "ExportMetadata", str, Mapping[str, Any]], "ExportRuntime"]
 
 logger = get_logger()
 

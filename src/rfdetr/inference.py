@@ -10,7 +10,7 @@ from __future__ import annotations
 __all__ = ["ModelContext", "RFDETRInference"]
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -43,20 +43,41 @@ class RFDETRInference:
         self,
         source: RFDETR | str | os.PathLike[str],
         *,
-        device: str = "auto",
+        device: str | torch.device = "auto",
         metadata: dict[str, Any] | str | os.PathLike[str] | None = None,
         trust_checkpoint: bool = False,
+        runtime_options: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a prediction facade from native weights or an exported artifact.
 
+        Each source accepts its own device vocabulary; a value valid for one format can be refused by another:
+
+        | Source | Accepted ``device`` values |
+        | --- | --- |
+        | Live ``RFDETR`` model | ``auto`` only; configure the model's own device instead |
+        | Checkpoint path | Any device ``RFDETR.from_checkpoint`` accepts; ``auto`` defers to it |
+        | ONNX | ``auto`` (CUDA provider when installed, else CPU), ``cpu``, ``cuda``, ``cuda:N`` |
+        | TensorRT | ``auto`` (``cuda:0``), ``cuda`` (the current CUDA device), ``cuda:N`` |
+        | OpenVINO | ``auto`` (AUTO plugin), ``cpu``, ``gpu``, ``npu``, ``gpu.N``, ``npu.N``, any case |
+        | TFLite, LiteRT | ``auto``, ``cpu`` |
+        | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only) |
+        | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
+        | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+
         Args:
             source: A live RFDETR model or a checkpoint or exported artifact path.
-            device: Runtime device, or ``"auto"`` to inherit the source device.
+            device: Runtime device, as a string or ``torch.device`` (converted with ``str()``), or ``"auto"`` to
+                inherit the source device.
             metadata: Optional metadata for an exported artifact.
             trust_checkpoint: Allow loading a checkpoint that contains custom Python objects.
+            runtime_options: Settings for an exported artifact's runtime. Each format reads only its own keys and
+                raises ``ValueError`` for any other: TensorRT takes ``cuda_graph``, ``engine_host_code_allowed`` and
+                ``verbose`` (each a ``bool``); OpenVINO takes ``cache_dir``, ``inference_precision`` and ``config``;
+                the other formats take none.
 
         Raises:
-            ValueError: If metadata or a device conflicts with a native source.
+            ValueError: If metadata, runtime options or a device conflicts with a native source, or the format's
+                loader refuses a runtime option.
 
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
@@ -64,36 +85,45 @@ class RFDETRInference:
         # Keep RFDETR imports local because detr imports ModelContext from this module.
         from rfdetr.detr import RFDETR
 
+        # Format loaders compare device strings; RFDETR itself also accepts a torch.device.
+        device = str(device)
         self._native_model: RFDETR | None = None
         self._export_context: PredictionContext | None = None
         if isinstance(source, RFDETR):
-            self._set_native_model(source, device, metadata)
+            self._set_native_model(source, device, metadata, runtime_options)
             return
 
         path = Path(source)
         if path.suffix.lower() in {".pt", ".pth", ".ckpt"}:
             if metadata is not None:
                 raise ValueError("metadata is only valid for exported artifacts.")
+            if runtime_options is not None:
+                raise ValueError("runtime_options is only valid for exported artifacts.")
             checkpoint_options: dict[str, Any] = {"trust_checkpoint": trust_checkpoint}
             if device != "auto":
                 checkpoint_options["device"] = device
             native_model = RFDETR.from_checkpoint(path, **checkpoint_options)
-            self._set_native_model(native_model, "auto", None)
+            self._set_native_model(native_model, "auto", None, None)
             return
 
         from rfdetr.export._runtime.context import load_exported_context
 
-        self._export_context = load_exported_context(path, device=device, metadata=metadata)
+        self._export_context = load_exported_context(
+            path, device=device, metadata=metadata, runtime_options=runtime_options
+        )
 
     def _set_native_model(
         self,
         native_model: RFDETR,
         device: str,
         metadata: dict[str, Any] | str | os.PathLike[str] | None,
+        runtime_options: Mapping[str, Any] | None,
     ) -> None:
         """Store a native model after validating facade-only arguments."""
         if metadata is not None:
             raise ValueError("metadata is only valid for exported artifacts.")
+        if runtime_options is not None:
+            raise ValueError("runtime_options is only valid for exported artifacts.")
         if device != "auto":
             raise ValueError("A live model owns its device policy. Omit device or configure the native model itself.")
         self._native_model = native_model

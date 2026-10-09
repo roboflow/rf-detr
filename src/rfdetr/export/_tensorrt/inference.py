@@ -20,7 +20,6 @@ from __future__ import annotations
 import contextlib
 import math
 import time
-import warnings
 from collections import OrderedDict, namedtuple
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -29,6 +28,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 import torch
+from deprecate import TargetMode, deprecated
 from torch import Tensor
 
 try:
@@ -303,7 +303,8 @@ def _deserialize_tensorrt_engine(session: _TensorRTSession, path: str) -> Any:
             ""
             if session._engine_host_code_allowed
             else "If it was exported with trt_version_compatible=True by TensorRT 11, load it with "
-            "engine_host_code_allowed=True (only for a file you trust). Otherwise: "
+            "RFDETRInference(path, runtime_options={'engine_host_code_allowed': True}), or "
+            "engine_host_code_allowed=True on TRTInference (only for a file you trust). Otherwise: "
         )
         raise RuntimeError(
             f"TensorRT {trt.__version__} could not deserialize the engine at '{path}'; the reason is in the "
@@ -905,8 +906,16 @@ def _build_tensorrt_engine(
             return serialized_engine
 
 
+#: Construction warning of :class:`TRTInference`; pyDeprecate fills in the versions.
+_TRT_INFERENCE_DEPRECATION = (
+    "`TRTInference` was deprecated in v%(deprecated_in)s and will be removed in v%(remove_in)s."
+    " Use RFDETRInference(engine_path).predict(image) for decoded predictions, with runtime_options for its"
+    " cuda_graph, engine_host_code_allowed and verbose settings."
+)
+
+
 class TRTInference:
-    """Deprecated compatibility facade for TensorRT inference.
+    """Deprecated compatibility facade for TensorRT inference, deprecated in v1.12.0 and removed in v2.0.0.
 
     Runs a serialized TensorRT engine on torch tensors that already sit on its CUDA device, through the shared session
     functions behind :class:`rfdetr.inference.RFDETRInference`. Inputs are bound by pointer, never copied, except with
@@ -941,6 +950,15 @@ class TRTInference:
 
     _runtime_state: _TensorRTSession
 
+    # Deprecate __init__ rather than the class: deprecated_class returns a proxy, and this facade's __getattr__ and
+    # __setattr__ forwarding, and callers using TRTInference.__new__(TRTInference), need the real class.
+    @deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
+        target=TargetMode.NOTIFY,
+        deprecated_in="1.12.0",
+        remove_in="2.0.0",
+        num_warns=-1,
+        template_mgs=_TRT_INFERENCE_DEPRECATION,
+    )
     def __init__(
         self,
         engine_path: str = "dino.trt",
@@ -951,13 +969,7 @@ class TRTInference:
         cuda_graph: bool = False,
         engine_host_code_allowed: bool = False,
     ) -> None:
-        """Create the legacy facade and warn that it will be removed in a future release."""
-        warnings.warn(
-            "TRTInference is deprecated and will be removed in a future release. "
-            "Use RFDETRInference(engine_path).predict(image) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        """Create the legacy facade; every construction emits a ``FutureWarning``."""
         self._runtime_state = _load_tensorrt_session(
             engine_path,
             device,
@@ -1081,16 +1093,51 @@ class TimeProfiler(contextlib.ContextDecorator):
         return time.perf_counter()
 
 
-def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load a TensorRT engine while preserving device tensors through execution."""
+#: The ``runtime_options`` keys the TensorRT loader reads, each a ``bool`` that defaults to ``False``.
+_TENSORRT_RUNTIME_OPTIONS = ("cuda_graph", "engine_host_code_allowed", "verbose")
+
+
+def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+    """Load a TensorRT engine while preserving device tensors through execution.
+
+    The engine runs with ``execute_v2`` by default, which needs no pycuda stream. ``cuda_graph=True`` captures the
+    launch into a CUDA graph on its own stream instead; :func:`_load_tensorrt_session` refuses it for an engine whose
+    optimization profile lets an input shape vary.
+
+    Args:
+        path: Serialized ``.trt`` or ``.engine`` file.
+        metadata: The artifact's inference metadata.
+        device: ``auto`` (``cuda:0``), ``cuda`` or ``cuda:N``.
+        options: Any of ``cuda_graph``, ``engine_host_code_allowed`` and ``verbose``, as on :class:`TRTInference`.
+
+    Returns:
+        The loaded runtime.
+
+    Raises:
+        ValueError: If *options* holds another key or a non-``bool`` value, or the engine disagrees with *metadata*.
+        RuntimeError: If no CUDA device is available.
+    """
+    from rfdetr.export._runtime.adapters import ExportRuntime, _runtime_options
+
+    settings = _runtime_options("TensorRT", options, _TENSORRT_RUNTIME_OPTIONS)
+    for key, value in settings.items():
+        # A truthy string such as "false" from a config file must not switch a setting on.
+        if not isinstance(value, bool):
+            raise ValueError(f"TensorRT runtime option {key} must be a bool, got {value!r}.")
+    cuda_graph = settings.get("cuda_graph", False)
     if device == "auto":
         device = "cuda:0"
     if not device.startswith("cuda") or not torch.cuda.is_available():
         raise RuntimeError("TensorRT requires an available CUDA device.")
 
-    from rfdetr.export._runtime.adapters import ExportRuntime
-
-    session = _load_tensorrt_session(str(path), device=device, sync_mode=True)
+    session = _load_tensorrt_session(
+        str(path),
+        device=device,
+        sync_mode=not cuda_graph,
+        verbose=settings.get("verbose", False),
+        cuda_graph=cuda_graph,
+        engine_host_code_allowed=settings.get("engine_host_code_allowed", False),
+    )
     if len(session.input_names) != 1 or session.input_names[0] != metadata.input_name:
         raise ValueError("TensorRT input binding disagrees with export metadata.")
     binding = session.bindings[session.input_names[0]]
@@ -1112,8 +1159,9 @@ def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str)
     def execute(batch: torch.Tensor) -> dict[str, Tensor]:
         """Feed the engine a contiguous tensor on its own CUDA device."""
         tensor = batch.to(device=session.engine_device, dtype=input_dtype).contiguous()
-        # execute_v2 has no stream argument; wait for torch's input work before it reads the pointer.
-        if session.engine_device.type == "cuda":
+        # execute_v2 has no stream argument; wait for torch's input work before it reads the pointer. A graph
+        # replay needs no host wait: _run_tensorrt_graph orders its stream after the caller's with an event.
+        if not cuda_graph and session.engine_device.type == "cuda":
             torch.cuda.current_stream(session.engine_device).synchronize()
         return _run_tensorrt_session(session, {session.input_names[0]: tensor})
 

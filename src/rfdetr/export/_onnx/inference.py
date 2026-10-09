@@ -7,10 +7,13 @@
 
 These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or the
 RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
+Loading a ``.onnx`` artifact through ``RFDETRInference`` also reads its embedded inference metadata with the ``onnx``
+package, so that path needs ``rfdetr[onnx]``, which installs both ``onnx`` and ``onnxruntime``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,8 +33,11 @@ def _run_onnx_raw(session: Any, input_name: str, array: Any) -> list[Any]:
     return cast(list[Any], session.run(None, {input_name: array}))
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load an ONNX artifact with explicit provider and interface checks."""
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+    """Load an ONNX artifact with explicit provider and interface checks; it reads no runtime options."""
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _runtime_options
+
+    _runtime_options("ONNX", options, ())
     try:
         import onnxruntime as ort
     except ImportError as exc:
@@ -48,8 +54,6 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
         raise ValueError(f"ONNX device {device!r} is unsupported. Use cpu, cuda:N, or auto.")
     if provider not in providers:
         raise RuntimeError(f"ONNX provider {provider} is unavailable. Installed providers: {providers}.")
-
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array
 
     device_id = int(device[5:]) if device.startswith("cuda:") else 0
     requested: list[str | tuple[str, dict[str, Any]]] = (

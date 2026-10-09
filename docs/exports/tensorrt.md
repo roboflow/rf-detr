@@ -128,9 +128,19 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 The engine must be compatible with the target GPU and TensorRT version. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
 
+`RFDETRInference` launches the engine with `execute_v2` by default, which needs no [`pycuda`](https://pypi.org/project/pycuda/). `runtime_options` takes three settings, each a `bool` that defaults to `False`:
+
+- `cuda_graph`: capture the engine's launch into a CUDA graph on the first call and replay it on later calls. Only an engine whose optimization profile fixes every input shape qualifies; an engine exported with `dynamic_batch=True` is refused when it is loaded. We have not measured the speed-up through `RFDETRInference`.
+- `engine_host_code_allowed`: load an engine that carries host code; see [Portable Engines](#portable-engines).
+- `verbose`: log TensorRT at VERBOSE rather than INFO.
+
+```python
+model = RFDETRInference("output/inference_model_fp16.trt", runtime_options={"cuda_graph": True})
+```
+
 !!! warning "TRTInference is deprecated"
 
-    Constructing `TRTInference` emits `DeprecationWarning`. Use `RFDETRInference(engine_path).predict(image)` for image inputs and Supervision results. The old class remains available for compatibility and will be removed in a future release.
+    Constructing `TRTInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v2.0.0. Use `RFDETRInference(engine_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cuda_graph`, `engine_host_code_allowed` and `verbose`. The old class remains available for compatibility until then.
 
 Both facades use the same session loading and execution functions. The shared adapter calls these functions directly and does not construct the deprecated class.
 
@@ -197,16 +207,16 @@ model.export(format="tensorrt", trt_version_compatible=True)
 
 The options have a cost, so measure on your own model. In our FP16 tests, `ampere_plus` made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. `same_compute_capability` cost nothing we could measure. `trt_version_compatible` added about 105 MB to an `RFDETRNano` engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The [changelog](https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md) has the numbers.
 
-An engine built by TensorRT 11 with `trt_version_compatible=True` contains host code, and TensorRT only loads it if you say you trust the file. `TRTInference` and `rfdetr.export.benchmark` take `engine_host_code_allowed` for that; it's off by default:
+An engine built by TensorRT 11 with `trt_version_compatible=True` contains host code, and TensorRT only loads it if you say you trust the file. `RFDETRInference` takes `engine_host_code_allowed` in `runtime_options` for that, and the deprecated `TRTInference` and `rfdetr.export.benchmark` take it as a keyword; it's off by default:
 
 ```python
-from rfdetr.export._tensorrt.inference import TRTInference
+from rfdetr import RFDETRInference
 
 engine = model.export(format="tensorrt", trt_version_compatible=True)
-runtime = TRTInference(str(engine), sync_mode=True, engine_host_code_allowed=True)
+runtime = RFDETRInference(engine, runtime_options={"engine_host_code_allowed": True})
 ```
 
-Only turn it on for a file you built yourself or otherwise trust. `TRTInference` lives in a private module, so like the classes under [Python API Conversion](#advanced-convert-an-existing-onnx-file-with-the-python-api) it can change without notice; `sync_mode=True` avoids the [`pycuda`](https://pypi.org/project/pycuda/) dependency of its default mode.
+Only turn it on for a file you built yourself or otherwise trust.
 
 ## Reuse the Timing Cache
 
