@@ -33,7 +33,7 @@ The `export()` method accepts several parameters to customize the export process
 | `trt_hardware_compatibility` | `None`     | Ask TensorRT for an engine that other GPUs may run: `"ampere_plus"` (NVIDIA Ampere, compute capability 8.x, and newer; build on one of them) or `"same_compute_capability"` (GPUs with the building GPU's compute capability). `None` builds for the building GPU only. Not supported on Jetson or DriveOS. A level your TensorRT lacks raises `ValueError`. See [TensorRT Export](tensorrt.md#portable-engines). Only used when `format="tensorrt"`; a non-`None` value for any other format emits a `UserWarning`.                                                             |
 | `trt_version_compatible`     | `False`    | Ask TensorRT for an engine that other releases of the same TensorRT major version may load (it worked between 11.2 and 11.3). Needs TensorRT's lean runtime package, such as [`tensorrt-lean-cu13-libs`](https://pypi.org/project/tensorrt-lean-cu13-libs/); without it the export raises `ImportError`. A TensorRT 11 engine then needs `engine_host_code_allowed=True` in `TRTInference`. See [TensorRT Export](tensorrt.md#portable-engines). Only used when `format="tensorrt"`; `True` for any other format emits a `UserWarning`.                                          |
 | `trt_timing_cache`           | `None`     | File that keeps the kernel timings TensorRT measures while building an engine. A build loads it when it exists and writes the merged timings back, so rebuilding the same model at the same precision and batch profile, on the same GPU and TensorRT version, skips most of the search. A directory raises `ValueError` and an unwritable location `OSError`, before the engine is built. See [TensorRT Export](tensorrt.md#reuse-the-timing-cache). Only used when `format="tensorrt"`; a non-`None` value for any other format emits a `UserWarning`.                         |
-| `notes`                      | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported artifact under the `"rfdetr_notes"` metadata key (the ONNX `metadata_props`, the CoreML `user_defined_metadata`). For a format that embeds it, a value JSON cannot encode raises before the model runs: `ValueError` for `NaN`/`Infinity` or a circular reference, `TypeError` for an arbitrary object.                                                                                                                                                             |
+| `notes`                      | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported artifact, for a format that carries it; see [Read Embedded Notes](#read-embedded-notes) for where each format stores it. For a format that embeds it, a value JSON cannot encode raises before the model runs: `ValueError` for `NaN`/`Infinity` or a circular reference, `TypeError` for an arbitrary object.                                                                                                                                                      |
 | `coreml_precision`           | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (half the size, and the only precision the Apple Neural Engine runs, see [Native CoreML](coreml.md#neural-engine-compute-units-and-the-fallback-boundary)). Ignored for every other format.                                                                                                                                                                                                                                                                     |
 | `coreml_neural_engine`       | `False`    | For `format="coreml"` with `coreml_precision="float16"`: export a graph that runs almost in full on the Apple Neural Engine. Faster with `CPU_AND_NE` or `ALL` compute units, slower on the CPU and the GPU. See [Native CoreML](coreml.md#neural-engine-export). Ignored for every other format.                                                                                                                                                                                                                                                                                |
 | `coreai_precision`           | `None`     | Compute precision for `format="coreai"`: `None`/`"float32"` (matches eager PyTorch on the GPU) or `"float16"` (half the size, and the precision Core AI runs on the Apple Neural Engine — at a measured accuracy cost, see [Core AI](coreai.md#precision-compute-units-and-latency)); a float16 keypoint model warns, since that asset aborts on the Neural Engine. Ignored for every other format.                                                                                                                                                                              |
@@ -77,7 +77,15 @@ Lower precision is not a portable speedup — see [fp16 pays off only where the 
 
 ## Read Embedded Notes
 
-Pass `notes=` to attach your own metadata, such as a dataset version or training run. For ONNX it is stored under the `rfdetr_notes` metadata property; strings are stored as is, any other JSON-serialisable value as JSON:
+Pass `notes=` to attach your own metadata, such as a dataset version or training run. A string is stored as is and any other JSON-serialisable value as JSON, so read a non-string value back with `json.loads`. Where each format keeps it:
+
+- `onnx`: the `rfdetr_notes` entry of the model's `metadata_props`.
+- `coreml`: the `rfdetr_notes` key of the `.mlpackage`'s `user_defined_metadata`.
+- `coreai`: the `rfdetr_notes` custom metadata field of the asset.
+- `tflite`: the intermediate `.onnx` the conversion goes through, under `rfdetr_notes`, as for `onnx`; the `.tflite` file has no slot for it.
+- `tensorrt`: the `notes` key of the description file written with `trt_metadata=True` (a `.trt` file has no slot), see [TensorRT Export](tensorrt.md#engine-description-file).
+
+Formats not listed (`openvino`, `executorch`, `litert`) warn and drop `notes`. Reading it back from an ONNX file:
 
 ```python
 import json
@@ -91,14 +99,18 @@ notes = {prop.key: prop.value for prop in onnx_model.metadata_props}["rfdetr_not
 print(json.loads(notes))
 ```
 
-A CoreML `.mlpackage` keeps it in `user_defined_metadata`, under the same key, next to `rfdetr_version`:
+A CoreML `.mlpackage` keeps it in `user_defined_metadata`, next to `rfdetr_version`. The example above stored a dict, so it is decoded with `json.loads`; a string needs no decoding:
 
 ```python
+import json
+
 import coremltools as ct
 
 metadata = ct.models.MLModel("output/rfdetr-small_fp32.mlpackage", skip_model_load=True).user_defined_metadata
-print(metadata["rfdetr_notes"], metadata["rfdetr_version"])
+print(json.loads(metadata["rfdetr_notes"]), metadata["rfdetr_version"])
 ```
+
+The RF-DETR version is recorded as `rfdetr_version` by the CoreML and Core AI exports and in the TensorRT description file (see [TensorRT Export](tensorrt.md#engine-description-file)); the ONNX and TFLite exports do not record it.
 
 ## Advanced Export Examples
 

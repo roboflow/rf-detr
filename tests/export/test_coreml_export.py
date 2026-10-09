@@ -441,7 +441,8 @@ class TestSaveMlmodelMetadata:
     """``_save_mlmodel`` stamps the RF-DETR provenance into ``MLModel.user_defined_metadata`` before it saves.
 
     ``coremltools`` is not needed: the converted model is a stand-in whose ``user_defined_metadata`` is a plain dict,
-    the same mapping interface the real one exposes. The keys and encoding match the ONNX and Core AI exports.
+    the same mapping interface the real one exposes. ``rfdetr_notes`` and its encoding match the ONNX export,
+    ``rfdetr_version`` the Core AI export.
     """
 
     @staticmethod

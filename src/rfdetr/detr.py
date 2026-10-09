@@ -1453,7 +1453,7 @@ class RFDETR:
         * ``notes`` — optional user-defined metadata (string, dict, list, or
           any JSON-serialisable value) stored under the ``"notes"`` key in every ``.pth`` checkpoint produced during
           training.  The value is also available inside ``args["notes"]`` for full provenance.  Pass the same value to
-          :meth:`export` to embed it in the ONNX file as well.
+          :meth:`export` to embed it in the exported artifact's metadata as well.
 
         After training completes the underlying ``nn.Module`` is synced back onto ``self.model.model`` so that
         :meth:`predict` and :meth:`export` continue to work without reloading the checkpoint.
@@ -2411,15 +2411,16 @@ class RFDETR:
                 ``None`` (default) reads and writes no file.  Ignored for every other format; passing a non-``None``
                 value there emits a ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
-                or any JSON-serialisable value) to embed in the exported
-                ONNX model under the ``"rfdetr_notes"`` metadata property.
+                or any JSON-serialisable value) to embed in the metadata of
+                the exported artifact, for a format that carries it (see
+                "Read Embedded Notes" in the export documentation for where
+                each format stores it).
                 When ``None`` no metadata entry is written. String values
                 are stored verbatim; all other types are JSON-encoded so
                 consumers must call ``json.loads()`` to recover a dict or
                 list. The same value can be passed to :meth:`train` so the
-                checkpoint and the ONNX file share the same provenance
-                information. For ``format="coreml"`` it is stored in the ``.mlpackage``'s
-                ``user_defined_metadata`` under ``"rfdetr_notes"``, together with ``"rfdetr_version"``.
+                checkpoint and the exported artifact share the same provenance
+                information.
                 **Ignored for ``format="executorch"``, ``format="openvino"``, and ``format="litert"``**: those
                 artifacts have no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning``
                 instead of being embedded. Every other format refuses a value JSON cannot encode (``NaN``,

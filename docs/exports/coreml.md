@@ -58,7 +58,7 @@ model.export(format="coreml", coreml_precision="float16")
 
 !!! note "Provenance metadata"
 
-    `notes=` and the RF-DETR version are stored in the `.mlpackage` metadata, under `rfdetr_notes` and `rfdetr_version` in `MLModel.user_defined_metadata` (the same keys as the ONNX export). coremltools' own `com.github.apple.coremltools.*` keys stay. See [Read Embedded Notes](advanced.md#read-embedded-notes).
+    `notes=` and the RF-DETR version are stored in the `.mlpackage` metadata, under `rfdetr_notes` and `rfdetr_version` in `MLModel.user_defined_metadata` (`rfdetr_notes` as in the ONNX export, `rfdetr_version` as in the [Core AI](coreai.md) export). coremltools' own `com.github.apple.coremltools.*` keys stay. See [Read Embedded Notes](advanced.md#read-embedded-notes).
 
 !!! note "Raw tensors can differ more than the precision suggests"
 

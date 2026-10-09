@@ -382,7 +382,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
 
         ``MLModel.user_defined_metadata`` is the ``.mlpackage``'s metadata slot: ``save`` persists it, and
         ``ct.convert`` already fills it with its own ``com.github.apple.coremltools.*`` keys, which are kept. The
-        keys and the encoding of *notes* match the ONNX and Core AI exports.
+        ``rfdetr_notes`` and the encoding of *notes* match the ONNX export, and ``rfdetr_version`` matches the Core AI
+        export.
 
         Args:
             mlmodel: The converted ``coremltools.models.MLModel``.
