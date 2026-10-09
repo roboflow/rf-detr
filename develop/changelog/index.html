@@ -2907,6 +2907,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p><code>rfdetr[onnx]</code> no longer installs <code>polygraphy</code> or <code>onnx_graphsurgeon</code>, so a host that exports to TensorRT or TFLite with <code>rfdetr[onnx]</code> plus a separately installed <code>tensorrt</code> or <code>onnx2tf</code> must install the missing package itself; see the matching entry under Removed. (<a href="https://github.com/roboflow/rf-detr/issues/1588">#1588</a>)</p>
 </li>
+<li>
+<p>A custom <code>Affine(translate_px=...)</code> config on the Kornia augmentation backend behaves differently from 1.11.2. That release ignored <code>translate_px</code>: the config built, never shifted the image and, when <code>rotate</code> was omitted, rotated it by a random ±15°. The shift is now applied, the implicit rotation is gone, and combinations Kornia cannot reproduce, such as rotation, scale, shear, a nonzero fill or reflected borders, raise <code>ValueError</code> when the pipeline is built. Pass <code>augmentation_backend="cpu"</code> (Albumentations, <code>rfdetr[augment]</code>) to keep them; <code>augmentation_backend="auto"</code> resolves to Kornia on a CUDA machine with Kornia installed. The fix itself is listed under Fixed.</p>
+</li>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3045,6 +3048,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p>Kornia <code>Affine(translate_px=...)</code> now applies integer-pixel translation to images, boxes and masks instead of silently ignoring it. Fixed values, signed ranges and per-axis ranges are supported for pure translation; unsupported combinations raise during pipeline construction rather than silently changing augmentation semantics.</p>
+</li>
 <li>
 <p><code>format="coreml"</code> with <code>coreml_precision="float16"</code> no longer loses about 3 box AP on the Apple Neural Engine. The bundle was converted for iOS 16, whose program runs the deformable-attention <code>resample</code> on the Neural Engine in fp16; it is now converted for iOS 15, where that op stays on the CPU, which also matches what the ExecuTorch CoreML delegate lowers. Measured on an Apple M3 Pro (macOS 27.0.1, pretrained models, all 5000 COCO val2017 images) under <code>CPU_AND_NE</code>: <code>RFDETRNano</code> 45.06 → 48.04 AP (eager 48.03) and <code>RFDETRSmall</code> 50.70 → 52.76 AP (eager 52.80); <code>CPU_AND_GPU</code> was already unaffected, and fp32 scores 48.03 on <code>RFDETRNano</code> either way. The cost is single-image latency on the Neural Engine, <code>RFDETRNano</code> fp16 under <code>CPU_AND_NE</code> (p50, batch 1): 10.8 → 12.7 ms back to back and 18.3 → 24.9 ms with 200 ms between passes; <code>RFDETRSegNano</code> 18.1 → 20.3 ms and 30.4 → 38.8 ms (the pairs were measured in the same session). Bundles now declare iOS 15 / macOS 12 as the minimum OS, down from iOS 16 / macOS 13; the output dtype change this brings is listed under Breaking Changes. (<a href="https://github.com/roboflow/rf-detr/issues/1024">#1024</a>)</p>
 </li>

@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-23T19:52:14">
+  <meta property="article:modified_time" content="2026-10-09T07:56:28">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-23T19:52:14",
+    "dateModified": "2026-10-09T07:56:28",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3341,6 +3341,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>Default path:</strong> Uses torchvision-native transforms and does not require Albumentations.</li>
 <li><strong>Custom CPU path:</strong> Non-empty <code>aug_config</code> dictionaries use Albumentations and require <code>rfdetr[augment]</code>.</li>
 <li><strong>GPU path:</strong> <code>augmentation_backend="kornia"</code> uses Kornia and requires <code>rfdetr[augment]</code>.</li>
+<li><strong>Pixel translation on Kornia:</strong> <code>{"Affine": {"translate_px": {"x": (-4, 4), "y": (-4, 4)}, "p": 1.0}}</code> shifts images, boxes and masks by whole pixels; an offset may be any integer or an integral float such as <code>4.0</code>. This form supports pure translation with constant-zero or replicate borders. Options that cannot change a whole-pixel shift are accepted and have no effect: <code>interpolation</code> and <code>mask_interpolation</code> codes 0-4, <code>keep_ratio</code>, <code>balanced_scale</code>, <code>rotate_method</code>, a unit <code>scale</code> or zero <code>shear</code>, and <code>fill</code>/<code>fill_mask</code> with a replicate border. Building the pipeline raises for nonzero rotation or shear, nonunit scale (a missing axis in a per-axis <code>scale</code>/<code>shear</code> mapping counts as <code>1</code>, as on Albumentations, so <code>shear={"x": 0}</code> raises), <code>fit_output=True</code>, interpolation codes outside 0-4, border modes other than constant or replicate, a nonzero <code>fill</code>/<code>fill_mask</code> with a constant border, the deprecated Albumentations 1.x aliases <code>cval</code>, <code>cval_mask</code> and <code>mode</code> (use <code>fill</code>, <code>fill_mask</code> and <code>border_mode</code>), and boolean, fractional, reversed or out-of-64-bit-range offsets. Use the Albumentations backend for those combinations.</li>
 <li><strong>CPU-bound custom configs:</strong> More transforms means slower data loading</li>
 <li><strong>Use <code>num_workers</code>:</strong> Parallelize augmentation across data loader workers</li>
 <li><strong>Monitor training mAP vs validation mAP:</strong> With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones</li>
@@ -3398,7 +3399,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 23, 2026 19:52:14 UTC">2026-09-23 19:52:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 9, 2026 07:56:28 UTC">2026-10-09 07:56:28</span>
   </span>
 
     
