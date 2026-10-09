@@ -5,7 +5,10 @@
 # ------------------------------------------------------------------------
 """Inference metadata is part of the exported artifact contract."""
 
+import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -19,6 +22,10 @@ from rfdetr.export._runtime.metadata import ExportMetadata, metadata_from_model,
 from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.class_names import class_id_to_name
+from tests._markers import onnx_only
+
+#: Digest of the ``b"model"`` artifact bytes, as a companion records it.
+_MODEL_DIGEST = hashlib.sha256(b"model").hexdigest()
 
 
 class TestSidecarMetadata:
@@ -225,6 +232,112 @@ class TestSidecarMetadata:
         with pytest.raises(ValueError, match="Pass metadata="):
             read_metadata(artifact)
 
+    def test_newer_schema_names_its_producer_and_asks_to_upgrade(self, tmp_path: Path) -> None:
+        """A companion from a newer schema asks for an upgrade instead of failing on its unknown field."""
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"model")
+        metadata = ExportMetadata(
+            format="tflite",
+            task="detect",
+            input_shape=(1, 3, 448, 448),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=100,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+        companion = write_metadata(artifact, metadata)
+        assert companion is not None
+        envelope = json.loads(companion.read_text(encoding="utf-8"))
+        envelope["metadata"].update(schema_version=2, producer_version="9.9.9", future_field=True)
+        companion.write_text(json.dumps(envelope), encoding="utf-8")
+
+        with pytest.raises(ValueError, match=r"written by rfdetr 9\.9\.9.*Upgrade rfdetr"):
+            read_metadata(artifact)
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_new_sidecar_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
+        """A first sidecar gets the mode ``open()`` would give it, so other users can read it, not ``0o600``."""
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"model")
+        metadata = ExportMetadata(
+            format="tflite",
+            task="detect",
+            input_shape=(1, 3, 448, 448),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=100,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+
+        companion = write_metadata(artifact, metadata)
+
+        assert companion is not None
+        assert stat.S_IMODE(companion.stat().st_mode) == 0o666 & ~process_umask
+
+    @pytest.mark.parametrize(
+        ("companion", "match"),
+        [
+            pytest.param("{", "not valid JSON", id="truncated"),
+            pytest.param("[" * 100_000, "not valid JSON", id="nested-too-deep"),
+            pytest.param("[]", "must hold a JSON object", id="not-an-object"),
+            pytest.param('{"metadata": {}}', r"missing \['artifact_sha256'\]", id="missing-digest"),
+            pytest.param(
+                json.dumps({"artifact_sha256": _MODEL_DIGEST}), r"missing \['metadata'\]", id="missing-metadata"
+            ),
+            pytest.param(
+                json.dumps({"artifact_sha256": _MODEL_DIGEST, "metadata": []}),
+                "JSON object under 'metadata'",
+                id="metadata-not-an-object",
+            ),
+        ],
+    )
+    def test_malformed_companion_raises_value_error(self, tmp_path: Path, companion: str, match: str) -> None:
+        """A truncated or wrong-shaped companion raises ``ValueError``, not ``KeyError``, ``TypeError`` or recursion."""
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"model")
+        (tmp_path / "model.tflite.rfdetr.json").write_text(companion, encoding="utf-8")
+
+        with pytest.raises(ValueError, match=match):
+            read_metadata(artifact)
+
+    @onnx_only
+    def test_companion_conflicting_with_embedded_onnx_metadata_is_rejected(self, tmp_path: Path) -> None:
+        """A companion cannot relabel an ONNX model whose embedded metadata says something else."""
+        import onnx  # optional dependency, gated by onnx_only
+
+        artifact = tmp_path / "model.onnx"
+        onnx.save(onnx.helper.make_model(onnx.helper.make_graph([], "empty", [], [])), artifact)
+        metadata = ExportMetadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 448, 448),
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=100,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+        write_metadata(artifact, metadata)
+        # A non-ONNX format takes the companion path, bound to the bytes that now embed the ONNX metadata.
+        write_metadata(artifact, metadata.model_copy(update={"format": "tensorrt"}))
+
+        with pytest.raises(ValueError, match="Embedded metadata conflicts with companion metadata"):
+            read_metadata(artifact)
+
 
 class TestMetadataCapture:
     """Verify model metadata capture and label mapping."""
@@ -402,9 +515,11 @@ class TestFormatMetadata:
         assert loaded.outputs == {"pred_boxes": 1, "pred_logits": 0}
         assert loaded.input_layout == "NHWC"
 
+    @onnx_only
     def test_onnx_metadata_keeps_user_notes(self, tmp_path: Path) -> None:
         """The reserved inference key does not replace a caller's notes."""
-        onnx = pytest.importorskip("onnx")
+        import onnx  # optional dependency, gated by onnx_only
+
         artifact = tmp_path / "model.onnx"
         graph = onnx.helper.make_graph([], "empty", [], [])
         model = onnx.helper.make_model(graph)
@@ -434,11 +549,13 @@ class TestFormatMetadata:
         assert next(item.value for item in saved.metadata_props if item.key == "rfdetr_notes") == '{"run": 7}'
         assert not artifact.with_name("model.onnx.rfdetr.json").exists()
 
+    @onnx_only
     def test_onnx_metadata_write_failure_preserves_original(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A failed metadata save leaves the successfully converted ONNX file intact."""
-        onnx = pytest.importorskip("onnx")
+        import onnx  # optional dependency, gated by onnx_only
+
         artifact = tmp_path / "model.onnx"
         graph = onnx.helper.make_graph([], "empty", [], [])
         onnx.save(onnx.helper.make_model(graph), artifact)
@@ -476,11 +593,71 @@ class TestFormatMetadata:
         assert artifact.read_bytes() == original
         assert not list(tmp_path.glob(".model.*.onnx"))
 
-    def test_metadata_rejects_unsupported_preprocessing_and_schema(
-        self,
-    ) -> None:
-        """An explicit legacy config cannot change native scaling or schema rules."""
-        payload = {
+    @pytest.mark.parametrize(
+        ("update", "match"),
+        [
+            pytest.param({"input_shape": (0, 3, 448, 448)}, "batch must be -1 or positive", id="zero-batch"),
+            pytest.param({"input_shape": (-2, 3, 448, 448)}, "batch must be -1 or positive", id="batch-below-dynamic"),
+            pytest.param({"input_shape": (1, 3, 0, 448)}, "positive channel and spatial shape", id="zero-height"),
+            pytest.param({"max_batch_size": 4}, "max_batch_size requires a dynamic batch", id="max-batch-static-batch"),
+            pytest.param({"means": [0.485, 0.456]}, "means and positive stds must match", id="means-length"),
+            pytest.param({"means": [float("nan"), 0.456, 0.406]}, "means and positive stds must match", id="nan-mean"),
+            pytest.param({"stds": [0.229, 0.0, 0.225]}, "means and positive stds must match", id="zero-std"),
+            pytest.param({"task": "segment"}, "outputs missing semantic values.*pred_masks", id="segment-no-masks"),
+            pytest.param(
+                {"task": "keypoints", "num_keypoints_per_class": [17]},
+                "outputs missing semantic values.*pred_keypoints",
+                id="keypoints-no-output",
+            ),
+            pytest.param(
+                {"outputs": {"pred_boxes": "dets", "pred_logits": "dets"}},
+                "its own runtime output",
+                id="shared-output-name",
+            ),
+            pytest.param(
+                {"outputs": {"pred_boxes": -1, "pred_logits": 0}},
+                "output positions must be non-negative",
+                id="negative-output-position",
+            ),
+            pytest.param({"class_names": []}, "class_names are required", id="empty-class-names"),
+            pytest.param({"num_classes": -1}, "num_classes, num_select, patch_size", id="negative-num-classes"),
+            pytest.param({"num_select": -1}, "num_classes, num_select, patch_size", id="negative-num-select"),
+            pytest.param({"patch_size": 0}, "num_classes, num_select, patch_size", id="zero-patch-size"),
+            pytest.param(
+                {"trace_alpha": -0.1}, "trace_alpha must be finite and non-negative", id="negative-trace-alpha"
+            ),
+            pytest.param({"trace_alpha": float("inf")}, "trace_alpha must be finite", id="infinite-trace-alpha"),
+            pytest.param({"pixel_scale": 1.0}, "pixel_scale must match native", id="pixel-scale"),
+            pytest.param(
+                {
+                    "task": "keypoints",
+                    "outputs": {"pred_boxes": "dets", "pred_logits": "labels", "pred_keypoints": "kp"},
+                },
+                "num_keypoints_per_class is required",
+                id="keypoints-no-schema",
+            ),
+            pytest.param(
+                {
+                    "task": "keypoints",
+                    "outputs": {"pred_boxes": "dets", "pred_logits": "labels", "pred_keypoints": "kp"},
+                    "num_keypoints_per_class": [0],
+                },
+                "no active keypoint class",
+                id="keypoints-all-inactive",
+            ),
+            pytest.param({"num_classes": 91}, "class_id_to_name is required", id="sparse-labels-without-map"),
+            pytest.param({"schema_version": 2}, "schema_version", id="schema-version"),
+            pytest.param({"unknown_field": 1}, "Extra inputs are not permitted", id="extra-field"),
+            pytest.param({"num_classes": "1"}, "Input should be a valid integer", id="strict-integer"),
+        ],
+    )
+    def test_rejects_contract_violations(self, update: dict[str, object], match: str) -> None:
+        """Metadata that cannot describe one safe prediction contract fails at construction.
+
+        Each case changes one field of an otherwise valid detection payload, so the message pins the rejecting rule: an
+        explicit legacy config cannot change native scaling, the schema, the output mapping, or the label layout.
+        """
+        payload: dict[str, object] = {
             "format": "onnx",
             "task": "detect",
             "input_shape": (1, 3, 448, 448),
@@ -494,7 +671,6 @@ class TestFormatMetadata:
             "patch_size": 16,
             "num_windows": 1,
         }
-        with pytest.raises(ValueError, match="pixel_scale"):
-            ExportMetadata(**payload, pixel_scale=1.0)
-        with pytest.raises(ValueError, match="schema_version"):
-            ExportMetadata(**payload, schema_version=2)
+
+        with pytest.raises(ValueError, match=match):
+            ExportMetadata.model_validate({**payload, **update})

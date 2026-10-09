@@ -19,21 +19,24 @@ import torch
 
 from rfdetr.export._runtime.adapters import ExportRuntime, load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata
+from tests.export._openvino_shapes import FakePartialShape
 
 
 def _metadata(**fields: Any) -> ExportMetadata:
     """Make a complete prediction contract for runtime tests.
 
+    Two classes give three logit slots: the class ids plus the trailing no-object slot.
+
     Examples:
         >>> contract = _metadata(format="onnx", task="detect", input_shape=(1, 3, 8, 8),
         ...     outputs={"pred_boxes": "dets", "pred_logits": "labels"})
         >>> contract.num_classes
-        3
+        2
     """
     return ExportMetadata(
-        class_names=["one", "two", "three"],
-        class_id_to_name={0: "one", 1: "two", 2: "three"},
-        num_classes=3,
+        class_names=["one", "two"],
+        class_id_to_name={0: "one", 1: "two"},
+        num_classes=2,
         num_select=2,
         patch_size=16,
         num_windows=1,
@@ -68,6 +71,53 @@ class TestExportRuntimeOutputs:
         result = runtime.run(torch.zeros(1, 3, 8, 8))
 
         assert result["pred_boxes"].shape == (1, 1, 4)
+
+    @pytest.mark.parametrize(
+        ("outputs", "raw", "match"),
+        [
+            pytest.param(
+                {"pred_boxes": "dets", "pred_logits": "labels"},
+                {"dets": np.zeros((1, 2, 4), np.float32), "labels": np.zeros((1, 2, 2), np.float32)},
+                "2 class slots",
+                id="logits-without-no-object-slot",
+            ),
+            pytest.param(
+                {"pred_boxes": "dets", "pred_logits": "labels"},
+                {"dets": np.zeros((1, 2, 4), np.float32), "labels": np.zeros((1, 2, 5), np.float32)},
+                "5 class slots",
+                id="logits-wider-than-metadata",
+            ),
+            pytest.param(
+                {"pred_boxes": "dets", "pred_logits": "labels"},
+                {"dets": np.zeros((1, 2, 4), np.float32), "scores": np.zeros((1, 2, 3), np.float32)},
+                "maps to missing runtime output 'labels'",
+                id="unknown-output-name",
+            ),
+            pytest.param(
+                {"pred_boxes": 0, "pred_logits": 2},
+                [np.zeros((1, 2, 4), np.float32), np.zeros((1, 2, 3), np.float32)],
+                "maps to missing runtime output 2",
+                id="position-past-last-output",
+            ),
+            pytest.param(
+                {"pred_boxes": "dets", "pred_logits": "labels"},
+                {"dets": np.zeros((1, 3, 4), np.float32), "labels": np.zeros((1, 2, 3), np.float32)},
+                "incompatible shapes",
+                id="query-count-mismatch",
+            ),
+        ],
+    )
+    def test_rejects_outputs_outside_contract(self, outputs: dict[str, str | int], raw: Any, match: str) -> None:
+        """Graph outputs that disagree with the metadata are refused instead of mislabelled.
+
+        A plain executor returns the given tensors, so only the shared output mapping decides: a logits tensor whose
+        width is not ``num_classes + 1`` would shift the no-object slot onto a real class id.
+        """
+        metadata = _metadata(format="onnx", task="detect", input_shape=(1, 3, 8, 8), outputs=outputs)
+        runtime = ExportRuntime("onnx", metadata, object(), "CPUExecutionProvider", "input", lambda batch: raw)
+
+        with pytest.raises(ValueError, match=match):
+            runtime.run(torch.zeros(1, 3, 8, 8))
 
 
 class TestONNXRuntimeAdapter:
@@ -339,9 +389,7 @@ class TestOpenVINORuntimeAdapter:
         session = Mock()
         raw_boxes = np.zeros((1, 2, 4), np.float32)
         session.infer.return_value = (raw_boxes, np.zeros((1, 2, 3), np.float32))
-        session.input_layer.partial_shape = [
-            SimpleNamespace(is_static=True, get_length=Mock(return_value=size)) for size in (1, 3, 8, 8)
-        ]
+        session.input_layer.partial_shape = FakePartialShape((1, 3, 8, 8))
         session.output_layers = ["dets", "labels"]
         core = Mock(available_devices=["CPU"])
         monkeypatch.setitem(sys.modules, "openvino", SimpleNamespace(Core=lambda: core))

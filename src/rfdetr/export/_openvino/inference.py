@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
+import os
 import re
 import threading
-import warnings
 from _thread import LockType
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from deprecate import TargetMode, deprecated
 from numpy.typing import NDArray
 
 from rfdetr.export._openvino.exporter import _check_openvino_available
@@ -130,13 +131,31 @@ def _infer_openvino(session: _OpenVINOSession, input_data: NDArray[Any]) -> tupl
         )
 
 
+#: Construction warning of :class:`OpenVINOInference`; pyDeprecate fills in the versions.
+_OPENVINO_INFERENCE_DEPRECATION = (
+    "`OpenVINOInference` was deprecated in v%(deprecated_in)s and will be removed in v%(remove_in)s."
+    " Use RFDETRInference(model_path).predict(image) for decoded predictions, with runtime_options for its"
+    " cache_dir, inference_precision and config settings."
+)
+
+
 class OpenVINOInference:
     """Deprecated compatibility facade for raw OpenVINO inference.
 
-    Use :class:`rfdetr.RFDETRInference` to load an artifact and call ``predict()`` for detections. This class will be
-    removed in a future release.
+    Use :class:`rfdetr.RFDETRInference` to load an artifact and call ``predict()`` for detections, passing
+    ``cache_dir``, ``inference_precision`` and ``config`` through its ``runtime_options``. Deprecated in v1.12.0 and
+    removed in v2.0.0.
     """
 
+    # Deprecate __init__ rather than the class: deprecated_class returns a proxy, and callers using
+    # OpenVINOInference.__new__(OpenVINOInference) need the real class.
+    @deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
+        target=TargetMode.NOTIFY,
+        deprecated_in="1.12.0",
+        remove_in="2.0.0",
+        num_warns=-1,
+        template_mgs=_OPENVINO_INFERENCE_DEPRECATION,
+    )
     def __init__(
         self,
         model_path: str | Path,
@@ -145,7 +164,7 @@ class OpenVINOInference:
         inference_precision: str | None = _AUTO_PRECISION,
         config: Mapping[str, Any] | None = None,
     ) -> None:
-        """Initialize the deprecated OpenVINO facade.
+        """Initialize the deprecated OpenVINO facade; every construction emits a ``FutureWarning``.
 
         Args:
             model_path: Path to the OpenVINO IR model (.xml file).
@@ -171,12 +190,6 @@ class OpenVINOInference:
             FileNotFoundError: If the model file doesn't exist.
             RuntimeError: If OpenVINO rejects *inference_precision* or *config* while compiling the model.
         """
-        warnings.warn(
-            "OpenVINOInference is deprecated and will be removed in a future release. "
-            "Use RFDETRInference(model_path).predict(image) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         session = _load_openvino_session(model_path, device, cache_dir, inference_precision, config)
         self._session = session
         self.compiled_model = session.compiled_model
@@ -209,8 +222,27 @@ class OpenVINOInference:
         return self.infer(input_data)
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load an OpenVINO graph through the shared session functions."""
+#: The ``runtime_options`` keys the OpenVINO loader reads, with the meaning they have on :class:`OpenVINOInference`.
+_OPENVINO_RUNTIME_OPTIONS = ("cache_dir", "config", "inference_precision")
+
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+    """Load an OpenVINO graph through the shared session functions.
+
+    Args:
+        path: OpenVINO IR ``.xml`` file.
+        metadata: The artifact's inference metadata.
+        device: ``auto``, ``cpu``, ``gpu``, ``npu``, ``gpu.N`` or ``npu.N``.
+        options: Any of ``cache_dir``, ``inference_precision`` and ``config``, as on :class:`OpenVINOInference`.
+
+    Returns:
+        The loaded runtime.
+    """
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _runtime_options
+
+    settings = _runtime_options("OpenVINO", options, _OPENVINO_RUNTIME_OPTIONS)
+    if settings.get("cache_dir") is not None:
+        settings["cache_dir"] = os.fspath(settings["cache_dir"])
     if device == "auto":
         target = "AUTO"
     elif device.lower() in {"cpu", "gpu", "npu"} or re.fullmatch(r"(?:gpu|npu)\.[0-9]+", device.lower()):
@@ -229,14 +261,18 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
         ):
             raise RuntimeError(f"OpenVINO device {target} is unavailable. Available devices: {available}.")
 
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array
-
-    session = _load_openvino_session(
-        path, device=target, inference_precision=_resolve_precision_hint(_AUTO_PRECISION, target)
-    )
+    precision = _resolve_precision_hint(settings.pop("inference_precision", _AUTO_PRECISION), target)
+    session = _load_openvino_session(path, device=target, inference_precision=precision, **settings)
     if metadata.input_dtype != "float32" or metadata.input_layout != "NCHW":
         raise ValueError("OpenVINO inference wrapper requires a float32 NCHW input.")
     shape = session.input_layer.partial_shape
+    # Check the rank before indexing: a dynamic rank has no length, and a rank that differs from the metadata would
+    # either index past the graph's last axis or leave its extra axes unchecked.
+    expected_rank = len(metadata.input_shape)
+    if not shape.rank.is_static:
+        raise ValueError(f"OpenVINO input rank must be {expected_rank}, got a dynamic rank.")
+    if len(shape) != expected_rank:
+        raise ValueError(f"OpenVINO input rank must be {expected_rank}, got {len(shape)}.")
     for axis, want in enumerate(metadata.input_shape):
         dimension = shape[axis]
         if dimension.is_static and want != -1 and dimension.get_length() != want:

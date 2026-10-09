@@ -7,8 +7,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, NamedTuple
+
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.utilities.keypoints import _is_bg_first_schema
+
+if TYPE_CHECKING:
+    from rfdetr.detr import RFDETR
 
 
 def is_coco_pretrained(class_names: list[str], num_classes: int) -> bool:
@@ -63,3 +68,54 @@ def class_id_to_name(
         active_slots = [slot for slot, count in enumerate(num_keypoints_per_class) if count > 0]
         return {slot: class_names[index] for index, slot in enumerate(active_slots) if index < len(class_names)}
     return dict(enumerate(class_names))
+
+
+class PredictionLabels(NamedTuple):
+    """Hold the class layout that a model's predictions use.
+
+    Attributes:
+        class_names: Names for active classes in model order.
+        num_classes: Number of logit slots in the model.
+        num_keypoints_per_class: Keypoint counts for each model slot; empty for non-keypoint models.
+        class_id_to_name: Mapping from prediction class IDs to class names.
+    """
+
+    class_names: list[str]
+    num_classes: int
+    num_keypoints_per_class: list[int]
+    class_id_to_name: dict[int, str]
+
+
+def prediction_labels(model: RFDETR) -> PredictionLabels:
+    """Derive the class layout of a live model's predictions from its names and training arguments.
+
+    Native prediction and export metadata both read the layout here, so an exported artifact maps class IDs to the
+    same names that ``predict()`` returns. A model context without ``args`` falls back to one logit slot per class
+    name, which keeps class IDs 0-indexed even for COCO names, and to the keypoint schema of ``model_config``, which
+    describes the head that was built.
+
+    Args:
+        model: Live RF-DETR wrapper whose ``class_names``, ``model.args`` and ``model_config`` define the layout.
+
+    Returns:
+        Class names, logit-slot count, keypoint schema, and the class-ID-to-name map built from them.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> config = SimpleNamespace(num_keypoints_per_class=[])
+        >>> args = SimpleNamespace(num_classes=3, num_keypoints_per_class=[0, 17, 4])
+        >>> trained = SimpleNamespace(args=args)
+        >>> names = ["person", "car"]
+        >>> labels = prediction_labels(SimpleNamespace(class_names=names, model=trained, model_config=config))
+        >>> labels.num_classes, labels.class_id_to_name
+        (3, {1: 'person', 2: 'car'})
+        >>> bare = SimpleNamespace()
+        >>> labels = prediction_labels(SimpleNamespace(class_names=COCO_CLASS_NAMES, model=bare, model_config=config))
+        >>> labels.num_classes, labels.num_keypoints_per_class, labels.class_id_to_name[1]
+        (80, [], 'bicycle')
+    """
+    names = list(model.class_names)
+    args = getattr(model.model, "args", None)
+    num_classes = getattr(args, "num_classes", len(names))
+    keypoint_schema = list(getattr(args, "num_keypoints_per_class", model.model_config.num_keypoints_per_class) or [])
+    return PredictionLabels(names, num_classes, keypoint_schema, class_id_to_name(names, num_classes, keypoint_schema))

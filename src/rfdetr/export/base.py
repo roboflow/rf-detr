@@ -402,25 +402,34 @@ class Exporter(ABC, Generic[_ConfigT]):
         _switch_to_export_mode(graph.model)
         path = Path(self._convert(graph))
         if graph.metadata is not None and graph.metadata.format == self.format:
+            # Both catches stay broad on purpose: conversion already wrote the artifact, and a metadata failure must
+            # not discard it. The traceback is kept so a bug in a format's override still shows where it happened,
+            # and the unpublished metadata goes to the debug log so the caller can pass it as ``metadata=``.
             try:
                 artifacts = self._metadata_artifacts(path)
             except Exception as error:
                 logger.warning(
-                    "Could not select inference metadata artifacts for %s: %s. "
-                    "Load the artifact with metadata= set to its inference metadata.",
+                    "Could not select inference metadata artifacts for %s: %s. Re-export with LOG_LEVEL=DEBUG to log "
+                    "the inference metadata as JSON, then load the artifact with RFDETRInference(metadata=<json>).",
                     path,
                     error,
+                    exc_info=True,
                 )
+                logger.debug("Unpublished inference metadata for %s: %s", path, graph.metadata.model_dump_json())
             else:
                 for artifact in artifacts:
                     try:
                         write_metadata(artifact, self._metadata_for_artifact(graph.metadata, artifact))
                     except Exception as error:
                         logger.warning(
-                            "Could not write inference metadata for %s: %s. "
-                            "Load this artifact with metadata= set to its inference metadata.",
+                            "Could not write inference metadata for %s: %s. Re-export with LOG_LEVEL=DEBUG to log the "
+                            "inference metadata as JSON, then load it with RFDETRInference(metadata=<json>).",
                             artifact,
                             error,
+                            exc_info=True,
+                        )
+                        logger.debug(
+                            "Unpublished inference metadata for %s: %s", artifact, graph.metadata.model_dump_json()
                         )
         logger.info(f"Successfully exported {self.display_name or self.format} model to: {path}")
         return path

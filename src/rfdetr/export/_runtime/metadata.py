@@ -7,23 +7,25 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib
 import json
 import math
 import os
-import shutil
-import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from rfdetr.utilities.class_names import class_id_to_name
+from rfdetr.utilities.class_names import prediction_labels
+from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 
 METADATA_KEY = "rfdetr_inference"
+#: The one metadata schema this reader understands. Any change to the ``ExportMetadata`` fields bumps it.
+SCHEMA_VERSION: Final = 1
 ExportFormat = Literal["onnx", "tensorrt", "openvino", "tflite", "litert", "coreml", "coreai", "executorch"]
 ExportTask = Literal["detect", "segment", "keypoints", "backbone"]
 
@@ -33,7 +35,7 @@ class ExportMetadata(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1] = SCHEMA_VERSION
     producer_version: str | None = None
     format: ExportFormat
     task: ExportTask
@@ -88,6 +90,14 @@ class ExportMetadata(BaseModel):
                 needed.add("pred_keypoints")
             if not needed.issubset(self.outputs):
                 raise ValueError(f"outputs missing semantic values: {sorted(needed - self.outputs.keys())}")
+        identifiers = list(self.outputs.values())
+        if len(set(identifiers)) != len(identifiers) or any(
+            isinstance(identifier, int) and identifier < 0 for identifier in identifiers
+        ):
+            raise ValueError(
+                "outputs must map each semantic value to its own runtime output, and output positions must be"
+                " non-negative"
+            )
         if self.task != "backbone" and not self.class_names:
             raise ValueError("class_names are required for prediction")
         if self.num_classes < 0 or self.num_select < 0 or self.patch_size <= 0 or self.num_windows <= 0:
@@ -147,13 +157,14 @@ def _sidecar_path(path: Path) -> Path:
 
 
 def _temporary_sibling(path: Path) -> Path:
-    """Create a temporary sibling so replacement stays on the same filesystem."""
-    descriptor, name = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=path.suffix, dir=path.parent)
+    """Create a temporary sibling so replacement stays on the same filesystem.
+
+    The file gets the umask-derived mode a plain ``open()`` would give a new file, not ``mkstemp``'s owner-only
+    ``0o600``; move it into place with ``_replace_keeping_mode`` so an existing target keeps its own mode.
+    """
+    descriptor, name = _mkstemp_default_mode(path.parent, prefix=f".{path.stem}.", suffix=path.suffix)
     os.close(descriptor)
-    temporary = Path(name)
-    if path.exists():
-        shutil.copymode(path, temporary)
-    return temporary
+    return Path(name)
 
 
 def write_metadata(path: str | Path, metadata: ExportMetadata) -> Path | None:
@@ -172,7 +183,7 @@ def write_metadata(path: str | Path, metadata: ExportMetadata) -> Path | None:
         temporary = _temporary_sibling(artifact)
         try:
             onnx.save(model, str(temporary))
-            temporary.replace(artifact)
+            _replace_keeping_mode(temporary, artifact)
         finally:
             temporary.unlink(missing_ok=True)
         return None
@@ -181,17 +192,119 @@ def write_metadata(path: str | Path, metadata: ExportMetadata) -> Path | None:
     temporary = _temporary_sibling(sidecar)
     try:
         temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(sidecar)
+        _replace_keeping_mode(temporary, sidecar)
     finally:
         temporary.unlink(missing_ok=True)
     return sidecar
 
 
+def _json_object(text: str, source: str) -> dict[str, Any]:
+    """Parse JSON text that must hold one object.
+
+    Args:
+        text: Serialized JSON.
+        source: What the text came from, named in the error.
+
+    Returns:
+        The parsed object.
+
+    Raises:
+        ValueError: If the text is not valid JSON, nests too deeply to parse, or holds something other than an object.
+
+    Examples:
+        >>> _json_object('{"task": "detect"}', "metadata=")
+        {'task': 'detect'}
+    """
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, RecursionError) as error:
+        raise ValueError(f"{source} is not valid JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{source} must hold a JSON object, got {type(value).__name__}")
+    return value
+
+
+def _envelope_metadata(
+    envelope: dict[str, Any], source: str, artifact: Path, artifact_digest: Callable[[], str]
+) -> dict[str, Any]:
+    """Unwrap the metadata a digest envelope carries once its digest matches the artifact.
+
+    Args:
+        envelope: Parsed ``{"artifact_sha256": ..., "metadata": ...}`` object.
+        source: What the envelope came from, named in the error.
+        artifact: Artifact the envelope must describe.
+        artifact_digest: Returns the artifact's digest; called at most once.
+
+    Returns:
+        The metadata object inside the envelope.
+
+    Raises:
+        ValueError: If a key is missing, the digest belongs to other bytes, or the metadata is not an object.
+    """
+    missing = sorted({"artifact_sha256", "metadata"} - envelope.keys())
+    if missing:
+        raise ValueError(f"{source} is missing {missing}")
+    if envelope["artifact_sha256"] != artifact_digest():
+        raise ValueError(f"Metadata digest does not match artifact: {artifact}")
+    metadata = envelope["metadata"]
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{source} must hold a JSON object under 'metadata', got {type(metadata).__name__}")
+    return metadata
+
+
+def _override_metadata(
+    override: Mapping[str, Any] | str | Path, artifact: Path, artifact_digest: Callable[[], str]
+) -> dict[str, Any]:
+    """Load caller-supplied metadata as plain JSON values, unwrapping a digest envelope bound to the artifact.
+
+    Args:
+        override: A mapping, or the path of a JSON file, holding metadata or a digest envelope.
+        artifact: Artifact the metadata must describe.
+        artifact_digest: Returns the artifact's digest; called at most once.
+
+    Returns:
+        The metadata object, with tuples as lists and keys as strings, as stored metadata has them.
+
+    Raises:
+        ValueError: If the file or mapping does not hold JSON-serializable metadata, or an envelope is stale.
+    """
+    if isinstance(override, (str, Path)):
+        source = f"Metadata file {override}"
+        text = Path(override).read_text(encoding="utf-8")
+    else:
+        source = "metadata= mapping"
+        mapping = dict(override)
+        try:
+            text = json.dumps(mapping)
+        except (TypeError, RecursionError) as error:
+            raise ValueError(f"{source} must hold JSON-serializable values: {error}") from error
+    explicit = _json_object(text, source)
+    if "metadata" in explicit and "artifact_sha256" in explicit:
+        return _envelope_metadata(explicit, source, artifact, artifact_digest)
+    return explicit
+
+
 def read_metadata(path: str | Path, override: Mapping[str, Any] | str | Path | None = None) -> ExportMetadata:
-    """Load validated metadata and reject stale companions or conflicting overrides."""
+    """Load validated metadata and reject stale companions or conflicting overrides.
+
+    Args:
+        path: Exported artifact. ONNX embeds its metadata; other formats keep it in ``<artifact>.rfdetr.json``.
+        override: Missing semantics for an older artifact, as a mapping or a JSON file path, holding metadata or a
+            digest envelope bound to this artifact.
+
+    Returns:
+        The validated prediction contract.
+
+    Raises:
+        FileNotFoundError: If the artifact does not exist.
+        ImportError: If the artifact is ``.onnx`` and ``onnx`` is not installed.
+        ValueError: If metadata is missing, malformed, stale, conflicting, or from an unsupported schema version.
+    """
     artifact = Path(path)
     if not artifact.exists():
         raise FileNotFoundError(artifact)
+    # The companion and an envelope override check the same digest, so a large artifact is hashed once, on first use.
+    artifact_digest = functools.cache(functools.partial(_artifact_digest, artifact))
     stored: dict[str, Any] | None = None
     if artifact.suffix == ".onnx":
         try:
@@ -201,27 +314,16 @@ def read_metadata(path: str | Path, override: Mapping[str, Any] | str | Path | N
         model = onnx.load(str(artifact), load_external_data=False)
         raw = next((item.value for item in model.metadata_props if item.key == METADATA_KEY), None)
         if raw is not None:
-            stored = json.loads(raw)
+            stored = _json_object(raw, f"Embedded metadata in {artifact}")
     sidecar = _sidecar_path(artifact)
     if sidecar.exists():
-        envelope = json.loads(sidecar.read_text(encoding="utf-8"))
-        if envelope["artifact_sha256"] != _artifact_digest(artifact):
-            raise ValueError(f"Metadata digest does not match artifact: {artifact}")
-        if stored is not None and stored != envelope["metadata"]:
+        source = f"Metadata companion {sidecar}"
+        envelope = _json_object(sidecar.read_text(encoding="utf-8"), source)
+        companion = _envelope_metadata(envelope, source, artifact, artifact_digest)
+        if stored is not None and stored != companion:
             raise ValueError("Embedded metadata conflicts with companion metadata")
-        stored = envelope["metadata"]
-    explicit = None
-    if override is not None:
-        explicit = (
-            json.loads(Path(override).read_text(encoding="utf-8"))
-            if isinstance(override, (str, Path))
-            else dict(override)
-        )
-        if "metadata" in explicit and "artifact_sha256" in explicit:
-            if explicit["artifact_sha256"] != _artifact_digest(artifact):
-                raise ValueError(f"Metadata digest does not match artifact: {artifact}")
-            explicit = explicit["metadata"]
-        explicit = json.loads(json.dumps(explicit))
+        stored = companion
+    explicit = None if override is None else _override_metadata(override, artifact, artifact_digest)
     if stored is None and explicit is None:
         raise ValueError(f"No RF-DETR inference metadata for {artifact}. Pass metadata= with the missing semantics.")
     merged = dict(stored or {})
@@ -230,6 +332,15 @@ def read_metadata(path: str | Path, override: Mapping[str, Any] | str | Path | N
             if key in merged and merged[key] != value:
                 raise ValueError(f"Metadata override conflicts with embedded value for {key!r}")
             merged[key] = value
+    # Checked before validation: a newer schema's unknown fields would otherwise surface as a raw pydantic error.
+    schema_version = merged.get("schema_version", SCHEMA_VERSION)
+    if schema_version != SCHEMA_VERSION:
+        producer = merged.get("producer_version")
+        writer = f"rfdetr {producer}" if producer else "an unknown rfdetr version"
+        raise ValueError(
+            f"Metadata schema_version {schema_version!r} was written by {writer}; this rfdetr reads schema_version "
+            f"{SCHEMA_VERSION} only. Upgrade rfdetr to load this artifact."
+        )
     return ExportMetadata.model_validate_json(json.dumps(merged))
 
 
@@ -255,11 +366,8 @@ def metadata_from_model(
         if config.use_grouppose_keypoints
         else "detect"
     )
-    names = list(model.class_names)
-    model_args = getattr(model.model, "args", None)
-    num_logit_slots = getattr(model_args, "num_classes", config.num_classes)
-    keypoint_schema = list(getattr(model_args, "num_keypoints_per_class", config.num_keypoints_per_class) or [])
-    label_map = class_id_to_name(names, num_logit_slots, keypoint_schema)
+    # The same derivation as native prediction, so the artifact maps class IDs to the names predict() returns.
+    labels = prediction_labels(model)
     outputs: dict[str, str | int] = {"pred_boxes": "dets", "pred_logits": "labels"}
     if task == "segment":
         outputs["pred_masks"] = "masks"
@@ -282,11 +390,11 @@ def metadata_from_model(
         outputs=outputs,
         means=list(model.means),
         stds=list(model.stds),
-        class_names=names,
-        class_id_to_name=label_map,
-        num_classes=num_logit_slots,
+        class_names=labels.class_names,
+        class_id_to_name=labels.class_id_to_name,
+        num_classes=labels.num_classes,
         num_select=model.model.postprocess.num_select,
-        num_keypoints_per_class=keypoint_schema,
+        num_keypoints_per_class=labels.num_keypoints_per_class,
         trace_alpha=model.model.postprocess.trace_alpha,
         upsample_masks_to_image_size=model.model.postprocess.upsample_masks_to_image_size,
         patch_size=config.patch_size,

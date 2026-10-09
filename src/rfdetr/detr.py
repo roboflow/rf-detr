@@ -48,7 +48,7 @@ from rfdetr.inference import ModelContext, _build_model_context
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
-from rfdetr.utilities.class_names import class_id_to_name
+from rfdetr.utilities.class_names import prediction_labels
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema
@@ -2905,25 +2905,22 @@ class RFDETR:
     @_ensure_model_on_device
     def _prediction_context(self) -> PredictionContext:
         """Read the live native model's prediction rules for one call."""
-        names = self.class_names
-        args = getattr(self.model, "args", None)
-        if args is None and names == list(COCO_CLASS_NAMES):
+        labels = prediction_labels(self)
+        if getattr(self.model, "args", None) is None and labels.class_names == list(COCO_CLASS_NAMES):
             logger.warning_once(
                 "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
                 "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
             )
-        num_classes = getattr(args, "num_classes", len(names))
-        keypoint_schema = list(getattr(args, "num_keypoints_per_class", []) or [])
         return PredictionContext(
             config=self.model_config,
             device=self.model.device,
             default_shape=(self.model.resolution, self.model.resolution),
             means=self.means,
             stds=self.stds,
-            class_names=names,
-            class_id_to_name=class_id_to_name(names, num_classes, keypoint_schema),
-            num_classes=num_classes,
-            num_keypoints_per_class=keypoint_schema,
+            class_names=labels.class_names,
+            class_id_to_name=labels.class_id_to_name,
+            num_classes=labels.num_classes,
+            num_keypoints_per_class=labels.num_keypoints_per_class,
             postprocess=self.model.postprocess,
             run=self._run_inference_batch,
             prepare=self._ensure_eval_mode_for_unoptimized_inference,

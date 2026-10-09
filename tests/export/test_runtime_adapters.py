@@ -18,6 +18,8 @@ import torch
 
 from rfdetr.export._runtime.adapters import load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata
+from rfdetr.export.registry import REGISTRY
+from tests.export._openvino_shapes import FakePartialShape
 
 
 class TestRuntimePolicies:
@@ -182,25 +184,13 @@ class TestRuntimePolicies:
             num_windows=1,
         )
 
-        class Dimension:
-            """Expose one fixed OpenVINO input dimension."""
-
-            is_static = True
-
-            def __init__(self, size: int) -> None:
-                self.size = size
-
-            def get_length(self) -> int:
-                """Return the fixed dimension size."""
-                return self.size
-
         class FakeSession:
             """Expose the input and output interface of an OpenVINO IR."""
 
             def __init__(self, _path: Path, device: str, inference_precision: str | None = None) -> None:
                 self.device = device
                 self.inference_precision = inference_precision
-                self.input_layer = types.SimpleNamespace(partial_shape=[Dimension(size) for size in (1, 3, 2, 2)])
+                self.input_layer = types.SimpleNamespace(partial_shape=FakePartialShape((1, 3, 2, 2)))
                 self.output_layers = [object(), object()]
 
         ov_module = types.ModuleType("openvino")
@@ -242,6 +232,49 @@ class TestRuntimePolicies:
         monkeypatch.setattr("rfdetr.export._onnx.inference._create_onnx_session", lambda *args, **kwargs: session)
 
         with pytest.raises(ValueError, match="input rank"):
+            load_runtime(artifact, contract, device="cpu")
+
+    @pytest.mark.parametrize(
+        "partial_shape",
+        [
+            pytest.param(FakePartialShape((1, 3, 8)), id="rank-3"),
+            pytest.param(FakePartialShape((1, 3, 8, 8, 1)), id="rank-5"),
+            pytest.param(FakePartialShape((), static_rank=False), id="dynamic-rank"),
+        ],
+    )
+    def test_openvino_rejects_input_rank_mismatch(
+        self, partial_shape: FakePartialShape, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An OpenVINO IR must declare exactly the four input axes its metadata records.
+
+        A three-axis input used to index past its last axis (``IndexError``), and a five-axis input passed with its
+        extra axis unchecked; a dynamic rank has no axes to compare. All three are refused with the same message.
+        """
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+        contract = ExportMetadata(
+            format="openvino",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=1,
+            num_windows=1,
+        )
+        session = types.SimpleNamespace(
+            input_layer=types.SimpleNamespace(partial_shape=partial_shape), output_layers=[object(), object()]
+        )
+        ov_module = types.ModuleType("openvino")
+        ov_module.Core = lambda: types.SimpleNamespace(available_devices=["CPU"])
+        monkeypatch.setitem(sys.modules, "openvino", ov_module)
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", lambda *_a, **_kw: session)
+
+        with pytest.raises(ValueError, match="OpenVINO input rank must be 4"):
             load_runtime(artifact, contract, device="cpu")
 
     def test_tensorrt_rejects_input_rank_mismatch(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -341,3 +374,121 @@ class TestRuntimePolicies:
 
         with pytest.raises(ValueError, match="CoreML input (rank|shape|dtype)"):
             load_runtime(artifact, contract, device="cpu")
+
+
+def _detect_metadata(format: str) -> ExportMetadata:
+    """Build minimal detection metadata for one export format.
+
+    Examples:
+        >>> _detect_metadata("onnx").format
+        'onnx'
+    """
+    return ExportMetadata(
+        format=format,
+        task="detect",
+        input_shape=(1, 3, 8, 8),
+        outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        class_names=["object"],
+        num_classes=1,
+        num_select=1,
+        trace_alpha=0.2,
+        patch_size=1,
+        num_windows=1,
+    )
+
+
+class TestRuntimeOptions:
+    """Format loaders read only their own runtime options and forward them to the session loader."""
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_unknown_key_is_refused_before_runtime_import(self, tmp_path: Path, format: str) -> None:
+        """A misspelled or wrong-format key fails on every host, before the format's runtime package is needed.
+
+        No runtime package is faked here, so a loader that imported its runtime, or checked the host, before the options
+        would fail with ImportError or RuntimeError instead of naming the key.
+        """
+        artifact = tmp_path / "model.bin"
+        artifact.write_bytes(b"artifact")
+
+        with pytest.raises(ValueError, match="does not accept 'cache_dirr'"):
+            load_runtime(artifact, _detect_metadata(format), options={"cache_dirr": "cache"})
+
+    def test_non_mapping_options_are_refused(self, tmp_path: Path) -> None:
+        """A list of pairs is not silently read as options."""
+        artifact = tmp_path / "model.bin"
+        artifact.write_bytes(b"artifact")
+
+        with pytest.raises(TypeError, match="must be a mapping"):
+            load_runtime(artifact, _detect_metadata("tensorrt"), options=[("cuda_graph", True)])
+
+    @pytest.mark.parametrize(
+        "options,expected",
+        [
+            pytest.param(
+                {},
+                {"sync_mode": True, "verbose": False, "cuda_graph": False, "engine_host_code_allowed": False},
+                id="default-execute-v2",
+            ),
+            pytest.param(
+                {"cuda_graph": True, "engine_host_code_allowed": True, "verbose": True},
+                {"sync_mode": False, "verbose": True, "cuda_graph": True, "engine_host_code_allowed": True},
+                id="cuda-graph-trusted-verbose",
+            ),
+        ],
+    )
+    def test_tensorrt_forwards_options_to_session(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, options: dict[str, bool], expected: dict[str, bool]
+    ) -> None:
+        """The default stays execute_v2; a CUDA graph drops sync_mode, which the session loader cannot combine with it.
+
+        The session loader is where a dynamic-profile engine is refused for cuda_graph=True, so forwarding the flag is
+        what makes that refusal reach RFDETRInference.
+        """
+        artifact = tmp_path / "model.engine"
+        artifact.write_bytes(b"engine")
+        session_loader = Mock(side_effect=RuntimeError("stop after session load"))
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr("rfdetr.export._tensorrt.inference._load_tensorrt_session", session_loader)
+
+        with pytest.raises(RuntimeError, match="stop after session load"):
+            load_runtime(artifact, _detect_metadata("tensorrt"), options=options)
+
+        session_loader.assert_called_once_with(str(artifact), device="cuda:0", **expected)
+
+    def test_tensorrt_refuses_non_bool_option(self, tmp_path: Path) -> None:
+        """A truthy string such as "false" from a config file must not switch graph capture on."""
+        artifact = tmp_path / "model.engine"
+        artifact.write_bytes(b"engine")
+
+        with pytest.raises(ValueError, match="cuda_graph must be a bool"):
+            load_runtime(artifact, _detect_metadata("tensorrt"), options={"cuda_graph": "false"})
+
+    def test_openvino_forwards_options_to_session(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The compile cache, precision hint and compile properties reach the shared OpenVINO session loader.
+
+        The export-side precision alias resolves to OpenVINO's own spelling, and a path-like cache directory is passed
+        on as the string OpenVINO's CACHE_DIR property takes.
+        """
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+        session_loader = Mock(side_effect=RuntimeError("stop after session load"))
+        monkeypatch.setitem(sys.modules, "openvino", types.ModuleType("openvino"))
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", session_loader)
+        options = {
+            "cache_dir": tmp_path / "cache",
+            "inference_precision": "float16",
+            "config": {"INFERENCE_NUM_THREADS": 2},
+        }
+
+        with pytest.raises(RuntimeError, match="stop after session load"):
+            load_runtime(artifact, _detect_metadata("openvino"), options=options)
+
+        session_loader.assert_called_once_with(
+            artifact,
+            device="AUTO",
+            inference_precision="f16",
+            cache_dir=str(tmp_path / "cache"),
+            config={"INFERENCE_NUM_THREADS": 2},
+        )

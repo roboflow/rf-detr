@@ -15,6 +15,7 @@ Use cases covered:
 """
 
 import inspect
+import logging
 import os
 import re
 import subprocess
@@ -2842,6 +2843,41 @@ class TestExporterMetadataPublication:
         assert warning.call_count == 1
         assert artifacts[0] in warning.call_args.args
         assert "metadata=" in warning.call_args.args[0]
+
+    def test_artifact_selection_failure_logs_traceback_and_metadata(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failing ``_metadata_artifacts`` override warns with its traceback and still returns the artifact.
+
+        The catch stays broad so a finished conversion is never lost, so a bug in a format override such as an
+        ``AttributeError`` only surfaces through this warning: the traceback has to be attached, and the metadata that
+        was not published is logged at debug level for the caller to pass as ``metadata=``.
+        """
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        exporter = self._exporter(tmp_path)
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"converted")
+        exporter._convert = MagicMock(return_value=artifact)
+        exporter._metadata_artifacts = MagicMock(side_effect=AttributeError("override bug"))
+        monkeypatch.setattr(export_base, "write_metadata", write_metadata)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            result = exporter(self._graph(metadata))
+
+        selection_warnings = [record for record in caplog.records if "Could not select" in record.getMessage()]
+        assert result == artifact
+        assert artifact.is_file()
+        assert not Path(f"{artifact}.rfdetr.json").exists()
+        assert selection_warnings[0].levelno == logging.WARNING
+        assert selection_warnings[0].exc_info[0] is AttributeError
+        assert "metadata=" in selection_warnings[0].getMessage()
+        assert metadata.model_dump_json() in caplog.text
 
     def test_real_writer_runs_through_exporter_hook(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """The exporter publishes sidecar metadata through the real writer hook."""

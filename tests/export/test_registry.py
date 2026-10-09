@@ -12,9 +12,11 @@ agree with the exporter classes once they are imported.
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from dataclasses import replace
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -25,6 +27,7 @@ from rfdetr.export._executorch.exporter import ExecuTorchExporter
 from rfdetr.export._litert.exporter import LiteRTConfig
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._openvino.exporter import OpenVINOConfig
+from rfdetr.export._runtime.metadata import ExportFormat
 from rfdetr.export._tensorrt.exporter import TensorRTConfig
 from rfdetr.export._tflite.exporter import TFLiteConfig
 from rfdetr.export.base import ExportConfig, Exporter, reject_unsupported_dynamic_batch
@@ -356,7 +359,22 @@ class TestRuntimeLoaderRegistry:
         """Adding an exporter requires its runtime loader in the same registry."""
         assert set(registry_module.RUNTIME_LOADERS) == set(REGISTRY)
 
+    def test_metadata_formats_match_export_formats(self) -> None:
+        """Adding an exporter requires its name in ``ExportFormat``, which export metadata validates against."""
+        assert set(get_args(ExportFormat)) == set(REGISTRY)
+
     @pytest.mark.parametrize("format", sorted(REGISTRY))
     def test_registered_loader_resolves(self, format: str) -> None:
         """A typo in a dotted loader path fails before users open an artifact."""
         assert callable(registry_module.resolve_runtime_loader(format))
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_registered_loader_takes_runtime_options(self, format: str) -> None:
+        """Every loader takes the options mapping that ``RFDETRInference(runtime_options=...)`` forwards.
+
+        ``load_runtime`` calls each loader with four positional arguments, so a loader missing ``options`` would only
+        fail once a user opens an artifact of that format.
+        """
+        loader = registry_module.resolve_runtime_loader(format)
+
+        assert list(inspect.signature(loader).parameters) == ["path", "metadata", "device", "options"]

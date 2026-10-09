@@ -39,6 +39,7 @@ from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.inference import OpenVINOInference
 from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
 from rfdetr.export.prepare import ExportGraph
+from tests.export._openvino_shapes import FakePartialShape
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
@@ -647,7 +648,9 @@ class TestOpenVINOInferenceDeprecation:
         core.compile_model.return_value.create_infer_request.return_value = infer_request
 
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            with pytest.warns(DeprecationWarning, match=r"RFDETRInference\(.*\)\.predict") as caught:
+            with pytest.warns(
+                FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v2\.0\.0.*RFDETRInference\(.*\)\.predict"
+            ) as caught:
                 inference = OpenVINOInference(xml_path)
             result = inference.infer(np.zeros((1, 3, 8, 8), dtype=np.float32))
 
@@ -658,8 +661,6 @@ class TestOpenVINOInferenceDeprecation:
 
     def test_public_predictor_is_warning_free(self, tmp_path: Path) -> None:
         """The unified runtime loader uses shared functions without constructing the deprecated facade."""
-        from types import SimpleNamespace
-
         from rfdetr import RFDETRInference
         from rfdetr.export._runtime.metadata import ExportMetadata
 
@@ -669,9 +670,7 @@ class TestOpenVINOInferenceDeprecation:
         fake_ov.Type = mock.Mock(f32="f32-type")
         core.available_devices = ["CPU"]
         core.compile_model.return_value.outputs = [object(), object()]
-        core.compile_model.return_value.input.return_value.partial_shape = [
-            SimpleNamespace(is_static=False) for _ in range(4)
-        ]
+        core.compile_model.return_value.input.return_value.partial_shape = FakePartialShape((None, None, None, None))
         metadata = ExportMetadata(
             format="openvino",
             task="detect",
@@ -692,7 +691,7 @@ class TestOpenVINOInferenceDeprecation:
                 warnings.simplefilter("always")
                 predictor = RFDETRInference(xml_path, metadata=metadata.model_dump(), device="cpu")
 
-        assert not [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
+        assert not [warning for warning in caught if issubclass(warning.category, (DeprecationWarning, FutureWarning))]
         assert predictor.runtime_info["backend"] == "openvino"
 
 

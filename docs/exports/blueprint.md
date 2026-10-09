@@ -9,7 +9,7 @@ description: How RF-DETR's export pipeline is put together, and the step-by-step
     - Every export format is an `Exporter` subclass built from its own configuration dataclass
     - `RFDETR.export()` is a facade: it prepares one `ExportGraph` and hands it to the exporter the registry names
     - The registry is plain data, so a format can be refused or its install hint printed before its dependency is imported
-    - Adding a format touches its own package, the registry, and `pyproject.toml` — never the base class
+    - Adding a format touches its own package, the registry, the metadata `ExportFormat` literal, and `pyproject.toml` — never the base class
     - This is an in-tree contribution recipe, not a plugin API: there is no public `register()` hook
 
 This page describes how the export pipeline is assembled and what it takes to add a format to it. If you only want to export a model, read [Export RF-DETR Model](index.md) instead — everything here is internal API.
@@ -67,7 +67,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
 
 An entry also carries the few facts that must be known *before* the import: the user-facing `label`, the `pip_extra` named in the missing-dependency message, `supports_dynamic_batch`, and `dynamic_batch_reason`. Those last three mirror class attributes of the exporter itself. The duplication is deliberate — it is what lets `reject_unsupported_dynamic_batch()` refuse a doomed request, in the format's own words, without paying tens of seconds and hundreds of megabytes for `coremltools` or TensorFlow first. `tests/export/test_registry.py` checks those mirrors.
 
-`RUNTIME_LOADERS` maps every format key to its lazy `load_export_runtime(path, metadata, device)` function. `resolve_runtime_loader()` imports that function only when an artifact is opened. Keep this map in sync with `REGISTRY`; the registry tests check that every format has a callable loader.
+`RUNTIME_LOADERS` maps every format key to its lazy `load_export_runtime(path, metadata, device, options)` function. `resolve_runtime_loader()` imports that function only when an artifact is opened. Keep this map in sync with `REGISTRY`; the registry tests check that every format has a callable loader.
 
 ### `base.py` — what every format gets for free
 
@@ -83,6 +83,8 @@ An entry also carries the few facts that must be known *before* the import: the 
 - writes metadata and logs the success line; a metadata-write failure warns while preserving the successfully converted artifact
 
 `Exporter.__init__` validates the configuration against the class's declared capabilities, and checks that `notes` serialize for a format that embeds them, so an unsupported request is refused at construction. `prepare_export_graph` captures prediction metadata from the source model. Exporters that produce multiple final files or alter names, layout, or dtype override the metadata hooks; do not put format-specific metadata behavior in `prepare.py`. `RFDETR.export()` then calls `check_dependencies()`, so a missing package is reported too, and `check_environment()`, for a setting the installed packages or the host cannot build (TensorRT's `trt_version_compatible` without its lean runtime, or `trt_hardware_compatibility="ampere_plus"` on a GPU older than Ampere) — all before the caller pays for a full DINOv2 forward pass.
+
+`ExportMetadata` (`src/rfdetr/export/_runtime/metadata.py`) rejects fields it does not know, so any new, removed, or redefined field bumps `SCHEMA_VERSION` and the `schema_version` literal with it. `read_metadata` loads only its own schema version: for any other it raises a `ValueError` that names the `producer_version` that wrote the artifact and asks the user to upgrade rfdetr. There is no migration step between versions.
 
 ## Adding a format
 
@@ -226,7 +228,7 @@ RUNTIME_LOADERS: Mapping[str, str] = {
 }
 ```
 
-`supports_dynamic_batch`, `label` and `dynamic_batch_reason` must match your class attributes exactly. Add one callable `load_export_runtime(path, metadata, device)` and its dotted path to `RUNTIME_LOADERS`; the registry tests check loader coverage and resolution. Add a short spelling to `ALIASES` if one is worth having (`"trt"`, `"pte"`). Set `preimport` only if your format has an import-order hazard; TFLite is the one precedent, because TensorFlow must load before anything pulls in ONNX's C extension.
+`supports_dynamic_batch`, `label` and `dynamic_batch_reason` must match your class attributes exactly. Add one callable `load_export_runtime(path, metadata, device, options)` and its dotted path to `RUNTIME_LOADERS`; the registry tests check loader coverage, resolution and that signature. Its first statement passes `options` (`RFDETRInference(runtime_options=...)`) through `_runtime_options(label, options, accepted_keys)` from `rfdetr.export._runtime.adapters`, with no accepted keys unless your session loader already takes a setting worth exposing. Add the format name to the `ExportFormat` literal in `src/rfdetr/export/_runtime/metadata.py` as well: export metadata validates its `format` against that literal, so a name missing there cannot be recorded, and a registry test checks that the literal and `REGISTRY` list the same formats. Add a short spelling to `ALIASES` if one is worth having (`"trt"`, `"pte"`). Set `preimport` only if your format has an import-order hazard; TFLite is the one precedent, because TensorFlow must load before anything pulls in ONNX's C extension.
 
 ### 5. Add the dependency extra
 
