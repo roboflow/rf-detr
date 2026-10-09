@@ -826,12 +826,22 @@ def _two_stage_rank_margin(model: torch.nn.Module, example_input: torch.Tensor) 
     return float((top[..., :-1] - top[..., 1:]).min())
 
 
-def _assert_well_conditioned(model: torch.nn.Module, example_input: torch.Tensor) -> None:
+def _assert_well_conditioned(
+    model: torch.nn.Module,
+    example_input: torch.Tensor,
+    *,
+    hint: str = "lower _COREML_E2E_NUM_QUERIES or change the parity input rather than loosening the parity bound",
+) -> None:
     """Fail with an explicit precondition message when the input's two-stage ranking has a near-tie.
+
+    The runtime and eager PyTorch round differently in fp32, so two neighbouring selection scores closer than their
+    difference can swap which queries ``torch.topk`` selects. Each selected proposal is paired with a positional learned
+    embedding, so a swap changes the decoder output and not only its order. Shared with the ExecuTorch suite.
 
     Args:
         model: Export-mode module whose forward makes exactly one ``torch.topk`` call.
         example_input: ``(N, C, H, W)`` parity input.
+        hint: Remedy the failure message suggests, naming the calling suite's query-count constant.
 
     Raises:
         AssertionError: If the ranking margin is below ``_MIN_TWO_STAGE_RANK_MARGIN``.
@@ -846,8 +856,8 @@ def _assert_well_conditioned(model: torch.nn.Module, example_input: torch.Tensor
     margin = _two_stage_rank_margin(model, example_input)
     assert margin >= _MIN_TWO_STAGE_RANK_MARGIN, (
         f"parity input is ill-conditioned: two-stage topk scores are only {margin:.2e} apart "
-        f"(< {_MIN_TWO_STAGE_RANK_MARGIN}), so fp32 rounding can swap selected queries and raw outputs cannot "
-        "match; lower _COREML_E2E_NUM_QUERIES or change the parity input rather than loosening the parity bound"
+        f"(< {_MIN_TWO_STAGE_RANK_MARGIN}), so fp32 rounding can swap selected queries and the outputs cannot "
+        f"match; {hint}"
     )
 
 

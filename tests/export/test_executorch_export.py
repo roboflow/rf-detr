@@ -41,11 +41,7 @@ from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.reproducibility import seed_all
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
-from tests.export.test_coreml_export import (
-    _MIN_TWO_STAGE_RANK_MARGIN,
-    _MULTICLASS_KEYPOINT_SCHEMA,
-    _two_stage_rank_margin,
-)
+from tests.export.test_coreml_export import _MULTICLASS_KEYPOINT_SCHEMA, _assert_well_conditioned
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
@@ -970,34 +966,10 @@ def validate_executorch_vs_pytorch(
     )
 
 
-def _assert_well_conditioned(model: torch.nn.Module, example_input: torch.Tensor) -> None:
-    """Fail with an explicit precondition message when the input's two-stage ranking has a near-tie.
-
-    The runtime and eager PyTorch round differently in fp32, so two neighbouring selection scores closer than their
-    difference can swap which queries ``torch.topk`` selects. Each selected proposal is paired with a positional learned
-    embedding, so a swap changes the decoder output and not only its order.
-
-    Args:
-        model: Export-mode module whose forward makes exactly one ``torch.topk`` call.
-        example_input: ``(N, C, H, W)`` parity input.
-
-    Raises:
-        AssertionError: If the ranking margin is below ``_MIN_TWO_STAGE_RANK_MARGIN``.
-
-    Examples:
-        >>> from tests.export.test_coreml_export import _TopkRanker
-        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[1.0, 0.0]]))
-        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[0.5, 0.5]]))
-        Traceback (most recent call last):
-            ...
-        AssertionError: parity input is ill-conditioned: ...
-    """
-    margin = _two_stage_rank_margin(model, example_input)
-    assert margin >= _MIN_TWO_STAGE_RANK_MARGIN, (
-        f"parity input is ill-conditioned: two-stage topk scores are only {margin:.2e} apart "
-        f"(< {_MIN_TWO_STAGE_RANK_MARGIN}), so fp32 rounding can swap selected queries and the outputs cannot "
-        "match; lower _EXECUTORCH_E2E_NUM_QUERIES or change the parity input rather than loosening the bound"
-    )
+#: Remedy the shared ``_assert_well_conditioned`` suggests when an ExecuTorch parity input is ill-conditioned.
+_EXECUTORCH_CONDITIONING_HINT = (
+    "lower _EXECUTORCH_E2E_NUM_QUERIES or change the parity input rather than loosening the bound"
+)
 
 
 #: Variants the e2e exports cover, each as ``(model class, output names, parity bound)``.
@@ -1393,7 +1365,7 @@ class TestExecutorchEndToEnd:
     def test_runtime_output_matches_pytorch(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """ExecuTorch runtime output must match the eager PyTorch forward within XNNPACK fp32 tolerance."""
         model, example, pte_path, validate_fn = exported
-        _assert_well_conditioned(model, example)
+        _assert_well_conditioned(model, example, hint=_EXECUTORCH_CONDITIONING_HINT)
         validate_fn(pte_path, model, example)
 
     def test_multiclass_keypoint_outputs_match_pytorch(
@@ -1407,7 +1379,7 @@ class TestExecutorchEndToEnd:
         model, example, pte_path = executorch_multiclass_keypoint_export
         assert bool(model.transformer.decoder.keypoint_class_mask.any())
         assert bool(eager_reference_tensors(model, example)[2].any()), "reseeded keypoint head still outputs zeros"
-        _assert_well_conditioned(model, example)
+        _assert_well_conditioned(model, example, hint=_EXECUTORCH_CONDITIONING_HINT)
         validate_executorch_vs_pytorch(
             pte_path,
             model,
@@ -1474,7 +1446,7 @@ class TestExecutorchEndToEnd:
         image = Image.open(photo_asset).convert("RGB")
         tensor, _ = infer_transforms((resolution, resolution))(image, None)
         pixel_values = tensor[None].float()
-        _assert_well_conditioned(model, pixel_values)
+        _assert_well_conditioned(model, pixel_values, hint=_EXECUTORCH_CONDITIONING_HINT)
 
         _check_executorch_available(require_runtime=True)
         from executorch.runtime import Runtime
