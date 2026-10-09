@@ -145,8 +145,10 @@ def shared_settings(config: ExportConfig) -> dict[str, Any]:
 def serialize_notes(notes: object) -> str:
     """Render *notes* as the string an artifact's metadata slot stores.
 
-    A string is stored as-is, so readers can use it without decoding. Anything else is JSON-encoded, and strictly:
-    ``NaN`` and ``Infinity`` are not valid JSON, and a strict parser on the reading side would reject them.
+    A string is stored as-is, so readers can use it without decoding, provided it encodes as UTF-8: a protobuf string
+    slot, such as ONNX ``metadata_props``, would otherwise refuse a surrogate code point only once the artifact is
+    written. Anything else is JSON-encoded, and strictly: ``NaN`` and ``Infinity`` are not valid JSON, and a strict
+    parser on the reading side would reject them.
 
     Args:
         notes: The user's notes.
@@ -155,7 +157,8 @@ def serialize_notes(notes: object) -> str:
         The value to store under the artifact's ``rfdetr_notes`` key.
 
     Raises:
-        ValueError: If *notes* holds a non-finite float or a circular reference.
+        ValueError: If *notes* holds a non-finite float or a circular reference, or is a string holding a surrogate
+            code point, which UTF-8 cannot encode.
         TypeError: If *notes* holds a value JSON cannot encode.
 
     Examples:
@@ -167,8 +170,16 @@ def serialize_notes(notes: object) -> str:
         Traceback (most recent call last):
         ...
         ValueError: notes must be a string or a JSON-serializable value: ...
+        >>> serialize_notes("a\\ud800")  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ValueError: notes must be a string UTF-8 can encode: ...
     """
     if isinstance(notes, str):
+        try:
+            notes.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError(f"notes must be a string UTF-8 can encode: {error}") from error
         return notes
     try:
         return json.dumps(notes, allow_nan=False)
@@ -318,8 +329,9 @@ class Exporter(ABC, Generic[_ConfigT]):
 
         Raises:
             NotImplementedError: If ``dynamic_batch`` was requested and the format bakes a fixed shape.
-            ValueError: If the format embeds *notes* and they hold a non-finite float or a circular reference. A
-                subclass override may also raise it for its own format-specific validation failures.
+            ValueError: If the format embeds *notes* and they hold a non-finite float or a circular reference, or are a
+                string holding a surrogate code point. A subclass override may also raise it for its own
+                format-specific validation failures.
             TypeError: If the format embeds *notes* and they hold a value JSON cannot encode.
         """
         if self.config.dynamic_batch and not self.supports_dynamic_batch:

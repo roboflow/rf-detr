@@ -196,6 +196,7 @@ class TestExportOnnxNotes:
             pytest.param({"scores": [float("nan")]}, ValueError, id="nested-nan"),
             pytest.param({1, 2}, TypeError, id="set"),
             pytest.param(_CIRCULAR_NOTES, ValueError, id="circular"),
+            pytest.param("a\ud800", ValueError, id="lone-surrogate"),
         ],
     )
     def test_unserializable_notes_are_refused_at_construction(
