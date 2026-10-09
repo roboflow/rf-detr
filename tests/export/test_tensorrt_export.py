@@ -43,6 +43,7 @@ from rfdetr.export._tensorrt.exporter import (
     TensorRTExporter,
 )
 from rfdetr.export.prepare import ExportGraph
+from tests._markers import requires_cuda
 from tests.export.conftest import (
     _structured_parity_input,
     assert_prediction_roundtrip,
@@ -543,7 +544,9 @@ class TestTRTInferenceDeprecation:
         monkeypatch.setattr(tensorrt_inference, "_load_tensorrt_session", load)
         monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", lambda session, blob: outputs)
 
-        with pytest.warns(DeprecationWarning, match="RFDETRInference") as recorded:
+        with pytest.warns(
+            FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v2\.0\.0.*RFDETRInference"
+        ) as recorded:
             facade = tensorrt_inference.TRTInference("model.trt", "cuda:1", sync_mode=True, verbose=True)
 
         assert recorded[0].filename.endswith("test_tensorrt_export.py")
@@ -557,7 +560,7 @@ class TestTRTInferenceDeprecation:
         """The compatibility facade cannot retarget an engine after its CUDA buffers are allocated."""
         state = types.SimpleNamespace(engine_device=torch.device("cuda:1"))
         monkeypatch.setattr(tensorrt_inference, "_load_tensorrt_session", lambda *args, **kwargs: state)
-        with pytest.warns(DeprecationWarning, match="RFDETRInference"):
+        with pytest.warns(FutureWarning, match="RFDETRInference"):
             facade = tensorrt_inference.TRTInference("model.trt")
 
         with pytest.raises(AttributeError):
@@ -2784,6 +2787,7 @@ def _distinct_batch(batch: int, resolution: int) -> torch.Tensor:
 
 
 @tensorrt_only
+@requires_cuda
 @pytest.mark.gpu
 @pytest.mark.integration
 @pytest.mark.e2e_tensorrt

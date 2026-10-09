@@ -5,12 +5,14 @@
 # ------------------------------------------------------------------------
 """Public exported-model loading and prediction contracts."""
 
+import math
 from pathlib import Path
 
 import pytest
 
 from rfdetr import RFDETRInference
 from rfdetr.detr import RFDETR
+from tests._markers import onnx_and_onnxruntime_only
 
 
 class TestInferenceLoading:
@@ -22,37 +24,112 @@ class TestInferenceLoading:
             RFDETRInference(tmp_path / "missing.onnx")
 
 
+# The graph helper doctest writes a real ONNX file, so it needs the package the class-level skipif cannot gate.
+__doctest_requires__ = {("_channel_readout_graph",): ["onnx"]}
+
+#: Native ImageNet normalization the fixture metadata declares and the tests apply by hand.
+_MEANS = (0.485, 0.456, 0.406)
+_STDS = (0.229, 0.224, 0.225)
+#: How far query 0's box moves per unit of a normalized channel mean.
+_READOUT_SCALE = 0.1
+#: Query 0's class-0 logit before the green channel mean is added, high enough to stay above the 0.5 threshold.
+_LOGIT_OFFSET = 4.0
+
+
+def _channel_readout_graph(path: Path) -> None:
+    """Save a two-query ONNX detector whose first query reads the normalized input channel means.
+
+    Query 0's box centre x, centre y and width move with the red, green and blue channel means, and its class-0 logit
+    moves with the green mean, so a wrong mean, std or channel order changes the prediction. Query 1 is a constant
+    low-score box. The batch axis is symbolic, so the same graph serves fixed- and dynamic-batch metadata.
+
+    Examples:
+        >>> import tempfile
+        >>> path = Path(tempfile.mkdtemp()) / "detector.onnx"
+        >>> _channel_readout_graph(path)
+        >>> path.stat().st_size > 0
+        True
+    """
+    import onnx
+    from onnx import TensorProto, helper
+
+    # Rows are the red, green and blue means; columns are query 0 then query 1, each as (cx, cy, w, h).
+    box_weights = [
+        [_READOUT_SCALE, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, _READOUT_SCALE, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, _READOUT_SCALE, 0.0, 0.0, 0.0, 0.0, 0.0],
+    ]
+    box_bias = [0.5, 0.5, 0.5, 0.5, 0.25, 0.25, 0.2, 0.2]
+    # Columns are (query 0, class 0), (query 0, class 1), (query 1, class 0), (query 1, class 1).
+    logit_weights = [[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+    logit_bias = [_LOGIT_OFFSET, -4.0, -4.0, -4.0]
+    initializers = [
+        helper.make_tensor("box_weights", TensorProto.FLOAT, [3, 8], [value for row in box_weights for value in row]),
+        helper.make_tensor("box_bias", TensorProto.FLOAT, [8], box_bias),
+        helper.make_tensor("box_shape", TensorProto.INT64, [3], [-1, 2, 4]),
+        helper.make_tensor(
+            "logit_weights", TensorProto.FLOAT, [3, 4], [value for row in logit_weights for value in row]
+        ),
+        helper.make_tensor("logit_bias", TensorProto.FLOAT, [4], logit_bias),
+        helper.make_tensor("logit_shape", TensorProto.INT64, [3], [-1, 2, 2]),
+    ]
+    nodes = [
+        helper.make_node("ReduceMean", ["images"], ["channel_means"], axes=[2, 3], keepdims=0),
+        helper.make_node("MatMul", ["channel_means", "box_weights"], ["box_flat"]),
+        helper.make_node("Add", ["box_flat", "box_bias"], ["box_values"]),
+        helper.make_node("Reshape", ["box_values", "box_shape"], ["boxes"]),
+        helper.make_node("MatMul", ["channel_means", "logit_weights"], ["logit_flat"]),
+        helper.make_node("Add", ["logit_flat", "logit_bias"], ["logit_values"]),
+        helper.make_node("Reshape", ["logit_values", "logit_shape"], ["logits"]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "detector",
+        [helper.make_tensor_value_info("images", TensorProto.FLOAT, ["batch", 3, 32, 48])],
+        [
+            helper.make_tensor_value_info("boxes", TensorProto.FLOAT, ["batch", 2, 4]),
+            helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["batch", 2, 2]),
+        ],
+        initializer=initializers,
+    )
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=8), path)
+
+
+def _expected_detection(rgb: tuple[int, int, int], height: int, width: int) -> tuple[list[float], float]:
+    """Compute the box and score the channel-readout graph gives a uniform image under native preprocessing.
+
+    Each channel is normalized by hand as ``(pixel / 255 - mean) / std`` in RGB order; a uniform image keeps that value
+    through any bilinear resize, so the expected prediction depends only on normalization and channel order.
+
+    Examples:
+        >>> box, score = _expected_detection((0, 0, 0), height=64, width=96)
+        >>> [round(value, 1) for value in box]
+        [12.3, 3.0, 43.0, 35.0]
+        >>> round(score, 3)
+        0.877
+    """
+    red, green, blue = ((value / 255 - mean) / std for value, mean, std in zip(rgb, _MEANS, _STDS))
+    center_x, center_y = 0.5 + _READOUT_SCALE * red, 0.5 + _READOUT_SCALE * green
+    box_width, box_height = 0.5 + _READOUT_SCALE * blue, 0.5
+    box = [
+        (center_x - box_width / 2) * width,
+        (center_y - box_height / 2) * height,
+        (center_x + box_width / 2) * width,
+        (center_y + box_height / 2) * height,
+    ]
+    return box, 1 / (1 + math.exp(-(_LOGIT_OFFSET + green)))
+
+
 @pytest.fixture
 def exported_detection(tmp_path: Path) -> tuple[Path, dict[str, object]]:
-    """Return a tiny real ONNX graph and its legacy inference metadata.
+    """Return a tiny real ONNX graph that reads its input, and its legacy inference metadata.
 
     Examples:
         >>> exported_detection()  # doctest: +SKIP
         # Pytest supplies the temporary directory.
     """
-    import numpy as np
-
-    onnx = pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime")
-    from onnx import TensorProto, helper, numpy_helper
-
     path = tmp_path / "detector.onnx"
-    boxes = np.array([[[0.5, 0.5, 0.5, 0.5], [0.25, 0.25, 0.2, 0.2]]], dtype=np.float32)
-    logits = np.array([[[4.0, -4.0], [-4.0, -4.0]]], dtype=np.float32)
-    graph = helper.make_graph(
-        [
-            helper.make_node("Constant", [], ["boxes"], value=numpy_helper.from_array(boxes)),
-            helper.make_node("Constant", [], ["logits"], value=numpy_helper.from_array(logits)),
-        ],
-        "detector",
-        [helper.make_tensor_value_info("images", TensorProto.FLOAT, [1, 3, 32, 48])],
-        [
-            helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [1, 2, 4]),
-            helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 2, 2]),
-        ],
-    )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=8)
-    onnx.save(model, path)
+    _channel_readout_graph(path)
     return path, {
         "format": "onnx",
         "task": "detect",
@@ -67,11 +144,12 @@ def exported_detection(tmp_path: Path) -> tuple[Path, dict[str, object]]:
         "patch_size": 16,
         "num_windows": 1,
         "trace_alpha": 0.2,
-        "means": [0.485, 0.456, 0.406],
-        "stds": [0.229, 0.224, 0.225],
+        "means": list(_MEANS),
+        "stds": list(_STDS),
     }
 
 
+@onnx_and_onnxruntime_only
 class TestInferenceCapabilities:
     """The public constructor returns an inference-only type."""
 
@@ -83,22 +161,52 @@ class TestInferenceCapabilities:
         assert not isinstance(model, RFDETR)
 
 
+@onnx_and_onnxruntime_only
 class TestExportedPrediction:
     """A real runtime returns the existing Supervision prediction contract."""
 
     def test_detection(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
-        """The exported model scales boxes and retains class names and source metadata."""
+        """Native preprocessing reaches the graph, and boxes scale back to a non-square source.
+
+        The graph reads each normalized channel mean, so a wrong mean, std or channel order on this channel-distinct
+        image moves the box or the score; the 64x96 source checks scaling to its own height and width.
+        """
         import numpy as np
         import supervision as sv
 
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
-        image = np.zeros((64, 96, 3), dtype=np.uint8)
+        image = np.full((64, 96, 3), (48, 96, 144), dtype=np.uint8)
+        expected_box, expected_score = _expected_detection((48, 96, 144), height=64, width=96)
+
         result = model.predict(image)
+
         assert isinstance(result, sv.Detections)
-        np.testing.assert_allclose(result.xyxy, [[24, 16, 72, 48]])
+        np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+        np.testing.assert_allclose(result.confidence, [expected_score], rtol=0, atol=1e-5)
         assert list(result.data["class_name"]) == ["object"]
         np.testing.assert_array_equal(result.metadata["source_image"], image)
+
+    def test_dynamic_batch_keeps_images_apart(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        """A dynamic-batch artifact predicts two different images in one call, each from its own pixels.
+
+        Two uniform images of different colours and sizes run as one batch of two; a batch-axis mix-up or a shared
+        source size would give both results the same box or score.
+        """
+        import numpy as np
+
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=dict(metadata, input_shape=[-1, 3, 32, 48]), device="cpu")
+        images = [np.full((64, 96, 3), (48, 96, 144), np.uint8), np.full((40, 80, 3), (200, 30, 90), np.uint8)]
+        first_box, first_score = _expected_detection((48, 96, 144), height=64, width=96)
+        second_box, second_score = _expected_detection((200, 30, 90), height=40, width=80)
+
+        first, second = model.predict(images, include_source_image=False)
+
+        np.testing.assert_allclose([first.xyxy[0], second.xyxy[0]], [first_box, second_box], rtol=0, atol=1e-3)
+        np.testing.assert_allclose(
+            [first.confidence[0], second.confidence[0]], [first_score, second_score], rtol=0, atol=1e-5
+        )
 
     @pytest.mark.parametrize("input_kind", ["pil", "path", "tensor"])
     def test_input_forms_preserve_prediction_and_source(

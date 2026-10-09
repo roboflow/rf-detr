@@ -15,13 +15,10 @@ eager reference forward, the deterministic input builders, and the per-output ma
 
 from __future__ import annotations
 
-import importlib.util
-import platform
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pytest
 import torch
 import torchvision.transforms.functional as TF  # noqa: N812 — standard torchvision alias
 from PIL import Image
@@ -233,37 +230,6 @@ def _prediction_image(size: int) -> np.ndarray:
     return np.stack(((x * 7) % 256, (y * 11) % 256, ((x + y) * 3) % 256), axis=-1).astype(np.uint8)
 
 
-def _require_prediction_runtime(format_name: str) -> None:
-    """Skip a runtime that this host cannot import or execute.
-
-    Examples:
-        Needs the caller's optional runtime installation, so this check is only used in integration tests.
-
-        >>> _require_prediction_runtime("onnx")  # doctest: +SKIP
-    """
-    requirements = {
-        "onnx": ("onnx", "onnxruntime"),
-        "openvino": ("openvino",),
-        "tflite": ("onnx2tf",),
-        "litert": ("litert_torch", "ai_edge_litert"),
-        "executorch": ("executorch",),
-        "coreml": ("coremltools",),
-        "coreai": ("coreai_torch", "coreai"),
-        "tensorrt": ("tensorrt",),
-    }
-    if format_name in {"coreml", "coreai"} and platform.system() != "Darwin":
-        pytest.skip(f"{format_name} runtime requires macOS")
-    if format_name == "tensorrt" and not torch.cuda.is_available():
-        pytest.skip("TensorRT runtime requires CUDA")
-    for package in requirements[format_name]:
-        if importlib.util.find_spec(package) is None:
-            pytest.skip(f"{format_name} runtime requires {package}")
-    if format_name == "tflite" and not any(
-        importlib.util.find_spec(package) is not None for package in ("ai_edge_litert", "tflite_runtime", "tensorflow")
-    ):
-        pytest.skip("TFLite inference requires ai_edge_litert, tflite_runtime, or tensorflow")
-
-
 def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> None:
     """Run the public export and prediction APIs on one image.
 
@@ -272,7 +238,6 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> 
 
         >>> assert_prediction_roundtrip("onnx", "detect", Path("output"))  # doctest: +SKIP
     """
-    _require_prediction_runtime(format_name)
     torch.manual_seed(17)
     native = _prediction_model_for_task(task)
     size = 64 if task == "detect" else 96

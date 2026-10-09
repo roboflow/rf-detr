@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import platform
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -88,6 +88,13 @@ def _select_outputs(
     boxes, logits = outputs["pred_boxes"], outputs["pred_logits"]
     if boxes.ndim != 3 or boxes.shape[-1] != 4 or logits.ndim != 3 or boxes.shape[:2] != logits.shape[:2]:
         raise ValueError("Export boxes and logits have incompatible shapes.")
+    # The detection head emits one logit per class id plus the trailing no-object slot that prediction labels as
+    # background, so a narrower or wider tensor would silently shift class ids.
+    if logits.shape[-1] != metadata.num_classes + 1:
+        raise ValueError(
+            f"Export logits have {logits.shape[-1]} class slots, but metadata num_classes={metadata.num_classes}"
+            f" needs {metadata.num_classes + 1} (class ids plus the no-object slot)."
+        )
     if metadata.task == "segment" and "pred_masks" not in outputs:
         raise ValueError("Segmentation export has no pred_masks mapping.")
     if metadata.task == "keypoints" and "pred_keypoints" not in outputs:
@@ -140,12 +147,68 @@ def _require_apple(format_name: str) -> None:
         raise RuntimeError(f"{format_name} inference requires macOS and its native runtime.")
 
 
-def load_runtime(path: str | Path, metadata: ExportMetadata, device: str = "auto") -> ExportRuntime:
-    """Load an artifact through its format-owned runtime loader."""
+def _runtime_options(format_name: str, options: Mapping[str, Any], accepted: Collection[str]) -> dict[str, Any]:
+    """Return a copy of a loader's runtime options after refusing every key that loader does not read.
+
+    Each format loader calls this first, before it imports its runtime package, so a misspelled key, or a key meant
+    for another format, fails the same way on every host instead of being ignored.
+
+    Args:
+        format_name: Format name as users read it, for the error message.
+        options: The ``runtime_options`` mapping passed to ``RFDETRInference``.
+        accepted: Keys the format's loader reads.
+
+    Returns:
+        A plain ``dict`` copy of *options*.
+
+    Raises:
+        TypeError: If *options* is not a mapping.
+        ValueError: If *options* holds a key outside *accepted*.
+
+    Examples:
+        >>> _runtime_options("OpenVINO", {"cache_dir": "cache"}, ("cache_dir", "config"))
+        {'cache_dir': 'cache'}
+        >>> _runtime_options("ONNX", {"providers": []}, ())
+        Traceback (most recent call last):
+        ...
+        ValueError: ONNX runtime_options does not accept 'providers'. Accepted keys: none.
+    """
+    if not isinstance(options, Mapping):
+        raise TypeError(f"runtime_options must be a mapping, got {type(options).__name__}.")
+    unknown = sorted(repr(key) for key in options if key not in accepted)
+    if unknown:
+        allowed = ", ".join(sorted(accepted)) or "none"
+        raise ValueError(
+            f"{format_name} runtime_options does not accept {', '.join(unknown)}. Accepted keys: {allowed}."
+        )
+    return dict(options)
+
+
+def load_runtime(
+    path: str | Path,
+    metadata: ExportMetadata,
+    device: str = "auto",
+    options: Mapping[str, Any] | None = None,
+) -> ExportRuntime:
+    """Load an artifact through its format-owned runtime loader.
+
+    Args:
+        path: Exported file or model bundle.
+        metadata: The artifact's inference metadata.
+        device: Runtime device policy, in the format's own vocabulary.
+        options: Format runtime settings; ``None`` passes none. The loader refuses keys it does not read.
+
+    Returns:
+        The loaded runtime.
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        ValueError: If the export is backbone-only, or the loader refuses *device* or *options*.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(path)
     if metadata.task == "backbone":
         raise ValueError("A backbone-only export cannot produce predictions.")
     loader = resolve_runtime_loader(metadata.format.lower())
-    return loader(path, metadata, device)
+    return loader(path, metadata, device, {} if options is None else options)
