@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title description">
   <title id="title">RF-DETR weekly project metrics</title>
-  <desc id="description">For week ending 2026-09-20, RF-DETR had +74 new GitHub stars and 50,614 PyPI downloads.</desc>
-  <metadata id="weekly-metrics-state">{"history":[{"downloads":100370,"new_stars":null,"stars_total":9026,"week_end":"2026-08-23","week_start":"2026-08-17"},{"downloads":52689,"new_stars":70,"stars_total":9096,"week_end":"2026-08-30","week_start":"2026-08-24"},{"downloads":44203,"new_stars":201,"stars_total":9297,"week_end":"2026-09-06","week_start":"2026-08-31"},{"downloads":51877,"new_stars":170,"stars_total":9467,"week_end":"2026-09-13","week_start":"2026-09-07"},{"downloads":50614,"new_stars":74,"stars_total":9541,"week_end":"2026-09-20","week_start":"2026-09-14"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
+  <desc id="description">For week ending 2026-10-04, RF-DETR had +62 new GitHub stars and 56,103 PyPI downloads.</desc>
+  <metadata id="weekly-metrics-state">{"history":[{"downloads":100370,"new_stars":null,"stars_total":9026,"week_end":"2026-08-23","week_start":"2026-08-17"},{"downloads":52689,"new_stars":70,"stars_total":9096,"week_end":"2026-08-30","week_start":"2026-08-24"},{"downloads":44203,"new_stars":201,"stars_total":9297,"week_end":"2026-09-06","week_start":"2026-08-31"},{"downloads":51877,"new_stars":170,"stars_total":9467,"week_end":"2026-09-13","week_start":"2026-09-07"},{"downloads":50614,"new_stars":74,"stars_total":9541,"week_end":"2026-09-20","week_start":"2026-09-14"},{"downloads":47796,"new_stars":84,"stars_total":9625,"week_end":"2026-09-27","week_start":"2026-09-21"},{"downloads":56103,"new_stars":62,"stars_total":9687,"week_end":"2026-10-04","week_start":"2026-09-28"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
   <rect width="1200" height="640" rx="18" fill="#ffffff"/>
   <text x="56" y="58" fill="#0b0b0b" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="700">RF-DETR weekly growth</text>
-  <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="15">Latest completed week · Sep 14–Sep 20, 2026</text>
+  <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="15">Latest completed week · Sep 28–Oct 4, 2026</text>
   <g font-family="DejaVu Sans, Arial, sans-serif">
     <rect x="56" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
     <text x="76" y="141" fill="#6b6a66" font-size="14">GITHUB STARS</text>
-    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">9,541</text>
+    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">9,687</text>
     <rect x="410" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
     <text x="430" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>
-    <text x="430" y="176" fill="#8315f9" font-size="28" font-weight="700">+74 new stars</text>
+    <text x="430" y="176" fill="#8315f9" font-size="28" font-weight="700">+62 new stars</text>
     <rect x="764" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>
     <text x="784" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>
-    <text x="784" y="176" fill="#2a78d6" font-size="28" font-weight="700">50,614 weekly downloads</text>
+    <text x="784" y="176" fill="#2a78d6" font-size="28" font-weight="700">56,103 weekly downloads</text>
   </g>
   <g aria-hidden="true" fill="none" stroke="#e1e0d9" stroke-width="1">
     <path d="M100 530.0H1100"/>
@@ -27,31 +27,37 @@
     <text x="88" y="535.0" text-anchor="end">+0</text>
     <text x="1112" y="535.0" text-anchor="start">0</text>
     <text x="88" y="390.0" text-anchor="end">+100</text>
-    <text x="1112" y="390.0" text-anchor="start">26,344</text>
+    <text x="1112" y="390.0" text-anchor="start">28,052</text>
     <text x="88" y="245.0" text-anchor="end">+201</text>
-    <text x="1112" y="245.0" text-anchor="start">52,689</text>
+    <text x="1112" y="245.0" text-anchor="start">56,103</text>
     <text x="100" y="221" fill="#8315f9" font-size="14" font-weight="700">NEW STARS</text>
     <text x="1100" y="221" fill="#2a78d6" font-size="14" font-weight="700" text-anchor="end">WEEKLY DOWNLOADS</text>
   </g>
   <g id="weekly-stars-bars">
-    <rect x="378.0" y="429.0" width="44.0" height="101.0" rx="4" fill="#8315f9"/>
-    <rect x="578.0" y="240.0" width="44.0" height="290.0" rx="4" fill="#8315f9"/>
-    <rect x="778.0" y="284.7" width="44.0" height="245.3" rx="4" fill="#8315f9"/>
-    <rect x="978.0" y="423.2" width="44.0" height="106.8" rx="4" fill="#8315f9"/>
+    <rect x="292.3" y="429.0" width="44.0" height="101.0" rx="4" fill="#8315f9"/>
+    <rect x="435.1" y="240.0" width="44.0" height="290.0" rx="4" fill="#8315f9"/>
+    <rect x="578.0" y="284.7" width="44.0" height="245.3" rx="4" fill="#8315f9"/>
+    <rect x="720.9" y="423.2" width="44.0" height="106.8" rx="4" fill="#8315f9"/>
+    <rect x="863.7" y="408.8" width="44.0" height="121.2" rx="4" fill="#8315f9"/>
+    <rect x="1006.6" y="440.5" width="44.0" height="89.5" rx="4" fill="#8315f9"/>
   </g>
   <g id="weekly-downloads-line">
-    <polyline points="400.0,240.0 600.0,286.7 800.0,244.5 1000.0,251.4" fill="none" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="400.0" cy="240.0" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-    <circle cx="600.0" cy="286.7" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-    <circle cx="800.0" cy="244.5" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-    <circle cx="1000.0" cy="251.4" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <polyline points="314.3,257.6 457.1,301.5 600.0,261.8 742.9,268.4 885.7,282.9 1028.6,240.0" fill="none" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="314.3" cy="257.6" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="457.1" cy="301.5" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="600.0" cy="261.8" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="742.9" cy="268.4" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="885.7" cy="282.9" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="1028.6" cy="240.0" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
   </g>
   <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="middle">
-    <text x="200.0" y="552">Aug 23</text>
-    <text x="400.0" y="552">Aug 30</text>
-    <text x="600.0" y="552">Sep 6</text>
-    <text x="800.0" y="552">Sep 13</text>
-    <text x="1000.0" y="552">Sep 20</text>
+    <text x="171.4" y="552">Aug 23</text>
+    <text x="314.3" y="552">Aug 30</text>
+    <text x="457.1" y="552">Sep 6</text>
+    <text x="600.0" y="552">Sep 13</text>
+    <text x="742.9" y="552">Sep 20</text>
+    <text x="885.7" y="552">Sep 27</text>
+    <text x="1028.6" y="552">Oct 4</text>
   </g>
   <g font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#52514e">
     <rect x="396" y="593" width="18" height="12" rx="2" fill="#8315f9"/>
