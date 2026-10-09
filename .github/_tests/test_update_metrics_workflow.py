@@ -22,7 +22,14 @@ TRACKED_SVG = "docs/assets/weekly-metrics.svg"
 CHECKED_IN_SVG = "<svg><!-- merged history --></svg>\n"
 UNMERGED_SVG = "<svg><!-- unmerged history --></svg>\n"
 STUB_LOG_NAME = "commands.log"
+STUB_BRANCH_SHA = "deadbeef"
+GITHUB_ENV_NAME = "github_env"
+STEP_SUMMARY_NAME = "step_summary"
 requires_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="restore step is a bash run block")
+requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="the real-git tests drive an actual repository")
+COMMIT_STEP = "📤 Commit and push metrics update"
+GENERATE_STEP = "📊 Generate weekly metrics SVG"
+METRICS_BRANCH = "automation/update-weekly-metrics"
 
 
 def _sha_pinned_action(uses: str) -> str | None:
@@ -99,62 +106,80 @@ def _run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) 
     return subprocess.run(["bash", str(script)], cwd=workspace, env=env, text=True, capture_output=True, check=False)
 
 
-def _restore_env(workspace: Path, branch_exists: bool, git_show_fails: bool = False) -> dict[str, str]:
+def _restore_env(
+    workspace: Path,
+    branch_exists: bool,
+    git_show_fails: bool = False,
+    fetch_fails: bool = False,
+    ls_remote_status: int | None = None,
+) -> dict[str, str]:
     """Build the environment a restore-step run sees, including the stub controls.
 
     Args:
-        workspace: Directory the step runs in; the stub command log is written beside the step script.
-        branch_exists: Whether the `git` stub's `fetch` reports the automation branch as found.
+        workspace: Directory the step runs in; the stub command log and `GITHUB_ENV` file live beside the script.
+        branch_exists: Whether the `git` stub's `ls-remote` finds the automation branch (exit 0) or not (exit 2).
         git_show_fails: Whether the `git` stub rejects `git show` the way a missing path does.
+        fetch_fails: Whether the `git` stub rejects `git fetch` even though `ls-remote` found the branch.
+        ls_remote_status: Explicit `git ls-remote` exit status to simulate, overriding `branch_exists`.
 
     Returns:
         Environment overlay handed to `_run_step`.
 
     Examples:
-        >>> _restore_env(Path("workspace"), branch_exists=False)["STUB_FETCH_FAILS"]
+        >>> _restore_env(Path("workspace"), branch_exists=False)["STUB_LS_REMOTE_STATUS"]
+        '2'
+        >>> _restore_env(Path("workspace"), branch_exists=True, fetch_fails=True)["STUB_FETCH_FAILS"]
         '1'
     """
     env = {
-        "METRICS_BRANCH": "automation/update-weekly-metrics",
+        "METRICS_BRANCH": METRICS_BRANCH,
+        "GITHUB_ENV": str(workspace / GITHUB_ENV_NAME),
         "STUB_LOG": str(workspace / STUB_LOG_NAME),
         "STUB_UNMERGED_SVG": UNMERGED_SVG,
+        "STUB_LS_REMOTE_STATUS": str(ls_remote_status if ls_remote_status is not None else (0 if branch_exists else 2)),
     }
-    if not branch_exists:
+    if fetch_fails:
         env["STUB_FETCH_FAILS"] = "1"
     if git_show_fails:
         env["STUB_GIT_SHOW_FAILS"] = "1"
     return env
 
 
-def _commit_env(
-    workspace: Path,
-    branch_exists: bool,
-    svg_changed: bool,
-    ls_remote_status: int | None = None,
-) -> dict[str, str]:
+def _commit_env(workspace: Path, branch_exists: bool, svg_changed: bool, push_fails: bool = False) -> dict[str, str]:
     """Build the environment a commit-step run sees, including the stub controls.
 
     Args:
-        workspace: Directory the step runs in; the stub command log is written beside the step script.
-        branch_exists: Whether the `git` stub reports the automation branch as existing on the remote.
+        workspace: Directory the step runs in; the stub command log and step summary live beside the step script.
+        branch_exists: Whether the automation branch existed on the remote when the run started. When it did,
+            the restore step has exported its tip as `METRICS_BASE_SHA`; otherwise that variable is unset.
         svg_changed: Whether the `git diff --quiet` guard reports a tracked SVG change.
-        ls_remote_status: Explicit `git ls-remote` exit status to simulate when needed.
+        push_fails: Whether the `git` stub rejects the publishing call the way a lost lease or a refused ref does.
 
     Returns:
         Environment overlay handed to `_run_step`.
 
     Examples:
         >>> env = _commit_env(Path("workspace"), branch_exists=False, svg_changed=False)
-        >>> (env["STUB_LS_REMOTE_STATUS"], env["STUB_DIFF_CLEAN"])
-        ('2', '1')
+        >>> (env["STUB_DIFF_CLEAN"], "METRICS_BASE_SHA" in env, env["DEFAULT_BRANCH"])
+        ('1', False, 'main')
+        >>> _commit_env(Path("workspace"), branch_exists=True, svg_changed=True)["METRICS_BASE_SHA"]
+        'deadbeef'
+        >>> _commit_env(Path("workspace"), branch_exists=True, svg_changed=True, push_fails=True)["STUB_PUSH_FAILS"]
+        '1'
     """
     env = {
-        "METRICS_BRANCH": "automation/update-weekly-metrics",
+        "METRICS_BRANCH": METRICS_BRANCH,
+        "DEFAULT_BRANCH": "main",
+        "GITHUB_REPOSITORY": "roboflow/rf-detr",
+        "GITHUB_STEP_SUMMARY": str(workspace / STEP_SUMMARY_NAME),
         "STUB_LOG": str(workspace / STUB_LOG_NAME),
-        "STUB_LS_REMOTE_STATUS": str(ls_remote_status if ls_remote_status is not None else (0 if branch_exists else 2)),
     }
+    if branch_exists:
+        env["METRICS_BASE_SHA"] = STUB_BRANCH_SHA
     if not svg_changed:
         env["STUB_DIFF_CLEAN"] = "1"
+    if push_fails:
+        env["STUB_PUSH_FAILS"] = "1"
     return env
 
 
@@ -162,9 +187,9 @@ def _commit_env(
 def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     """Workspace holding a checked-in SVG, plus a stub recording every `git` call.
 
-    The stub's `fetch` reports the automation branch missing when `STUB_FETCH_FAILS` is set, the way a
-    branch that was never pushed (or was deleted after merge) does; its `show` serves `STUB_UNMERGED_SVG`
-    and fails like a missing path when `STUB_GIT_SHOW_FAILS` is set.
+    The stub's `ls-remote` exits with `STUB_LS_REMOTE_STATUS` (2 for a branch that was never pushed or was
+    deleted after merge), `fetch` fails when `STUB_FETCH_FAILS` is set, `rev-parse` reports the branch tip, and
+    `show` serves `STUB_UNMERGED_SVG` and fails like a missing path when `STUB_GIT_SHOW_FAILS` is set.
 
     Examples:
         >>> restore_sandbox  # doctest: +SKIP
@@ -181,13 +206,17 @@ def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
         "git",
         'echo "git $*" >> "$STUB_LOG"\n'
         "case $1 in\n"
+        "  ls-remote)\n"
+        '    exit "${STUB_LS_REMOTE_STATUS:-0}"\n'
+        "    ;;\n"
         "  fetch)\n"
         '    if [ -n "${STUB_FETCH_FAILS:-}" ]; then\n'
-        '      echo "fatal: couldn'
-        "'"
-        't find remote ref $3" >&2\n'
+        '      echo "fatal: unable to fetch $5" >&2\n'
         "      exit 128\n"
         "    fi\n"
+        "    ;;\n"
+        "  rev-parse)\n"
+        f'    echo "{STUB_BRANCH_SHA}"\n'
         "    ;;\n"
         "  show)\n"
         '    if [ -n "${STUB_GIT_SHOW_FAILS:-}" ]; then\n'
@@ -205,9 +234,9 @@ def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
 def commit_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     """Workspace plus a git stub for exercising the commit-and-push step.
 
-    The stub reports whether the tracked SVG changed through `STUB_DIFF_CLEAN`, controls the
-    `git ls-remote` result through `STUB_LS_REMOTE_STATUS`, and records every `git` call in
-    `STUB_LOG` so tests can assert how the step tried to publish its update.
+    The stub reports whether the tracked SVG changed through `STUB_DIFF_CLEAN`, rejects `git push` when
+    `STUB_PUSH_FAILS` is set, and records every `git` call in `STUB_LOG` so tests can assert how the step tried to
+    publish its update.
 
     Examples:
         >>> commit_sandbox  # doctest: +SKIP
@@ -232,12 +261,11 @@ def commit_sandbox(tmp_path: Path) -> tuple[Path, Path]:
         "      exit 1\n"
         "    fi\n"
         "    ;;\n"
-        "  ls-remote)\n"
-        '    if [ "${STUB_LS_REMOTE_STATUS:-0}" = "0" ]; then\n'
-        '      printf "%s\\t%s\\n" "deadbeef" "refs/heads/$5"\n'
-        "      exit 0\n"
+        "  push)\n"
+        '    if [ -n "${STUB_PUSH_FAILS:-}" ]; then\n'
+        '      echo "! [rejected] HEAD -> $3 (stale info)" >&2\n'
+        "      exit 1\n"
         "    fi\n"
-        '    exit "${STUB_LS_REMOTE_STATUS:-2}"\n'
         "    ;;\n"
         "esac",
     )
@@ -269,18 +297,19 @@ def metrics_steps(metrics_workflow: dict[str, Any]) -> dict[str, dict[str, Any]]
 
 
 class TestUpdateMetricsWorkflow:
-    """Tests for scheduled metrics generation and pull-request wiring."""
+    """Tests for the workflow's schedule, permissions, action pins and step contracts."""
 
     def test_schedule_waits_for_completed_pypi_week_and_retries_it(self, metrics_workflow: dict[str, Any]) -> None:
         """Schedule must wait for completed Sunday data and retry the same week for three more days.
 
         PyPI Stats publishes no completion SLA, so a Monday run can fail on data that is not there yet. Every weekday in
         the Monday-to-Thursday window resolves to the same completed week, so the retries recover it; a Monday-only
-        schedule would lose that week permanently, because the next Monday sees a non-contiguous history instead.
+        schedule would lose that week permanently, because the next Monday sees a non-contiguous history instead. The
+        off-hour minute keeps the run away from the top-of-hour peak, when GitHub delays or drops scheduled runs.
         """
         triggers = metrics_workflow[True] if True in metrics_workflow else metrics_workflow["on"]
 
-        assert triggers["schedule"] == [{"cron": "0 6 * * 1-4"}]
+        assert triggers["schedule"] == [{"cron": "17 6 * * 1-4"}]
         assert "workflow_dispatch" in triggers
 
     def test_workflow_has_only_required_write_permissions(self, metrics_workflow: dict[str, Any]) -> None:
@@ -304,25 +333,27 @@ class TestUpdateMetricsWorkflow:
         """
         assert metrics_workflow["jobs"]["update-metrics"]["timeout-minutes"] == 5
 
-    @pytest.mark.parametrize(
-        ("step_name", "action"),
-        [
-            pytest.param("📥 Checkout the repository", "actions/checkout", id="checkout"),
-            pytest.param("🐍 Install uv and set Python", "astral-sh/setup-uv", id="setup-uv"),
-        ],
-    )
-    def test_third_party_actions_are_pinned_to_commit_shas(
-        self,
-        metrics_steps: dict[str, dict[str, Any]],
-        step_name: str,
-        action: str,
-    ) -> None:
+    def test_third_party_actions_are_pinned_to_commit_shas(self, metrics_workflow: dict[str, Any]) -> None:
         """Every third-party action must be pinned to an immutable commit SHA.
 
         This job holds write access to the repository, so a tag pin would let an upstream retag hand that access to code
-        nobody here reviewed.
+        nobody here reviewed. Iterating every `uses:` also catches an action added later without a pin.
         """
-        assert _sha_pinned_action(metrics_steps[step_name]["uses"]) == action
+        steps = metrics_workflow["jobs"]["update-metrics"]["steps"]
+
+        unpinned = [step["uses"] for step in steps if "uses" in step and _sha_pinned_action(step["uses"]) is None]
+
+        assert unpinned == []
+
+    def test_steps_restore_then_generate_then_commit(self, metrics_workflow: dict[str, Any]) -> None:
+        """Restore must precede generation, which must precede the commit.
+
+        The generator reads its previous checkpoint out of the SVG on disk, so generating before restoring would re-
+        baseline from the default branch, and committing before generating would publish the stale SVG.
+        """
+        names = [step["name"] for step in metrics_workflow["jobs"]["update-metrics"]["steps"]]
+
+        assert names.index(RESTORE_STEP) < names.index(GENERATE_STEP) < names.index(COMMIT_STEP)
 
     def test_checkout_reads_the_default_branch(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
         """Checkout must read the default branch rather than the automation branch.
@@ -366,23 +397,13 @@ class TestUpdateMetricsWorkflow:
         metrics_steps: dict[str, dict[str, Any]],
     ) -> None:
         """Commit step must write only the generated SVG and force-update the fixed branch."""
-        commit_step = metrics_steps["📤 Commit and push metrics update"]
+        commit_step = metrics_steps[COMMIT_STEP]
         run = commit_step["run"]
 
         assert commit_step["env"]["METRICS_BRANCH"] == "automation/update-weekly-metrics"
         assert "git diff --quiet -- docs/assets/weekly-metrics.svg" in run
         assert "git add -- docs/assets/weekly-metrics.svg" in run
         assert 'git commit -m "docs: update weekly project metrics"' in run
-        assert "git ls-remote --exit-code --heads origin \"$METRICS_BRANCH\" | awk '{print $1}'" in run
-        assert "ls_remote_status=$?" in run
-        assert 'if [ "$ls_remote_status" -eq 0 ]; then' in run
-        assert 'elif [ "$ls_remote_status" -eq 2 ]; then' in run
-        assert (
-            'git push --force-with-lease="refs/heads/$METRICS_BRANCH:$remote_branch_sha" '
-            'origin HEAD:"$METRICS_BRANCH"' in run
-        )
-        assert 'git push origin HEAD:"$METRICS_BRANCH"' in run
-        assert 'echo "::error::git ls-remote failed for $METRICS_BRANCH"' in run
 
 
 @requires_bash
@@ -494,6 +515,81 @@ class TestRestoreUnmergedHistoryStep:
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
         assert "fetch --no-tags --depth=1 origin automation/update-weekly-metrics" in logged
 
+    def test_lookup_failure_stops_instead_of_restarting_from_the_default_branch(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A failed remote lookup must fail the step instead of masquerading as an absent branch.
+
+        Treating an auth or network error as "no branch" would restart from the default branch's SVG and let the next
+        push overwrite every unmerged checkpoint.
+        """
+        workspace, stubs = restore_sandbox
+
+        result = _run_step(
+            metrics_steps[RESTORE_STEP]["run"],
+            workspace,
+            stubs,
+            _restore_env(workspace, branch_exists=False, ls_remote_status=128),
+        )
+
+        assert result.returncode == 128
+        assert "::error::git ls-remote failed for automation/update-weekly-metrics" in result.stdout
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+
+    def test_fetch_failure_for_an_existing_branch_fails_the_step(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A branch that exists but cannot be fetched must fail the step, not be treated as absent.
+
+        The old `if git fetch` lumped every fetch failure in with "branch absent", so a transient error silently dropped
+        the unmerged weeks from the next push.
+        """
+        workspace, stubs = restore_sandbox
+
+        result = _run_step(
+            metrics_steps[RESTORE_STEP]["run"],
+            workspace,
+            stubs,
+            _restore_env(workspace, branch_exists=True, fetch_fails=True),
+        )
+
+        assert result.returncode == 1
+        assert "::error::git fetch failed for automation/update-weekly-metrics" in result.stdout
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+
+    def test_existing_branch_exports_its_tip_as_the_push_lease_base(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """The restored branch tip must reach the commit step through `GITHUB_ENV`.
+
+        The push lease is anchored to the tip the SVG was restored from; a tip looked up at push time would match
+        whatever the branch holds and degrade the lease into an unconditional force.
+        """
+        workspace, stubs = restore_sandbox
+
+        _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, branch_exists=True))
+
+        assert (workspace / GITHUB_ENV_NAME).read_text(encoding="utf-8") == f"METRICS_BASE_SHA={STUB_BRANCH_SHA}\n"
+
+    def test_restored_svg_is_staged_for_the_commit_guard(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """The restored SVG must be staged so the no-op guard compares against the branch, not the default branch."""
+        workspace, stubs = restore_sandbox
+
+        _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, branch_exists=True))
+
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert "git add -- docs/assets/weekly-metrics.svg" in logged
+
 
 @requires_bash
 class TestCommitAndPushStep:
@@ -508,7 +604,7 @@ class TestCommitAndPushStep:
         workspace, stubs = commit_sandbox
 
         result = _run_step(
-            metrics_steps["📤 Commit and push metrics update"]["run"],
+            metrics_steps[COMMIT_STEP]["run"],
             workspace,
             stubs,
             _commit_env(workspace, branch_exists=True, svg_changed=False),
@@ -519,16 +615,20 @@ class TestCommitAndPushStep:
         assert "commit -m" not in logged
         assert "push " not in logged
 
-    def test_first_push_creates_the_branch_without_force_with_lease(
+    def test_first_push_expects_the_branch_to_be_absent(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         commit_sandbox: tuple[Path, Path],
     ) -> None:
-        """A first run must create the automation branch without requiring a lease."""
+        """A first run must create the automation branch behind an empty-expectation lease.
+
+        An empty expected value makes git refuse the push when the branch has appeared since the restore step looked, so
+        a concurrent creator is never overwritten.
+        """
         workspace, stubs = commit_sandbox
 
         result = _run_step(
-            metrics_steps["📤 Commit and push metrics update"]["run"],
+            metrics_steps[COMMIT_STEP]["run"],
             workspace,
             stubs,
             _commit_env(workspace, branch_exists=False, svg_changed=True),
@@ -536,9 +636,10 @@ class TestCommitAndPushStep:
 
         assert result.returncode == 0, result.stderr
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
-        assert "ls-remote --exit-code --heads origin automation/update-weekly-metrics" in logged
-        assert "push origin HEAD:automation/update-weekly-metrics" in logged
-        assert "push --force-with-lease origin HEAD:automation/update-weekly-metrics" not in logged
+        assert (
+            "push --force-with-lease=refs/heads/automation/update-weekly-metrics: "
+            "origin HEAD:automation/update-weekly-metrics" in logged
+        )
 
     def test_existing_branch_updates_with_force_with_lease(
         self,
@@ -549,7 +650,7 @@ class TestCommitAndPushStep:
         workspace, stubs = commit_sandbox
 
         result = _run_step(
-            metrics_steps["📤 Commit and push metrics update"]["run"],
+            metrics_steps[COMMIT_STEP]["run"],
             workspace,
             stubs,
             _commit_env(workspace, branch_exists=True, svg_changed=True),
@@ -558,26 +659,217 @@ class TestCommitAndPushStep:
         assert result.returncode == 0, result.stderr
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
         assert (
-            "push --force-with-lease=refs/heads/automation/update-weekly-metrics:deadbeef "
+            f"push --force-with-lease=refs/heads/automation/update-weekly-metrics:{STUB_BRANCH_SHA} "
             "origin HEAD:automation/update-weekly-metrics" in logged
         )
 
-    def test_remote_lookup_failure_stops_before_any_push(
+    @pytest.mark.parametrize("branch_exists", [True, False])
+    def test_rejected_push_fails_the_step(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+        branch_exists: bool,
+    ) -> None:
+        """A push the remote refuses must turn the step red on both the lease and the first-push path.
+
+        Losing the lease race (or hitting a protected branch) is exactly the signal that the branch did not receive the
+        update; swallowing it, for example with `|| true`, would report a green run while the chart goes stale.
+        """
+        workspace, stubs = commit_sandbox
+
+        result = _run_step(
+            metrics_steps[COMMIT_STEP]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=branch_exists, svg_changed=True, push_fails=True),
+        )
+
+        assert result.returncode != 0, result.stdout
+
+    def test_commits_with_bot_identity_before_publishing(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         commit_sandbox: tuple[Path, Path],
     ) -> None:
-        """A transient remote lookup failure must fail the step instead of masquerading as branch creation."""
+        """The step must set the bot identity, stage only the SVG, commit, and only then publish.
+
+        A commit made before the identity is configured fails on a fresh runner, and a publish that precedes the commit
+        would push whatever the checkout already held instead of the generated update.
+        """
         workspace, stubs = commit_sandbox
 
-        result = _run_step(
-            metrics_steps["📤 Commit and push metrics update"]["run"],
+        _run_step(
+            metrics_steps[COMMIT_STEP]["run"],
             workspace,
             stubs,
-            _commit_env(workspace, branch_exists=False, svg_changed=True, ls_remote_status=128),
+            _commit_env(workspace, branch_exists=True, svg_changed=True),
         )
 
-        assert result.returncode == 128
-        assert "::error::git ls-remote failed for automation/update-weekly-metrics" in result.stdout
-        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
-        assert "push " not in logged
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8").splitlines()
+        assert logged == [
+            "git config user.name github-actions[bot]",
+            "git config user.email 41898282+github-actions[bot]@users.noreply.github.com",
+            "git diff --quiet -- docs/assets/weekly-metrics.svg",
+            "git add -- docs/assets/weekly-metrics.svg",
+            "git commit -m docs: update weekly project metrics",
+            f"git push --force-with-lease=refs/heads/{METRICS_BRANCH}:{STUB_BRANCH_SHA} origin HEAD:{METRICS_BRANCH}",
+        ]
+
+    def test_pushed_update_prints_the_compare_link_for_a_maintainer(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A successful push must hand a maintainer the compare URL that opens the publishing pull request.
+
+        Nothing in the workflow opens that pull request, so without the link the chart stays stale until someone notices
+        the branch is ahead of the default branch.
+        """
+        workspace, stubs = commit_sandbox
+        expected = "https://github.com/roboflow/rf-detr/compare/main...automation/update-weekly-metrics?expand=1"
+
+        result = _run_step(
+            metrics_steps[COMMIT_STEP]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=True, svg_changed=True),
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert f"::notice title=Weekly metrics pushed::Open a PR to publish: {expected}" in result.stdout
+        assert expected in (workspace / STEP_SUMMARY_NAME).read_text(encoding="utf-8")
+
+
+def _git(cwd: Path, *args: str) -> str:
+    """Run an isolated `git` command and return its stripped stdout.
+
+    Args:
+        cwd: Directory the command runs in.
+        *args: Arguments after `git`.
+
+    Returns:
+        Standard output of the command, stripped.
+
+    Examples:
+        >>> _git(Path("."), "--version").startswith("git version")
+        True
+    """
+    return subprocess.run(
+        ["git", *args], cwd=cwd, env=REAL_GIT_ENV, text=True, capture_output=True, check=True
+    ).stdout.strip()
+
+
+REAL_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+}
+
+
+@pytest.fixture
+def real_remote(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Bare origin holding a default branch and an automation branch, plus a clone of the default branch.
+
+    Returns the clone's workspace, the bare origin, and the automation branch's tip SHA.
+
+    Examples:
+        >>> real_remote  # doctest: +SKIP
+        pytest fixture; builds a bare repository and a clone under tmp_path.
+    """
+    origin = tmp_path / "origin.git"
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
+    _git(seed, "init", "-b", "main")
+    (seed / "docs" / "assets").mkdir(parents=True)
+    (seed / TRACKED_SVG).write_text(CHECKED_IN_SVG, encoding="utf-8")
+    _git(seed, "add", "--", TRACKED_SVG)
+    _git(seed, "commit", "-m", "default branch svg")
+    _git(seed, "checkout", "-b", METRICS_BRANCH)
+    (seed / TRACKED_SVG).write_text(UNMERGED_SVG, encoding="utf-8")
+    _git(seed, "commit", "-am", "unmerged svg")
+    tip = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "push", origin.as_uri(), "main", METRICS_BRANCH)
+    workspace = tmp_path / "workspace"
+    _git(tmp_path, "clone", "--branch", "main", origin.as_uri(), str(workspace))
+    return workspace, origin, tip
+
+
+@requires_bash
+@requires_git
+class TestRestoreStepAgainstRealGit:
+    """Tests that run the restore step's shell against a real repository and a bare origin."""
+
+    @staticmethod
+    def _restore(metrics_steps: dict[str, dict[str, Any]], workspace: Path) -> subprocess.CompletedProcess[str]:
+        """Run the restore step with real git and a scratch `GITHUB_ENV` file."""
+        env = {**REAL_GIT_ENV, "METRICS_BRANCH": METRICS_BRANCH, "GITHUB_ENV": str(workspace.parent / GITHUB_ENV_NAME)}
+        return _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, workspace, env)
+
+    def test_existing_branch_is_restored_staged_and_exported(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """The branch's SVG must land staged in the workspace and its tip must be exported for the lease."""
+        workspace, _, tip = real_remote
+
+        result = self._restore(metrics_steps, workspace)
+
+        assert result.returncode == 0, result.stderr
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == UNMERGED_SVG
+        assert _git(workspace, "diff", "--cached", "--name-only") == TRACKED_SVG
+        assert (workspace.parent / GITHUB_ENV_NAME).read_text(encoding="utf-8") == f"METRICS_BASE_SHA={tip}\n"
+
+    def test_absent_branch_is_left_alone(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """With the automation branch deleted on the remote the step must change nothing and export nothing."""
+        workspace, origin, _ = real_remote
+        _git(origin, "branch", "-D", METRICS_BRANCH)
+
+        result = self._restore(metrics_steps, workspace)
+
+        assert result.returncode == 0, result.stderr
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+        assert not (workspace.parent / GITHUB_ENV_NAME).exists()
+
+    def test_unreachable_remote_fails_the_step(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """A remote that cannot be reached is a failure, not an absent branch."""
+        workspace, origin, _ = real_remote
+        shutil.rmtree(origin)
+
+        result = self._restore(metrics_steps, workspace)
+
+        assert result.returncode != 0
+        assert "::error::git ls-remote failed" in result.stdout
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+
+    def test_unfetchable_branch_fails_the_step(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """A branch that `ls-remote` lists but `fetch` cannot serve must fail, not be treated as absent.
+
+        Deleting the tip's loose object from the bare origin keeps the ref listed while the pack the fetch needs cannot
+        be built, which is the shape of the transient fetch failure the old `if git fetch` swallowed.
+        """
+        workspace, origin, tip = real_remote
+        (origin / "objects" / tip[:2] / tip[2:]).unlink()
+
+        result = self._restore(metrics_steps, workspace)
+
+        assert result.returncode != 0
+        assert "::error::git fetch failed" in result.stdout
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
