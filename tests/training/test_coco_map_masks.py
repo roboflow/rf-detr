@@ -174,6 +174,14 @@ def test_stored_masks_do_not_depend_on_the_encoding_chunk(monkeypatch: pytest.Mo
     assert (metric.detection_mask, metric.groundtruth_mask) == (reference.detection_mask, reference.groundtruth_mask)
 
 
+def test_update_rejects_a_mask_stack_with_a_channel_dimension() -> None:
+    """A ``(K, 1, H, W)`` stack, the layout ``PostProcess`` returns before the callback squeezes it, must raise."""
+    metric = OnePassCocoMeanAveragePrecision(**_KWARGS)
+
+    with pytest.raises(ValueError, match=r"masks must have shape \(K, H, W\), got \(2, 1, 8, 8\)"):
+        metric.update(*_segmentation_batch(torch.ones((2, 1, 8, 8), dtype=torch.bool)))
+
+
 def _state_case(case: str, device: str = "cpu") -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
     """Return one image of predictions and ground truth exercising one rule of TorchMetrics' stored state.
 
