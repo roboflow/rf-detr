@@ -1023,8 +1023,7 @@ class TestCoreMLEndToEnd:
     def test_mlpackage_metadata_round_trips(
         self, coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]]
     ) -> None:
-        """``notes`` and the RF-DETR version survive ``save`` into a bundle loaded back from disk, beside coremltools'
-        keys."""
+        """``notes`` and the RF-DETR version survive save and reload, beside coremltools' keys."""
         import coremltools as ct
 
         _, _, _, mlpackage_path, _ = coreml_export
