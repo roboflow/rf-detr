@@ -29,6 +29,9 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 35
     runs-on: Roboflow-GPU-VM-Runner
+    env:
+      # Same weights directory as try-all-models in ci-integrations.yml, so this job can restore its cache entry.
+      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
@@ -52,6 +55,23 @@ jobs:
         # extras that require Python>=3.12 (e.g. tflite/onnx2tf) when project supports >=3.10.
         # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
         run: uv pip install -e ".[onnx,plus,train,augment,visual,data]" --group tests
+
+      - name: 🔑 Compute model weights cache key
+        id: weights-key
+        # Same key as try-all-models in ci-integrations.yml (which saves it on push to develop): the weights registry's
+        # git blob hash plus the installed rfdetr_plus version, which registers the XLarge/2XLarge weights used here.
+        run: |
+          registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)
+          plus=$(python -c "from importlib.metadata import version; print(version('rfdetr_plus'))")
+          echo "key=rfdetr-weights-${registry}-plus-${plus}" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Restore cached model weights
+        # The GPU runner gets a fresh VM for every job, so without this every run downloads the weights again.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: ${{ steps.weights-key.outputs.key }}
+          enableCrossOsArchive: true
 
       - name: 🧪 Run the Test
         run: |

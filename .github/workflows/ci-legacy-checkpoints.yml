@@ -77,10 +77,37 @@ jobs:
       fail-fast: false
       matrix:
         version: ${{ fromJson(needs.get-versions.outputs.matrix) }}
+    env:
+      # Same weights directory as try-all-models in ci-integrations.yml, so this job can restore its cache entry.
+      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
 
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🔑 Compute model weights cache key
+        id: weights-key
+        run: echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Restore cached model weights
+        # Saved by try-all-models in ci-integrations.yml. This job needs only rf-detr-small.pth, whose URL and MD5 are
+        # unchanged across the released versions tested here, so any rfdetr_plus version saved for the current weights
+        # registry will do (prefix match).
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: rfdetr-weights-${{ steps.weights-key.outputs.registry }}
+          restore-keys: |
+            rfdetr-weights-${{ steps.weights-key.outputs.registry }}-
+          enableCrossOsArchive: true
+
+      - name: 🔗 Expose cached weights to releases that ignore RF_HOME
+        # Releases before 1.7 resolve a bare weights name such as rf-detr-small.pth against the working directory, not
+        # RF_HOME; link the cached files there so those releases find them too.
+        run: |
+          if [ -d "$RF_HOME" ]; then
+            find "$RF_HOME" -maxdepth 1 -type f -exec ln -s {} . \;
+          fi
 
       - name: 🐍 Set up Python + uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
