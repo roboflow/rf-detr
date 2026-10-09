@@ -19,6 +19,7 @@ from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
 
+#: COCO RLE edge-case names exercised by the mask-state parity test.
 _MASK_CASES = [
     "no_masks",
     "empty_1d",
