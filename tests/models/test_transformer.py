@@ -3223,7 +3223,7 @@ _LINEAR_RELU_CASES = [
 class TestLinearReLU:
     """Fused linear + ReLU autograd function against relu(linear)."""
 
-    @pytest.mark.usefixtures("float32_matmul_precision")
+    @pytest.mark.usefixtures("float32_matmul_precision", "mkldnn_disabled")
     @pytest.mark.parametrize("dim_feedforward", [64, 63])
     @pytest.mark.parametrize(("device", "dtype"), _LINEAR_RELU_CASES)
     def test_is_bitwise_relu_of_linear_forward_and_backward(
