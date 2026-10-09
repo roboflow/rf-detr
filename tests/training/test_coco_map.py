@@ -920,8 +920,8 @@ def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: 
 
     Segmentation is where the backends diverge structurally. hotcoco returns a copy from its ``dataset`` getter, so the
     ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs reaches its evaluator only through
-    ``COCO.update_anns`` (the supported hotcoco floor is past the earlier bytes-RLE constructor mismatch). ufcoco's RLE
-    encoder rejects the boolean masks TorchMetrics hands over, so the adapter converts them; a mask AP that silently
+    ``COCO.update_anns`` (the supported hotcoco floor is past the earlier bytes-RLE constructor mismatch). Every backend
+    reads the RLE the adapter encodes itself, so an RLE one backend misreads would show up here; a mask AP that silently
     collapses to 0.0 is what either mistake would look like.
     """
     mask = torch.zeros(2, 16, 16, dtype=torch.bool)

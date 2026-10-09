@@ -10,10 +10,11 @@ Purpose:
     reruns. The adapter derives compact per-class AP and AR vectors from the aggregate evaluator arrays produced by one
     global evaluation for each requested IoU type.
 Scope:
-    Own CPU-backed metric updates, validation of the private TorchMetrics state/backend contract, explicit fixed-order
-    distributed state merging, update-state inspection, prediction-score hoisting during COCO-format construction, and
-    compact one-pass computation. Lightning lifecycle, EMA voting, logging, checkpoint metrics, F1, keypoint
-    evaluation, and terminal rendering remain callback concerns.
+    Own metric updates (CPU state; masks are run-length encoded on CUDA when they arrive there, on the CPU otherwise),
+    validation of the private TorchMetrics state/backend contract, explicit fixed-order distributed state merging,
+    update-state inspection, prediction-score hoisting during COCO-format construction, and compact one-pass
+    computation. Lightning lifecycle, EMA voting, logging, checkpoint metrics, F1, keypoint evaluation, and terminal
+    rendering remain callback concerns.
 Usage:
     Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with one of the
     backends registered in ``_BACKENDS`` (``hotcoco`` by default, ``faster_coco_eval``, ``ufcoco`` or ``vernier``) and
@@ -54,7 +55,13 @@ import torch
 import torchmetrics
 from torch import Tensor
 from torchmetrics.detection import MeanAveragePrecision
-from torchmetrics.detection.helpers import CocoBackend
+from torchmetrics.detection.helpers import (
+    CocoBackend,
+    _fix_empty_tensors,
+    _input_validator,
+    _warning_on_too_many_detections,
+)
+from torchvision.ops import box_convert
 
 from rfdetr.config import CocoEvalBackend
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
@@ -62,7 +69,6 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-_METRIC_INPUT_FIELDS = frozenset({"boxes", "scores", "labels", "masks", "iscrowd", "area"})
 _MAP_STATE_ATTRS = (
     "detection_box",
     "detection_scores",
@@ -437,30 +443,6 @@ def _ufcoco_evaluator_type() -> type:
     return _UfcocoCocoEval
 
 
-class _UfcocoMaskTools:
-    """Ufcoco's RLE utilities, accepting the boolean masks TorchMetrics hands over.
-
-    TorchMetrics encodes each stored mask as ``np.asfortranarray(mask)`` of the boolean array it keeps, which faster-
-    coco-eval and hotcoco accept. ufcoco's ``encode`` holds pycocotools' ``uint8`` contract and rejects a boolean
-    array, so it is converted here, one mask at a time; the Fortran-ordered ``uint8`` copy is the array the encoder
-    would have been given by pycocotools' own callers. Every other utility -- ``area``, which TorchMetrics calls to size
-    annotations -- is the module's own, reached through :meth:`__getattr__`.
-    """
-
-    def encode(self, mask: np.ndarray[Any, Any]) -> Any:
-        """Encode one binary mask as RLE, converting a boolean array to ``uint8`` first."""
-        if mask.dtype == np.bool_:
-            mask = np.asfortranarray(mask, dtype=np.uint8)
-        return _ufcoco().mask.encode(mask)
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward every other RLE utility, such as ``area``, to ultrafast-pycocotools' ``mask`` module."""
-        return getattr(_ufcoco().mask, name)
-
-
-_UFCOCO_MASK_TOOLS = _UfcocoMaskTools()
-
-
 class _UfcocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``ultrafast-pycocotools`` instead of ``faster-coco-eval``.
 
@@ -468,9 +450,8 @@ class _UfcocoBackend(_PackageCocoBackend):
     ``createIndex()``, annotations read back as the same dictionaries -- so the adapter routes it through the paths it
     takes for faster-coco-eval, with one exception shared with hotcoco: box-only evaluation loads detections through
     ``loadRes`` from one array (see ``OnePassCocoMeanAveragePrecision._loads_detections_from_array``) instead of
-    building the prediction dataset. Beyond that, the only adaptations are the two places where ufcoco follows
-    pycocotools more literally than the other backends do, :func:`_ufcoco_evaluator_type` and
-    :class:`_UfcocoMaskTools`.
+    building the prediction dataset. Beyond that, the only adaptation is where ufcoco follows pycocotools more
+    literally than the other backends do, :func:`_ufcoco_evaluator_type`.
     """
 
     def _package(self) -> Any:
@@ -481,11 +462,6 @@ class _UfcocoBackend(_PackageCocoBackend):
     def cocoeval(self) -> object:
         """Return ufcoco's COCO evaluator type, summarizing at the configured detection limit."""
         return _ufcoco_evaluator_type()
-
-    @property
-    def mask_utils(self) -> object:
-        """Return ufcoco's RLE mask utilities, accepting boolean masks."""
-        return _UFCOCO_MASK_TOOLS
 
 
 class _FasterCocoEvalBackend(_RfdetrCocoBackend):
@@ -568,6 +544,163 @@ def _rle_dicts(masks: list[Any]) -> list[dict[str, Any]]:
         [{'size': (2, 3), 'counts': b'06'}]
     """
     return [{"size": size, "counts": counts} for image in masks for size, counts in image]
+
+
+#: Mask pixels encoded at once; a mask larger than this is encoded on its own. Each chunk of masks is encoded and copied
+#: to the host before the next starts, so this bounds the encoder's device memory: two bool temporaries of this size
+#: plus about 80 bytes per run. Predicted masks are upsampled from the mask head, so even random logits change on only
+#: about one pixel in nine (about 350 MiB per chunk at 640x480); masks of real objects need about 35 MiB.
+_RLE_CHUNK_PIXELS = 1 << 25
+
+
+def _mask_run_lengths(masks: Tensor) -> tuple[Tensor, Tensor]:
+    """Return the COCO run lengths of every mask in a stack, computed on the stack's device.
+
+    COCO RLE reads a mask column by column and alternates background and foreground runs, starting with background: a
+    mask whose first pixel is foreground starts with a run of length zero, and a mask with no pixels is one empty run.
+
+    Args:
+        masks: ``(K, H, W)`` masks with ``K >= 1``; any non-zero value is foreground.
+
+    Returns:
+        The ``int64`` run lengths of all masks concatenated in mask order, and the number of runs of each mask.
+
+    Examples:
+        >>> masks = torch.tensor([[[0, 1], [0, 1]], [[1, 1], [1, 1]]], dtype=torch.bool)
+        >>> counts, runs = _mask_run_lengths(masks)
+        >>> counts.tolist(), runs.tolist()
+        ([2, 2, 0, 4], [2, 2])
+    """
+    num_masks, height, width = masks.shape
+    pixels = height * width
+    device = masks.device
+    if pixels == 0:
+        empty = torch.zeros(num_masks, dtype=torch.int64, device=device)
+        return empty, empty + 1
+    masks = masks if masks.dtype == torch.bool else masks != 0
+    # COCO RLE reads a mask column by column, so a run starts at every pixel that differs from the one above it or, at
+    # the top of a column, from the bottom of the column before. Pixel -1 counts as background, so a mask whose first
+    # pixel is set starts a run at 0 and its leading background run is empty. The change map keeps the masks' own
+    # row-major layout: a column-major copy of the masks would be a strided copy slower than the whole scan.
+    change = torch.empty((num_masks, height, width), dtype=torch.bool, device=device)
+    torch.ne(masks[:, 1:], masks[:, :-1], out=change[:, 1:])
+    torch.ne(masks[:, 0, 1:], masks[:, -1, :-1], out=change[:, 0, 1:])
+    change[:, 0, 0] = masks[:, 0, 0]
+    found = change.view(-1).nonzero().squeeze(1)
+    # Reorder the run starts from row-major to column-major positions. The starts stay grouped by mask, so `rows` holds.
+    rows = found // pixels
+    base = rows * pixels
+    within = found - base
+    starts = (base + within % width * height + within // width).sort().values - base
+    starts_per_mask = torch.bincount(rows, minlength=num_masks)
+    # The run before each start reaches back to the previous start of the same mask, or to the mask's first pixel.
+    previous = torch.zeros_like(starts)
+    previous[1:] = starts[:-1]
+    first_of_mask = torch.ones_like(rows, dtype=torch.bool)
+    first_of_mask[1:] = rows[1:] != rows[:-1]
+    previous.masked_fill_(first_of_mask, 0)
+    # Index one past each mask's last start, which is that start's index in `starts` shifted by the leading zero.
+    last = torch.cumsum(starts_per_mask, 0)
+    last_start = torch.where(starts_per_mask > 0, torch.cat([starts.new_zeros(1), starts])[last], 0)
+    counts = torch.empty(starts.numel() + num_masks, dtype=torch.int64, device=device)
+    # Mask r's runs follow every earlier mask's: its i-th start (counted over all masks) lands at i + r, and its final
+    # run at last[r] + r.
+    counts[torch.arange(starts.numel(), device=device) + rows] = starts - previous
+    counts[last + torch.arange(num_masks, device=device)] = pixels - last_start
+    return counts, starts_per_mask + 1
+
+
+def _compress_run_lengths(counts: Tensor, runs: Tensor, max_count: int) -> tuple[Tensor, Tensor]:
+    """Write run lengths as COCO compressed RLE strings, as pycocotools' ``rleToString`` does.
+
+    Every count after a mask's third is replaced by its difference from the count two before it. Each value is written
+    least significant 5-bit group first, one character ``48 + group`` per group, with 32 added to every character but
+    the last; the top bit of the last group is the sign.
+
+    Args:
+        counts: Run lengths of every mask concatenated in mask order, as :func:`_mask_run_lengths` returns them.
+        runs: Number of runs of each mask.
+        max_count: An upper bound on every count, such as the masks' pixel count. It sets how many 5-bit groups each
+            value is split into.
+
+    Returns:
+        The ``uint8`` characters of all masks concatenated in mask order, and the index one past each mask's last
+        character.
+
+    Examples:
+        >>> chars, ends = _compress_run_lengths(torch.tensor([2, 2, 0, 4]), torch.tensor([2, 2]), max_count=4)
+        >>> bytes(chars.tolist()), ends.tolist()
+        (b'2204', [2, 4])
+    """
+    device = counts.device
+    total = counts.numel()
+    mask_ends = torch.cumsum(runs, 0)
+    mask_index = torch.repeat_interleave(torch.arange(runs.numel(), device=device), runs, output_size=total)
+    position = torch.arange(total, device=device) - (mask_ends - runs)[mask_index]
+    two_back = torch.zeros_like(counts)
+    two_back[2:] = counts[:-2]
+    value = torch.where(position > 2, counts - two_back, counts)
+    # |value| <= max_count, so this many groups always reach the sign bit.
+    groups = (max_count.bit_length() + 5) // 5
+    chars = torch.empty((total, groups), dtype=torch.uint8, device=device)
+    written = torch.empty((total, groups), dtype=torch.bool, device=device)
+    pending = torch.ones(total, dtype=torch.bool, device=device)
+    for group in range(groups):
+        low = value & 0x1F
+        value = value >> 5
+        # Another group follows unless what is left is the sign extension of this group's top bit.
+        more = torch.where((low & 0x10) != 0, value != -1, value != 0)
+        chars[:, group] = low + 48 + more * 32
+        written[:, group] = pending
+        pending = pending & more
+    return chars[written], torch.cumsum(written.sum(1), 0)[mask_ends - 1]
+
+
+def _encode_masks(masks: Tensor) -> tuple[tuple[tuple[int, int], bytes], ...]:
+    """Run-length encode one image's masks into the ``(size, counts)`` pairs TorchMetrics stores for it.
+
+    TorchMetrics copies each mask to host memory and has the backend's ``mask.encode`` scan it there. This computes the
+    same compressed COCO RLE on CUDA when the masks are there, so only the RLE characters reach the host; masks on any
+    other device are encoded on the CPU. At most ``_RLE_CHUNK_PIXELS`` pixels of masks, or one larger mask, are encoded
+    at once.
+
+    Args:
+        masks: ``(K, H, W)`` masks of one image; any non-zero value is foreground.
+
+    Returns:
+        One ``((H, W), counts)`` pair per mask, ``counts`` being the bytes every supported backend's ``mask.encode``
+        returns for that mask; ``()`` when there are no masks.
+
+    Raises:
+        ValueError: If ``masks`` holds masks but is not three-dimensional.
+
+    Examples:
+        >>> _encode_masks(torch.tensor([[[0, 1], [0, 1]]], dtype=torch.bool))
+        (((2, 2), b'22'),)
+    """
+    if masks.shape[0] == 0:
+        return ()
+    if masks.ndim != 3:
+        raise ValueError(f"masks must have shape (K, H, W), got {tuple(masks.shape)}")
+    masks = masks.detach()
+    if masks.device.type != "cuda":
+        masks = masks.cpu()
+    size = (int(masks.shape[1]), int(masks.shape[2]))
+    pixels = size[0] * size[1]
+    per_chunk = max(1, _RLE_CHUNK_PIXELS // max(pixels, 1))
+    # Each chunk's run tensors are freed before the next chunk; only its characters, one to a few bytes per run, stay
+    # on the device until the single copy to the host.
+    chunk_chars: list[Tensor] = []
+    chunk_ends: list[Tensor] = []
+    written = 0
+    for first in range(0, masks.shape[0], per_chunk):
+        chars, ends = _compress_run_lengths(*_mask_run_lengths(masks[first : first + per_chunk]), max_count=pixels)
+        chunk_chars.append(chars)
+        chunk_ends.append(ends + written)
+        written += chars.numel()
+    data = torch.cat(chunk_chars).cpu().numpy().tobytes()
+    bounds = [0, *torch.cat(chunk_ends).tolist()]
+    return tuple((size, data[start:end]) for start, end in zip(bounds, bounds[1:]))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -685,23 +818,67 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         return True
 
     def update(self, preds: list[dict[str, Tensor]], target: list[dict[str, Tensor]]) -> None:
-        """Validate inputs and store detached CPU copies of fields consumed by TorchMetrics.
+        """Validate inputs and store the fields TorchMetrics consumes, as CPU state.
+
+        This mirrors TorchMetrics' own ``update`` with two differences. Every stored tensor is a detached CPU copy, and
+        :func:`_encode_masks` run-length encodes the masks, on CUDA when they are there, where TorchMetrics copies each
+        mask to host memory and encodes it pixel by pixel. The stored mask bytes are the same.
 
         Args:
             preds: Per-image predictions in TorchMetrics detection format.
             target: Per-image ground-truth annotations in TorchMetrics detection format.
         """
-        cpu_preds = [
-            {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
-            for item in preds
-        ]
-        cpu_target = [
-            {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
-            for item in target
-        ]
-        super().update(cpu_preds, cpu_target)
-        if self._stream_categories is not None and not self._stream_stopped and cpu_target:
-            self._stream_batch(len(cpu_target))
+        _input_validator(preds, target, iou_type=self.iou_type)
+        for item in preds:
+            boxes, masks = self._stored_geometry(item, warn=self.warn_on_many_detections)
+            if boxes is not None:
+                self.detection_box.append(boxes)
+            if masks is not None:
+                # TorchMetrics annotates its mask states as tensors but stores these tuples, and ignores the same error.
+                self.detection_mask.append(masks)  # type: ignore[arg-type]
+            self.detection_labels.append(item["labels"].detach().cpu())
+            self.detection_scores.append(item["scores"].detach().cpu())
+        for item in target:
+            boxes, masks = self._stored_geometry(item)
+            if boxes is not None:
+                self.groundtruth_box.append(boxes)
+            if masks is not None:
+                self.groundtruth_mask.append(masks)  # type: ignore[arg-type]
+            labels = item["labels"].detach().cpu()
+            self.groundtruth_labels.append(labels)
+            self.groundtruth_crowds.append(
+                item["iscrowd"].detach().cpu() if "iscrowd" in item else torch.zeros_like(labels)
+            )
+            self.groundtruth_area.append(item["area"].detach().cpu() if "area" in item else torch.zeros_like(labels))
+        if self._stream_categories is not None and not self._stream_stopped and target:
+            self._stream_batch(len(target))
+
+    def _stored_geometry(
+        self, item: dict[str, Tensor], warn: bool = False
+    ) -> tuple[Tensor | None, tuple[tuple[tuple[int, int], bytes], ...] | None]:
+        """Return one image's boxes and masks as TorchMetrics stores them, with the masks encoded where they are.
+
+        Args:
+            item: One image's predictions or ground truth.
+            warn: Whether to warn, as TorchMetrics does, when the image has more detections than the largest
+                maximum-detection threshold.
+
+        Returns:
+            The CPU ``xywh`` boxes when ``bbox`` is evaluated and the ``(size, counts)`` masks when ``segm`` is; each is
+            ``None`` otherwise.
+        """
+        boxes: Tensor | None = None
+        masks: tuple[tuple[tuple[int, int], bytes], ...] | None = None
+        if "bbox" in self.iou_type:
+            boxes = _fix_empty_tensors(item["boxes"].detach().cpu())
+            if boxes.numel() > 0:
+                boxes = box_convert(boxes, in_fmt=self.box_format, out_fmt="xywh")
+        if "segm" in self.iou_type:
+            masks = _encode_masks(item["masks"])
+        limit = self.max_detection_thresholds[-1]
+        if warn and any(value is not None and len(value) > limit for value in (boxes, masks)):
+            _warning_on_too_many_detections(limit)
+        return boxes, masks
 
     def reset(self) -> None:
         """Reset the stored state and start a fresh stream for the next epoch."""
