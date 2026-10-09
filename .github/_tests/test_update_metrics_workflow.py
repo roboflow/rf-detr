@@ -205,8 +205,8 @@ def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
 def commit_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     """Workspace plus a git stub for exercising the commit-and-push step.
 
-    The stub reports whether the tracked SVG changed through `STUB_DIFF_CLEAN`, whether the remote
-    automation branch exists through `STUB_REMOTE_BRANCH_EXISTS`, and records every `git` call in
+    The stub reports whether the tracked SVG changed through `STUB_DIFF_CLEAN`, controls the
+    `git ls-remote` result through `STUB_LS_REMOTE_STATUS`, and records every `git` call in
     `STUB_LOG` so tests can assert how the step tried to publish its update.
 
     Examples:
