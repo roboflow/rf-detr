@@ -117,5 +117,8 @@ def prediction_labels(model: RFDETR) -> PredictionLabels:
     names = list(model.class_names)
     args = getattr(model.model, "args", None)
     num_classes = getattr(args, "num_classes", len(names))
-    keypoint_schema = list(getattr(args, "num_keypoints_per_class", model.model_config.num_keypoints_per_class) or [])
+    schema = getattr(args, "num_keypoints_per_class", None)
+    if schema is None:
+        schema = getattr(getattr(model, "model_config", None), "num_keypoints_per_class", None)
+    keypoint_schema = list(schema or [])
     return PredictionLabels(names, num_classes, keypoint_schema, class_id_to_name(names, num_classes, keypoint_schema))
