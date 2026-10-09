@@ -688,19 +688,16 @@ def _encode_masks(masks: Tensor) -> tuple[tuple[tuple[int, int], bytes], ...]:
     size = (int(masks.shape[1]), int(masks.shape[2]))
     pixels = size[0] * size[1]
     per_chunk = max(1, _RLE_CHUNK_PIXELS // max(pixels, 1))
-    # Each chunk's run tensors are freed before the next chunk; only its characters, one to a few bytes per run, stay
-    # on the device until the single copy to the host.
-    chunk_chars: list[Tensor] = []
-    chunk_ends: list[Tensor] = []
-    written = 0
+    # Completed chunks become host bytes immediately, so device outputs do not accumulate across chunks.
+    encoded: list[tuple[tuple[int, int], bytes]] = []
     for first in range(0, masks.shape[0], per_chunk):
         chars, ends = _compress_run_lengths(*_mask_run_lengths(masks[first : first + per_chunk]), max_count=pixels)
-        chunk_chars.append(chars)
-        chunk_ends.append(ends + written)
-        written += chars.numel()
-    data = torch.cat(chunk_chars).cpu().numpy().tobytes()
-    bounds = [0, *torch.cat(chunk_ends).tolist()]
-    return tuple((size, data[start:end]) for start, end in zip(bounds, bounds[1:]))
+        data = chars.cpu().numpy().tobytes()
+        bounds = [0, *ends.tolist()]
+        encoded.extend((size, data[start:end]) for start, end in zip(bounds, bounds[1:]))
+        # Release this chunk's device outputs before allocating the next chunk's run-length scratch.
+        del chars, ends
+    return tuple(encoded)
 
 
 @dataclasses.dataclass(frozen=True)

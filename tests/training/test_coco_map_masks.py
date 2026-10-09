@@ -174,6 +174,40 @@ def test_stored_masks_do_not_depend_on_the_encoding_chunk(monkeypatch: pytest.Mo
     assert (metric.detection_mask, metric.groundtruth_mask) == (reference.detection_mask, reference.groundtruth_mask)
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_dense_mask_chunks_bound_extra_cuda_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Completed dense chunks must not accumulate on CUDA as the mask stack grows.
+
+    Input allocation is excluded; both stacks encode two masks per chunk. Exact stored RLE is compared with the CPU
+    backend, while the larger stack may add at most 64 KiB of encoder scratch beyond the small stack's peak.
+    """
+    monkeypatch.setattr("rfdetr.training.coco_map._RLE_CHUNK_PIXELS", 2 * 64 * 65)
+    mask = (torch.arange(64 * 65).reshape(64, 65) % 2).bool()
+    peaks = []
+    for count in (2, 64):
+        masks = mask.repeat(count, 1, 1)
+        batch = _segmentation_batch(masks, "cuda")
+        metric = OnePassCocoMeanAveragePrecision(**_KWARGS)
+        metric.update(*batch)
+        metric.reset()
+        torch.cuda.synchronize()
+        baseline = torch.cuda.memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+
+        metric.update(*batch)
+
+        torch.cuda.synchronize()
+        peaks.append(torch.cuda.max_memory_allocated() - baseline)
+        reference = MeanAveragePrecision(**_KWARGS)
+        reference.update(*_segmentation_batch(masks))
+        assert (metric.detection_mask, metric.groundtruth_mask) == (
+            reference.detection_mask,
+            reference.groundtruth_mask,
+        )
+    assert peaks[1] <= peaks[0] + 64 * 1024
+
+
 def test_update_rejects_a_mask_stack_with_a_channel_dimension() -> None:
     """A ``(K, 1, H, W)`` stack, the layout ``PostProcess`` returns before the callback squeezes it, must raise."""
     metric = OnePassCocoMeanAveragePrecision(**_KWARGS)
