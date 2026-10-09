@@ -14,7 +14,6 @@ Use cases covered:
 - Every symbol these tests monkeypatch must stay on the real call path, not merely remain importable.
 """
 
-import importlib.util
 import inspect
 import os
 import re
@@ -42,11 +41,10 @@ from rfdetr.export.base import Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.export.registry import REGISTRY, resolve_exporter
 from rfdetr.models.backbone.dinov2 import DinoV2
+from tests._markers import onnx_only, onnxruntime_only
 
 if TYPE_CHECKING:
     import onnx
-
-_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
 
 @contextmanager
@@ -192,7 +190,7 @@ def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@onnx_only
 def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     """Integration test: exporting a segmentation model should not crash.
 
@@ -211,7 +209,7 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@onnx_only
 def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_path: Path) -> None:
     """Integration test: exporting with a valid rectangular shape should not crash.
 
@@ -233,6 +231,7 @@ def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_pa
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
+@onnx_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestExportedGraphAvoidsCoreMLRejectedOps:
@@ -268,7 +267,6 @@ class TestExportedGraphAvoidsCoreMLRejectedOps:
         return onnx.shape_inference.infer_shapes(onnx.load(str(onnx_path))).graph
 
     def test_detection_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
-        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
         from tests.models.test_transformer_onnx_two_stage import (
             find_single_input_concat_nodes,
             find_zero_dim_float_concat_nodes,
@@ -281,7 +279,6 @@ class TestExportedGraphAvoidsCoreMLRejectedOps:
         assert find_zero_dim_float_concat_nodes(graph) == []
 
     def test_segmentation_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
-        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
         from tests.models.test_transformer_onnx_two_stage import (
             find_single_input_concat_nodes,
             find_zero_dim_float_concat_nodes,
@@ -336,7 +333,7 @@ def test_dinov2_export_uses_precomputed_positions_for_exact_rectangular_grid() -
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@onnx_only
 def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     """Verify that calling export() does not change the original model's train/eval state.
 
@@ -1328,7 +1325,8 @@ class TestExportOnnxVariantNaming:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@onnx_only
+@onnxruntime_only
 @pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRSegNano, RFDETRKeypointPreview])
 @pytest.mark.parametrize("projector_scale", [["P4"], ["P4", "P5"]])
 @pytest.mark.parametrize("dynamic_batch", [False, True])
@@ -1340,8 +1338,8 @@ def test_backbone_only_exports_features_without_detector(
 ) -> None:
     """The public backbone export runs independently of detector heads and preserves every feature level."""
     import numpy as np
+    import onnxruntime as ort
 
-    ort = pytest.importorskip("onnxruntime")
     model = model_class(
         pretrain_weights=None,
         device="cpu",
@@ -1779,6 +1777,7 @@ class TestExportRejectsBeforeForwardPass:
             pytest.param("tflite", {"notes": float("nan")}, ValueError, "notes", id="tflite-notes-nan"),
             pytest.param("tensorrt", {"notes": float("nan")}, ValueError, "notes", id="tensorrt-notes-nan"),
             pytest.param("coreai", {"notes": float("nan")}, ValueError, "notes", id="coreai-notes-nan"),
+            pytest.param("coreml", {"notes": float("nan")}, ValueError, "notes", id="coreml-notes-nan"),
             pytest.param(
                 "tensorrt",
                 {"trt_hardware_compatibility": "AMPERE_PLUS"},
@@ -2635,7 +2634,7 @@ def _if_nodes(model: "onnx.ModelProto") -> list[str]:
     return [node.name for node in model.graph.node if node.op_type == "If"]
 
 
-@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@onnx_only
 class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
     """The keypoint ONNX graph must avoid the constructs that broke its onnx2tf/TFLite conversion (#1514).
 

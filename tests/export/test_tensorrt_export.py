@@ -1249,6 +1249,7 @@ class TestTimingCache:
         assert captured["build"] == {"save_timing_cache": str(cache)}
 
     @pytest.mark.parametrize("dynamic_batch", [False, True])
+    @tensorrt_only
     def test_the_keywords_handed_to_polygraphy_exist_in_its_api(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dynamic_batch: bool
     ) -> None:
@@ -1257,9 +1258,10 @@ class TestTimingCache:
         The recording stub takes any keyword, so a keyword Polygraphy renamed or removed would leave the CPU suite green
         while only a GPU run broke. The keywords the exporter really passes are recorded for a fixed-batch and a
         dynamic-batch build (the latter adds a profile next to the cache), then checked against the signatures of the
-        real ``CreateConfig`` and ``engine_from_network``. Skipped where Polygraphy does not import.
+        real ``CreateConfig`` and ``engine_from_network``. Skipped where TensorRT or Polygraphy is not installed.
         """
-        trt_backend = pytest.importorskip("polygraphy.backend.trt", exc_type=ImportError)
+        from polygraphy.backend import trt as trt_backend
+
         network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384) if dynamic_batch else (1, 3, 384, 384)))
         captured = _patch_polygraphy_chain_recording(monkeypatch, network)
         cache = tmp_path / "engine.cache"
@@ -1700,15 +1702,16 @@ class TestPortableEngines:
 
         assert captured["config"] == {"fp16": False, "version_compatible": True}
 
+    @tensorrt_only
     def test_the_installed_polygraphy_create_config_accepts_the_portability_keywords(self) -> None:
         """The real ``CreateConfig`` still takes the two keywords the exporter passes for portable engines.
 
         The unit tests above record whatever keyword the exporter passes, so a Polygraphy release that renamed one would
         go unnoticed there; this reads the installed signature instead.
         """
-        create_config = pytest.importorskip("polygraphy.backend.trt").CreateConfig
+        from polygraphy.backend.trt import CreateConfig
 
-        parameters = inspect.signature(create_config).parameters
+        parameters = inspect.signature(CreateConfig).parameters
 
         assert {"version_compatible", "hardware_compatibility_level"} <= parameters.keys()
 

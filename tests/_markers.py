@@ -12,6 +12,9 @@ import sys
 import pytest
 import torch
 
+from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
+from rfdetr.utilities.imports import _IS_TORCH_XLA_INSTALLED
+
 #: Skip a test node that invokes CPU-backend `torch.compile` (Inductor codegen). Windows CI runners
 #: have no MSVC (``cl.exe``) on ``PATH``, so Inductor's CPU C++ codegen fails with
 #: ``InvalidCxxCompiler`` before the test body's own assertions ever run. CUDA-parametrized variants
@@ -27,3 +30,24 @@ requires_cpu_inductor = pytest.mark.skipif(
 #: deselects it; ``cuda_marks`` is that pair for ``pytest.param(..., marks=cuda_marks)``.
 requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 cuda_marks = [pytest.mark.gpu, requires_cuda]
+
+#: Skip a test node that drives a real XLA device when ``torch_xla`` is not installed (the ``xla`` extra). Pair it with
+#: ``@pytest.mark.xla`` so the XLA CI job selects it.
+requires_torch_xla = pytest.mark.skipif(
+    not _IS_TORCH_XLA_INSTALLED,
+    reason="torch_xla not installed; skip XLA device tests",
+)
+
+#: Skip a test node that needs the ``onnx`` package (graph construction, export, checker).
+onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX tests")
+
+#: Skip a test node that needs ``onnxruntime`` alone (running a model it was handed).
+onnxruntime_only = pytest.mark.skipif(
+    not _IS_ONNXRUNTIME_INSTALLED, reason="onnxruntime not installed; skip ONNX Runtime tests"
+)
+
+#: Skip a test node that builds a graph with ``onnx`` and runs it with ``onnxruntime``.
+onnx_and_onnxruntime_only = pytest.mark.skipif(
+    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
+    reason="onnx/onnxruntime not installed; skip ONNX inference tests",
+)

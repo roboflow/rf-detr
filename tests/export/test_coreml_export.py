@@ -19,6 +19,7 @@ only appears on correlated image structure.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 from collections import Counter
@@ -38,6 +39,7 @@ from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available, _CoreMLApi
 from rfdetr.export.prepare import ExportGraph
+from rfdetr.utilities.package import get_version
 from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import (
     _parity_input_from_image,
@@ -435,6 +437,81 @@ class TestConvertDeploymentTarget:
         )
 
 
+class TestSaveMlmodelMetadata:
+    """``_save_mlmodel`` stamps the RF-DETR provenance into ``MLModel.user_defined_metadata`` before it saves.
+
+    ``coremltools`` is not needed: the converted model is a stand-in whose ``user_defined_metadata`` is a plain dict,
+    the same mapping interface the real one exposes. ``rfdetr_notes`` and its encoding match the ONNX export,
+    ``rfdetr_version`` the Core AI export.
+    """
+
+    @staticmethod
+    def _save(tmp_path: Path, *, notes: object = None, existing: dict[str, str] | None = None) -> mock.MagicMock:
+        """Run ``_save_mlmodel`` on a stand-in model and return it.
+
+        Args:
+            tmp_path: Directory the bundle path is built in; nothing is written because ``save`` is mocked.
+            notes: The ``notes`` the export was asked to embed.
+            existing: Keys already in the metadata, as ``ct.convert`` leaves them.
+
+        Returns:
+            The stand-in model; ``saved_metadata`` holds a copy of the metadata taken when ``save`` ran.
+
+        Examples:
+            >>> model = TestSaveMlmodelMetadata._save(Path("."), notes="hi")
+            >>> model.saved_metadata["rfdetr_notes"]
+            'hi'
+        """
+        mlmodel = mock.MagicMock()
+        mlmodel.user_defined_metadata = dict(existing or {})
+        mlmodel.save.side_effect = lambda _path: setattr(mlmodel, "saved_metadata", dict(mlmodel.user_defined_metadata))
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, notes=notes, verbose=False))
+        exporter._save_mlmodel(mlmodel, tmp_path / "model.mlpackage")
+        return mlmodel
+
+    @pytest.mark.parametrize(
+        "notes, stored",
+        [
+            pytest.param("trained on pallets", "trained on pallets", id="string"),
+            pytest.param({"run": 3, "classes": ["box"]}, json.dumps({"run": 3, "classes": ["box"]}), id="json"),
+            pytest.param("", "", id="empty-string"),
+            pytest.param(0, "0", id="zero"),
+            pytest.param(False, "false", id="false"),
+            pytest.param([], "[]", id="empty-list"),
+        ],
+    )
+    def test_notes_are_stored_under_the_onnx_key(self, tmp_path: Path, notes: object, stored: str) -> None:
+        """A string is stored as is and anything else as JSON, under ``rfdetr_notes``."""
+        assert self._save(tmp_path, notes=notes).saved_metadata["rfdetr_notes"] == stored
+
+    def test_no_notes_writes_no_notes_key(self, tmp_path: Path) -> None:
+        """Without ``notes`` the key is absent, as in the ONNX export."""
+        assert "rfdetr_notes" not in self._save(tmp_path).saved_metadata
+
+    def test_rfdetr_version_is_stored(self, tmp_path: Path) -> None:
+        """The installed RF-DETR version is stored under ``rfdetr_version``."""
+        with mock.patch("rfdetr.export._coreml.exporter.get_version", return_value="9.9.9"):
+            model = self._save(tmp_path)
+        assert model.saved_metadata["rfdetr_version"] == "9.9.9"
+
+    def test_unknown_version_writes_no_version_key(self, tmp_path: Path) -> None:
+        """A source checkout without package metadata has no version to record."""
+        with mock.patch("rfdetr.export._coreml.exporter.get_version", return_value=None):
+            model = self._save(tmp_path)
+        assert "rfdetr_version" not in model.saved_metadata
+
+    def test_coremltools_own_keys_are_kept(self, tmp_path: Path) -> None:
+        """``ct.convert`` fills ``com.github.apple.coremltools.*``; stamping must add to it, not replace it."""
+        key = "com.github.apple.coremltools.version"
+        assert self._save(tmp_path, notes="x", existing={key: "9.0"}).saved_metadata[key] == "9.0"
+
+    def test_metadata_is_written_before_the_bundle_is_saved(self, tmp_path: Path) -> None:
+        """``save`` persists the spec, so a key set after it would never reach the ``.mlpackage``."""
+        model = self._save(tmp_path, notes="x")
+        model.save.assert_called_once_with(str(tmp_path / "model.mlpackage"))
+        assert model.saved_metadata["rfdetr_notes"] == "x"
+
+
 class TestExportCoremlBareDefaultNaming:
     """``variant_name=None`` + ``output_name=None`` combined with a non-default ``compute_precision`` (fp16).
 
@@ -641,12 +718,12 @@ class TestExportFormatParameter:
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
         self._mock_coreml_convert.assert_not_called()
 
-    def test_notes_warns_and_is_ignored(self) -> None:
-        """``notes`` must warn for CoreML (no ONNX-style metadata slot) but still export."""
+    def test_notes_do_not_warn(self, recwarn: pytest.WarningsRecorder) -> None:
+        """``notes`` has a slot in an ``.mlpackage`` (``user_defined_metadata``), so it must not warn as dropped."""
         obj = self._make_rfdetr()
-        with pytest.warns(UserWarning, match=r"`notes` is not forwarded to format='coreml'"):
-            obj.export(format="coreml", output_dir=str(self._tmp_path / "out"), notes="hello")
+        obj.export(format="coreml", output_dir=str(self._tmp_path / "out"), notes="hello")
         self._mock_coreml_convert.assert_called_once()
+        assert not [w for w in recwarn if "notes" in str(w.message)]
 
     def test_dynamic_batch_raises_before_converter(self) -> None:
         """``dynamic_batch=True`` is refused by ``RFDETR.export()`` before the converter is invoked."""
@@ -700,6 +777,9 @@ _COREML_E2E_VARIANTS = [
 # every run instead of trusting it (weight init differs across torch versions, so the margins do too).
 #: Queries the e2e parity exports select, small enough that their two-stage ranking is well separated.
 _COREML_E2E_NUM_QUERIES = 5
+
+#: ``notes`` the e2e export embeds, read back from the saved bundle's metadata.
+_COREML_E2E_NOTES = "provenance"
 #: Minimum eager gap between neighbouring top-ranked scores: 5x the worst swap (two scores drifting 1e-5 apart).
 _MIN_TWO_STAGE_RANK_MARGIN = 1e-4
 #: Seed the module-scoped e2e fixtures set themselves: they run before the autouse per-test ``reset_random_seeds``.
@@ -807,7 +887,11 @@ def coreml_export(
     seed_all(_COREML_EXPORT_SEED)
     detector = model_cls(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
     mlpackage_path = detector.export(
-        output_dir=str(out_dir), format="coreml", coreml_neural_engine=neural_engine, verbose=False
+        output_dir=str(out_dir),
+        format="coreml",
+        coreml_neural_engine=neural_engine,
+        notes=_COREML_E2E_NOTES,
+        verbose=False,
     )
 
     model = detector.model.model.to("cpu").eval()
@@ -935,6 +1019,18 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.stem.endswith("_fp32-ane" if neural_engine else "_fp32")
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
         assert ct.utils.load_spec(str(mlpackage_path)).specificationVersion == _IOS15_SPEC_VERSION
+
+    def test_mlpackage_metadata_round_trips(
+        self, coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]]
+    ) -> None:
+        """``notes`` and the RF-DETR version survive save and reload, beside coremltools' keys."""
+        import coremltools as ct
+
+        _, _, _, mlpackage_path, _ = coreml_export
+        metadata = ct.models.MLModel(str(mlpackage_path), skip_model_load=True).user_defined_metadata
+        assert metadata["rfdetr_notes"] == _COREML_E2E_NOTES
+        assert metadata.get("rfdetr_version") == get_version()
+        assert "com.github.apple.coremltools.version" in metadata
 
     def test_outputs_match_pytorch_structured(
         self, coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]]

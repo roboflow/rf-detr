@@ -51,6 +51,8 @@ from rfdetr.export._tflite.exporter import (
     _patch_validation_download,
     _prepare_calibration_data,
 )
+from rfdetr.export.imports import _IS_ONNX_GRAPHSURGEON_INSTALLED, _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
+from tests._markers import onnx_only
 
 onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 
@@ -928,12 +930,14 @@ class TestPatchValidationDownload:
             sys.modules.update(saved)
 
 
+@onnx_only
 class TestGetOnnxInputInfo:
     """Tests for ``_get_onnx_input_info()``."""
 
     def test_reads_input_name_and_shape(self, tmp_path: Path) -> None:
         """Build a minimal ONNX model and verify we read back its metadata."""
-        onnx = pytest.importorskip("onnx", reason="onnx not installed")
+        import onnx
+
         TensorProto, helper = onnx.TensorProto, onnx.helper  # noqa: N806
 
         inp = helper.make_tensor_value_info("images", TensorProto.FLOAT, [1, 3, 560, 560])
@@ -950,7 +954,8 @@ class TestGetOnnxInputInfo:
 
     def test_different_input_shape(self, tmp_path: Path) -> None:
         """Verify non-square resolution reads correctly."""
-        onnx = pytest.importorskip("onnx", reason="onnx not installed")
+        import onnx
+
         TensorProto, helper = onnx.TensorProto, onnx.helper  # noqa: N806
 
         inp = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 448, 640])
@@ -1217,9 +1222,7 @@ class TestCheckOnnx2tfAvailable:
 # ---------------------------------------------------------------------------
 
 onnx_gs_available = pytest.mark.skipif(
-    not all(
-        __import__("importlib").util.find_spec(p) is not None for p in ("onnx", "onnx_graphsurgeon", "onnxruntime")
-    ),
+    not (_IS_ONNX_INSTALLED and _IS_ONNX_GRAPHSURGEON_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx, onnx_graphsurgeon, and onnxruntime required",
 )
 

@@ -32,6 +32,24 @@ from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
+from rfdetr.utilities.imports import (
+    _IS_FASTER_COCO_EVAL_INSTALLED,
+    _IS_HOTCOCO_INSTALLED,
+    _IS_PYCOCOTOOLS_INSTALLED,
+    _IS_UFCOCO_INSTALLED,
+    _IS_VERNIER_INSTALLED,
+)
+
+pycocotools_only = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pycocotools not installed")
+# Every eval backend `CocoEvalBackend` names, each carrying the skip mark for the package it needs.
+_BACKEND_ONLY = {
+    "hotcoco": pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed"),
+    "hotcoco_streaming": pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed"),
+    "faster_coco_eval": pytest.mark.skipif(not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed"),
+    "ufcoco": pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed"),
+    "vernier": pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed"),
+}
+_ALL_BACKENDS = [pytest.param(backend, marks=_BACKEND_ONLY[backend]) for backend in get_args(CocoEvalBackend)]
 
 # Power-of-two image sides keep every normalised box coordinate exact in float32, so boxes survive the
 # normalise/denormalise round trip bit for bit and the metric comparisons below can be exact.
@@ -414,6 +432,7 @@ class TestCrowdRegionsReachEvaluation:
         assert scored[0]["boxes"][1].tolist() == [128.0, 16.0, 128.0, 112.0], "the zero-width box must reach GT as-is"
 
 
+@pycocotools_only
 def test_crowd_row_matches_its_non_crowd_twin_under_the_eval_transform(tmp_path: Path) -> None:
     """A compressed-RLE crowd and a polygon non-crowd twin covering the same box give the same box and mask.
 
@@ -421,7 +440,8 @@ def test_crowd_row_matches_its_non_crowd_twin_under_the_eval_transform(tmp_path:
     the annotation file. Both must end up in the same frame, box and mask alike, or the crowd would ignore detections
     somewhere other than where it is. Compressed (string ``counts``) RLE is what most exporters write.
     """
-    pycocotools_mask = pytest.importorskip("pycocotools.mask")
+    from pycocotools import mask as pycocotools_mask
+
     crowd_mask = np.zeros((_HEIGHT, _WIDTH), dtype=np.uint8)
     crowd_mask[16:112, 128:224] = 1
     rle = pycocotools_mask.encode(np.asfortranarray(crowd_mask))
@@ -596,12 +616,11 @@ def _pycocotools_stats(
     return evaluator.stats
 
 
-@pytest.mark.parametrize("backend", list(get_args(CocoEvalBackend)))
+@pycocotools_only
+@pytest.mark.parametrize("backend", _ALL_BACKENDS)
 @pytest.mark.parametrize("segmentation", [pytest.param(False, id="bbox"), pytest.param(True, id="bbox+segm")])
 def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmentation: bool) -> None:
     """On a small COCO file with crowd regions, callback box and mask metrics equal pycocotools."""
-    pytest.importorskip("pycocotools")
-    pytest.importorskip({"ufcoco": "ultrafast_pycocotools", "hotcoco_streaming": "hotcoco"}.get(backend, backend))
     dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3, include_masks=segmentation)
     grid = (_HEIGHT, _WIDTH) if segmentation else None
     results = [_prediction(boxes, scores, labels, mask_grid=grid) for boxes, scores, labels in _PARITY_DETECTIONS]

@@ -156,18 +156,21 @@ class AugmentationBackend(str, Enum):
         """Resolve a string to a concrete backend, auto-picking the best installed one.
 
         Legacy string aliases (``"gpu"``, ``"tv"``, ``"albu"``) are mapped to their current form
-        first. ``"cpu"`` auto-picks the best *installed* CPU backend: Albumentations > Kornia
-        (CPU) > torchvision. ``"auto"`` additionally prefers Kornia first when ``has_cuda=True``
-        and Kornia is installed, then falls back to the same CPU priority. The concrete backend
-        ``"cpu"``/``"auto"`` resolve to can therefore vary across environments — pass
-        ``"torchvision"`` explicitly to force torchvision regardless of what's installed.
+        first. ``"cpu"`` auto-picks the best *installed* backend: Albumentations > Kornia >
+        torchvision, where Kornia is eligible only when ``has_cuda=True``. ``"auto"`` additionally
+        prefers Kornia first when ``has_cuda=True`` and Kornia is installed, then falls back to the
+        same priority. Neither ever resolves to Kornia without CUDA, because the Kornia training path
+        refuses to run without a CUDA device. The concrete backend ``"cpu"``/``"auto"`` resolve to
+        can therefore vary across environments — pass ``"torchvision"`` explicitly to force
+        torchvision regardless of what's installed.
 
         Args:
             value: Backend name string.
-            has_cuda: Whether a CUDA device is available. Only consulted for ``"auto"`` — callers
-                that care about CUDA-gated GPU selection (e.g. dataset builders) compute this via
-                their own fork-safe CUDA check and pass it in; this function does not probe CUDA
-                itself to avoid importing device-detection code from other modules.
+            has_cuda: Whether a CUDA device is available. Consulted for ``"cpu"`` and ``"auto"``,
+                which only pick Kornia when it is ``True`` — callers that care about CUDA-gated GPU
+                selection (e.g. dataset builders) compute this via their own fork-safe CUDA check and
+                pass it in; this function does not probe CUDA itself to avoid importing
+                device-detection code from other modules.
 
         Returns:
             Concrete ``AugmentationBackend`` member.
@@ -187,7 +190,7 @@ class AugmentationBackend(str, Enum):
                 return cls.KORNIA
             if cls.ALBU._is_available():
                 return cls.ALBU
-            if cls.KORNIA._is_available():
+            if has_cuda and cls.KORNIA._is_available():
                 return cls.KORNIA
             return cls.TV
         try:
@@ -1454,12 +1457,13 @@ class TrainConfig(BaseConfig):
         default=None,
         description=(
             "User-defined provenance metadata embedded in best-model .pth and Lightning .ckpt "
-            "checkpoints under checkpoint['args']['notes'], and in exported ONNX/Core AI files "
-            "under the 'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
-            "(string, dict, list, int, float, bool). Checkpoints store the value as-is; a "
+            "checkpoints under checkpoint['args']['notes'], and in the metadata of an exported artifact "
+            "for a format that carries it (see 'Read Embedded Notes' in the export docs). "
+            "Accepts any JSON-serialisable value (string, dict, list, int, float, bool). "
+            "Checkpoints store the value as-is; a "
             "Lightning .ckpt additionally replaces a value a weights-only torch.load cannot "
             "read with its repr() (and warns) so Trainer.fit(ckpt_path=...) can still resume. "
-            "ONNX/Core AI exports store string values verbatim and JSON-encode all other types."
+            "Exports store string values verbatim and JSON-encode all other types."
         ),
     )
 
