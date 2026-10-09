@@ -30,6 +30,8 @@ model.export(format="tensorrt")
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32`/`_int8` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](advanced.md#export-parameters) — unless `output_name` is set).
 
+The ONNX file is an intermediate conversion input and has no RF-DETR inference metadata. The final engine receives its own metadata sidecar. To load the intermediate ONNX directly with `RFDETRInference`, pass the missing task and interface semantics through `metadata=`; see the [metadata notes](index.md#predict-with-rfdetrinference).
+
 !!! note "Dynamic batch"
 
     Pass `dynamic_batch=True` together with `max_batch_size` to build one engine that accepts any batch from 1 to `max_batch_size`. The engine gets a single TensorRT optimization profile with `min=1`, `opt=batch_size` and `max=max_batch_size`, so `batch_size` should be the batch you serve most often; other sizes inside the range run, TensorRT just tunes its kernels for `opt`. Without `dynamic_batch` the engine accepts only the batch size baked into the intermediate ONNX graph.
@@ -113,7 +115,34 @@ Requirements and limits:
 
     The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw TensorRT deployment. By default it is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases; see [Portable Engines](#portable-engines) for the options that widen that.
 
-    If you plan to run inference with [`inference-models`](basics.md#run-inference-with-inference-models) (the recommended path), do **not** pass `format="tensorrt"` — `inference-models` builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let `inference-models` handle the backend.
+    If you plan to run inference with [`inference-models`](basics.md#run-inference-with-inference-models) (a separate deployment option), do **not** pass `format="tensorrt"` — `inference-models` builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let `inference-models` handle the backend.
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model_fp16.trt")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+The engine must be compatible with the target GPU and TensorRT version. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+`RFDETRInference` launches the engine with `execute_v2` by default, which needs no [`pycuda`](https://pypi.org/project/pycuda/). `runtime_options` takes three settings, each a `bool` that defaults to `False`:
+
+- `cuda_graph`: capture the engine's launch into a CUDA graph on the first call and replay it on later calls. Only an engine whose optimization profile fixes every input shape qualifies; an engine exported with `dynamic_batch=True` is refused when it is loaded. We have not measured the speed-up through `RFDETRInference`.
+- `engine_host_code_allowed`: load an engine that carries host code; see [Portable Engines](#portable-engines).
+- `verbose`: log TensorRT at VERBOSE rather than INFO.
+
+```python
+model = RFDETRInference("output/inference_model_fp16.trt", runtime_options={"cuda_graph": True})
+```
+
+!!! warning "TRTInference is deprecated"
+
+    Constructing `TRTInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v2.0.0. Use `RFDETRInference(engine_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cuda_graph`, `engine_host_code_allowed` and `verbose`. The old class remains available for compatibility until then.
+
+Both facades use the same session loading and execution functions. The shared adapter calls these functions directly and does not construct the deprecated class.
 
 ## Engine Description File
 
@@ -178,16 +207,16 @@ model.export(format="tensorrt", trt_version_compatible=True)
 
 The options have a cost, so measure on your own model. In our FP16 tests, `ampere_plus` made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. `same_compute_capability` cost nothing we could measure. `trt_version_compatible` added about 105 MB to an `RFDETRNano` engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The [changelog](https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md) has the numbers.
 
-An engine built by TensorRT 11 with `trt_version_compatible=True` contains host code, and TensorRT only loads it if you say you trust the file. `TRTInference` and `rfdetr.export.benchmark` take `engine_host_code_allowed` for that; it's off by default:
+An engine built by TensorRT 11 with `trt_version_compatible=True` contains host code, and TensorRT only loads it if you say you trust the file. `RFDETRInference` takes `engine_host_code_allowed` in `runtime_options` for that, and the deprecated `TRTInference` and `rfdetr.export.benchmark` take it as a keyword; it's off by default:
 
 ```python
-from rfdetr.export._tensorrt.inference import TRTInference
+from rfdetr import RFDETRInference
 
 engine = model.export(format="tensorrt", trt_version_compatible=True)
-runtime = TRTInference(str(engine), sync_mode=True, engine_host_code_allowed=True)
+runtime = RFDETRInference(engine, runtime_options={"engine_host_code_allowed": True})
 ```
 
-Only turn it on for a file you built yourself or otherwise trust. `TRTInference` lives in a private module, so like the classes under [Python API Conversion](#python-api-conversion) it can change without notice; `sync_mode=True` avoids the [`pycuda`](https://pypi.org/project/pycuda/) dependency of its default mode.
+Only turn it on for a file you built yourself or otherwise trust.
 
 ## Reuse the Timing Cache
 
@@ -207,7 +236,7 @@ A bad path is refused before the engine is built: a directory, or a path ending 
 
 Polygraphy keeps an empty `<file>.lock` next to the cache and locks it while it reads or writes the cache, so the folder has to be writable. We did not test two exports sharing one cache file at the same time. Without `trt_timing_cache`, no file is read or written.
 
-## Python API Conversion
+## Advanced: Convert an existing ONNX file with the Python API
 
 Use this only to convert an **already-exported** `.onnx` file without re-running the model export. To go straight from a checkpoint to an engine, use [`format="tensorrt"`](#export-directly-to-tensorrt) above.
 

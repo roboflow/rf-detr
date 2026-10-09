@@ -47,7 +47,18 @@ pip install "rfdetr[litert]"
 
 This writes one float32 file named after the model's variant, `output/<model-variant>.tflite` (for example `output/rfdetr-small.tflite`; `-backbone` is appended with `backbone_only=True`, and `output_name` overrides the stem). `shape=(H, W)` picks a custom resolution exactly as for the other formats.
 
-## LiteRT Inference Example
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-small.tflite")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+LiteRT artifacts use their metadata to identify the NCHW input layout. The shared API returns the same Supervision result types as the native model. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use the LiteRT interpreter directly
 
 The file has one input (NCHW float32, ImageNet-normalized like `predict()`) and positional outputs: boxes `[batch, 300, 4]` in normalized `cxcywh`, class logits `[batch, 300, num_classes]`, and — for segmentation models — mask logits as a third output. Output tensor names are litert-torch's own (`serving_default_output_<i>_output`), so match outputs by position, as for the CoreML and OpenVINO exports.
 

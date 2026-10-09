@@ -19,6 +19,7 @@ from torch import nn
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export._runtime.calibration_checks import check_calibration_data
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -325,3 +326,7 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
             logger.info(f"✓ OpenVINO IR model saved to {output_xml}")
             logger.info(f"✓ Model binary saved to {output_bin}")
         return str(output_xml)
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Use the output positions returned by the OpenVINO wrapper."""
+        return positional_metadata(metadata)

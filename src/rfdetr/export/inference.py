@@ -21,8 +21,10 @@ through its own ``execute([tensor])``. The stable public subset of :class:`TRTIn
 profiling helpers) are implementation detail that may change without notice, even though the class itself is exported
 here.
 
-For multi-backend inference (PyTorch / ONNX / TensorRT) with automatic backend selection, prefer `inference-models
-<https://github.com/roboflow/inference/tree/main/inference_models>`_.
+Use :class:`rfdetr.inference.RFDETRInference` for image inputs and Supervision predictions across native models and
+export formats; its ``runtime_options`` carries the TensorRT and OpenVINO session settings. The TensorRT and OpenVINO
+classes are deprecated since v1.12.0 and will be removed in v2.0.0. They remain available for compatibility and emit a
+``FutureWarning`` when constructed.
 """
 
 from __future__ import annotations

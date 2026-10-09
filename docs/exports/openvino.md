@@ -57,9 +57,36 @@ OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="f
 model.export(format="openvino", openvino_precision="float32")
 ```
 
-## OpenVINO Inference Example
+## Predict with RFDETRInference
 
-`OpenVINOInference` loads an exported IR and runs it. It takes already-preprocessed NCHW tensors and returns the model's raw output tensors — decoding those into detections is up to you (see [ONNX Inference](onnx.md) for the decode steps).
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-medium.xml")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+`runtime_options` takes `cache_dir`, `inference_precision` and `config`, with the meaning they have on the [OpenVINO session](#advanced-use-the-openvino-session-directly) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
+
+```python
+model = RFDETRInference(
+    "output/rfdetr-medium.xml",
+    device="cpu",
+    runtime_options={"cache_dir": "output/openvino-cache", "config": {"INFERENCE_NUM_THREADS": 4}},
+)
+```
+
+<span id="openvino-inference-example"></span>
+
+## Advanced: Use the OpenVINO session directly
+
+!!! warning "OpenVINOInference is deprecated"
+
+    Constructing `OpenVINOInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v2.0.0. Use `RFDETRInference(model_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cache_dir`, `inference_precision` and `config`. The old class remains available for compatibility until then.
+
+The compatibility class takes preprocessed NCHW tensors and returns raw outputs. It shares session loading and execution functions with the common adapter. The adapter calls these functions directly and does not construct the deprecated class.
 
 !!! warning "The input array must be float32 and contiguous"
 

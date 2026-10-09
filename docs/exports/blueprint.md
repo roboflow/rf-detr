@@ -9,7 +9,7 @@ description: How RF-DETR's export pipeline is put together, and the step-by-step
     - Every export format is an `Exporter` subclass built from its own configuration dataclass
     - `RFDETR.export()` is a facade: it prepares one `ExportGraph` and hands it to the exporter the registry names
     - The registry is plain data, so a format can be refused or its install hint printed before its dependency is imported
-    - Adding a format touches its own package, the registry, and `pyproject.toml` — never the base class
+    - Adding a format touches its own package, the registry, the metadata `ExportFormat` literal, and `pyproject.toml` — never the base class
     - This is an in-tree contribution recipe, not a plugin API: there is no public `register()` hook
 
 This page describes how the export pipeline is assembled and what it takes to add a format to it. If you only want to export a model, read [Export RF-DETR Model](index.md) instead — everything here is internal API.
@@ -32,8 +32,11 @@ RFDETR.export(format=..., **kwargs)
   |-- ExporterClass(config)                          -> exporter           (configuration and notes validated)
   |-- ExporterClass.check_dependencies()                                   (missing packages reported)
   |-- exporter.check_environment()                                         (what the configuration needs of them)
-  |-- prepare.prepare_export_graph(model, ...)       -> ExportGraph        (format-independent forward pass)
-  \-- exporter(graph)                                -> Path to artifact   (both checks again, then _convert)
+  |-- prepare.prepare_export_graph(model, ...)       -> ExportGraph        (forward pass + prediction metadata)
+  \-- exporter(graph)                                -> Path to artifact   (both checks again, then _convert + metadata hooks)
+
+RFDETRInference(artifact)
+  \-- registry.resolve_runtime_loader(format)       -> load_export_runtime (lazy runtime loading)
 ```
 
 **What the user asked for** and **what the model looks like** are kept apart on purpose. The configuration carries the first, `ExportGraph` carries the second, and an exporter is the only place they meet. That is what makes a format testable without a real model: most of the export test suite builds a throwaway `ExportGraph` and never traces anything.
@@ -49,7 +52,7 @@ RFDETR.export(format=..., **kwargs)
 - runs one forward pass, so a broken graph fails here rather than inside a third-party converter
 - moves everything to CPU, where every converter traces
 
-It returns a frozen `ExportGraph`: `model`, `input_tensors`, `input_names`, `output_names`, `dynamic_axes`, `shape`, `backbone_only`. Nothing in it names a format.
+It returns a frozen `ExportGraph`: `model`, `input_tensors`, `input_names`, `output_names`, `dynamic_axes`, `shape`, `backbone_only`, and captured prediction metadata. The graph fields stay format-independent. Captured metadata records the requested format and prediction semantics; the exporter adapts it to the final artifact's interface. Metadata does not include user `notes`.
 
 ### `registry.py` — data, not imports
 
@@ -62,20 +65,26 @@ REGISTRY: Mapping[str, ExporterEntry] = {
 }
 ```
 
-An entry also carries the few facts that must be known *before* the import: the user-facing `label`, the `pip_extra` named in the missing-dependency message, `supports_dynamic_batch`, and `dynamic_batch_reason`. Those last three mirror class attributes of the exporter itself. The duplication is deliberate — it is what lets `reject_unsupported_dynamic_batch()` refuse a doomed request, in the format's own words, without paying tens of seconds and hundreds of megabytes for `coremltools` or TensorFlow first. `tests/export/test_registry.py` is the only thing keeping the two copies in sync, so it asserts they match.
+An entry also carries the few facts that must be known *before* the import: the user-facing `label`, the `pip_extra` named in the missing-dependency message, `supports_dynamic_batch`, and `dynamic_batch_reason`. Those last three mirror class attributes of the exporter itself. The duplication is deliberate — it is what lets `reject_unsupported_dynamic_batch()` refuse a doomed request, in the format's own words, without paying tens of seconds and hundreds of megabytes for `coremltools` or TensorFlow first. `tests/export/test_registry.py` checks those mirrors.
+
+`RUNTIME_LOADERS` maps every format key to its lazy `load_export_runtime(path, metadata, device, options)` function. `resolve_runtime_loader()` imports that function only when an artifact is opened. Keep this map in sync with `REGISTRY`; the registry tests check that every format has a callable loader.
 
 ### `base.py` — what every format gets for free
 
 `rfdetr.export.base` names no format. It holds `ExportConfig`, the settings shared by all of them, `Exporter`, the abstract class they subclass, and a few format-independent helpers such as `serialize_notes`.
 
-`Exporter.__call__` runs before and after your `_convert`:
+`Exporter.__call__` checks dependencies and enters export mode before `_convert`, then normalizes its result and publishes metadata through two hooks:
 
 - checks the format's packages (`check_dependencies`), then what the configuration needs of them (`check_environment`), so an exporter handed a graph directly fails the same way `RFDETR.export()` does
 - switches the model into its export-friendly forward — exactly once, and idempotently, so a two-stage format composing another exporter stays safe
 - normalizes whatever `_convert` returned into a `Path`
-- logs the success line
+- calls `_metadata_artifacts(path)` for every final file that needs metadata
+- calls `_metadata_for_artifact(metadata, path)` to adapt metadata when the format changes the exported interface
+- writes metadata and logs the success line; a metadata-write failure warns while preserving the successfully converted artifact
 
-`Exporter.__init__` validates the configuration against the class's declared capabilities, and checks that `notes` serialize for a format that embeds them, so an unsupported request is refused at construction. `RFDETR.export()` then calls `check_dependencies()`, so a missing package is reported too, and `check_environment()`, for a setting the installed packages or the host cannot build (TensorRT's `trt_version_compatible` without its lean runtime, or `trt_hardware_compatibility="ampere_plus"` on a GPU older than Ampere) — all before the caller pays for a full DINOv2 forward pass.
+`Exporter.__init__` validates the configuration against the class's declared capabilities, and checks that `notes` serialize for a format that embeds them, so an unsupported request is refused at construction. `prepare_export_graph` captures prediction metadata from the source model. Exporters that produce multiple final files or alter names, layout, or dtype override the metadata hooks; do not put format-specific metadata behavior in `prepare.py`. `RFDETR.export()` then calls `check_dependencies()`, so a missing package is reported too, and `check_environment()`, for a setting the installed packages or the host cannot build (TensorRT's `trt_version_compatible` without its lean runtime, or `trt_hardware_compatibility="ampere_plus"` on a GPU older than Ampere) — all before the caller pays for a full DINOv2 forward pass.
+
+`ExportMetadata` (`src/rfdetr/export/_runtime/metadata.py`) rejects fields it does not know, so any new, removed, or redefined field bumps `SCHEMA_VERSION` and the `schema_version` literal with it. `read_metadata` loads only its own schema version: for any other it raises a `ValueError` that names the `producer_version` that wrote the artifact and asks the user to upgrade rfdetr. There is no migration step between versions.
 
 ## Adding a format
 
@@ -199,7 +208,7 @@ def _export_name(self, *, backbone_only: bool) -> str:
 
 `output_name` wins over `variant_name` wins over the default, and both inputs are sanitized against path traversal. `is_custom` tells you to suppress any precision or backend suffix you would otherwise append — the caller asked for that exact name. `append_backbone_marker` is not optional: without it a backbone-only export silently overwrites a full-detector export written under the same name.
 
-### 4. Register it
+### 4. Register export and prediction
 
 ```python
 REGISTRY: Mapping[str, ExporterEntry] = {
@@ -212,9 +221,14 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         dynamic_batch_reason="(the graph bakes a fixed input shape). Export one model per batch size instead.",
     ),
 }
+
+RUNTIME_LOADERS: Mapping[str, str] = {
+    # Keep one lazy loader path for every REGISTRY format.
+    "myformat": "rfdetr.export._myformat.inference:load_export_runtime",
+}
 ```
 
-`supports_dynamic_batch`, `label` and `dynamic_batch_reason` must match your class attributes exactly — the mirror test enforces it. Add a short spelling to `ALIASES` if one is worth having (`"trt"`, `"pte"`). Set `preimport` only if your format has an import-order hazard; TFLite is the one precedent, because TensorFlow must load before anything pulls in ONNX's C extension.
+`supports_dynamic_batch`, `label` and `dynamic_batch_reason` must match your class attributes exactly. Add one callable `load_export_runtime(path, metadata, device, options)` and its dotted path to `RUNTIME_LOADERS`; the registry tests check loader coverage, resolution and that signature. Its first statement passes `options` (`RFDETRInference(runtime_options=...)`) through `_runtime_options(label, options, accepted_keys)` from `rfdetr.export._runtime.adapters`, with no accepted keys unless your session loader already takes a setting worth exposing. Add the format name to the `ExportFormat` literal in `src/rfdetr/export/_runtime/metadata.py` as well: export metadata validates its `format` against that literal, so a name missing there cannot be recorded, and a registry test checks that the literal and `REGISTRY` list the same formats. Add a short spelling to `ALIASES` if one is worth having (`"trt"`, `"pte"`). Set `preimport` only if your format has an import-order hazard; TFLite is the one precedent, because TensorFlow must load before anything pulls in ONNX's C extension.
 
 ### 5. Add the dependency extra
 
@@ -222,7 +236,7 @@ Add `myformat = [...]` under `[project.optional-dependencies]` in `pyproject.tom
 
 ### 6. Document the format
 
-Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to the user-facing export docs ([Overview](index.md), [Export Basics](basics.md), [Advanced Export](advanced.md)) — installation extra, a basic example, output files, and an inference snippet.
+Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to the user-facing export docs ([Overview](index.md), [Export Basics](basics.md), [Advanced Export](advanced.md)) — installation extra, a basic example, output files, and an `RFDETRInference` prediction snippet. Keep raw tensor examples clearly marked as advanced. Existing ONNX and TFLite NumPy reference helpers remain useful for dependency-light numerical checks and share raw execution with their adapters. TensorRT and OpenVINO session loading and execution live in shared module-level functions. Their deprecated classes delegate to these functions for compatibility. Adapters call the functions directly, so removing the classes needs no runtime changes. CoreML and Core AI loaders use their vendor APIs directly.
 
 ### 7. Test it
 

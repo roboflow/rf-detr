@@ -16,10 +16,16 @@ eager reference forward, the deterministic input builders, and the per-output ma
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import torch
 import torchvision.transforms.functional as TF  # noqa: N812 — standard torchvision alias
 from PIL import Image
+from supervision import Detections, KeyPoints
+
+from rfdetr import RFDETRInference, RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
+from rfdetr.detr import RFDETR
 
 # ImageNet statistics used by predict-style preprocessing; parity inputs are normalized to
 # roughly this range so the backbone sees realistic activations.
@@ -186,3 +192,107 @@ def max_abs_output_diffs(
             )
         diffs.append((eager - other.float()).abs().max().item())
     return diffs
+
+
+def _prediction_model_for_task(task: str) -> RFDETR:
+    """Build a small random model with explicit labels and no downloaded weights.
+
+    Examples:
+        >>> _prediction_model_for_task("detect").class_names
+        ['alpha', 'beta']
+    """
+    kwargs: dict[str, Any] = {
+        "pretrain_weights": None,
+        "device": "cpu",
+        "resolution": 64 if task == "detect" else 96,
+        "num_queries": 4,
+        "num_select": 4,
+        "num_classes": 2,
+    }
+    if task == "keypoints":
+        kwargs["num_keypoints_per_class"] = [3]
+        model = RFDETRKeypointPreview(**kwargs)
+        model.model.class_names = ["alpha"]
+    else:
+        model = (RFDETRSegNano if task == "segment" else RFDETRNano)(**kwargs)
+        model.model.class_names = ["alpha", "beta"]
+    return model
+
+
+def _prediction_image(size: int) -> np.ndarray:
+    """Make an RGB image with stable spatial structure.
+
+    Examples:
+        >>> _prediction_image(4).shape
+        (4, 4, 3)
+    """
+    y, x = np.indices((size, size))
+    return np.stack(((x * 7) % 256, (y * 11) % 256, ((x + y) * 3) % 256), axis=-1).astype(np.uint8)
+
+
+def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> None:
+    """Run the public export and prediction APIs on one image.
+
+    Examples:
+        Requires a real export runtime and a temporary artifact directory.
+
+        >>> assert_prediction_roundtrip("onnx", "detect", Path("output"))  # doctest: +SKIP
+    """
+    torch.manual_seed(17)
+    native = _prediction_model_for_task(task)
+    size = 64 if task == "detect" else 96
+    image = _prediction_image(size)
+    original = native.predict(image, threshold=0.0, include_source_image=False)
+    settings: dict[str, Any] = {}
+    if format_name == "tensorrt":
+        settings["fp16"] = False
+    elif format_name == "executorch":
+        settings["backend"] = "xnnpack"
+    elif format_name == "coreml":
+        settings["coreml_precision"] = "float32"
+    elif format_name == "coreai":
+        settings["coreai_precision"] = "float32"
+    elif format_name == "openvino":
+        settings["openvino_precision"] = "float32"
+    artifact = native.export(format=format_name, output_dir=str(tmp_path), verbose=False, **settings)
+    exported = RFDETRInference(artifact, device="cuda:0" if format_name == "tensorrt" else "cpu")
+    actual = exported.predict(image, threshold=0.0, include_source_image=False)
+
+    assert exported.class_names == native.class_names
+    assert type(actual) is type(original)
+    normalized_box_atol = {
+        "onnx": 1e-3,
+        "openvino": 1e-2,
+        "tflite": 2e-2,
+        "litert": 1e-2,
+        "executorch": 1e-2,
+        "coreml": 2e-2,
+        "coreai": 2e-2,
+        "tensorrt": 2e-2,
+    }[format_name]
+    score_atol = {
+        "onnx": 1e-3,
+        "openvino": 2e-2,
+        "tflite": 3e-2,
+        "litert": 2e-2,
+        "executorch": 2e-2,
+        "coreml": 3e-2,
+        "coreai": 3e-2,
+        "tensorrt": 3e-2,
+    }[format_name]
+    if task == "keypoints":
+        assert isinstance(actual, KeyPoints) and isinstance(original, KeyPoints)
+        assert actual.detection_confidence is not None and original.detection_confidence is not None
+        assert actual.keypoint_confidence is not None and original.keypoint_confidence is not None
+        np.testing.assert_allclose(actual.xy, original.xy, atol=normalized_box_atol * size, rtol=0)
+        np.testing.assert_allclose(actual.detection_confidence, original.detection_confidence, atol=score_atol, rtol=0)
+        np.testing.assert_allclose(actual.keypoint_confidence, original.keypoint_confidence, atol=score_atol, rtol=0)
+    else:
+        assert isinstance(actual, Detections) and isinstance(original, Detections)
+        assert actual.confidence is not None and original.confidence is not None
+        np.testing.assert_array_equal(actual.class_id, original.class_id)
+        np.testing.assert_allclose(actual.xyxy, original.xyxy, atol=normalized_box_atol * size, rtol=0)
+        np.testing.assert_allclose(actual.confidence, original.confidence, atol=score_atol, rtol=0)
+        if task == "segment":
+            assert actual.mask is not None and original.mask is not None
+            assert np.mean(actual.mask != original.mask) < 0.02

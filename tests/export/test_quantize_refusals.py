@@ -156,10 +156,11 @@ def forward_pass() -> Any:
     """Patch ``prepare_export_graph`` to raise :class:`_ForwardPassReachedError`, and return the patch.
 
     The host check is stubbed out for both formats: the point is the order of the refusals, not which packages the test
-    machine has.
+    machine has. ``metadata_from_model`` is stubbed too: the mocked ``RFDETR`` has no class names for it to read.
     """
     with (
         mock.patch("rfdetr.export.prepare.prepare_export_graph", side_effect=_ForwardPassReachedError) as prepare,
+        mock.patch("rfdetr.export._runtime.metadata.metadata_from_model"),
         mock.patch.object(OnnxExporter, "check_dependencies"),
         mock.patch.object(OpenVINOExporter, "check_dependencies"),
     ):
