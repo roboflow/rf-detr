@@ -41,7 +41,11 @@ from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.reproducibility import seed_all
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
-from tests.export.test_coreml_export import _MIN_TWO_STAGE_RANK_MARGIN, _two_stage_rank_margin
+from tests.export.test_coreml_export import (
+    _MIN_TWO_STAGE_RANK_MARGIN,
+    _MULTICLASS_KEYPOINT_SCHEMA,
+    _two_stage_rank_margin,
+)
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
@@ -960,9 +964,9 @@ def validate_executorch_vs_pytorch(
     """
     diffs = _runtime_parity(model, example, pte_path)
     assert len(diffs) == len(output_names), f"export must yield {output_names}, got {len(diffs)} outputs"
-    assert max(diffs) < bound, (
-        f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)} "
-        f"({dict(zip(output_names, diffs))}, bound={bound})"
+    # all(), not max(): NaN compares False, while max([0.0, nan]) returns 0.0 and would hide a NaN output.
+    assert all(diff < bound for diff in diffs), (
+        f"ExecuTorch outputs diverge from PyTorch: max abs diffs {dict(zip(output_names, diffs))} (bound={bound})"
     )
 
 
@@ -1085,9 +1089,19 @@ def exported_pretrained(
     """Export the pretrained RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview checkpoints to a ``.pte`` once per variant.
 
     Random weights give the two-stage query selection proposal scores that differ by less than float32 noise, so the
-    order of the selected queries, and with it their scores, can differ between eager PyTorch and the runtime.
+    order of the selected queries, and with it their scores, can differ between eager PyTorch and the runtime. Even
+    pretrained, the shipped query counts leave neighbouring scores on the photo about 1e-5 apart, the size of the fp32
+    drift, so the checkpoints are exported with ``_EXECUTORCH_E2E_NUM_QUERIES`` queries, whose margins on the photo
+    are 3.5e-3 or more (macOS arm64).
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``.pte`` lowering, so it cannot run standalone.
+
+        >>> model, example, pte_path, validate_fn = exported_pretrained  # doctest: +SKIP
+        >>> example.shape[0], pte_path.suffix  # doctest: +SKIP
+        (1, '.pte')
     """
-    return _export_variant(request, tmp_path_factory)
+    return _export_variant(request, tmp_path_factory, num_queries=_EXECUTORCH_E2E_NUM_QUERIES)
 
 
 @pytest.fixture(scope="module")
@@ -1119,28 +1133,60 @@ def executorch_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tupl
     return reference_model, example, Path(pte_path)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS)
 def executorch_default_queries_export(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[torch.nn.Module, torch.Tensor, Path]:
-    """Export RFDETRNano with its shipped query count, which ``exported`` trades for a separated ranking.
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[Any, torch.Tensor, Path, Any]:
+    """Export each e2e variant with its shipped query count, which ``exported`` trades for a separated ranking.
 
-    The shipped graph is what users receive, and it no longer gets value parity, so it is converted and run here.
+    The shipped graphs are what users receive, and they no longer get value parity, so each one is converted and run
+    here. The counts differ per variant (300 for detection, 100 for segmentation and keypoints), and the mask and
+    keypoint output shapes follow them.
 
     Examples:
         Skipped: a pytest fixture, and a real ``.pte`` lowering, so it cannot run standalone.
 
-        >>> model, example, pte_path = executorch_default_queries_export  # doctest: +SKIP
+        >>> model, example, pte_path, validate_fn = executorch_default_queries_export  # doctest: +SKIP
         >>> pte_path.suffix  # doctest: +SKIP
         '.pte'
     """
+    return _export_variant(request, tmp_path_factory, pretrain_weights=None)
+
+
+@pytest.fixture(scope="module")
+def executorch_multiclass_keypoint_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, torch.Tensor, Path]:
+    """Export a KeypointPreview with two keypoint classes and a seeded, non-zero keypoint head to a ``.pte``.
+
+    The keypoint output heads start at zero, which makes the keypoints of an untrained model independent of the
+    decoder, so the ``keypoint`` variant compares zeros with zeros. Small seeded weights, as in the CoreML suite, make a
+    mis-lowered keypoint head or keypoint self-attention show up in the outputs, and two classes make that attention's
+    mask block the cross-class pairs (one class blocks nothing).
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``.pte`` lowering, so it cannot run standalone.
+
+        >>> model, example, pte_path = executorch_multiclass_keypoint_export  # doctest: +SKIP
+        >>> bool(model.transformer.decoder.keypoint_class_mask.any())  # doctest: +SKIP
+        True
+    """
     import rfdetr
 
+    out_dir = tmp_path_factory.mktemp("executorch_multiclass_keypoint")
     seed_all(_EXECUTORCH_EXPORT_SEED)
-    out_dir = tmp_path_factory.mktemp("executorch_default_queries")
-    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    detector = rfdetr.RFDETRKeypointPreview(
+        pretrain_weights=None,
+        num_queries=_EXECUTORCH_E2E_NUM_QUERIES,
+        num_classes=len(_MULTICLASS_KEYPOINT_SCHEMA),
+    )
+    module = detector.model.model
+    module.reinitialize_keypoint_head(_MULTICLASS_KEYPOINT_SCHEMA)
+    generator = torch.Generator().manual_seed(_EXECUTORCH_EXPORT_SEED)
+    with torch.no_grad():
+        for name, param in module.named_parameters():
+            if "keypoint_embed" in name and not param.any():
+                param.copy_(0.02 * torch.randn(param.shape, generator=generator))
     pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
-    model = detector.model.model.to("cpu").eval()
+    model = module.to("cpu").eval()
     model.export()
     example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution).contiguous()
     return model, example, Path(pte_path)
@@ -1173,6 +1219,35 @@ def _portable_kernel_call_names(pte_path: Path) -> list[str]:
         for instruction in chain.instructions
         if type(instruction.instr_args).__name__ == "KernelCall"
     ]
+
+
+#: Portable op classes the masked keypoint self-attention leaves outside XNNPACK, and an upper bound on their calls
+#: (12 with ExecuTorch 1.3.1). More calls or another op class is a regression the keypoint xfail must not absorb.
+_KEYPOINT_ATTENTION_RESIDUE_OPS = frozenset({"aten::eq", "aten::mul"})
+_KEYPOINT_ATTENTION_RESIDUE_MAX_CALLS = 12
+
+
+def _fail_on_unexpected_keypoint_attention_residue(attention_calls: list[str]) -> None:
+    """Fail the test outright when the keypoint attention's portable residue grows or gains an op class.
+
+    ``pytest.fail`` raises ``Failed``, not ``AssertionError``, so it fails a test marked
+    ``xfail(raises=AssertionError)`` instead of counting as its expected failure.
+
+    Args:
+        attention_calls: Portable attention kernel calls, as qualified op names from ``_portable_kernel_call_names``.
+
+    Examples:
+        >>> _fail_on_unexpected_keypoint_attention_residue(["aten::eq.Scalar_out", "aten::mul.out"])
+        >>> with pytest.raises(pytest.fail.Exception):
+        ...     _fail_on_unexpected_keypoint_attention_residue(["aten::bmm.out"])
+    """
+    unexpected = sorted({op for op in attention_calls if op.split(".")[0] not in _KEYPOINT_ATTENTION_RESIDUE_OPS})
+    if unexpected or len(attention_calls) > _KEYPOINT_ATTENTION_RESIDUE_MAX_CALLS:
+        pytest.fail(
+            f"masked keypoint attention left {len(attention_calls)} portable call(s), expected at most "
+            f"{_KEYPOINT_ATTENTION_RESIDUE_MAX_CALLS} of {sorted(_KEYPOINT_ATTENTION_RESIDUE_OPS)}; "
+            f"unexpected op classes: {unexpected}"
+        )
 
 
 class _TinyConvNet(torch.nn.Module):
@@ -1264,12 +1339,9 @@ class TestExecutorchEndToEnd:
 
         The keypoint model is expected to fail: its keypoint-instance self-attention passes ``keypoint_class_mask`` as
         its mask, and ``decompose_attention`` leaves masked calls to the default decomposition, which leaves 12 portable
-        ``eq``/``mul`` calls (ExecuTorch 1.3.1). ``strict=True`` makes the test report when that is fixed.
+        ``eq``/``mul`` calls (ExecuTorch 1.3.1). The xfail absorbs only that ``AssertionError``, and ``strict=True``
+        makes the test report when it is fixed; more calls or another op class fail the test outright.
         """
-        if request.node.callspec.params["exported"][0] == "RFDETRKeypointPreview":
-            request.applymarker(
-                pytest.mark.xfail(reason="masked keypoint self-attention is not decomposed for XNNPACK", strict=True)
-            )
         _, _, pte_path, _ = exported
         portable_ops = _portable_kernel_call_names(pte_path)
         attention_ops = {
@@ -1283,6 +1355,15 @@ class TestExecutorchEndToEnd:
             "aten::permute_copy",
         }
         attention_calls = [op for op in portable_ops if op.split(".")[0] in attention_ops]
+        if request.node.callspec.params["exported"][0] == "RFDETRKeypointPreview":
+            request.applymarker(
+                pytest.mark.xfail(
+                    raises=AssertionError,
+                    reason="masked keypoint self-attention is not decomposed for XNNPACK",
+                    strict=True,
+                )
+            )
+            _fail_on_unexpected_keypoint_attention_residue(attention_calls)
         assert not attention_calls, (
             f"{len(attention_calls)} portable attention kernel call(s) in {pte_path.name}: "
             f"{sorted(set(attention_calls))}"
@@ -1315,19 +1396,40 @@ class TestExecutorchEndToEnd:
         _assert_well_conditioned(model, example)
         validate_fn(pte_path, model, example)
 
-    def test_default_query_count_runs_with_eager_shapes(
-        self, executorch_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    def test_multiclass_keypoint_outputs_match_pytorch(
+        self, executorch_multiclass_keypoint_export: tuple[Any, torch.Tensor, Path]
     ) -> None:
-        """The shipped query count lowers and runs, with the eager shapes and finite values.
+        """Keypoints from a non-zero keypoint head behind a cross-class attention mask must match the eager forward.
+
+        The ``keypoint`` variant's zero-initialised keypoint head yields zeros in both runs, so this is the export whose
+        keypoint values depend on the lowered decoder and mask. The first two checks keep it from going vacuous too.
+        """
+        model, example, pte_path = executorch_multiclass_keypoint_export
+        assert bool(model.transformer.decoder.keypoint_class_mask.any())
+        assert bool(eager_reference_tensors(model, example)[2].any()), "reseeded keypoint head still outputs zeros"
+        _assert_well_conditioned(model, example)
+        validate_executorch_vs_pytorch(
+            pte_path,
+            model,
+            example,
+            output_names=("boxes", "logits", "keypoints"),
+            bound=_EXECUTORCH_DETECTION_MAX_ABS_DIFF,
+        )
+
+    def test_default_query_count_runs_with_eager_shapes(
+        self, executorch_default_queries_export: tuple[Any, torch.Tensor, Path, Any]
+    ) -> None:
+        """The shipped query count lowers and runs, with the eager shapes, float32 outputs and finite values.
 
         Values are not compared: at this count the two-stage selection scores of an untrained model sit about 1e-6
         apart (see ``_EXECUTORCH_E2E_NUM_QUERIES``), so a rank swap would fail a value comparison for a reason that
         has nothing to do with the lowering.
         """
-        model, example, pte_path = executorch_default_queries_export
+        model, example, pte_path, _ = executorch_default_queries_export
         eager = eager_reference_tensors(model, example)
         runtime = _executorch_runtime_tensors(pte_path, example)
         assert [tuple(r.shape) for r in runtime] == [tuple(e.shape) for e in eager]
+        assert {r.dtype for r in runtime} == {torch.float32}
         assert all(bool(torch.isfinite(r).all()) for r in runtime)
 
     def test_backbone_outputs_match_pytorch_structured(
@@ -1337,9 +1439,9 @@ class TestExecutorchEndToEnd:
         model, example, pte_path = executorch_backbone_export
         assert "-backbone" in pte_path.stem
         diffs = _runtime_parity(model, example, pte_path)
-        assert max(diffs) < _EXECUTORCH_DETECTION_MAX_ABS_DIFF, (
+        assert all(diff < _EXECUTORCH_DETECTION_MAX_ABS_DIFF for diff in diffs), (
             "ExecuTorch backbone outputs diverge from PyTorch: "
-            f"max abs diff {max(diffs)} (bound={_EXECUTORCH_DETECTION_MAX_ABS_DIFF})"
+            f"max abs diffs {diffs} (bound={_EXECUTORCH_DETECTION_MAX_ABS_DIFF})"
         )
 
     def test_preprocessed_image_detections_match_pytorch(
@@ -1357,9 +1459,11 @@ class TestExecutorchEndToEnd:
         absorbs a permutation of whole output rows but not a two-stage near-tie swap: each selected proposal is paired
         with a positional learned ``query_feat``/``refpoint_embed``, so a swap changes the decoder output, not only its
         order. One forced swap moved an untrained Nano's scores by 4.3e-4 to 1.14e-3 (macOS arm64), the order of this
-        test's bound, so the test runs on the pretrained checkpoints. ``_assert_well_conditioned`` is not applied:
-        their 300-query margins on this photo are below ``_MIN_TWO_STAGE_RANK_MARGIN`` (1.6e-5 for Nano, 1.0e-5 for
-        the keypoint model, Linux x86-64).
+        test's bound, so the test runs on the pretrained checkpoints. At their shipped query counts the margins on
+        this photo are below ``_MIN_TWO_STAGE_RANK_MARGIN`` (1.6e-5 for Nano, 1.0e-5 for the keypoint model, Linux
+        x86-64), so ``exported_pretrained`` keeps ``_EXECUTORCH_E2E_NUM_QUERIES`` queries and
+        ``_assert_well_conditioned`` checks the margin on every run. The stride fault still moves those 5-query scores
+        by 6.4e-3 or more (keypoint model; 0.33 and 0.47 for the others, eager simulation on macOS arm64).
         """
         from PIL import Image
 
@@ -1370,6 +1474,7 @@ class TestExecutorchEndToEnd:
         image = Image.open(photo_asset).convert("RGB")
         tensor, _ = infer_transforms((resolution, resolution))(image, None)
         pixel_values = tensor[None].float()
+        _assert_well_conditioned(model, pixel_values)
 
         _check_executorch_available(require_runtime=True)
         from executorch.runtime import Runtime
