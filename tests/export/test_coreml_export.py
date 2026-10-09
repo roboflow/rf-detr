@@ -474,6 +474,10 @@ class TestSaveMlmodelMetadata:
         [
             pytest.param("trained on pallets", "trained on pallets", id="string"),
             pytest.param({"run": 3, "classes": ["box"]}, json.dumps({"run": 3, "classes": ["box"]}), id="json"),
+            pytest.param("", "", id="empty-string"),
+            pytest.param(0, "0", id="zero"),
+            pytest.param(False, "false", id="false"),
+            pytest.param([], "[]", id="empty-list"),
         ],
     )
     def test_notes_are_stored_under_the_onnx_key(self, tmp_path: Path, notes: object, stored: str) -> None:
@@ -1026,7 +1030,7 @@ class TestCoreMLEndToEnd:
         _, _, _, mlpackage_path, _ = coreml_export
         metadata = ct.models.MLModel(str(mlpackage_path), skip_model_load=True).user_defined_metadata
         assert metadata["rfdetr_notes"] == _COREML_E2E_NOTES
-        assert metadata["rfdetr_version"] == get_version()
+        assert metadata.get("rfdetr_version") == get_version()
         assert "com.github.apple.coremltools.version" in metadata
 
     def test_outputs_match_pytorch_structured(
