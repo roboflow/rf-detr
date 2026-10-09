@@ -63,7 +63,7 @@ train = [
     # truth, `COCO.load_res(array, segmentation=...)` for box and mask predictions, and
     # `COCO.update_anns(ids=..., area=...)` to switch prediction areas between IoU types in place (its `dataset` getter
     # returns a copy, so an edit through it never lands). Release 1.2.1 stops warning about the float32 threshold
-    # grids, which the narrowed warning filter in `_silenced_backend_diagnostics` assumes, and raises `ValueError` for
+    # grids, which the narrowed warning filter in `_silenced_backend_diagnostics` assumes, and raises `RuntimeError` for
     # a NaN score. `_HotCocoBackend` refuses an install that lacks a symbol the adapter calls; the 1.2.1 floor itself is
     # enforced only by this requirement. 1.2.1 rejects a fractional category or image id but accepts a whole-valued
     # float one, so the adapter checks label dtypes itself. The ceiling keeps the parity-tested 1.2 line until the next minor is verified against the
