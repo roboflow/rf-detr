@@ -373,7 +373,7 @@ class TestUpdateMetricsWorkflow:
         assert "git diff --quiet -- docs/assets/weekly-metrics.svg" in run
         assert "git add -- docs/assets/weekly-metrics.svg" in run
         assert 'git commit -m "docs: update weekly project metrics"' in run
-        assert 'git ls-remote --exit-code --heads origin "$METRICS_BRANCH" | awk \'{print $1}\'' in run
+        assert "git ls-remote --exit-code --heads origin \"$METRICS_BRANCH\" | awk '{print $1}'" in run
         assert "ls_remote_status=$?" in run
         assert 'if [ "$ls_remote_status" -eq 0 ]; then' in run
         assert 'elif [ "$ls_remote_status" -eq 2 ]; then' in run
