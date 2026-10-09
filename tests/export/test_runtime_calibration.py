@@ -21,12 +21,11 @@ from unittest import mock
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from rfdetr.export._runtime import calibration
 from rfdetr.export._runtime.calibration import IMAGE_SUFFIXES, _arrays_from_samples, _image_paths, calibration_batches
 from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
-
-Image = pytest.importorskip("PIL.Image")
 
 
 def _save_image(path: Path, *, mode: str = "RGB", size: tuple[int, int] = (12, 9), seed: int = 0) -> Path:

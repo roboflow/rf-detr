@@ -38,9 +38,13 @@ from rfdetr.export._tensorrt.exporter import (
     TensorRTConfig,
     TensorRTExporter,
 )
+from rfdetr.export.imports import _IS_ONNXCONVERTER_COMMON_INSTALLED
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, box_iou
+from tests._markers import onnxruntime_only
 
+# Module-level on purpose: the parametrized ``CASES`` below build ONNX nodes while the module is collected, so a guarded
+# import would raise ``NameError`` instead of skipping. Moving every graph builder behind a local import is a follow-up.
 onnx = pytest.importorskip("onnx")
 from onnx import TensorProto, helper, numpy_helper  # noqa: E402
 
@@ -51,6 +55,9 @@ DECODER = "/transformer/decoder/layers.0/"
 #: Node-name prefix outside every quantized region (a detection head).
 HEAD = "/class_embed/"
 
+onnxconverter_common_only = pytest.mark.skipif(
+    not _IS_ONNXCONVERTER_COMMON_INSTALLED, reason="onnxconverter-common not installed (the FP16 graph rewrite)"
+)
 tensorrt_only = pytest.mark.skipif(
     not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
 )
@@ -1829,6 +1836,7 @@ class TestInt8SourceGraph:
                 pass
 
 
+@onnxruntime_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestCalibration:
@@ -1881,7 +1889,6 @@ class TestCalibration:
     def test_ranges_are_the_absolute_maximum_over_every_image(
         self, image_graph: Path, values: tuple[float, ...]
     ) -> None:
-        pytest.importorskip("onnxruntime")
         images = [np.full((1, 3, 4, 6), value, np.float32) for value in values]
         ranges = quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input", "features"], images)
         assert ranges == pytest.approx({"input": 5.0, "features": 15.0})
@@ -1889,7 +1896,6 @@ class TestCalibration:
     def test_calibration_data_is_closed_when_calibration_fails(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
     ) -> None:
-        pytest.importorskip("onnxruntime")
         generators: list[Iterator[np.ndarray]] = []
         real = calibration.calibration_batches
 
@@ -1919,7 +1925,6 @@ class TestCalibration:
     def test_too_few_images_are_warned_about(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path, images: int, warned: bool
     ) -> None:
-        pytest.importorskip("onnxruntime")
         messages: list[str] = []
         monkeypatch.setattr(calibration.logger, "warning", messages.append)
         samples = [np.zeros((1, 3, 4, 6), np.float32)] * images
@@ -1928,7 +1933,6 @@ class TestCalibration:
         assert bool(messages) is warned
 
     def test_calibrated_range_becomes_the_scale(self, image_graph: Path) -> None:
-        pytest.importorskip("onnxruntime")
         images = np.random.default_rng(0).standard_normal((3, 3, 4, 6)).astype(np.float32)
         with quantize.int8_source_graph(
             str(image_graph),
@@ -1945,7 +1949,6 @@ class TestCalibration:
         assert float(initializers[quantize_node.input[1]]) == float(expected)
 
     def test_no_image_is_refused(self, image_graph: Path) -> None:
-        pytest.importorskip("onnxruntime")
         with pytest.raises(ValueError, match="no image"):
             quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [])
 
@@ -1962,7 +1965,8 @@ class TestCalibration:
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
 
     def test_calibration_runs_on_the_cpu(self, monkeypatch: pytest.MonkeyPatch, image_graph: Path) -> None:
-        ort = pytest.importorskip("onnxruntime")
+        import onnxruntime as ort
+
         requested: list[object] = []
 
         def record(*_: object, providers: object = None, **__: object) -> None:
@@ -1980,7 +1984,8 @@ class TestCalibration:
         The probe adds one reduction per measured tensor; under the default order those raised peak host memory far
         above the plain graph's at a large calibration batch.
         """
-        ort = pytest.importorskip("onnxruntime")
+        import onnxruntime as ort
+
         requested: list[object] = []
 
         def record(*_: object, sess_options: object = None, **__: object) -> None:
@@ -1996,7 +2001,6 @@ class TestCalibration:
 
     @pytest.mark.parametrize("value", [np.nan, np.inf])
     def test_non_finite_calibration_image_is_refused(self, image_graph: Path, value: float) -> None:
-        pytest.importorskip("onnxruntime")
         # Not the first element: onnxruntime's ReduceMax skips a NaN anywhere else and returns a finite range.
         images = np.zeros((2, 3, 4, 6), np.float32)
         images[1, 0, 1, 2] = value
@@ -2018,7 +2022,6 @@ class TestCalibration:
         finite range for activations that are not; ``Sqrt`` of a negative value puts the NaN at the second element. The
         probe runs on the exported opset and on the lifted one.
         """
-        pytest.importorskip("onnxruntime")
         graph = helper.make_graph(
             [helper.make_node("Sqrt", ["x"], ["root"], "sqrt")],
             "nan",
@@ -2032,7 +2035,6 @@ class TestCalibration:
         assert ranges == {"root": np.inf}
 
     def test_range_too_large_for_an_fp16_scale_is_refused(self, image_graph: Path) -> None:
-        pytest.importorskip("onnxruntime")
         images = np.full((2, 3, 4, 6), 1e8, np.float32)  # finite, but 1e8 / 127 overflows FP16
         with pytest.raises(ValueError, match="does not fit an FP16 scale"):
             with quantize.int8_source_graph(
@@ -2048,7 +2050,6 @@ class TestCalibration:
     def test_range_that_is_not_finite_is_refused(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path, value: float
     ) -> None:
-        pytest.importorskip("onnxruntime")
         monkeypatch.setattr(
             quantize, "calibrate_ranges", lambda _path, _model, tensors, _batches: dict.fromkeys(tensors, value)
         )
@@ -2064,7 +2065,7 @@ class TestCalibration:
                 pass
 
     def test_probe_is_removed_when_the_session_fails(self, monkeypatch: pytest.MonkeyPatch, image_graph: Path) -> None:
-        ort = pytest.importorskip("onnxruntime")
+        import onnxruntime as ort
 
         def refuse(*_: object, **__: object) -> None:
             raise RuntimeError("session failed")
@@ -2074,11 +2075,10 @@ class TestCalibration:
             quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [np.zeros((1, 3, 4, 6))])
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
 
+    @onnxconverter_common_only
     def test_intermediates_are_removed_when_the_rewrite_fails(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
     ) -> None:
-        pytest.importorskip("onnxruntime")
-        pytest.importorskip("onnxconverter_common")
 
         def fail(*_: object, **__: object) -> None:
             raise RuntimeError("rewrite failed")
@@ -2123,9 +2123,8 @@ class TestCalibration:
                 pass
         assert seen == [2]
 
+    @onnxconverter_common_only
     def test_source_graph_is_quantized_and_cleaned_up(self, image_graph: Path) -> None:
-        pytest.importorskip("onnxruntime")
-        pytest.importorskip("onnxconverter_common")
         calibration = np.random.default_rng(0).standard_normal((3, 3, 4, 6)).astype(np.float32)
         with quantize.int8_source_graph(
             str(image_graph),
@@ -2143,6 +2142,7 @@ class TestCalibration:
     @pytest.mark.parametrize(
         "error", [pytest.param(RuntimeError, id="error"), pytest.param(KeyboardInterrupt, id="interrupt")]
     )
+    @onnxconverter_common_only
     def test_quantized_graph_is_removed_when_the_build_fails(
         self, image_graph: Path, error: type[BaseException]
     ) -> None:
@@ -2151,8 +2151,6 @@ class TestCalibration:
         TensorRT parses and builds inside the ``with`` block; a failure or Ctrl+C there must not leave the intermediate
         graph beside the user's export.
         """
-        pytest.importorskip("onnxruntime")
-        pytest.importorskip("onnxconverter_common")
         images = np.zeros((2, 3, 4, 6), np.float32)
         with pytest.raises(error):
             with quantize.int8_source_graph(
@@ -2165,6 +2163,7 @@ class TestCalibration:
                 raise error()
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
 
+    @onnxconverter_common_only
     def test_quantized_graph_that_cannot_be_removed_is_reported(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
     ) -> None:
@@ -2172,8 +2171,6 @@ class TestCalibration:
 
         Deletion is patched to fail only inside the ``with`` block, so calibration and its own warnings run as usual.
         """
-        pytest.importorskip("onnxruntime")
-        pytest.importorskip("onnxconverter_common")
         messages: list[str] = []
 
         def locked(self: Path, missing_ok: bool = False) -> None:
@@ -2196,7 +2193,8 @@ class TestCalibration:
 
         The session is made to fail so that calibration ends right after the probe was written.
         """
-        ort = pytest.importorskip("onnxruntime")
+        import onnxruntime as ort
+
         messages: list[str] = []
 
         def refuse(*_: object, **__: object) -> None:
@@ -2255,8 +2253,8 @@ class TestNanoInt8Plan:
             "INT8 attention in 9 of 12 backbone attention blocks"
         ]
 
+    @onnxconverter_common_only
     def test_rewritten_graph_is_valid_onnx(self, nano_onnx: Path, plan: quantize.Int8Plan) -> None:
-        pytest.importorskip("onnxconverter_common")
         from rfdetr.export._tensorrt.exporter import fp16_source_graph
 
         with fp16_source_graph(str(nano_onnx)) as fp16_path:

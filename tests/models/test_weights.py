@@ -23,7 +23,10 @@ from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
 from rfdetr.models.weights import _warn_on_partial_load, apply_lora, load_pretrain_weights
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.utilities.imports import _IS_PEFT_INSTALLED
 from rfdetr.utilities.reproducibility import seed_all
+
+peft_only = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installed; `pip install rfdetr[lora]`")
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -761,7 +764,6 @@ def lora_checkpoint(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, tor
 
         >>> lora_checkpoint(None)  # doctest: +SKIP
     """
-    pytest.importorskip("peft")
     seed_all(_LORA_CHECKPOINT_SEED)
     source = _build_nano("inference", None, backbone_lora=True).eval()
     _perturb_parameters(source)
@@ -787,6 +789,7 @@ def plain_checkpoint(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
+@peft_only
 class TestLoadPretrainWeightsLoraCheckpoint:
     """A checkpoint saved by a ``backbone_lora=True`` run reloads with its trained encoder (#1540).
 
@@ -842,7 +845,6 @@ class TestLoadPretrainWeightsLoraCheckpoint:
         This is how a LoRA fine-tune starts from the COCO weights. Fresh adapters are an identity, so the wrapped
         encoder must compute what the same checkpoint computes without LoRA.
         """
-        pytest.importorskip("peft")
         with_lora = _build_nano("inference", plain_checkpoint, backbone_lora=True)
         without_lora = _build_nano("inference", plain_checkpoint)
 
