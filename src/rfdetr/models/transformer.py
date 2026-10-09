@@ -333,8 +333,12 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
-    dim_t = torch.arange(dim, dtype=pos_tensor.dtype, device=pos_tensor.device)
-    dim_t = 10000 ** (2 * (dim_t // 2) / dim)
+    # Computed in at least float32, as PositionEmbeddingSine does, then cast once to the positions' dtype. torch
+    # 2.14 lowers a half-precision ``dim_t // 2`` to ``libdevice.isinf`` on a float16 or bfloat16 operand, which
+    # Triton cannot compile (pytorch/pytorch#197002), so ``inference(dtype="float16",
+    # compile_backend="inductor")`` failed. float32 and float64 positions compute in their own dtype as before.
+    dim_t = torch.arange(dim, dtype=torch.promote_types(pos_tensor.dtype, torch.float32), device=pos_tensor.device)
+    dim_t = (10000 ** (2 * (dim_t // 2) / dim)).to(pos_tensor.dtype)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
     pos_x = x_embed[:, :, None] / dim_t
