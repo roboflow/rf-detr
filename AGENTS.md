@@ -60,8 +60,11 @@ As an AI agent contributing to RF-DETR, you are responsible for:
 # Install uv (if not already installed)
 pip install uv
 
-# Full development environment (always use this)
-uv sync --all-groups
+# Create the virtual environment
+uv venv
+
+# Install the extras and groups used by the CPU test job
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 ```
 
 **Prerequisites:** Python >=3.10 (tested on 3.10-3.14)
@@ -323,7 +326,7 @@ result = subprocess.run(
 
 ### Making Changes
 
-1. **Setup:** `uv sync --all-groups`
+1. **Setup:** Follow the [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) instructions.
 2. **Before changes:** Run tests to establish baseline
 3. **Development:**
     - Make minimal, focused changes

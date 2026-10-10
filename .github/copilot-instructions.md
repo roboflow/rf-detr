@@ -22,8 +22,11 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **Package Manager:** This project uses `uv` for all dependency management.
 
 ```bash
-# Development setup
-uv sync --all-groups
+# Create the environment
+uv venv
+
+# Install the dependencies used by the CPU test job
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Run tests (always before committing)
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
