@@ -49,6 +49,7 @@ from rfdetr.training.param_groups import (
     _PARAM_GROUP_SETTINGS,
     _apply_configured_param_group_settings,
     _build_param_dicts,
+    _configured_settings_fed_by,
     _explicit_param_group_settings,
     _resolve_resumed_param_group_settings,
     get_param_dict,
@@ -413,10 +414,10 @@ class RFDETRModelModule(LightningModule):
         # step loop and the epoch-end hook. Defaults keep pre-configure behaviour (per-step stepping).
         self._lr_scheduler_interval: str = "step"
         self._lr_scheduler_monitor: str | None = None
-        # (initial_lr, weight_decay) of each parameter group as configure_optimizers() built it, and whether
-        # on_train_start() puts them back over the ones a resumed checkpoint restores (#1613).
+        # (initial_lr, weight_decay) of each parameter group as configure_optimizers() built it, and the explicit
+        # settings whose groups on_train_start() puts back over the ones a resumed checkpoint restores (#1613).
         self._configured_param_group_settings: list[tuple[float, float | None]] = []
-        self._reapplies_param_group_settings: bool = False
+        self._reapplied_param_group_settings: list[str] = []
         self._restarts_groups_without_base: bool = False
         self._accumulated_box_normalizer: Tensor | None = None
         # Set by _clip_manual_optimization_gradients (proof that on_before_optimizer_step actually ran
@@ -650,8 +651,8 @@ class RFDETRModelModule(LightningModule):
         replays a captured graph or stays eager.
 
         When the run resumed a checkpoint's optimizer state with a learning-rate or weight-decay setting passed
-        explicitly, :meth:`_reapply_configured_param_group_settings` then gives its parameter groups the values this run
-        configured.
+        explicitly, :meth:`_reapply_configured_param_group_settings` then gives the parameter groups that setting feeds
+        the values this run configured.
 
         Lightning restores optimizer state after ``on_fit_start``.  Fused AdamW is strict about the dtype, device, and
         layout of its moment tensors, so resuming from a checkpoint can fail if Lightning rehydrates those tensors in a
@@ -659,9 +660,9 @@ class RFDETRModelModule(LightningModule):
         resumed optimizer compatible without discarding the saved momentum state.
         """
         self._configure_cuda_graph_runner()
-        if self._reapplies_param_group_settings:
-            self._reapplies_param_group_settings = False
+        if self._reapplied_param_group_settings:
             self._reapply_configured_param_group_settings()
+            self._reapplied_param_group_settings = []
 
         if not self._use_fused_optimizer:
             return
@@ -693,8 +694,10 @@ class RFDETRModelModule(LightningModule):
         """Give the optimizer restored from a checkpoint the learning rates and weight decay this run configured.
 
         ``trainer.fit(ckpt_path=...)`` restores them from the checkpoint after :meth:`configure_optimizers` built them
-        from ``train_config``, which used to drop a changed ``lr`` without a word (#1613). Momentum and the schedule's
-        progress carry over; see :func:`~rfdetr.training.param_groups._apply_configured_param_group_settings`.
+        from ``train_config``, which used to drop a changed ``lr`` without a word (#1613). Only the groups that a
+        setting passed explicitly feeds change: the rest keep what the checkpoint's optimizer holds, which the ``args``
+        a resume hit by #1613 recorded may not match. Momentum and the schedule's progress carry over; see
+        :func:`~rfdetr.training.param_groups._apply_configured_param_group_settings`.
         """
         optimizer = self.optimizers(use_pl_optimizer=False)
         if not isinstance(optimizer, torch.optim.Optimizer) or len(self._configured_param_group_settings) != len(
@@ -704,14 +707,34 @@ class RFDETRModelModule(LightningModule):
             # and may return several optimizers.
             if self.global_rank == 0:
                 logger.warning(
-                    "configure_optimizers was replaced, so the resumed optimizer keeps the learning rates and weight "
-                    "decay it saved instead of the ones set for this run."
+                    "configure_optimizers was replaced (or the optimizer is not a torch.optim.Optimizer), so the "
+                    "resumed optimizer keeps the learning rates and weight decay it saved instead of the ones set for "
+                    "this run."
+                )
+            return
+        configured = _configured_settings_fed_by(
+            self._reapplied_param_group_settings,
+            self._configured_param_group_settings,
+            optimizer,
+            _namespace_from_configs(self.model_config, self.train_config),
+            lambda namespace: get_param_dict(namespace, getattr(self.model, "_orig_mod", self.model)),
+        )
+        if not any(setting is not None for pair in configured for setting in pair):
+            # No trainable parameter takes these settings (a frozen encoder drops the encoder's), or the optimizer
+            # holds parameters other than the model's own (FSDP and DeepSpeed flatten them), so no group could be
+            # matched with what a setting feeds, and the resumed values would pass unchanged.
+            if self.global_rank == 0:
+                logger.warning(
+                    "No parameter group of the resumed optimizer is fed by %s (no trainable parameter takes it, or the "
+                    "strategy replaced the model's parameters, as FSDP and DeepSpeed do), so it keeps the learning "
+                    "rates and weight decay it saved instead of the ones set for this run.",
+                    ", ".join(self._reapplied_param_group_settings),
                 )
             return
         changed = _apply_configured_param_group_settings(
             optimizer,
             self._current_lr_scheduler(),
-            self._configured_param_group_settings,
+            configured,
             restart_without_base=self._restarts_groups_without_base,
         )
         if changed and self.global_rank == 0:
@@ -2034,15 +2057,16 @@ class RFDETRModelModule(LightningModule):
         optimizer from the resolved config; every checkpoint this run writes records it.
 
         When ``train_config`` sets any of these explicitly, :meth:`on_train_start` compares each restored parameter
-        group with what this run configured and puts back the ones that differ. The comparison is per group rather than
-        against ``args``, because a resume hit by #1613 recorded ``args`` its optimizer never trained with; a resume
-        that sets none of them continues exactly as saved. A group saved without the learning rate it started from (a
-        ``ReduceLROnPlateau`` checkpoint from an earlier release) can only restart at the configured one, which happens
-        only when a learning-rate setting changed.
+        group those settings feed with what this run configured and puts back the ones that differ; a group they do not
+        feed keeps what the checkpoint's optimizer holds, even where ``args`` records another value. The comparison is
+        per group rather than against ``args``, because a resume hit by #1613 recorded ``args`` its optimizer never
+        trained with; a resume that sets none of them continues exactly as saved. A group saved without the learning
+        rate it started from (a ``ReduceLROnPlateau`` checkpoint from an earlier release) can only restart at the
+        configured one, which happens only when a learning-rate setting changed.
 
         A checkpoint written before rfdetr 1.11.1 records no ``args``. Resuming one without setting any of these keeps
-        its saved values; setting one applies the config as given, and the settings left out take their defaults, with
-        a warning naming them.
+        its saved values; setting one applies the config as given to the groups it feeds, and the settings left out
+        take their defaults there, with a warning naming them.
 
         Args:
             checkpoint: Checkpoint dict carrying optimizer state, as passed to :meth:`on_load_checkpoint`.
@@ -2050,7 +2074,7 @@ class RFDETRModelModule(LightningModule):
         explicit = _explicit_param_group_settings(self.train_config)
         self.train_config, restored, overridden = _resolve_resumed_param_group_settings(self.train_config, checkpoint)
         recorded = isinstance(checkpoint.get("args"), dict)
-        self._reapplies_param_group_settings = bool(explicit)
+        self._reapplied_param_group_settings = explicit
         changed = overridden if recorded else explicit
         self._restarts_groups_without_base = any(name != "weight_decay" for name in changed)
         # global_rank, not trainer.is_global_zero: load_from_checkpoint calls this hook with no trainer attached.
@@ -2062,7 +2086,7 @@ class RFDETRModelModule(LightningModule):
                 logger.warning(
                     "The resumed checkpoint does not record the settings it was trained with (it predates rfdetr "
                     "1.11.1), so with %s set explicitly, %s use their defaults rather than the values it was trained "
-                    "with.",
+                    "with in the parameter groups those settings feed.",
                     ", ".join(explicit),
                     ", ".join(unset),
                 )

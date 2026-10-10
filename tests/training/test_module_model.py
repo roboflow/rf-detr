@@ -3783,21 +3783,44 @@ def _module_with_restored_optimizer(
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as directory:
         ...     module, optimizer = _module_with_restored_optimizer(Path(directory), [(0.1, 0.0)], restarts=True)
-        >>> optimizer.param_groups[0]["lr"], module._reapplies_param_group_settings
-        (0.025, True)
+        >>> optimizer.param_groups[0]["lr"], module._reapplied_param_group_settings
+        (0.025, ['lr'])
     """
     module, *_ = _build_module(tmp_path=tmp_path)
     optimizer = torch.optim.AdamW([nn.Parameter(torch.zeros(1))], lr=0.025, weight_decay=0.0)
     module.optimizers = MagicMock(return_value=optimizer)
     module._current_lr_scheduler = MagicMock(return_value=None)
     module._configured_param_group_settings = configured
-    module._reapplies_param_group_settings = True
+    module._reapplied_param_group_settings = ["lr"]
     module._restarts_groups_without_base = restarts
     return module, optimizer
 
 
 class TestReapplyConfiguredParamGroupSettings:
     """``on_train_start`` puts the configured settings back over a resumed checkpoint's optimizer state (#1613)."""
+
+    @pytest.fixture(autouse=True)
+    def fed_by(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        """Stand in for the model-dependent mask: every explicit setting feeds every group.
+
+        Examples:
+            >>> fed_by  # doctest: +SKIP
+            A pytest fixture; it needs monkeypatch.
+        """
+        mock = MagicMock(side_effect=lambda names, configured, *_: configured)
+        monkeypatch.setattr("rfdetr.training.module_model._configured_settings_fed_by", mock)
+        return mock
+
+    def test_masks_the_configured_settings_by_the_explicit_ones(self, tmp_path: Path, fed_by: MagicMock) -> None:
+        """A group no explicit setting feeds keeps what the checkpoint's optimizer holds, stale ``args`` or not."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module._reapplied_param_group_settings = ["weight_decay"]
+        fed_by.side_effect = lambda names, configured, *_: [(None, weight_decay) for _, weight_decay in configured]
+
+        module._reapply_configured_param_group_settings()
+
+        assert fed_by.call_args.args[0] == ["weight_decay"]
+        assert optimizer.param_groups[0]["lr"] == 0.025
 
     @pytest.mark.parametrize(("restarts", "expected_lr"), [(True, 0.1), (False, 0.025)])
     def test_group_without_a_base_restarts_only_for_a_learning_rate_change(
@@ -3808,6 +3831,46 @@ class TestReapplyConfiguredParamGroupSettings:
         module._reapply_configured_param_group_settings()
 
         assert optimizer.param_groups[0]["lr"] == expected_lr
+
+    def test_settings_that_feed_no_group_leave_the_optimizer_alone_and_warn(
+        self,
+        tmp_path: Path,
+        fed_by: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Parameters the model does not own (FSDP, DeepSpeed) match no group; the resume must not pass silently."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        fed_by.side_effect = lambda names, configured, *_: [(None, None)] * len(configured)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.WARNING, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
+        assert "No parameter group of the resumed optimizer is fed by lr" in caplog.text
+
+    def test_weight_decay_alone_is_put_back(self, tmp_path: Path, fed_by: MagicMock) -> None:
+        """A resume that passes only ``weight_decay`` feeds no learning rate, but its weight decay still applies."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.05)], restarts=False)
+        module._reapplied_param_group_settings = ["weight_decay"]
+        fed_by.side_effect = lambda names, configured, *_: [(None, weight_decay) for _, weight_decay in configured]
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["weight_decay"] == 0.05
+
+    def test_on_train_start_reapplies_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A second ``fit`` of the module carries no resumed state to put back."""
+        module, _ = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module._reapply_configured_param_group_settings = MagicMock()
+        module._configure_cuda_graph_runner = MagicMock()
+        monkeypatch.setattr(RFDETRModelModule, "_use_fused_optimizer", False)
+
+        module.on_train_start()
+        module.on_train_start()
+
+        assert module._reapply_configured_param_group_settings.call_count == 1
 
     def test_logs_how_many_groups_changed(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -3864,7 +3927,7 @@ class TestFusedOptimizerResumeStateNormalization:
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
         module.train_config = SimpleNamespace(optimizer="adamw")
-        module._reapplies_param_group_settings = False
+        module._reapplied_param_group_settings = []
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -3903,7 +3966,7 @@ class TestFusedOptimizerResumeStateNormalization:
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
         module.train_config = SimpleNamespace(optimizer="adamw")
-        module._reapplies_param_group_settings = False
+        module._reapplied_param_group_settings = []
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -3942,7 +4005,7 @@ class TestFusedOptimizerResumeStateNormalization:
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
         module.train_config = SimpleNamespace(optimizer="adamw")
-        module._reapplies_param_group_settings = False
+        module._reapplied_param_group_settings = []
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True

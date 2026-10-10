@@ -866,7 +866,7 @@ def _resolve_resumed_optimizer_settings(config: TrainConfig) -> TrainConfig:
     except (RuntimeError, pickle.UnpicklingError) as exc:
         logger.debug("Could not read the training settings recorded in %s ahead of training: %s", resume, exc)
         return config
-    if not checkpoint.get("optimizer_states"):
+    if not isinstance(checkpoint, dict) or not checkpoint.get("optimizer_states"):
         return config
     return _resolve_resumed_param_group_settings(config, checkpoint)[0]
 
