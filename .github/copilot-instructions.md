@@ -10,7 +10,7 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 
 - **Project Type:** Python ML library (computer vision)
 - **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13, 3.14)
-- **License:** Apache 2.0 (Plus models under PML 1.0)
+- **License:** Apache 2.0, commercially usable out of the box (package, Nano–Large detection, every Seg size, Keypoint). Plus models use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on.
 
 > [!TIP]
 >

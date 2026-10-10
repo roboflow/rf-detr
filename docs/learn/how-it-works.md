@@ -155,20 +155,22 @@ You can run the same search on your own dataset on the [Roboflow platform](https
 
 ## RF-DETR vs. convolutional detectors
 
-| Question                    | Classic convolutional detector (YOLOv8, YOLO11)   | RF-DETR                                                     |
-| :-------------------------- | :------------------------------------------------ | :---------------------------------------------------------- |
-| How many predictions?       | One per grid cell per scale, thousands in total   | A fixed set of 300 queries                                  |
-| How are duplicates removed? | NMS after the network, with a tuned IoU threshold | Learned during training through one-to-one matching; no NMS |
-| How far can a feature see?  | Grows layer by layer with the receptive field     | Whole image in one global attention block                   |
-| Backbone pretraining        | Supervised, learned from labeled images           | DINOv2, self-supervised on a large curated image collection |
-| Changing model size         | Train each size separately                        | One NAS run covers Nano through Large                       |
-| Parameters                  | Small (YOLO11-N: 2.6 M)                           | Larger (RF-DETR-N: 30.5 M)                                  |
+| Question                    | Classic convolutional detector (YOLOv8, YOLO11)                                                            | RF-DETR                                                                                                |
+| :-------------------------- | :--------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
+| How many predictions?       | One per grid cell per scale, thousands in total                                                            | A fixed set of 300 queries                                                                             |
+| How are duplicates removed? | NMS after the network, with a tuned IoU threshold                                                          | Learned during training through one-to-one matching; no NMS                                            |
+| How far can a feature see?  | Grows layer by layer with the receptive field                                                              | Whole image in one global attention block                                                              |
+| Backbone pretraining        | Supervised, learned from labeled images                                                                    | DINOv2, self-supervised on a large curated image collection                                            |
+| Changing model size         | Train each size separately                                                                                 | One NAS run covers Nano through Large                                                                  |
+| Parameters                  | Small (YOLO11-N: 2.6 M)                                                                                    | Larger (RF-DETR-N: 30.5 M)                                                                             |
+| License                     | AGPL-3.0 — commercial use needs a license ([included on Roboflow cloud](https://roboflow.com/ultralytics)) | Apache 2.0 — free for commercial use (Nano through Large detection, every segmentation size, Keypoint) |
 
 What this buys you in practice, from the [Benchmarks](benchmarks.md) page (COCO val2017, NVIDIA T4, TensorRT FP16, batch size 1):
 
 - **Accuracy at lower latency.** At 4.4 ms, RF-DETR-M scores 54.7 AP50:95 and YOLO26-M scores 52.5; YOLO26-L needs 5.7 ms to reach 54.1. At the top end, RF-DETR-L reaches 56.5 at 6.8 ms, while YOLO26-X reaches 56.9 but needs 9.6 ms and YOLO11-X reaches 50.9 at 10.5 ms.
 - **Transfer to new domains.** On RF100-VL, an average over 100 diverse real-world datasets, RF-DETR-L scores 62.2 AP50:95 against 56.5 for YOLO11-L and 59.3 for YOLO26-L. The paper credits the DINOv2 backbone for part of the gain on small datasets, but this table does not isolate it: LW-DETR-L, built on a different backbone, also reaches 61.5.
 - **No post-processing to tune or to port.** An exported model needs only a top-k score selection after the forward pass. Compared with the default YOLOv8 and YOLO11 export path, there is no NMS implementation to reproduce in ONNX, TensorRT, CoreML, or any other runtime.
+- **A permissive license.** RF-DETR Nano through Large detection, every segmentation size and Keypoint are Apache 2.0, so you can ship them in a closed-source, commercial product, including self-hosted deployments, without paying a license fee or open-sourcing your code. YOLOv8, YOLO11 and YOLO26 are AGPL-3.0: using them in a commercial product or service means open-sourcing your application code or buying a commercial license. Deploying on Roboflow includes that license for every user; commercial self-hosting is an Enterprise add-on ([details](https://roboflow.com/ultralytics)).
 
 The trade-offs are real as well:
 
