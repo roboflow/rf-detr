@@ -1,5 +1,5 @@
 ---
-description: A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.
+description: A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.
 ---
 
 # How RF-DETR Works
@@ -10,6 +10,7 @@ description: A visual, intuition-first explanation of how RF-DETR works, why it 
     - Its backbone is DINOv2, a vision transformer pretrained without labels, which is why it adapts well to small and unusual datasets
     - Windowed attention keeps the backbone cheap, and deformable attention lets each query read only a few points of the image instead of all of them
     - Training uses one-to-one Hungarian matching, which is what teaches the model not to produce duplicates
+    - For instance segmentation, each query also paints its own mask: a dot product between the query and a shared map of pixel features, so mask, box and class always describe the same object
     - In the RF-DETR paper, one training run covers the Nano through Large sizes as points on a single accuracy–latency curve
 
 This page builds the idea up from scratch, one picture at a time. No prior knowledge of transformers is assumed. If you only want numbers, go to [Benchmarks](benchmarks.md); if you want to train, go to [Train Model](train/index.md).
@@ -125,7 +126,7 @@ model = RFDETRSmall()
 detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 ```
 
-Segmentation and keypoint models add a head that turns each query into a mask or a set of keypoints. The rest of the pipeline is the same.
+Segmentation and keypoint models add a head that turns each query into a mask or a set of keypoints. The rest of the pipeline is the same. [From boxes to masks](#from-boxes-to-masks-instance-segmentation) below shows how the segmentation head works.
 
 ## How it learns: matching, not sorting
 
@@ -142,6 +143,59 @@ Three further training details make this converge fast enough to be practical:
 - **Group DETR.** During training RF-DETR uses 13 independent groups of queries, each matched to the ground truth on its own. Every object therefore gets 13 positive queries per image instead of one, which is much more learning signal. At inference only one group of 300 queries is used, so this costs nothing at deployment time.
 - **IoU-aware classification.** The classification target for a matched query is not a plain 1. It blends the predicted score with the IoU of the predicted box, so the model learns to be confident in proportion to how well its box fits. Scores then rank boxes by quality as well as by class.
 - **A loss on every decoder layer.** Each decoder layer's output is supervised directly. One consequence is that later layers can be removed at inference and the earlier ones still produce useful boxes, which the next section relies on.
+
+## From boxes to masks: instance segmentation
+
+A box says roughly where an object is. Instance segmentation asks for its exact pixels, and keeps every object separate: two dogs lying on top of each other get two masks, not one "dog" region. RF-DETR-Seg does this without changing anything above. The backbone, the projector, the queries, the decoder and the matching all stay. One small head is added, and every query that claims an object also paints that object's mask.
+
+![The coarse memory feature map is upsampled to a quarter of the input resolution and refined by small convolutional blocks into per-pixel features. Each query embedding from the decoder passes through a small MLP. The mask logit at every pixel is the dot product of the query embedding with that pixel's feature, plus a bias, so every query paints its own mask; a query below the score threshold is dropped.](../assets/how-it-works/segmentation.svg){ loading=lazy }
+
+### A mask is a dot product
+
+The memory from Step 3 is too coarse for a mask: it holds one feature per patch. The segmentation head first upsamples it to a quarter of the input resolution, so the 384 × 384 input of RF-DETR-Seg Small becomes a 96 × 96 grid. A few small convolutional blocks, one per decoder layer, then refine it into **pixel features**. Each block is a depthwise 3 × 3 convolution followed by LayerNorm and a pointwise layer.
+
+The decoder already gives every query an embedding: the same vector that predicts its box and class. A small MLP adapts it for the mask. The mask logit at a pixel is then the dot product of that query embedding with the pixel's feature, plus one learned bias. A positive logit means "this pixel belongs to my object".
+
+Two consequences fall out of this design:
+
+- **All masks come from one matrix multiplication.** The pixel features are computed once per image and shared by every query. A mask costs one dot product per pixel, not a separate network run per object.
+- **Masks never need to be paired with boxes.** Mask, box and class come from the same query embedding, so they always describe the same object. Just as there is no NMS, there is no step that assigns masks to detections afterwards.
+
+!!! question "Pause and ponder"
+
+    The pixel features know nothing about any particular object; they are shared by all queries. So what makes the dog query light up only the dog's pixels, and not the cat's? The answer is in the query embedding: after self-attention with the other queries and cross-attention into the image, it encodes *which* object it claimed, and the dot product matches pixels that look like that object.
+
+### How the masks are learned
+
+Masks enter training in two places:
+
+- **Matching.** The cost of a (query, object) pair gains two mask terms next to the class, L1 and GIoU terms: a binary cross-entropy between the predicted and the true mask, and a Dice cost. A query whose box looks right but whose mask covers the wrong pixels becomes a worse match.
+- **The loss.** Each matched query is trained with the same two terms. Binary cross-entropy scores every pixel on its own. Dice scores the overlap of the whole shape, so a small object with few pixels still counts.
+
+Comparing every pixel of every mask with its target would be expensive, so training compares them only at sampled points, an idea from [PointRend](https://arxiv.org/abs/1912.08193). The loss takes one point for every 16 mask pixels. Three quarters of those points go where the prediction is least certain, with a logit close to 0, which is usually along object boundaries. The rest are spread at random. Because the mask is a dot product, the head can evaluate it directly at those points, and never builds the full masks during training.
+
+As with boxes, every decoder layer gets its own mask, and each one is supervised directly.
+
+### Reading the masks
+
+At inference, the queries scoring below your confidence threshold are dropped first. Only the remaining masks are upsampled to the original image size and cut at logit 0, which turns them into boolean masks. That ordering means a higher threshold also saves mask memory and time. There is still no NMS. Two overlapping objects are two queries, so they get two masks, and a pixel can belong to both.
+
+```python
+from rfdetr import RFDETRSegSmall
+
+model = RFDETRSegSmall()
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
+detections.mask  # boolean array, one (H, W) mask per detected object
+```
+
+The segmentation models use 12 pixel patches instead of 16, so their memory is finer at the same resolution. They also use fewer queries than detection at the small sizes:
+
+| Model              | Resolution [px] | Patch size [px] | Tokens [-] | Decoder layers [-] | Queries [-] | Mask grid [-] |
+| :----------------- | :-------------: | :-------------: | :--------: | :----------------: | :---------: | :-----------: |
+| RF-DETR-Seg Nano   |       312       |       12        |    676     |         4          |     100     |    78 × 78    |
+| RF-DETR-Seg Small  |       384       |       12        |   1,024    |         4          |     100     |    96 × 96    |
+| RF-DETR-Seg Medium |       432       |       12        |   1,296    |         5          |     200     |   108 × 108   |
+| RF-DETR-Seg Large  |       504       |       12        |   1,764    |         5          |     200     |   126 × 126   |
 
 ## One training run, a whole family of models
 
@@ -201,6 +255,7 @@ The closest relative is **LW-DETR**, which RF-DETR builds on. The paper lists wh
 
 - [Benchmarks](benchmarks.md): the full accuracy and latency tables behind the numbers on this page
 - [Run Model](run/detection.md): use a pretrained model in a few lines
+- [Run Segmentation](run/segmentation.md): predict instance masks with RF-DETR-Seg
 - [Train Model](train/index.md): fine-tune on your own dataset
 - [Export Model](../exports/index.md): deploy to ONNX, TensorRT, CoreML, and other runtimes
 - [RF-DETR paper](https://arxiv.org/abs/2511.09554): the full method and ablations

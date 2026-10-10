@@ -58,6 +58,46 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
 
+!!! note "Using COCO classes vs. fine-tuned model classes"
+
+    `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79). For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
+
+### Read the masks
+
+Segmentation models return one binary mask per instance in addition to the box, score and class. The masks are stored in `detections.mask`, a boolean array of shape `(N, H, W)` for `N` instances, which `supervision` annotators and utilities consume directly:
+
+```python
+import supervision as sv
+from rfdetr import RFDETRSegMedium
+
+model = RFDETRSegMedium()
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
+
+print(detections.mask.shape)  # (N, H, W)
+print(sv.mask_to_polygons(detections.mask[0]))  # polygon outline of the first instance
+print(detections.area)  # per-instance pixel area, computed from the masks
+```
+
+Instances scoring below `threshold` are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. Use `sv.MaskAnnotator` to draw filled masks, `sv.PolygonAnnotator` to draw outlines only, or `sv.BoxAnnotator` to overlay the boxes as well.
+
+### Preprocessing and inference backends
+
+`predict()` resizes without antialiasing by default (`antialias=False`), which matches checkpoints trained with the default CPU augmentation backend when `rfdetr[augment]` is installed (Albumentations). Pass `antialias=True` for checkpoints trained with torchvision resizing: the Kornia/GPU augmentation backend, the CPU backend without `rfdetr[augment]`, or older RF-DETR releases. Antialiasing costs a little extra preprocessing time per image. Exported models and the `rfdetr.export` runtime helpers always resize without antialiasing, so `antialias=True` results will not match them unless you pre-resize the image with antialiasing yourself.
+
+For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. Capture allocates a graph-private memory pool that persists for the graph's lifetime and scales with batch size, resolution and model. Segmentation models also carry the mask outputs in that pool, so expect higher memory cost than for detection. The backend was measured on detection RF-DETR Nano at batch size 1; segmentation models use the same path but are unmeasured. The default stays `"torchscript"`:
+
+```python
+model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
+```
+
+An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
+
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. It requires a compatible CUDA device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+
+```python
+model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
+```
+
 For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference. This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
 
 ```python
