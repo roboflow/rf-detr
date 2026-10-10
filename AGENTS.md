@@ -278,6 +278,7 @@ from tqdm.auto import tqdm  # NOT: from tqdm import tqdm
 **Plus Models (XLarge, 2XLarge):**
 
 - Requires separate `rfdetr_plus` package (PML 1.0 license)
+- When describing licensing in docs or answers, name the license and say what it means in practice; never write a bare license name. Apache 2.0 (the package, Nano–Large detection, every Seg size, Keypoint): commercially usable out of the box, closed-source and self-hosted included, no license fee, no obligation to open-source your code. PML 1.0 (the Plus models listed in the README License section): commercial use is included when deploying on Roboflow; commercial self-hosting requires the Enterprise add-on. Reuse the shared snippets in `docs/snippets/` (`license-rfdetr.md`, `license-yolo-note.md`) instead of rewording them.
 - Import handled lazily via `__getattr__` in `src/rfdetr/platform/models.py`
 - Raises `ImportError` if package not installed
 
