@@ -247,6 +247,8 @@ trainer.fit(module, datamodule, ckpt_path="output/last.ckpt")
 trainer.fit(module, datamodule, ckpt_path="output/checkpoint.pth")
 ```
 
+When the checkpoint carries optimizer state, `on_load_checkpoint` orders the learning-rate and weight-decay settings (`lr`, `lr_encoder`, `lr_vit_layer_decay`, `lr_component_decay`, `weight_decay`) as `model.train(resume=...)` does: a value the module's `TrainConfig` sets explicitly wins, and one it leaves out takes the value recorded in the checkpoint. A `TrainConfig` built from a complete mapping, as LightningCLI's parser and `TrainConfig(**json.load(f)["train_config"])` build it, marks every field as set, so there a setting counts as set when it differs from its default. The optimizer's moments and the schedule's progress carry over. A `configure_optimizers` of your own records nothing to compare with, so the resumed optimizer then keeps its saved learning rates and weight decay, and warns when one of these settings is set.
+
 > **Note:** When `checkpoint_interval=1`, no `last.ckpt` is written. Use `checkpoint_{epoch}.ckpt` (e.g. `output/checkpoint_epoch=4.ckpt`) to resume instead.
 
 If you need to persist a converted checkpoint on disk (for example to inspect it, share it, or use it outside of PTL), convert it explicitly before passing it to `trainer.fit`:

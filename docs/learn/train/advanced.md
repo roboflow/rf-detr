@@ -106,7 +106,9 @@ The training loop will automatically load:
 - Learning rate scheduler state
 - Training epoch number
 
-Resuming rewrites `training_config.json` in `output_dir` with the resumed run's own configuration — once when the run starts and again when it finishes — so a previous run's copy in that directory is replaced as soon as the resumed run begins.
+The optimizer's moments and the schedule's progress carry over. Its learning rates and weight decay follow the order defaults, then the checkpoint, then what you pass: an `lr`, `lr_encoder`, `lr_vit_layer_decay`, `lr_component_decay` or `weight_decay` you set to a new value replaces the checkpoint's, and one you leave out keeps the value the checkpoint records. A new `lr` becomes the base the schedule scales: a schedule that had decayed to 40% of the old `lr` continues at 40% of the new one. A scheduler that sets its own learning rates from `lr_scheduler_kwargs`, such as `OneCycleLR` or `CyclicLR`, ignores `lr` as it does in a fresh run, and a `ReduceLROnPlateau` checkpoint written by an earlier release restarts at a changed learning rate instead of keeping its reductions. A change that merges or splits parameter groups, such as `weight_decay` to or from `0`, does not fit the saved optimizer state, and loading the checkpoint fails. Resuming logs which values came from the checkpoint and which you set.
+
+Resuming rewrites `training_config.json` in `output_dir` with the resumed run's own configuration — once when the run starts and again when it finishes — so a previous run's copy in that directory is replaced as soon as the resumed run begins. Both this file and the checkpoints the resumed run writes record the settings above; with a `resume` that names no checkpoint file, such as `"last"`, only the checkpoints do. A `last.ckpt` written before rfdetr 1.11.1 does not record the settings it was trained with: resumed without any of them passed, it keeps its saved values while the files record the defaults; with one passed, that one applies and the ones you leave out take their defaults, with a warning naming them.
 
 !!! warning "Lightweight checkpoints resume without optimizer/scheduler state"
 
