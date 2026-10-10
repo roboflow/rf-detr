@@ -1016,10 +1016,16 @@ class TestConvertLegacyCheckpoint:
 
 
 class _FakeModule:
-    """Minimal object supporting attribute assignment for on_load_checkpoint tests."""
+    """Minimal object supporting attribute assignment for on_load_checkpoint tests.
+
+    A checkpoint carrying optimizer state also has the hook resolve the resumed learning-rate settings (#1613), which
+    reads ``train_config.model_fields_set`` and ``global_rank``.
+    """
 
     model_config = SimpleNamespace(positional_encoding_size=36)
-    train_config = SimpleNamespace(optimizer="torch.optim.AdamW")
+    train_config = TrainConfig(dataset_dir="data", optimizer="torch.optim.AdamW")
+    global_rank = 0
+    _adopt_resumed_param_group_settings = RFDETRModelModule._adopt_resumed_param_group_settings
 
 
 class TestOnLoadCheckpoint:

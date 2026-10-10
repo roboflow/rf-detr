@@ -8,14 +8,24 @@
 # ------------------------------------------------------------------------
 """Functions to get params dict."""
 
+import copy
+from bisect import bisect_right
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
-from torch import nn
+from torch import Tensor, nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
+from rfdetr.config import TrainConfig
 from rfdetr.models.backbone import Joiner
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+#: ``TrainConfig`` settings that set a parameter group's learning rate or weight decay, read by
+#: :func:`_build_param_dicts` and the backbone's ``get_named_param_lr_pairs``.
+_PARAM_GROUP_SETTINGS = ("lr", "lr_encoder", "lr_vit_layer_decay", "lr_component_decay", "weight_decay")
 
 
 def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
@@ -277,3 +287,314 @@ def _regroup_scheduler_lists(scheduler_state: dict[str, Any], unmerged_count: in
                     _regroup_scheduler_lists(nested_state, unmerged_count, buckets)
         elif isinstance(value, list) and len(value) == unmerged_count:
             scheduler_state[key] = [value[bucket[0]] for bucket in buckets]
+
+
+def _explicit_param_group_settings(train_config: TrainConfig) -> list[str]:
+    """Return the settings in :data:`_PARAM_GROUP_SETTINGS` that the caller of a resumed run chose.
+
+    That is ``model_fields_set``, except for a config built from a complete mapping: LightningCLI's parser (``rfdetr
+    fit``) and ``TrainConfig(**json.load(f)["train_config"])`` on a current ``training_config.json`` mark every field
+    as set, so membership says nothing about what the caller chose. For such a config a setting counts when it differs
+    from its default.
+
+    Args:
+        train_config: Config of the resumed run.
+
+    Returns:
+        The chosen settings, in :data:`_PARAM_GROUP_SETTINGS` order.
+
+    Examples:
+        >>> _explicit_param_group_settings(TrainConfig(dataset_dir="data", lr=1e-4))
+        ['lr']
+        >>> complete = TrainConfig(**TrainConfig(dataset_dir="data", weight_decay=5e-4).model_dump())
+        >>> _explicit_param_group_settings(complete)
+        ['weight_decay']
+    """
+    fields = type(train_config).model_fields
+    if train_config.model_fields_set >= fields.keys():
+        return [name for name in _PARAM_GROUP_SETTINGS if getattr(train_config, name) != fields[name].default]
+    return [name for name in _PARAM_GROUP_SETTINGS if name in train_config.model_fields_set]
+
+
+def _resolve_resumed_param_group_settings(
+    train_config: TrainConfig, checkpoint: Mapping[str, Any]
+) -> tuple[TrainConfig, dict[str, Any], dict[str, tuple[Any, Any]]]:
+    """Order a resumed run's parameter-group settings as defaults, then the checkpoint, then the caller (#1613).
+
+    A setting in :data:`_PARAM_GROUP_SETTINGS` that the caller left out takes the value recorded in the checkpoint's
+    ``args``, and one they set keeps their value; :func:`_explicit_param_group_settings` tells the two apart. A
+    checkpoint without ``args`` (a ``last.ckpt`` written before rfdetr 1.11.1) records nothing to take, so the config
+    is returned as it is.
+
+    Args:
+        train_config: Config of the resumed run.
+        checkpoint: The checkpoint being resumed, or at least its ``args``.
+
+    Returns:
+        ``(resolved, restored, overridden)``: the config to train with, whose ``model_fields_set`` leaves out what it
+        took from the checkpoint; the settings taken from the checkpoint; and ``{name: (recorded, set)}`` for each
+        setting the caller set to a value other than the recorded one.
+
+    Examples:
+        >>> config = TrainConfig(dataset_dir="data", lr=1e-5)
+        >>> resolved, restored, overridden = _resolve_resumed_param_group_settings(
+        ...     config, {"args": {"lr": 5e-5, "weight_decay": 2e-4}}
+        ... )
+        >>> resolved.lr, resolved.weight_decay, restored, overridden
+        (1e-05, 0.0002, {'weight_decay': 0.0002}, {'lr': (5e-05, 1e-05)})
+    """
+    recorded = checkpoint.get("args")
+    if not isinstance(recorded, dict):
+        return train_config, {}, {}
+    explicit = _explicit_param_group_settings(train_config)
+    restored = {name: recorded[name] for name in _PARAM_GROUP_SETTINGS if name in recorded and name not in explicit}
+    overridden = {
+        name: (recorded[name], getattr(train_config, name))
+        for name in _PARAM_GROUP_SETTINGS
+        if name in recorded and name in explicit and recorded[name] != getattr(train_config, name)
+    }
+    resolved = train_config.model_copy(update=restored)
+    # The caller did not set these; same convention as RFDETR.from_checkpoint's checkpoint-derived num_classes.
+    resolved.model_fields_set.difference_update(restored)
+    return resolved, restored, overridden
+
+
+def _configured_settings_fed_by(
+    names: Sequence[str],
+    configured: list[tuple[float, float | None]],
+    optimizer: Optimizer,
+    args: Any,
+    build: Callable[[Any], list[dict[str, Any]]],
+) -> list[tuple[float | None, float | None]]:
+    """Keep the configured setting of each parameter group only where one of ``names`` feeds it.
+
+    A setting the caller left out is no part of what a resumed run changes: its groups keep the value the checkpoint's
+    optimizer holds, which a stale ``args`` of a run hit by #1613 may not match. Which groups a setting feeds is read
+    off the parameter groups themselves: every named setting is moved, and a parameter whose learning rate or weight
+    decay moves with them is fed by them. A group is fed when any of its parameters is.
+
+    Args:
+        names: The settings the caller chose, from :data:`_PARAM_GROUP_SETTINGS`.
+        configured: ``(initial_lr, weight_decay)`` of each group as ``configure_optimizers`` built it.
+        optimizer: The optimizer, whose groups ``configured`` describes in order.
+        args: Namespace the parameter groups were built from; not modified.
+        build: Builds the parameter groups from such a namespace, as ``configure_optimizers`` does.
+
+    Returns:
+        ``configured`` with ``None`` for a learning rate or weight decay that no named setting feeds.
+
+    Examples:
+        >>> import torch
+        >>> from types import SimpleNamespace
+        >>> head, encoder = torch.nn.Parameter(torch.zeros(1)), torch.nn.Parameter(torch.zeros(1))
+        >>> def build(args):
+        ...     return [{"params": [head], "lr": args.lr}, {"params": [encoder], "lr": args.lr_encoder}]
+        >>> args = SimpleNamespace(lr=1e-4, lr_encoder=1e-3, weight_decay=1e-4)
+        >>> optimizer = torch.optim.AdamW(build(args), lr=args.lr, weight_decay=args.weight_decay)
+        >>> configured = [(group["lr"], group["weight_decay"]) for group in optimizer.param_groups]
+        >>> _configured_settings_fed_by(["lr_encoder"], configured, optimizer, args, build)
+        [(None, None), (0.001, None)]
+    """
+    probe = copy.copy(args)
+    for name in names:
+        # Shifted past any value a setting can sit at, zero included, so a parameter it feeds moves.
+        setattr(probe, name, getattr(args, name) * 2 + 1)
+
+    def settings(namespace: Any) -> dict[int, tuple[float, float]]:
+        """Map each parameter's id to the learning rate and weight decay ``build`` gives it under ``namespace``."""
+        found = {}
+        for group in build(namespace):
+            # ``torch.optim`` takes a bare tensor as a group's ``params`` as well as a list.
+            members = [group["params"]] if isinstance(group["params"], Tensor) else group["params"]
+            # A group without its own weight decay inherits the optimizer's, which is the setting itself.
+            weight_decay = group.get("weight_decay", namespace.weight_decay)
+            found.update({id(param): (group["lr"], weight_decay) for param in members})
+        return found
+
+    before, after = settings(args), settings(probe)
+    lr_fed = {key for key, (lr, _) in before.items() if lr != after[key][0]}
+    weight_decay_fed = {key for key, (_, weight_decay) in before.items() if weight_decay != after[key][1]}
+    return [
+        (
+            lr if any(id(param) in lr_fed for param in group["params"]) else None,
+            weight_decay if any(id(param) in weight_decay_fed for param in group["params"]) else None,
+        )
+        for group, (lr, weight_decay) in zip(optimizer.param_groups, configured, strict=True)
+    ]
+
+
+def _apply_configured_param_group_settings(
+    optimizer: Optimizer,
+    scheduler: LRScheduler | ReduceLROnPlateau | None,
+    configured: list[tuple[float | None, float | None]],
+    *,
+    restart_without_base: bool = False,
+) -> int:
+    """Give each restored parameter group the base learning rate and weight decay this run configured.
+
+    Resuming from a checkpoint restores every group's ``lr``, ``initial_lr`` and ``weight_decay``, and the scheduler's
+    ``base_lrs``, over what ``configure_optimizers`` built (#1613). A group whose configured base differs takes it as
+    its new ``initial_lr`` and scheduler base, and its current ``lr`` is moved with it (see :func:`_rescaled_lr`), so
+    the schedule carries on from the step it reached instead of restarting: a cosine half-way down stays half-way
+    down, and ``ReduceLROnPlateau`` keeps its reductions.
+
+    A group restored without ``initial_lr`` (a ``ReduceLROnPlateau`` checkpoint written by an earlier rfdetr release)
+    has no base to compare or scale from: it keeps its restored ``lr`` unless ``restart_without_base`` is set, and then
+    restarts at its configured base, which is logged. A group restored at a zero base shows no schedule progress, so it
+    restarts at its configured base.
+
+    Args:
+        optimizer: The optimizer after Lightning restored its state.
+        scheduler: Its scheduler after Lightning restored its state, if any.
+        configured: ``(initial_lr, weight_decay)`` of each group as ``configure_optimizers`` built it, in group order;
+            ``weight_decay`` is ``None`` for an optimizer without one. ``None`` for either leaves the restored value as
+            it is, as :func:`_configured_settings_fed_by` marks a setting no explicit one feeds.
+        restart_without_base: Restart groups restored without ``initial_lr`` at their configured base; set when a
+            learning-rate setting changed.
+
+    Returns:
+        How many groups changed.
+
+    Examples:
+        >>> import torch
+        >>> optimizer = torch.optim.AdamW([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+        >>> scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 0.5**step)
+        >>> optimizer.step(); scheduler.step()
+        >>> _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 0.01)])
+        1
+        >>> scheduler.base_lrs, optimizer.param_groups[0]["lr"]
+        ([0.01], 0.005)
+    """
+    changed = 0
+    without_base = 0
+    kept_without_base = 0
+    for index, (group, (configured_lr, configured_weight_decay)) in enumerate(
+        zip(optimizer.param_groups, configured, strict=True)
+    ):
+        restored_lr = group.get("initial_lr")
+        lr_changed = False
+        if (
+            configured_lr is not None
+            and restored_lr != configured_lr
+            and (restored_lr is not None or restart_without_base)
+        ):
+            lr_changed = True
+            without_base += restored_lr is None
+            group["lr"] = _rescaled_lr(group["lr"], restored_lr, configured_lr, scheduler, index)
+            group["initial_lr"] = configured_lr
+            _set_scheduler_group_lr(scheduler, index, base_lr=configured_lr, lr=group["lr"])
+        elif configured_lr is not None and restored_lr is None:
+            kept_without_base += 1
+        weight_decay_changed = (
+            configured_weight_decay is not None and group.get("weight_decay") != configured_weight_decay
+        )
+        if weight_decay_changed:
+            group["weight_decay"] = configured_weight_decay
+        changed += lr_changed or weight_decay_changed
+    if without_base:
+        logger.warning(
+            "%d resumed parameter groups were saved without the learning rate they started from (a ReduceLROnPlateau "
+            "checkpoint written by an earlier rfdetr release), so they restart at the configured learning rate "
+            "instead of keeping the reductions already taken.",
+            without_base,
+        )
+    if kept_without_base:
+        logger.warning(
+            "%d resumed parameter groups were saved without the learning rate they started from and no learning-rate "
+            "setting differs from the checkpoint's record, so they keep the learning rate they saved.",
+            kept_without_base,
+        )
+    return changed
+
+
+def _active_scheduler(scheduler: object) -> object:
+    """Return the scheduler that sets the learning rate now: the wrapped one of a ``SequentialLR``, else itself.
+
+    Args:
+        scheduler: A scheduler, or ``None``.
+
+    Returns:
+        ``scheduler``, or the member of a ``SequentialLR`` its current step falls in, recursively.
+
+    Examples:
+        >>> import torch
+        >>> optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+        >>> warmup = torch.optim.lr_scheduler.LinearLR(optimizer, total_iters=2)
+        >>> cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=4)
+        >>> sequential = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup, cosine], milestones=[2])
+        >>> _active_scheduler(sequential) is warmup
+        True
+    """
+    milestones = getattr(scheduler, "_milestones", None)
+    members = getattr(scheduler, "_schedulers", None)
+    if isinstance(milestones, list) and isinstance(members, list):
+        return _active_scheduler(members[bisect_right(milestones, scheduler.last_epoch)])  # type: ignore[attr-defined]
+    return scheduler
+
+
+def _rescaled_lr(lr: float, old_base: float | None, new_base: float, scheduler: object, index: int) -> float:
+    """Move a group's current learning rate from its restored base to a new one, keeping its place in the schedule.
+
+    A schedule that scales its base (``LambdaLR``, warmup ramps, the managed presets, a plateau's reductions) is at the
+    same fraction of it, so ``lr`` scales by ``new_base / old_base``. A floor in absolute terms does not scale:
+    ``CosineAnnealingLR`` and ``CosineAnnealingWarmRestarts`` move between the base and ``eta_min``, so the distance
+    from ``eta_min`` scales; and ``ReduceLROnPlateau`` never goes below ``min_lrs`` nor above its base, so it is
+    clamped between them.
+
+    Args:
+        lr: The group's restored current learning rate.
+        old_base: The group's restored base, or ``None``/zero when there is none to scale from.
+        new_base: The configured base.
+        scheduler: The restored scheduler, or ``None``.
+        index: The group's position in the optimizer.
+
+    Returns:
+        The group's new current learning rate; ``new_base`` when there is no base to scale from.
+
+    Examples:
+        >>> import torch
+        >>> optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+        >>> scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=4, eta_min=0.01)
+        >>> round(_rescaled_lr(0.055, 0.1, 0.05, scheduler, 0), 4)
+        0.03
+        >>> _rescaled_lr(0.025, 0.1, 0.04, None, 0)
+        0.01
+    """
+    if not old_base:
+        return new_base
+    if isinstance(scheduler, ReduceLROnPlateau):
+        return max(lr * new_base / old_base, min(scheduler.min_lrs[index], new_base))
+    floor = getattr(_active_scheduler(scheduler), "eta_min", None)
+    if floor is None or old_base == floor:
+        return lr * new_base / old_base
+    return float(floor + (lr - floor) * (new_base - floor) / (old_base - floor))
+
+
+def _set_scheduler_group_lr(scheduler: object, index: int, *, base_lr: float, lr: float) -> None:
+    """Set one parameter group's base and last learning rate in ``scheduler`` and every scheduler it wraps.
+
+    A composite scheduler (``SequentialLR``, ``ChainedScheduler``) keeps the schedulers it wraps under ``_schedulers``,
+    and each closed-form one (``LambdaLR``, the managed presets) computes the group's rate from its own ``base_lrs``.
+
+    Args:
+        scheduler: A scheduler, or ``None``.
+        index: The parameter group's position in the optimizer.
+        base_lr: The group's new base learning rate.
+        lr: The group's new current learning rate.
+
+    Examples:
+        >>> import torch
+        >>> optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+        >>> scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1.0)
+        >>> _set_scheduler_group_lr(scheduler, 0, base_lr=0.2, lr=0.2)
+        >>> scheduler.base_lrs, scheduler.get_last_lr()
+        ([0.2], [0.2])
+    """
+    base_lrs = getattr(scheduler, "base_lrs", None)
+    if isinstance(base_lrs, list):
+        base_lrs[index] = base_lr
+    last_lrs = getattr(scheduler, "_last_lr", None)
+    if isinstance(last_lrs, list):
+        last_lrs[index] = lr
+    for nested in getattr(scheduler, "_schedulers", ()):
+        _set_scheduler_group_lr(nested, index, base_lr=base_lr, lr=lr)

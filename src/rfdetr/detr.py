@@ -12,6 +12,7 @@ import json
 import ntpath
 import operator
 import os
+import pickle
 import re
 import tempfile
 import threading
@@ -836,6 +837,40 @@ def _save_training_config(config: TrainConfig, model_config: ModelConfig, class_
         logger.warning("Could not save training_config.json to %s.", config.output_dir, exc_info=True)
 
 
+def _resolve_resumed_optimizer_settings(config: TrainConfig) -> TrainConfig:
+    """Order a resumed run's parameter-group settings before anything records its config (#1613).
+
+    Defaults, then the checkpoint, then the caller: a learning-rate or weight-decay setting passed to ``train()`` wins,
+    and one left out takes the value recorded in the checkpoint, so ``training_config.json``, written before
+    ``trainer.fit``, already holds what the run trains with. ``RFDETRModelModule.on_load_checkpoint`` resolves the same
+    order again from the checkpoint Lightning loads, logs it, and covers what this cannot read: a ``resume`` that names
+    no file (a Lightning sentinel such as ``"last"``) or a file a weights-only ``torch.load`` refuses. A checkpoint
+    without optimizer state (the lightweight ``.pth`` files) restarts the optimizer from the config, so it changes
+    nothing here.
+
+    Args:
+        config: Config of the resumed run, with ``resume`` set. ``model_fields_set`` holds what the caller passed.
+
+    Returns:
+        The config to train with.
+    """
+    # rfdetr.training needs the train extra, which RFDETR.train() has already imported by now.
+    from rfdetr.training.param_groups import _resolve_resumed_param_group_settings
+
+    resume = str(config.resume)
+    if not os.path.isfile(resume):
+        return config
+    try:
+        # mmap: only the pickled metadata is read here; Lightning loads the tensors again inside trainer.fit().
+        checkpoint = torch.load(resume, map_location="cpu", weights_only=True, mmap=True)
+    except (RuntimeError, pickle.UnpicklingError) as exc:
+        logger.debug("Could not read the training settings recorded in %s ahead of training: %s", resume, exc)
+        return config
+    if not isinstance(checkpoint, dict) or not checkpoint.get("optimizer_states"):
+        return config
+    return _resolve_resumed_param_group_settings(config, checkpoint)[0]
+
+
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models, running inference on the models,
     optimising models, and uploading trained models for deployment."""
@@ -1455,6 +1490,12 @@ class RFDETR:
           training.  The value is also available inside ``args["notes"]`` for full provenance.  Pass the same value to
           :meth:`export` to embed it in the exported artifact's metadata as well.
 
+        With ``resume`` pointing at a checkpoint that carries optimizer state, the optimizer's moments and the
+        schedule's progress carry over, and the learning-rate and weight-decay settings (``lr``, ``lr_encoder``,
+        ``lr_vit_layer_decay``, ``lr_component_decay``, ``weight_decay``) follow the order defaults, then the
+        checkpoint, then the keyword arguments: one passed here wins, and one left out takes the value recorded in the
+        checkpoint (#1613).
+
         After training completes the underlying ``nn.Module`` is synced back onto ``self.model.model`` so that
         :meth:`predict` and :meth:`export` continue to work without reloading the checkpoint.
 
@@ -1492,6 +1533,9 @@ class RFDETR:
         # build the TrainConfig, and resolve any auto batch size.  Shared with evaluate()
         # so both accept exactly the same keyword arguments.
         config, _accelerator, _devices = _prepare_run_config(self, **kwargs)
+        # Before anything records the config: training_config.json and every checkpoint describe the resolved one.
+        if config.resume:
+            config = _resolve_resumed_optimizer_settings(config)
 
         # Auto-detect num_classes from the training dataset and align model_config.
         # This must run before RFDETRModelModule is constructed so that weight loading
