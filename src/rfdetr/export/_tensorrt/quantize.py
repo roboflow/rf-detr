@@ -8,8 +8,8 @@
 TensorRT 11 has no INT8 builder flag and no calibrator: an INT8 engine is a strongly typed build of a graph that
 carries its own ``QuantizeLinear``/``DequantizeLinear`` pairs. Where those pairs sit decides whether the engine is
 faster than FP16 at all, so the placement here is not "quantize every matrix multiply". It follows what was measured
-on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token limit on Small to Large (TensorRT
-11.3); issue #1024:
+on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), for the attention token limit on Small to Large (TensorRT
+11.3), and for the segmentation and keypoint models on an RTX 5070 with TensorRT 11.4; issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -18,7 +18,8 @@ on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token
   multiplies of a block whose attention runs in INT8, below). The output of
   each quantized operation stays in floating point, so TensorRT fuses the bias, LayerScale and residual add into the
   INT8 kernel's epilogue and the quantize step into the preceding LayerNorm or GELU. The projector, the two-stage
-  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing.
+  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing. The mask and
+  keypoint heads sit outside the quantized regions and stay FP16 too; quantizing them was not measured.
 * **No convolution whose input channels TensorRT would pad.** TensorRT ran the INT8 patch embedding on the 3-channel
   image padded to 32 channels and stored the 29 added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant,
   read on every run: at batch 8 the engine was 110 MB instead of 51 MB and INT8 1.21x instead of 1.37x faster than
@@ -27,12 +28,13 @@ on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token
   or 5 zero channels per image.)
 * **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
   that was measured to run faster for it (head size 16, 32 or 64 and at most 325 tokens: the windowed backbone blocks
-  of Nano, Small and Medium) gets Q/DQ on both batched matrix multiplies as well as on its q/k/v/output projections,
-  which keeps attention fused in INT8. Any other block (Large's windowed blocks, the global backbone blocks, the decoder
-  self-attention) keeps its projections and batched multiplies in FP16: quantizing
-  only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the fused FP16 kernel, and
-  a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output into that kernel, which
-  returns wrong values.
+  of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both batched matrix
+  multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other block (the
+  windowed blocks of detection Large, Seg Nano, Seg Large and Keypoint Preview, the global backbone blocks, the decoder
+  self-attention and the keypoint decoder's ``kp_inst_self_attn``) keeps its projections and batched multiplies in
+  FP16: quantizing only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the
+  fused FP16 kernel, and a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output
+  into that kernel, which returns wrong values.
 * **A GELU never feeds an FP16 consumer from an INT8 multiply.** TensorRT 10.16 and 11.3 return NaN for an INT8
   ``MatMul`` -> bias -> GELU -> FP16 consumer chain, so an MLP's first projection is quantized only when its second one
   is.
@@ -72,7 +74,7 @@ INT8 = "int8"
 
 #: The graph outputs an INT8 export is measured for: a detector's, plus a segmentation model's mask logits or a keypoint
 #: model's keypoints. The heads that produce them sit outside the quantized regions and stay FP16. Any other set (a
-#: backbone-only export, a model with both) is refused.
+#: backbone-only export, a graph with both outputs) is refused.
 _INT8_OUTPUT_NAMES = (("dets", "labels"), ("dets", "labels", "masks"), ("dets", "labels", "keypoints"))
 
 #: Largest magnitude a symmetric INT8 value takes; TensorRT requires a zero point of 0.
@@ -105,25 +107,17 @@ _AXES_ATTRIBUTE_REDUCTIONS = frozenset(
 )
 
 #: Ops whose schema changed between opset 17 and :data:`_FP16_QDQ_OPSET` only by accepting more types (float8, strings),
-#: a new attribute whose default keeps the old behavior (``Resize``: ``antialias``, ``axes``), or more values of an
-#: attribute (``ScatterND``: ``reduction`` ``max`` and ``min``), so lifting the opset import alone keeps their meaning.
+#: so lifting the opset import alone keeps their meaning.
 _TYPE_ONLY_CHANGES = frozenset(
-    {
-        "Cast",
-        "CastLike",
-        "Constant",
-        "Equal",
-        "Identity",
-        "If",
-        "Loop",
-        "Reshape",
-        "Resize",
-        "ScatterND",
-        "Scan",
-        "Shape",
-        "Size",
-    }
+    {"Cast", "CastLike", "Constant", "Equal", "Identity", "If", "Loop", "Reshape", "Scan", "Shape", "Size"}
 )
+
+#: Ops whose schema changed between these opsets and :data:`_FP16_QDQ_OPSET` only by a new attribute whose default keeps
+#: the old behavior (``Resize``: ``antialias``, ``axes``, ``keep_aspect_ratio_policy``), a new value of an attribute
+#: (``Resize``: the ``half_pixel_symmetric`` coordinate mode, which an older graph cannot carry; ``ScatterND``:
+#: ``reduction`` ``max`` and ``min``) or more types. A graph at a lower opset is checked as any other op: ``Resize``
+#: took ``roi`` as its second input before opset 11, and its ``scales`` moved there.
+_UNCHANGED_SINCE = {"Resize": 13, "ScatterND": 16}
 
 #: Head sizes TensorRT's INT8 fused-attention kernel accepts (TensorRT 11.3 "Attention fusion", SM75-90, SM120-121).
 _FUSED_INT8_HEAD_SIZES = frozenset({16, 32, 64})
@@ -468,7 +462,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
                 raise ValueError(
                     f"Cannot place INT8 safely: the Softmax {softmax.name!r} feeds a matrix multiply of two "
                     "activations but is not a recognised attention block. INT8 TensorRT export applies to RF-DETR "
-                    "detector exports only."
+                    "model exports only (detection, segmentation or keypoint)."
                 )
             continue
         sources = (scores.input[0], scores.input[1], context.input[1])
@@ -565,7 +559,8 @@ def plan_int8(model: Any) -> Int8Plan:
             # cannot be followed to its projection cannot be kept out of INT8 with certainty.
             raise ValueError(
                 f"Cannot place INT8 safely: the output projection of the FP16 attention at {block.scores.name!r} "
-                "could not be identified. INT8 TensorRT export applies to RF-DETR detector exports only."
+                "could not be identified. INT8 TensorRT export applies to RF-DETR model exports only (detection, "
+                "segmentation or keypoint)."
             )
         weighted -= block.projections
         if in_region and not block.int8:
@@ -591,8 +586,8 @@ def plan_int8(model: Any) -> Int8Plan:
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "
-            "RF-DETR detector exports only. Layers are found by the node-name prefixes "
-            f"{list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
+            "RF-DETR model exports only (detection, segmentation or keypoint). Layers are found by the node-name "
+            f"prefixes {list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
         )
     order = {name: index for index, name in enumerate(names)}
     activations = sorted(
@@ -824,7 +819,9 @@ def _lift_opset(model: Any) -> None:
                 unsized = len(node.input) < 2 or not node.input[1]
                 if unsized and not any(attribute.name == "num_outputs" for attribute in node.attribute):
                     node.attribute.append(helper.make_attribute("num_outputs", len(node.output)))
-            elif node.op_type not in _TYPE_ONLY_CHANGES:
+            elif node.op_type not in _TYPE_ONLY_CHANGES and current < _UNCHANGED_SINCE.get(
+                node.op_type, _FP16_QDQ_OPSET
+            ):
                 try:
                     changed = (
                         defs.get_schema(node.op_type, current).since_version

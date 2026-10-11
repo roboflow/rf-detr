@@ -931,7 +931,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             (config.calibration_data is None, "needs calibration_data: a directory of representative images"),
             (not config.fp16, "builds on the FP16 graph, so it cannot be combined with fp16=False"),
             (config.dynamic_batch, "is measured for a static batch only; drop dynamic_batch"),
-            (config.backbone_only, "applies to the full detector, not a backbone_only export"),
+            (config.backbone_only, "applies to the full model, not a backbone_only export"),
         )
         for refused, reason in refusals:
             if refused:

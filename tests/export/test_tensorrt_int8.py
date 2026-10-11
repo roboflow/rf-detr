@@ -567,7 +567,14 @@ class TestInt8Host:
         with pytest.raises(RuntimeError, match="ONNX export reached"):
             exporter._convert(_export_graph(extra))
 
-    @pytest.mark.parametrize("extra", [("masks", "keypoints"), ("boxes",), ("keypoints", "masks")])
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            pytest.param(("masks", "keypoints"), id="both-heads"),
+            pytest.param(("boxes",), id="unknown-output"),
+            pytest.param(("keypoints", "masks"), id="heads-reversed"),
+        ],
+    )
     def test_unsupported_outputs_are_refused_before_the_onnx_export(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: tuple[str, ...]
     ) -> None:
@@ -831,7 +838,7 @@ class TestPlanInt8:
             ]
         )
         graph.output.append(helper.make_tensor_value_info("head", TensorProto.FLOAT, [1, 8, 16]))
-        with pytest.raises(ValueError, match="RF-DETR detector exports only"):
+        with pytest.raises(ValueError, match="RF-DETR model exports only"):
             quantize.plan_int8(model)
 
     def test_decoder_attention_stays_float(self) -> None:
@@ -898,7 +905,7 @@ class TestPlanInt8:
 
     def test_graph_without_quantizable_layers_is_refused(self) -> None:
         model = _attention_and_mlp(HEAD, sequence=8, head_size=16, mlp_prefix=HEAD)
-        with pytest.raises(ValueError, match="RF-DETR detector exports only"):
+        with pytest.raises(ValueError, match="RF-DETR model exports only"):
             quantize.plan_int8(model)
 
     def test_layer_inside_a_subgraph_is_not_planned(self) -> None:
@@ -917,7 +924,7 @@ class TestPlanInt8:
         for node in model.graph.node:
             if node.name.endswith("fc2/MatMul"):
                 node.name = f"{BACKBONE}fc1/MatMul"
-        with pytest.raises(ValueError, match="RF-DETR detector exports only"):
+        with pytest.raises(ValueError, match="RF-DETR model exports only"):
             quantize.plan_int8(model)
 
 
@@ -1777,6 +1784,26 @@ class TestLiftOpset:
         with pytest.raises(ValueError, match="'pad' \\(Pad\\) changed meaning"):
             quantize._lift_opset(model)
 
+    @pytest.mark.parametrize(("op", "opset"), [("Resize", 10), ("ScatterND", 13)])
+    def test_resize_and_scatter_nd_below_the_opset_they_were_checked_from_are_refused(
+        self, op: str, opset: int
+    ) -> None:
+        """``Resize`` (before opset 13) and ``ScatterND`` (before 16) did mean something else than at opset 19.
+
+        Their opset-17 behavior was checked against opset 19, so only a graph at or above the opset from which that
+        holds may have them lifted; a hand-made graph below it is refused instead of failing late in the runtime.
+        """
+        node = helper.make_node(op, ["x", "a", "b"], ["y"], "node")
+        graph = helper.make_graph(
+            [node],
+            "old",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
+        with pytest.raises(ValueError, match=f"\\({op}\\) changed meaning"):
+            quantize._lift_opset(model)
+
     def test_unknown_op_is_refused(self) -> None:
         """An op ONNX does not define is refused with a ValueError naming the node, not onnx's own SchemaError.
 
@@ -1924,7 +1951,12 @@ class TestInt8SourceGraph:
                 pass
 
     @pytest.mark.parametrize(
-        "outputs", [("dets", "labels"), ("dets", "labels", "masks"), ("dets", "labels", "keypoints")]
+        "outputs",
+        [
+            pytest.param(("dets", "labels"), id="detection"),
+            pytest.param(("dets", "labels", "masks"), id="segmentation"),
+            pytest.param(("dets", "labels", "keypoints"), id="keypoint"),
+        ],
     )
     def test_detection_segmentation_and_keypoint_outputs_are_accepted(self, outputs: tuple[str, ...]) -> None:
         graph = helper.make_graph(
@@ -2399,20 +2431,24 @@ class TestSegmentationAndKeypointInt8Plan:
 
     @pytest.fixture(scope="class")
     def exports(self, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-        """Export an untrained RFDETRSegNano and RFDETRKeypointPreview to ONNX on CPU, once for the class.
+        """Export an untrained RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium and RFDETRKeypointPreview to ONNX on CPU.
+
+        Done once for the class. Small and Medium are the segmentation models whose windows fit INT8 attention.
 
         Examples:
             A pytest fixture cannot be called directly.
 
             >>> paths = exports(tmp_path_factory)  # doctest: +SKIP
         """
-        from rfdetr import RFDETRKeypointPreview, RFDETRSegNano
+        from rfdetr import RFDETRKeypointPreview, RFDETRSegMedium, RFDETRSegNano, RFDETRSegSmall
         from rfdetr.utilities.reproducibility import seed_all
 
         # The pretrained keypoint model has the person class behind a padding class, which is what puts ScatterND in
         # its graph; the default untrained schema (one class) has none.
         models = (
             ("segmentation", RFDETRSegNano, {}),
+            ("segmentation-small", RFDETRSegSmall, {}),
+            ("segmentation-medium", RFDETRSegMedium, {}),
             ("keypoint", RFDETRKeypointPreview, {"num_classes": 2, "num_keypoints_per_class": [0, 17]}),
         )
         paths = {}
@@ -2447,6 +2483,36 @@ class TestSegmentationAndKeypointInt8Plan:
         head, _, _ = _HEAD_MODELS[kind]
         quantized = [name for name in plans[kind].weighted if not name.startswith(quantize._QUANTIZED_REGIONS)]
         assert (quantized, [n for n in plans[kind].weighted if n.startswith(head)]) == ([], [])
+
+    @pytest.mark.parametrize("kind", ["segmentation-small", "segmentation-medium"])
+    def test_windowed_attention_of_small_and_medium_is_int8(
+        self, kind: str, exports: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        messages: list[str] = []
+        monkeypatch.setattr(quantize.logger, "info", messages.append)
+        quantize.plan_int8(onnx.load(str(exports[kind])))
+        assert [m.split(";")[0] for m in messages if "stay FP16" in m] == [
+            "INT8 attention in 9 of 12 backbone attention blocks"
+        ]
+
+    @onnx_and_onnxruntime_only
+    @onnxconverter_common_only
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_int8_source_graph_builds_from_the_real_export(self, kind: str, exports: dict[str, Path]) -> None:
+        model = onnx.load(str(exports[kind]))
+        shape = [dim.dim_value for dim in model.graph.input[0].type.tensor_type.shape.dim]
+        samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(exports[kind]),
+            calibration_data=samples,
+            max_images=2,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        onnx.checker.check_model(quantized, full_check=True)
+        opsets = {entry.domain: entry.version for entry in quantized.opset_import}
+        assert (opsets[""], [o.name for o in quantized.graph.output]) == (19, [o.name for o in model.graph.output])
 
     def test_keypoint_instance_self_attention_is_left_float(self, plans: dict[str, quantize.Int8Plan]) -> None:
         assert [n for n in plans["keypoint"].weighted if "_self_attn/" in n] == []
