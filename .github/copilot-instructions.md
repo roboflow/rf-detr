@@ -25,7 +25,7 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 # Create the environment
 uv venv
 
-# Install the dependencies used by the CPU test job
+# Install the dependencies used by the CPU test job (add ,coreml on macOS).
 uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Run tests (always before committing)
