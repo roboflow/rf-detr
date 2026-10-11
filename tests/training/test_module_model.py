@@ -1619,6 +1619,90 @@ class TestTrainingStep:
         assert progress_loss_calls[0].kwargs.get("on_epoch") is False
 
     @pytest.mark.parametrize(
+        ("progress_name", "scale"),
+        [("loss", 2.0), ("loss_cls", 1.0)],
+    )
+    def test_progress_loss_is_epoch_running_mean_weighted_by_batch_size(
+        self, tmp_path: Path, progress_name: str, scale: float
+    ) -> None:
+        """The live progress value is the sample-weighted mean of the epoch so far, not the latest batch."""
+        module, _, _, _, fake_criterion = self._run_step(tmp_path, weight_dict={"loss_ce": 2.0})
+        first_samples, first_targets = _make_batch(batch_size=1)
+        second_samples, second_targets = _make_batch(batch_size=3)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((first_samples, first_targets), batch_idx=0)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(4.0)}
+        module.training_step((second_samples, second_targets), batch_idx=1)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == progress_name]
+        assert progress_calls[-1].args[1].item() == pytest.approx(scale * (1.0 * 1 + 4.0 * 3) / 4)
+
+    def test_progress_terms_stay_per_batch_when_train_log_on_step(self, tmp_path: Path) -> None:
+        """With train_log_on_step=True every progress term keeps its per-batch value, as train/loss_step does."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path, train_log_on_step=True)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((samples, targets), batch_idx=0)
+        second_value = torch.tensor(3.0)
+        fake_criterion.return_value = {"loss_ce": second_value}
+        module.training_step((samples, targets), batch_idx=1)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1] is second_value
+
+    @pytest.mark.parametrize("train_log_on_step", [False, True])
+    def test_progress_terms_are_progress_bar_only(self, tmp_path: Path, train_log_on_step: bool) -> None:
+        """Every progress term goes to the progress bar only, per step, with the same flags in both modes."""
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].kwargs == {
+            "prog_bar": True,
+            "logger": False,
+            "on_step": True,
+            "on_epoch": False,
+            "batch_size": 2,
+        }
+
+    @pytest.mark.parametrize("progress_name", ["loss", "loss_cls"])
+    def test_progress_loss_running_mean_restarts_each_epoch(self, tmp_path: Path, progress_name: str) -> None:
+        """The running mean restarts at each epoch, so the first step of a new epoch reports its own loss."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((samples, targets), batch_idx=0)
+        module.on_train_epoch_start()
+        fake_criterion.return_value = {"loss_ce": torch.tensor(3.0)}
+        module.log.reset_mock()
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == progress_name]
+        assert progress_calls[-1].args[1].item() == pytest.approx(3.0)
+
+    def test_progress_loss_running_mean_is_detached_from_autograd(self, tmp_path: Path) -> None:
+        """The running sums must not keep the autograd graph of every step alive until the epoch ends."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0, requires_grad=True)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1].requires_grad is False
+
+    def test_progress_loss_running_mean_accumulates_in_float32(self, tmp_path: Path) -> None:
+        """A half-precision loss term is summed in float32, so the bar does not drift over a long epoch."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0, dtype=torch.bfloat16)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1].dtype is torch.float32
+
+    @pytest.mark.parametrize(
         "train_log_on_step",
         [
             pytest.param(False, id="epoch-only"),
@@ -1644,11 +1728,14 @@ class TestTrainingStep:
             pytest.param(True, 0, id="on-step-skips-live-loss"),
         ],
     )
-    def test_live_loss_key_gated_on_train_log_on_step(self, tmp_path, train_log_on_step, expected_live_loss_calls):
+    def test_live_loss_key_gated_on_train_log_on_step(
+        self, tmp_path: Path, train_log_on_step: bool, expected_live_loss_calls: int
+    ) -> None:
         """Redundant live ``loss`` progress key is emitted only when train_log_on_step is False.
 
-        With train_log_on_step=True the ``train/loss`` call forks into a live ``train/loss_step`` progress entry, so the
-        separate ``loss`` scalar becomes redundant and is skipped.
+        With train_log_on_step=True the ``train/loss`` call forks into a per-batch ``train/loss_step`` progress entry,
+        which already shows the aggregate, so the running-mean ``loss`` scalar is skipped to keep the bar's keys as
+        before.
         """
         module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
 
