@@ -87,6 +87,18 @@ The same on a Tesla T4, from a Colab run of the same external harness (INT8 lose
 
 The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).
 
+Segmentation and keypoint models at batch 1, measured the same way on the RTX 5070 with TensorRT 11.4.0.106 (not yet on a T4). AP is COCO box AP and mask AP (`instances_val2017`) for the segmentation models, box AP and keypoint AP (`person_keypoints_val2017`) for the keypoint model, over all 5000 `val2017` images:
+
+| Model            | Box AP, FP16 | Box AP, INT8  | Task AP, FP16 | Task AP, INT8 | Plain call, FP16 | Plain call, INT8 | CUDA graph, FP16 | CUDA graph, INT8 | Engine, FP16 | Engine, INT8 |
+| ---------------- | ------------ | ------------- | ------------- | ------------- | ---------------- | ---------------- | ---------------- | ---------------- | ------------ | ------------ |
+| Seg Nano         | 48.42        | 47.66 (−0.77) | 40.08         | 39.58 (−0.50) | 1.245 ms         | 1.186 ms (1.05×) | 1.223 ms         | 1.164 ms (1.05×) | 69 MB        | 51 MB        |
+| Seg Small        | 51.10        | 49.97 (−1.13) | 42.94         | 42.13 (−0.81) | 1.600 ms         | 1.304 ms (1.23×) | 1.574 ms         | 1.281 ms (1.23×) | 69 MB        | 46 MB        |
+| Seg Medium       | 53.42        | 52.19 (−1.22) | 44.94         | 44.00 (−0.94) | 1.931 ms         | 1.651 ms (1.17×) | 1.905 ms         | 1.623 ms (1.17×) | 73 MB        | 49 MB        |
+| Seg Large        | 54.92        | 54.00 (−0.92) | 46.42         | 45.97 (−0.45) | 2.396 ms         | 2.185 ms (1.10×) | 2.371 ms         | 2.157 ms (1.10×) | 73 MB        | 55 MB        |
+| Keypoint Preview | 51.52        | 51.02 (−0.50) | 71.77         | 71.10 (−0.68) | 3.218 ms         | 2.785 ms (1.16×) | 3.197 ms         | 2.758 ms (1.16×) | 81 MB        | 62 MB        |
+
+Larger batches: Seg Nano is 1.17× (batch 8) and 1.15× (batch 32) faster than FP16 from a CUDA graph, and Keypoint Preview 1.19× at batch 8; AP was scored at batch 1 only. Seg Nano and Seg Large have no block that fits INT8 attention and Seg Small and Seg Medium do (see below), which is why Seg Nano gains the least.
+
 These tables come from a benchmark harness outside this repository. [Section 8 of the CUDA cookbook](../../cookbooks/export-cuda/#8-tensorrt-int8) runs the same kind of calibration (128 COCO images, there `val2017` images held out of the scored subset), export and FP16-against-INT8 comparison for Small at batch 1 on a `val2017` subset, from a synchronous call and a CUDA graph, so you can measure it on your own GPU; it does not regenerate these tables.
 
 !!! warning "Engine size on the T4"
@@ -104,8 +116,8 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 Requirements and limits:
 
-- Detection models only. Segmentation and keypoint models raise `NotImplementedError`; export them with `quantization=None`.
-- A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. Only TensorRT 10.16 and 11.3 were measured; the 10.x releases before 10.16 are accepted but untested.
+- Detection, segmentation and keypoint models. The mask and keypoint heads stay FP16, as does the keypoint decoder's instance self-attention. The attention rule above applies unchanged: the windowed backbone blocks of `RFDETRSegSmall` and `RFDETRSegMedium` run INT8 attention (9 of 12 blocks), while `RFDETRSegNano` (one window), `RFDETRSegLarge` and `RFDETRKeypointPreview` have no block that fits, so only their backbone MLPs and the decoder's cross-attention and feed-forward layers run in INT8 and the gain over FP16 is smaller. Any other set of outputs (a `backbone_only` export, a model with both heads) raises `NotImplementedError`.
+- A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. Only TensorRT 10.16 and 11.3 were measured for detection, and 11.4 on an RTX 5070 for segmentation and keypoints; the 10.x releases before 10.16 are accepted but untested.
 - On the RTX 5070 under WSL2, at batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column above). The T4 gains about as much without a graph (1.09–1.22×).
 - Measured on two GPUs (sm_120 and sm_75), without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`: those settings are accepted with `quantization="int8"`, but INT8 engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the gain relies on. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.
 

@@ -70,9 +70,10 @@ logger = get_logger()
 #: The only quantization mode a TensorRT export accepts besides ``None`` (FP16 or FP32, chosen with ``fp16``).
 INT8 = "int8"
 
-#: The graph outputs an INT8 export is measured for: a detector. Segmentation and keypoint models add outputs and are
-#: refused.
-_INT8_OUTPUT_NAMES = ("dets", "labels")
+#: The graph outputs an INT8 export is measured for: a detector's, plus a segmentation model's mask logits or a keypoint
+#: model's keypoints. The heads that produce them sit outside the quantized regions and stay FP16. Any other set (a
+#: backbone-only export, a model with both) is refused.
+_INT8_OUTPUT_NAMES = (("dets", "labels"), ("dets", "labels", "masks"), ("dets", "labels", "keypoints"))
 
 #: Largest magnitude a symmetric INT8 value takes; TensorRT requires a zero point of 0.
 _INT8_MAX = 127
@@ -103,10 +104,25 @@ _AXES_ATTRIBUTE_REDUCTIONS = frozenset(
     }
 )
 
-#: Ops whose schema changed between opset 17 and :data:`_FP16_QDQ_OPSET` only by accepting more types (float8, strings)
-#: or a new attribute whose default keeps the old behavior, so lifting the opset import alone keeps their meaning.
+#: Ops whose schema changed between opset 17 and :data:`_FP16_QDQ_OPSET` only by accepting more types (float8, strings),
+#: a new attribute whose default keeps the old behavior (``Resize``: ``antialias``, ``axes``), or more values of an
+#: attribute (``ScatterND``: ``reduction`` ``max`` and ``min``), so lifting the opset import alone keeps their meaning.
 _TYPE_ONLY_CHANGES = frozenset(
-    {"Cast", "CastLike", "Constant", "Equal", "Identity", "If", "Loop", "Reshape", "Scan", "Shape", "Size"}
+    {
+        "Cast",
+        "CastLike",
+        "Constant",
+        "Equal",
+        "Identity",
+        "If",
+        "Loop",
+        "Reshape",
+        "Resize",
+        "ScatterND",
+        "Scan",
+        "Shape",
+        "Size",
+    }
 )
 
 #: Head sizes TensorRT's INT8 fused-attention kernel accepts (TensorRT 11.3 "Attention fusion", SM75-90, SM120-121).
@@ -946,7 +962,7 @@ def insert_qdq(model: Any, plan: Int8Plan, ranges: Mapping[tuple[str, int], floa
 
 
 def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
-    """Refuse a graph INT8 cannot start from: quantized, not float32, not a static image, or not a detector.
+    """Refuse a graph INT8 cannot start from: quantized, not float32, not a static image, or not a supported model.
 
     Each would otherwise fail late or point the wrong way: a quantized graph plans nothing to quantize, and an FP16
     graph is calibrated in full before the FP16 cast refuses it with advice (``fp16=False``) that an INT8 request
@@ -960,8 +976,9 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
         ValueError: If the graph holds Q/DQ nodes, FP16 inputs or weights, or a dynamic batch axis, lists an
             initializer as a graph input too, or its first input is not rank 4 with fixed, positive channels, height
             and width.
-        NotImplementedError: If its outputs are not exactly a detector's ``dets`` and ``labels`` (a segmentation,
-            keypoint or backbone-only export), matching what ``RFDETR.export`` raises for such a model.
+        NotImplementedError: If its outputs are not a detector's ``dets`` and ``labels``, optionally followed by
+            ``masks`` or ``keypoints`` (so a backbone-only export or any other set is refused), matching what
+            ``RFDETR.export`` raises for such a model.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -1000,11 +1017,12 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
             "the ONNX graph with keep_initializers_as_inputs=False."
         )
     outputs = tuple(output.name for output in model.graph.output)
-    if outputs != _INT8_OUTPUT_NAMES:
+    if outputs not in _INT8_OUTPUT_NAMES:
         # The type _convert raises for the same model before its ONNX export, so build_engine callers catch one type.
         raise NotImplementedError(
-            f"'{onnx_path}' outputs {list(outputs)}, and quantization='int8' is measured for detection models only, "
-            f"whose outputs are {list(_INT8_OUTPUT_NAMES)}. Build this graph with quantization=None."
+            f"'{onnx_path}' outputs {list(outputs)}, and quantization='int8' is measured for detection, segmentation "
+            f"and keypoint models only, whose outputs are {[list(names) for names in _INT8_OUTPUT_NAMES]}. Build this "
+            "graph with quantization=None."
         )
     # Calibration preprocesses images to the input's own channels, height and width, so each must be a known size.
     image = model.graph.input[0]
@@ -1051,8 +1069,9 @@ def int8_source_graph(
             included) or does not fit an FP16 scale; or if a calibration
             image cannot be identified as an image (the message names the file). An image Pillow identifies but
             cannot decode (a truncated file) raises Pillow's own ``OSError``, which does not name the file.
-        NotImplementedError: If the graph's outputs are not exactly a detector's ``dets`` and ``labels`` (a
-            segmentation, keypoint or backbone-only export), as ``RFDETR.export`` raises for such a model.
+        NotImplementedError: If the graph's outputs are not a detector's ``dets`` and ``labels``, optionally followed
+            by ``masks`` or ``keypoints`` (so a backbone-only export or any other set is refused), as
+            ``RFDETR.export`` raises for such a model.
     """
     import onnx
     from onnx import numpy_helper
