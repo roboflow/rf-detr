@@ -15,7 +15,7 @@ from typing import Any, cast
 
 from torch import Tensor, nn
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
+from torch.optim.lr_scheduler import ChainedScheduler, LRScheduler, ReduceLROnPlateau, SequentialLR
 
 from rfdetr.config import TrainConfig
 from rfdetr.models.backbone import Joiner
@@ -292,10 +292,8 @@ def _regroup_scheduler_lists(scheduler_state: dict[str, Any], unmerged_count: in
 def _explicit_param_group_settings(train_config: TrainConfig) -> list[str]:
     """Return the settings in :data:`_PARAM_GROUP_SETTINGS` that the caller of a resumed run chose.
 
-    That is ``model_fields_set``, except for a config built from a complete mapping: LightningCLI's parser (``rfdetr
-    fit``) and ``TrainConfig(**json.load(f)["train_config"])`` on a current ``training_config.json`` mark every field
-    as set, so membership says nothing about what the caller chose. For such a config a setting counts when it differs
-    from its default.
+    Membership in ``model_fields_set`` records intent even for values equal to defaults. Every supplied key in a
+    complete mapping is explicit; LightningCLI retains its sparse caller input before expanding parser defaults.
 
     Args:
         train_config: Config of the resumed run.
@@ -308,11 +306,8 @@ def _explicit_param_group_settings(train_config: TrainConfig) -> list[str]:
         ['lr']
         >>> complete = TrainConfig(**TrainConfig(dataset_dir="data", weight_decay=5e-4).model_dump())
         >>> _explicit_param_group_settings(complete)
-        ['weight_decay']
+        ['lr', 'lr_encoder', 'lr_vit_layer_decay', 'lr_component_decay', 'weight_decay']
     """
-    fields = type(train_config).model_fields
-    if train_config.model_fields_set >= fields.keys():
-        return [name for name in _PARAM_GROUP_SETTINGS if getattr(train_config, name) != fields[name].default]
     return [name for name in _PARAM_GROUP_SETTINGS if name in train_config.model_fields_set]
 
 
@@ -465,6 +460,16 @@ def _apply_configured_param_group_settings(
         >>> scheduler.base_lrs, optimizer.param_groups[0]["lr"]
         ([0.01], 0.005)
     """
+    # Validate every proposed rescale before touching even a preceding group's weight decay. A
+    # multi-member chain with an absolute floor has no generally valid proportional rescale.
+    rescaled_lrs = [
+        _rescaled_lr(group["lr"], group.get("initial_lr"), configured_lr, scheduler, index)
+        if configured_lr is not None
+        and group.get("initial_lr") != configured_lr
+        and (group.get("initial_lr") is not None or restart_without_base)
+        else None
+        for index, (group, (configured_lr, _)) in enumerate(zip(optimizer.param_groups, configured, strict=True))
+    ]
     changed = 0
     without_base = 0
     kept_without_base = 0
@@ -480,7 +485,7 @@ def _apply_configured_param_group_settings(
         ):
             lr_changed = True
             without_base += restored_lr is None
-            group["lr"] = _rescaled_lr(group["lr"], restored_lr, configured_lr, scheduler, index)
+            group["lr"] = rescaled_lrs[index]
             group["initial_lr"] = configured_lr
             _set_scheduler_group_lr(scheduler, index, base_lr=configured_lr, lr=group["lr"])
         elif configured_lr is not None and restored_lr is None:
@@ -508,13 +513,16 @@ def _apply_configured_param_group_settings(
 
 
 def _active_scheduler(scheduler: object) -> object:
-    """Return the scheduler that sets the learning rate now: the wrapped one of a ``SequentialLR``, else itself.
+    """Find the active scheduler, unwrapping sequential schedules and single-member chains.
 
     Args:
         scheduler: A scheduler, or ``None``.
 
     Returns:
-        ``scheduler``, or the member of a ``SequentialLR`` its current step falls in, recursively.
+        The active scheduler, recursively unwrapped.
+
+    Raises:
+        ValueError: Multiple chained members compose an active nonzero absolute floor.
 
     Examples:
         >>> import torch
@@ -525,10 +533,17 @@ def _active_scheduler(scheduler: object) -> object:
         >>> _active_scheduler(sequential) is warmup
         True
     """
-    milestones = getattr(scheduler, "_milestones", None)
-    members = getattr(scheduler, "_schedulers", None)
-    if isinstance(milestones, list) and isinstance(members, list):
-        return _active_scheduler(members[bisect_right(milestones, scheduler.last_epoch)])  # type: ignore[attr-defined]
+    if isinstance(scheduler, SequentialLR):
+        return _active_scheduler(scheduler._schedulers[bisect_right(scheduler._milestones, scheduler.last_epoch)])
+    if isinstance(scheduler, ChainedScheduler):
+        active = [_active_scheduler(member) for member in scheduler._schedulers]
+        if len(active) == 1:
+            return active[0]
+        if any(getattr(member, "eta_min", 0) != 0 for member in active):
+            raise ValueError(
+                "Cannot rescale a resumed learning rate for a multi-member ChainedScheduler with a nonzero "
+                "cosine floor. Keep its learning rate unchanged or use a single-member chain."
+            )
     return scheduler
 
 
@@ -560,11 +575,13 @@ def _rescaled_lr(lr: float, old_base: float | None, new_base: float, scheduler: 
         >>> _rescaled_lr(0.025, 0.1, 0.04, None, 0)
         0.01
     """
+    # Composition refusal also applies to groups that would otherwise restart without a usable base.
+    active = _active_scheduler(scheduler)
     if not old_base:
         return new_base
     if isinstance(scheduler, ReduceLROnPlateau):
         return max(lr * new_base / old_base, min(scheduler.min_lrs[index], new_base))
-    floor = getattr(_active_scheduler(scheduler), "eta_min", None)
+    floor = getattr(active, "eta_min", None)
     if floor is None or old_base == floor:
         return lr * new_base / old_base
     return float(floor + (lr - floor) * (new_base - floor) / (old_base - floor))

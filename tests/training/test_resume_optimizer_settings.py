@@ -20,7 +20,14 @@ from unittest.mock import patch
 
 import pytest
 import torch
-from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR, LinearLR, ReduceLROnPlateau, SequentialLR
+from torch.optim.lr_scheduler import (
+    ChainedScheduler,
+    CosineAnnealingLR,
+    LambdaLR,
+    LinearLR,
+    ReduceLROnPlateau,
+    SequentialLR,
+)
 
 from rfdetr import RFDETRNano
 from rfdetr._namespace import _namespace_from_configs
@@ -137,6 +144,13 @@ class TestResolveResumedParamGroupSettings:
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {setting: _CHECKPOINT_VALUE}})
         assert getattr(resolved, setting) == _EXPLICIT_VALUE
 
+    @pytest.mark.parametrize("setting", _PARAM_GROUP_SETTINGS)
+    def test_complete_mapping_preserves_explicit_defaults(self, setting: str) -> None:
+        """A supplied mapping's keys are explicit even when their values equal defaults."""
+        config = TrainConfig(**TrainConfig(dataset_dir="data").model_dump())
+        resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {setting: _CHECKPOINT_VALUE}})
+        assert getattr(resolved, setting) == TrainConfig.model_fields[setting].default
+
     def test_restored_setting_is_not_marked_explicit(self) -> None:
         config = TrainConfig(dataset_dir="data")
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {"lr": _CHECKPOINT_VALUE}})
@@ -157,11 +171,138 @@ class TestResolveResumedParamGroupSettings:
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {})
         assert resolved is config
 
-    def test_config_built_from_a_complete_mapping_takes_unchanged_defaults_from_the_checkpoint(self) -> None:
-        """LightningCLI's parser (``rfdetr fit --ckpt_path``) marks every field as set, defaults included."""
+    def test_config_built_from_a_complete_mapping_keeps_supplied_defaults(self) -> None:
+        """Every key supplied by a Python or JSON mapping expresses caller intent."""
         config = TrainConfig(**TrainConfig(dataset_dir="data", lr=1e-5).model_dump())
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {"lr_encoder": _CHECKPOINT_VALUE}})
-        assert resolved.lr_encoder == _CHECKPOINT_VALUE
+        assert resolved.lr_encoder == TrainConfig.model_fields["lr_encoder"].default
+
+
+class TestChainedSchedulerResume:
+    """Restored chained schedules follow the new base without changing their absolute floor."""
+
+    @pytest.mark.parametrize("container", [pytest.param(list, id="list"), pytest.param(tuple, id="tuple")])
+    def test_single_cosine_chain_matches_fresh_current_and_next_step(self, container: type) -> None:
+        """Exercise real optimizer/scheduler save and load, followed by another scheduler step."""
+        parameter = torch.nn.Parameter(torch.ones(1))
+        optimizer = torch.optim.SGD([parameter], lr=0.1, momentum=0.9)
+        scheduler = ChainedScheduler(container([CosineAnnealingLR(optimizer, T_max=4, eta_min=0.01)]))
+        for _ in range(2):
+            parameter.grad = torch.ones_like(parameter)
+            optimizer.step()
+            scheduler.step()
+        state = optimizer.state_dict()
+        scheduler_state = scheduler.state_dict()
+        restored = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=0.05, momentum=0.9)
+        restored_scheduler = ChainedScheduler(container([CosineAnnealingLR(restored, T_max=4, eta_min=0.01)]))
+        restored.load_state_dict(state)
+        restored_scheduler.load_state_dict(scheduler_state)
+        _apply_configured_param_group_settings(restored, restored_scheduler, [(0.05, None)])
+        fresh = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=0.05)
+        fresh_scheduler = ChainedScheduler(container([CosineAnnealingLR(fresh, T_max=4, eta_min=0.01)]))
+        for _ in range(2):
+            fresh.step()
+            fresh_scheduler.step()
+        assert restored.param_groups[0]["lr"] == pytest.approx(fresh.param_groups[0]["lr"])
+        assert next(iter(restored.state.values()))["momentum_buffer"].item() == pytest.approx(1.9)
+        restored.step()
+        restored_scheduler.step()
+        fresh.step()
+        fresh_scheduler.step()
+        assert restored.param_groups[0]["lr"] == pytest.approx(fresh.param_groups[0]["lr"])
+
+    @pytest.mark.parametrize("saved_base", [0.2, 0.0, None])
+    def test_unsupported_floor_composition_refuses_before_any_mutation(self, saved_base: float | None) -> None:
+        """An earlier group's weight decay must also survive a later group's refusal."""
+        optimizer = torch.optim.SGD(
+            [{"params": [torch.nn.Parameter(torch.ones(1))], "lr": lr} for lr in (0.1, 0.2)], weight_decay=0.01
+        )
+        scheduler = ChainedScheduler(
+            [LambdaLR(optimizer, lambda step: 0.9**step), CosineAnnealingLR(optimizer, T_max=4, eta_min=0.01)]
+        )
+        if saved_base is None:
+            del optimizer.param_groups[1]["initial_lr"]
+        else:
+            optimizer.param_groups[1]["initial_lr"] = saved_base
+        before_optimizer = optimizer.state_dict()
+        before_scheduler = scheduler.state_dict()
+        with pytest.raises(ValueError, match="ChainedScheduler"):
+            _apply_configured_param_group_settings(
+                optimizer, scheduler, [(None, 0.02), (0.05, None)], restart_without_base=True
+            )
+        assert optimizer.state_dict() == before_optimizer
+        assert scheduler.state_dict() == before_scheduler
+
+    def test_weight_decay_only_resume_accepts_multi_member_floor_chain(self) -> None:
+        """The composition restriction applies only to learning-rate rescaling."""
+        optimizer = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=0.1)
+        scheduler = ChainedScheduler(
+            [LambdaLR(optimizer, lambda step: 1.0), CosineAnnealingLR(optimizer, T_max=4, eta_min=0.01)]
+        )
+        assert _apply_configured_param_group_settings(optimizer, scheduler, [(0.1, 0.02)]) == 1
+        assert optimizer.param_groups[0]["lr"] == 0.1
+        assert optimizer.param_groups[0]["weight_decay"] == 0.02
+
+    @pytest.mark.parametrize("container", [pytest.param(list, id="list"), pytest.param(tuple, id="tuple")])
+    def test_sequential_cosine_inside_single_chain_matches_fresh_step(self, container: type) -> None:
+        """A chain may wrap a sequential warmup whose active member has an absolute floor."""
+        optimizers = [torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=lr) for lr in (0.1, 0.05)]
+        schedulers = [
+            ChainedScheduler(
+                [
+                    SequentialLR(
+                        optimizer,
+                        container(
+                            [LinearLR(optimizer, total_iters=2), CosineAnnealingLR(optimizer, T_max=4, eta_min=0.01)]
+                        ),
+                        milestones=container([2]),
+                    )
+                ]
+            )
+            for optimizer in optimizers
+        ]
+        for optimizer, scheduler in zip(optimizers, schedulers, strict=True):
+            for _ in range(4):
+                optimizer.step()
+                scheduler.step()
+        _apply_configured_param_group_settings(optimizers[0], schedulers[0], [(0.05, None)])
+        assert optimizers[0].param_groups[0]["lr"] == pytest.approx(optimizers[1].param_groups[0]["lr"])
+
+        for optimizer, scheduler in zip(optimizers, schedulers, strict=True):
+            optimizer.step()
+            scheduler.step()
+        assert optimizers[0].param_groups[0]["lr"] == pytest.approx(optimizers[1].param_groups[0]["lr"])
+
+    def test_multi_member_chain_sees_tuple_sequential_floor(self) -> None:
+        """Nested tuple-valued sequential members cannot hide unsupported floor compositions."""
+        optimizer = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=0.1)
+        sequential = SequentialLR(
+            optimizer,
+            (LinearLR(optimizer, total_iters=2), CosineAnnealingLR(optimizer, T_max=4, eta_min=0.01)),
+            milestones=(2,),
+        )
+        scheduler = ChainedScheduler([sequential, LambdaLR(optimizer, lambda step: 1.0)])
+        for _ in range(4):
+            optimizer.step()
+            scheduler.step()
+        before_optimizer = optimizer.state_dict()
+        before_scheduler = scheduler.state_dict()
+        with pytest.raises(ValueError, match="ChainedScheduler"):
+            _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, 0.02)])
+        assert optimizer.state_dict() == before_optimizer
+        assert scheduler.state_dict() == before_scheduler
+
+    def test_floorless_multi_member_chain_keeps_proportional_rescaling(self) -> None:
+        """Multiple homogeneous multiplicative schedules remain supported."""
+        optimizer = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=0.1)
+        scheduler = ChainedScheduler(
+            [LambdaLR(optimizer, lambda step: 0.9**step), CosineAnnealingLR(optimizer, T_max=4)]
+        )
+        optimizer.step()
+        scheduler.step()
+        before = optimizer.param_groups[0]["lr"]
+        _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, None)])
+        assert optimizer.param_groups[0]["lr"] == pytest.approx(before / 2)
 
 
 class TestResolveResumedOptimizerSettings:
@@ -259,15 +400,15 @@ class TestAdoptResumedParamGroupSettings:
     @pytest.mark.parametrize(
         ("explicit", "args", "reapplies"),
         [
-            pytest.param({}, None, False, id="no-recorded-settings"),
-            pytest.param({}, {"lr": 5e-5}, False, id="unchanged-resume"),
+            pytest.param({}, None, True, id="no-recorded-settings"),
+            pytest.param({}, {"lr": 5e-5}, True, id="supplied-defaults"),
             pytest.param({"lr": 1e-5}, {"lr": 5e-5}, True, id="explicit-change"),
         ],
     )
-    def test_config_built_from_a_complete_mapping_reapplies_only_what_differs_from_its_default(
+    def test_config_built_from_a_complete_mapping_reapplies_supplied_settings(
         self, explicit: dict[str, float], args: dict[str, float] | None, reapplies: bool
     ) -> None:
-        """``rfdetr fit --ckpt_path`` builds its config through LightningCLI, which marks every field as set."""
+        """Full mappings explicitly supply all optimizer settings, including defaults."""
         config = TrainConfig(**TrainConfig(dataset_dir="data", **explicit).model_dump())
         assert bool(_adopt(config, args)._reapplied_param_group_settings) is reapplies
 
