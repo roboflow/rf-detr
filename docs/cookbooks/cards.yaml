@@ -10,7 +10,7 @@ cards:
     labels: [EXPORT, INFERENCE, DEPLOY, CUDA]
     version: v1.11.0
     author: Borda
-    description: "Export RF-DETR to ONNX (CUDA execution provider) and TensorRT, run inference on both, and benchmark them against PyTorch eager, TorchScript, and direct CUDA Graph inference on an NVIDIA GPU."
+    description: "Export RF-DETR to ONNX (CUDA execution provider) and TensorRT, run inference on both, and benchmark them against PyTorch eager, TorchScript, and direct CUDA Graph inference on an NVIDIA GPU, then build a calibrated INT8 TensorRT engine and compare it with FP16."
   - href: export-cpu/
     name: "RF-DETR on CPU — Export, Inference & Latency"
     labels: [EXPORT, INFERENCE, DEPLOY, CPU]

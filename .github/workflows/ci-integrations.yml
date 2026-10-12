@@ -222,7 +222,8 @@ jobs:
     # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
     # integration jobs this runs on the self-hosted GPU runner (same as ci-tests-gpu.yml).
     runs-on: Roboflow-GPU-VM-Runner
-    timeout-minutes: 25
+    # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
+    timeout-minutes: 35
     concurrency:
       group: pytest-tensorrt-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -344,9 +345,9 @@ jobs:
       - name: 🧪 Run TensorRT end-to-end parity tests
         # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
         # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
-        # only runs here.
+        # only runs here. Selected by marker over tests/, so TestInt8EndToEnd (test_tensorrt_int8.py) runs too.
         run: |
-          uv run --no-sync pytest tests/export/test_tensorrt_export.py \
+          uv run --no-sync pytest tests/ \
             -m e2e_tensorrt -n 1 \
             --timeout=600 \
             --durations=20 \

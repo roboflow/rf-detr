@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
 from torch import Tensor
 
@@ -27,8 +29,26 @@ def ms_deform_attn_core_pytorch(
     sampling_locations: Tensor,
     attention_weights: Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
+    grid_sample: Callable[..., Tensor] = _bilinear_grid_sample,
 ) -> Tensor:
-    """For debug and test only, need to use cuda version instead."""
+    """Multi-scale deformable attention in pure PyTorch, the only implementation RF-DETR uses.
+
+    Args:
+        value: Projected value maps of every level, flattened, ``(batch_size, n_heads, head_dim, sum(H * W))``.
+        value_spatial_shapes: Each level's ``(height, width)`` as a ``(n_levels, 2)`` tensor.
+        sampling_locations: Sampling points in ``[0, 1]`` image coordinates, rank 6
+            ``(batch_size, len_query, n_heads, n_levels, n_points, 2)``, or rank 5 with ``(n_levels, n_points)``
+            merged on the export path.
+        attention_weights: Weight of each sampling point, ``(batch_size, len_query, n_heads, n_levels * n_points)``.
+        value_spatial_shapes_hw: The same shapes as Python ``(height, width)`` int pairs. Used instead of
+            *value_spatial_shapes* when given, which ``torch.export`` requires.
+        grid_sample: Samples each level's value map. It takes ``(value, grid, padding_mode=..., align_corners=...)``
+            like :func:`~rfdetr.utilities.tensors._bilinear_grid_sample`, the default. An exporter passes another
+            exact sampler when its converter lowers ``grid_sample`` poorly.
+
+    Returns:
+        Attention output of shape ``(batch_size, len_query, n_heads * head_dim)``.
+    """
     # batch_size, n_heads, head_dim, spatial_size
     batch_size, n_heads, head_dim, _ = value.shape
     # Use Python int pairs when available (required for torch.export compatibility,
@@ -65,7 +85,7 @@ def ms_deform_attn_core_pytorch(
             grid_l = sampling_grids[:, :, :, level_index]
         sampling_grid_l_ = grid_l.transpose(1, 2).flatten(0, 1)
         # batch_size*n_heads, head_dim, len_query, num_points
-        sampling_value_l_ = _bilinear_grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
+        sampling_value_l_ = grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
         sampling_value_list.append(sampling_value_l_)
     # (batch_size, len_query, n_heads, num_levels * num_points)
     # -> (batch_size, n_heads, len_query, num_levels, num_points)

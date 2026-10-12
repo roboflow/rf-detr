@@ -26,6 +26,8 @@ pip install "rfdetr[executorch]"
 
 The `"xnnpack"` backend targets any CPU platform and runs in fp32. It is the recommended, portable backend and requires only the standard `rfdetr[executorch]` wheel. `backend` has no default — it must always be passed explicitly for `format="executorch"`.
 
+On this backend the export rewrites attention without a mask as two batched matrix multiplications and a softmax, and computes the query, key and value slices of the decoder's packed `in_proj_weight` at export time. XNNPACK then runs the encoder and decoder attention, which `F.scaled_dot_product_attention` and `nn.MultiheadAttention` otherwise split into portable kernels between many small XNNPACK partitions. The outputs are the same to float32 rounding, and the median CPU latency is 33–54% lower (1.5–2.2x faster) in the measurements of the changelog entry for this change (ExecuTorch 1.5.1, 16 threads, Xeon and Apple M4 Max).
+
 === "Object Detection"
 
     ```python

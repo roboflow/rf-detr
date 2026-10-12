@@ -65,6 +65,8 @@ export ROBOFLOW_HOME=/mnt/shared/models
 
 If both are set, `RF_HOME` wins. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
 
+Published checkpoints download from `https://repo.roboflow.com/rfdetr`. On a network that only allows listed hosts, allow `repo.roboflow.com`, or copy the files into the cache directory ahead of time: a cached file whose MD5 matches is never downloaded again.
+
 ## What input resolutions are allowed?
 
 `resolution` must be a positive integer divisible by `patch_size × num_windows` for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises `ValueError` indicating the required divisor. Input is square; each variant ships a sensible default resolution.

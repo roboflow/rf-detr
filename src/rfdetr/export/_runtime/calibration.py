@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Calibration data for the static-quantization export paths.
 
-Static post-training quantization derives activation ranges from data, so ONNX and OpenVINO both need the same thing:
-representative images, preprocessed exactly as inference preprocesses them. That is one job with one correct answer, so
-it lives here rather than once per format -- and it stays free of both formats' heavy optional dependencies, which is
-what lets each import it without dragging in the other's runtime.
+Static post-training quantization derives activation ranges from data, so ONNX, OpenVINO and TensorRT all need the same
+thing: representative images, preprocessed exactly as inference preprocesses them. That is one job with one correct
+answer, so it lives here rather than once per format -- and it stays free of every format's heavy optional dependencies,
+which is what lets each import it without dragging in another's runtime.
 
 The accepted forms mirror ``RFDETR.export``'s *calibration_data* keyword: a directory of images, a ``.npy`` file, or an
 array. A directory is the normal case and the only one where preprocessing happens here; arrays are taken as already
@@ -17,14 +17,14 @@ prepared.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
-from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -32,10 +32,23 @@ logger = get_logger()
 #: Image suffixes read from a *calibration_data* directory.
 IMAGE_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp"})
 
-#: Fewest calibration samples both INT8 paths accept without a warning. A conservative heuristic floor, not a measured
-#: threshold: min/max activation ranges taken from a handful of images rarely cover what the model sees in deployment,
-#: and the resulting model still loads and runs, so the accuracy loss is otherwise silent.
+#: Fewest calibration samples the INT8 paths (ONNX, OpenVINO and TensorRT) accept without a warning. A conservative
+#: heuristic floor, not a measured threshold: min/max activation ranges taken from a handful of images rarely cover
+#: what the model sees in deployment, and the resulting model still loads and runs, so the accuracy loss is otherwise
+#: silent.
 MIN_CALIBRATION_SAMPLES: int = 32
+
+#: Lowest and highest value a pixel takes once normalized as :func:`preprocess_to_nchw` does: a 0 and a 1 intensity,
+#: on whichever channel's ImageNet statistics stretch them furthest.
+_NORMALIZED_RANGE: tuple[float, float] = (
+    min(-mean / std for mean, std in zip(IMAGENET_MEAN, IMAGENET_STD, strict=True)),
+    max((1 - mean) / std for mean, std in zip(IMAGENET_MEAN, IMAGENET_STD, strict=True)),
+)
+
+#: How far past :data:`_NORMALIZED_RANGE` a sample may reach before it is reported: one whole 0-1 intensity range on
+#: the channel with the smallest ImageNet std. Resampling overshoot or a slightly different normalization stays inside
+#: it; raw 0-255 pixels stored as floats do not.
+_NORMALIZED_SLACK: float = 1 / min(IMAGENET_STD)
 
 
 def warn_if_too_few_samples(count: int) -> None:
@@ -54,11 +67,36 @@ def warn_if_too_few_samples(count: int) -> None:
         )
 
 
+def is_image_file(path: Path) -> bool:
+    """Tell whether *path* is a file a *calibration_data* directory contributes as an image.
+
+    Only regular files with an image suffix count: a subdirectory named like an image does not, and neither does a
+    macOS AppleDouble sidecar (``._name.jpg``), which carries an image suffix but holds resource-fork metadata, not
+    pixels. Only the name and the file type are looked at; the file is not opened.
+
+    Args:
+        path: A directory entry.
+
+    Returns:
+        ``True`` if *path* is read as a calibration image.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     _ = (Path(tmp) / "a.jpg").write_bytes(b"")
+        ...     _ = (Path(tmp) / "._a.jpg").write_bytes(b"")
+        ...     (Path(tmp) / "sub.jpg").mkdir()
+        ...     sorted(p.name for p in Path(tmp).iterdir() if is_image_file(p))
+        ['a.jpg']
+    """
+    return path.suffix.lower() in IMAGE_SUFFIXES and not path.name.startswith("._") and path.is_file()
+
+
 def _image_paths(directory: Path, max_images: int) -> list[Path]:
     """Return up to *max_images* image files from *directory*, sorted by name.
 
-    Only regular files with an image suffix count: a subdirectory named like an image is skipped, and so are macOS
-    AppleDouble sidecars (``._name.jpg``), which carry an image suffix but hold resource-fork metadata, not pixels.
+    Only the entries :func:`is_image_file` accepts count.
 
     Args:
         directory: Directory to read images from.
@@ -79,11 +117,7 @@ def _image_paths(directory: Path, max_images: int) -> list[Path]:
         ...     [p.name for p in _image_paths(Path(tmp), max_images=5)]
         ['a.png', 'b.jpg']
     """
-    paths = sorted(
-        p
-        for p in directory.iterdir()
-        if p.suffix.lower() in IMAGE_SUFFIXES and not p.name.startswith("._") and p.is_file()
-    )
+    paths = sorted(p for p in directory.iterdir() if is_image_file(p))
     if not paths:
         raise ValueError(f"No calibration images found in {directory}. Supported suffixes: {sorted(IMAGE_SUFFIXES)}.")
     return paths[:max_images]
@@ -93,6 +127,12 @@ def _arrays_from_samples(
     array: NDArray[Any], height: int, width: int, channels: int = 3
 ) -> Iterator[NDArray[np.float32]]:
     """Yield one ``(1, C, H, W)`` float32 batch per sample of a pre-normalized calibration array.
+
+    Each sample is also compared with the values ImageNet normalization can produce (:data:`_NORMALIZED_RANGE`, plus
+    :data:`_NORMALIZED_SLACK` on each side). One that falls outside -- raw 0-255 pixels stored as floats, say -- is
+    logged with a warning, once per sample, and still used: its activation ranges will not match what the model sees at
+    inference. Pixels scaled to 0-1 but never normalized fall inside that range, so they cannot be told apart from
+    normalized data and calibrate wrong without a warning.
 
     Args:
         array: Samples shaped ``(N, C, H, W)``, already normalized the way the model expects.
@@ -131,8 +171,19 @@ def _arrays_from_samples(
             f"Calibration array is {array.shape[2]}x{array.shape[3]} but the graph expects {height}x{width}. "
             "Pass a directory of images instead to have them resized for you."
         )
-    for sample in array:
-        yield np.ascontiguousarray(sample[None], dtype=np.float32)
+    low, high = _NORMALIZED_RANGE[0] - _NORMALIZED_SLACK, _NORMALIZED_RANGE[1] + _NORMALIZED_SLACK
+    for index, sample in enumerate(array):
+        batch = np.ascontiguousarray(sample[None], dtype=np.float32)
+        # Measured on the converted batch, so a memory-mapped sample is paged in once. A NaN compares false either way
+        # and is left to the quantizer, which refuses it.
+        smallest, largest = float(batch.min()), float(batch.max())
+        if smallest < low or largest > high:
+            logger.warning(
+                f"Calibration sample {index} spans {smallest:.4g} to {largest:.4g}, outside the {low:.4g} to "
+                f"{high:.4g} an image normalized as predict() does stays within. Its activation ranges will not match "
+                "inference: normalize the array with the ImageNet mean and std, or pass a directory of images instead."
+            )
+        yield batch
 
 
 def calibration_batches(
@@ -142,7 +193,7 @@ def calibration_batches(
     width: int,
     channels: int = 3,
     max_images: int = 100,
-) -> Iterator[NDArray[np.float32]]:
+) -> Generator[NDArray[np.float32], None, None]:
     """Yield ``(1, C, H, W)`` float32 batches to calibrate activation ranges with.
 
     A directory of images is the normal case: each is preprocessed exactly as
@@ -150,8 +201,10 @@ def calibration_batches(
     path or array is taken as already preprocessed and is passed through unchanged. A ``.npy`` file is memory-mapped
     rather than read up front, so only the samples being converted are paged in.
 
-    Both quantizers materialize the whole sequence before calibrating (ONNX Runtime rewinds its reader, NNCF takes a
-    sized dataset), so peak memory grows with the number of samples: roughly ``N * C * H * W * 4`` bytes.
+    The ONNX and OpenVINO quantizers materialize the whole sequence before calibrating (ONNX Runtime rewinds its
+    reader, NNCF takes a sized dataset), so their peak memory grows with the number of samples: roughly
+    ``N * C * H * W * 4`` bytes. The TensorRT quantizer consumes them lazily, one export batch at a time, so its memory
+    grows with ``batch_size`` rather than with the number of samples.
 
     Args:
         calibration_data: Directory of images, path to a ``.npy`` file, or a preprocessed array.

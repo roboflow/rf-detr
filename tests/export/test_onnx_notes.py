@@ -13,11 +13,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX notes tests")
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export.prepare import ExportGraph
+from tests._markers import onnx_only
 
-
-from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter  # noqa: E402
-from rfdetr.export.prepare import ExportGraph  # noqa: E402
+# The helper doctest exports a real ONNX model, so it needs the package a class-level skipif cannot gate.
+__doctest_requires__ = {("_export_tiny_model",): ["onnx"]}
 
 #: A list that contains itself: JSON cannot encode it, and ``json.dumps`` reports it as a ``ValueError``.
 _CIRCULAR_NOTES: list[object] = []
@@ -77,6 +78,7 @@ def _export_tiny_model(tmp_path: Path, notes: object = None) -> str:
     return str(OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))(graph))
 
 
+@onnx_only
 class TestExportOnnxNotes:
     """Verify ``notes`` metadata round-trips through the ONNX export."""
 
@@ -97,6 +99,8 @@ class TestExportOnnxNotes:
         """Notes are stored as the 'notes' metadata_props entry in the ONNX model."""
         output_file = _export_tiny_model(tmp_path, notes=notes)
 
+        import onnx
+
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert "rfdetr_notes" in meta
@@ -107,6 +111,8 @@ class TestExportOnnxNotes:
         notes = "my run description"
         output_file = _export_tiny_model(tmp_path, notes=notes)
 
+        import onnx
+
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert meta["rfdetr_notes"] == "my run description"
@@ -116,6 +122,8 @@ class TestExportOnnxNotes:
         notes = {"project": "ceramics", "batch": 7}
         output_file = _export_tiny_model(tmp_path, notes=notes)
 
+        import onnx
+
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert json.loads(meta["rfdetr_notes"]) == notes
@@ -123,6 +131,8 @@ class TestExportOnnxNotes:
     def test_no_notes_metadata_when_notes_is_none(self, tmp_path: Path) -> None:
         """When notes=None (default), no 'rfdetr_notes' metadata entry is written."""
         output_file = _export_tiny_model(tmp_path, notes=None)
+
+        import onnx
 
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
@@ -142,6 +152,8 @@ class TestExportOnnxNotes:
         """Falsy but non-None notes are embedded; guard is 'is not None', not truthiness."""
         output_file = _export_tiny_model(tmp_path, notes=notes)
 
+        import onnx
+
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert "rfdetr_notes" in meta
@@ -151,15 +163,26 @@ class TestExportOnnxNotes:
         notes = "Reviewer: Łukasz · 2026-Q2 · ✅"
         output_file = _export_tiny_model(tmp_path, notes=notes)
 
+        import onnx
+
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert meta["rfdetr_notes"] == notes
 
-    def test_notes_are_embedded_when_onnx_was_installed_after_the_module_loaded(
+    def test_embedding_notes_does_not_read_a_module_level_onnx_binding(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Notes still reach the file when the exporter module bound ``onnx`` before the install (a notebook retry)."""
-        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None)
+        """Notes still reach the file when the exporter module carries a stale ``onnx = None`` binding.
+
+        The exporter module used to bind ``onnx`` at import, to ``None`` without the package, and ``_embed_notes`` read
+        it, so a notebook that installed ``onnx`` after the import lost its notes. ``_embed_notes`` now imports ``onnx``
+        when it runs and nothing binds the name at module level; the planted binding fails this test only if a read of
+        such a binding comes back. The late-install scenario itself is covered by
+        ``test_onnx_installed_after_a_refused_check_is_found``.
+        """
+        import onnx
+
+        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None, raising=False)
         output_file = _export_tiny_model(tmp_path, notes={"run": 1})
 
         meta = {prop.key: prop.value for prop in onnx.load(output_file).metadata_props}

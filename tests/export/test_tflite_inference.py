@@ -1059,7 +1059,7 @@ class TestBilinearResizeHalfPixel:
     )
     def test_parity_with_torch_interpolate(self, src_shape: tuple[int, int, int], out_h: int, out_w: int) -> None:
         """Output matches F.interpolate(mode='bilinear', align_corners=False) to within 1e-5."""
-        torch = pytest.importorskip("torch")
+        import torch
         import torch.nn.functional as F  # noqa: N812
 
         rng = np.random.default_rng(42)

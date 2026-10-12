@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Callable
 from typing import cast
 
 import torch
@@ -25,6 +26,7 @@ from torch import Tensor, nn
 from torch.nn.init import constant_, xavier_uniform_
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
+from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
 def _is_power_of_2(n: int) -> bool:
@@ -35,6 +37,10 @@ def _is_power_of_2(n: int) -> bool:
 
 class MSDeformAttn(nn.Module):
     """Multi-Scale Deformable Attention Module."""
+
+    #: Samples each level's value map in the deformable-attention core. An exporter can set an exact sampler of its
+    #: own on the module instances of the model it converts; the class default serves every other caller.
+    grid_sample: Callable[..., Tensor] = staticmethod(_bilinear_grid_sample)
 
     def __init__(self, d_model: int = 256, n_levels: int = 4, n_heads: int = 8, n_points: int = 4) -> None:
         """Multi-Scale Deformable Attention Module :param d_model      hidden dimension :param n_levels     number of
@@ -255,5 +261,6 @@ class MSDeformAttn(nn.Module):
             sampling_locations,
             attention_weights,
             value_spatial_shapes_hw=input_spatial_shapes_hw,
+            grid_sample=self.grid_sample,
         )
         return cast(Tensor, self.output_proj(output))

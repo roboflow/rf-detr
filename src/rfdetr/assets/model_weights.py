@@ -53,7 +53,7 @@ class ModelWeightAsset:
     Example:
         >>> asset = ModelWeightAsset(
         ...     filename='rf-detr-base.pth',
-        ...     url='https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth',
+        ...     url='https://repo.roboflow.com/rfdetr/rf-detr-base-coco.pth',
         ...     md5_hash='b4d3ce46099eaed50626ede388caf979'
         ... )
     """
@@ -86,7 +86,7 @@ class ModelWeightsBase(Enum):
         >>> asset.filename
         'rf-detr-base.pth'
         >>> asset.url  # doctest: +SKIP
-        'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
+        'https://repo.roboflow.com/rfdetr/rf-detr-base-coco.pth'
     """
 
     _value_: ModelWeightAsset
@@ -125,7 +125,7 @@ class ModelWeightsBase(Enum):
         Example:
             >>> asset = ModelWeights.from_filename('rf-detr-base.pth')
             >>> asset.url
-            'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
+            'https://repo.roboflow.com/rfdetr/rf-detr-base-coco.pth'
         """
         for member in cls:
             if member._value_.filename == filename:
@@ -183,90 +183,90 @@ class ModelWeights(ModelWeightsBase):
         >>> asset.filename
         'rf-detr-base.pth'
         >>> asset.url
-        'https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth'
+        'https://repo.roboflow.com/rfdetr/rf-detr-base-coco.pth'
     """
 
     # Detection Models
     RF_DETR_BASE = ModelWeightAsset(
         "rf-detr-base.pth",
-        "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-base-coco.pth",
         "b4d3ce46099eaed50626ede388caf979",
     )
     RF_DETR_BASE_O365 = ModelWeightAsset(
         "rf-detr-base-o365.pth",
-        "https://storage.googleapis.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
+        "https://repo.roboflow.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
         "d93f4921ccbb0f0a2e4364bed290892b",
     )
     RF_DETR_BASE_2 = ModelWeightAsset(
         "rf-detr-base-2.pth",
-        "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-base-2.pth",
         "462f4d9df407ddc1812f42614040e913",
     )
     RF_DETR_LARGE = ModelWeightAsset(
         "rf-detr-large.pth",
-        "https://storage.googleapis.com/rfdetr/rf-detr-large.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-large.pth",
         "992c8e862aa733a7bb2777e45d49f1a0",
     )
     RF_DETR_LARGE_2026 = ModelWeightAsset(
         "rf-detr-large-2026.pth",
-        "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-large-2026.pth",
         "5cb72153541cbcb9aa6efa26222acc75",
     )
     RF_DETR_NANO = ModelWeightAsset(
         "rf-detr-nano.pth",
-        "https://storage.googleapis.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
+        "https://repo.roboflow.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
         "fb6504cce7fbdc783f7a46991f07639f",
     )
     RF_DETR_SMALL = ModelWeightAsset(
         "rf-detr-small.pth",
-        "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
+        "https://repo.roboflow.com/rfdetr/small_coco/checkpoint_best_regular.pth",
         "fb37061c1af7bace359c91b723a8d5c1",
     )
     RF_DETR_MEDIUM = ModelWeightAsset(
         "rf-detr-medium.pth",
-        "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
+        "https://repo.roboflow.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
         "7223f764a87b863f02eb8d52bf0ce2ee",
     )
     RF_DETR_KEYPOINT_PREVIEW = ModelWeightAsset(
         "rf-detr-keypoint-preview-xlarge.pth",
-        "https://storage.googleapis.com/rfdetr/rf-detr-keypoint-preview-xlarge.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-keypoint-preview-xlarge.pth",
         "6de511943ee85a547d4c5cb527daf0eb",
     )
 
     # Segmentation Models
     RF_DETR_SEG_PREVIEW = ModelWeightAsset(
         "rf-detr-seg-preview.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-preview.pt",
         "e35820c28fb86080558123e47a5e49ca",
     )
     RF_DETR_SEG_NANO = ModelWeightAsset(
         "rf-detr-seg-nano.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-n-ft.pth",
         "9995497791d0ff1664a1d9ddee9cfd20",
     )
     RF_DETR_SEG_SMALL = ModelWeightAsset(
         "rf-detr-seg-small.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-s-ft.pth",
         "0a2a3006381d0c42853907e700eadd08",
     )
     RF_DETR_SEG_MEDIUM = ModelWeightAsset(
         "rf-detr-seg-medium.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-m-ft.pth",
         "a49af1562c3719227ad43d0ca53b4c7a",
     )
     RF_DETR_SEG_LARGE = ModelWeightAsset(
         "rf-detr-seg-large.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-l-ft.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-l-ft.pth",
         "275f7b094909544ed2841c94a677d07e",
     )
     RF_DETR_SEG_XLARGE = ModelWeightAsset(
         "rf-detr-seg-xlarge.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-xl-ft.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-xl-ft.pth",
         "3693b35d0eea86ebb3e0444f4a611fba",
     )
     RF_DETR_SEG_XXLARGE = ModelWeightAsset(
         "rf-detr-seg-xxlarge.pt",
-        "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
+        "https://repo.roboflow.com/rfdetr/rf-detr-seg-2xl-ft.pth",
         "040bc3412af840fa8a47e0ff69b552ba",
     )
     # All methods inherited from ModelWeightsBase

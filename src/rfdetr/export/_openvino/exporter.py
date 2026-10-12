@@ -129,8 +129,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         All of these are judged before the forward pass. Static INT8 derives its activation ranges from the data it is
         shown, so missing calibration data is a refusal rather than a default: absent or out-of-domain data produces
         a model that loads, runs, and is quietly wrong. What can be judged from the configuration alone -- a path that
-        does not exist, a directory without images, a file that is not ``.npy``, an array that is not rank 4 -- is
-        judged here too.
+        does not exist, a directory without images, a file that is not ``.npy``, an array that is not a non-empty
+        rank-4 float array, a *max_images* that is not a positive integer -- is judged here too.
 
         Raises:
             ValueError: If *precision* is not ``"float32"``, ``"float16"``, or ``None``; if *quantization* is not a
@@ -151,7 +151,7 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
                 "no meaningful default."
             )
         if self.config.quantization == "int8":
-            check_calibration_data(self.config.calibration_data)
+            check_calibration_data(self.config.calibration_data, max_images=self.config.max_images)
 
     @classmethod
     def check_dependencies(cls) -> None:

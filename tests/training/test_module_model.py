@@ -31,10 +31,15 @@ from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.box_ops import pairwise_box_l1_cost
+from rfdetr.utilities.imports import _IS_PYTORCH_OPTIMIZER_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
 
 from .helpers import _fake_postprocess as _helpers_fake_postprocess
 from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+
+pytorch_optimizer_only = pytest.mark.skipif(
+    not _IS_PYTORCH_OPTIMIZER_INSTALLED, reason="pytorch_optimizer not installed"
+)
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -2888,10 +2893,10 @@ class TestConfigureOptimizers:
         ):
             module.configure_optimizers()
 
+    @pytorch_optimizer_only
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_real_import_path_optimizer_smoke(self, mock_get_param_dict, tmp_path):
         """A real pytorch-optimizer optimizer can be built via its import path when installed."""
-        pytest.importorskip("pytorch_optimizer")
         module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
         mock_get_param_dict.return_value = param_dicts
 

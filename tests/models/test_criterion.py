@@ -10,6 +10,7 @@ import pickle
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 from torch import Tensor
@@ -26,6 +27,7 @@ from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.utilities.tensors import NestedTensor, pad_targets_to_fixed_count
+from tests._markers import requires_torch_xla
 
 
 class _MatcherStub:
@@ -1036,7 +1038,6 @@ class TestMaskLossDenominatorStaysOnDevice:
         The formerly scripted wrappers rejected NumPy scalars; the eager functions go through Python's ordinary tensor
         division and must keep accepting them.
         """
-        np = pytest.importorskip("numpy")
         torch.manual_seed(0)
         inputs = torch.randn(2, 16)
         targets = torch.randint(0, 2, (2, 16)).float()
@@ -1178,13 +1179,13 @@ class TestMaskLossDenominatorStaysOnDevice:
         assert denominator.grad is not None
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_denominator_is_not_read_back_to_the_host_on_xla(self) -> None:
         """No ``_local_scalar_dense`` and no ``aten::`` fallback: the whole call stays on device.
 
         Runs on any PJRT backend -- ``device.type`` is ``"xla"`` under ``PJRT_DEVICE=CPU`` too, which is all the
         host-sync counter depends on, so this needs no TPU silicon.
         """
-        pytest.importorskip("torch_xla")
         import torch_xla
         import torch_xla.debug.metrics as met
 
@@ -1899,6 +1900,7 @@ class TestPaddedTargets:
         assert torch.allclose(plain["cardinality_error"], padded["cardinality_error"], rtol=1e-5, atol=1e-6)
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_cardinality_error_does_not_read_the_valid_mask_back_to_the_host(self) -> None:
         """No ``_local_scalar_dense``: reading padded targets' ``valid`` counts must stay a device transfer.
 
@@ -1907,7 +1909,6 @@ class TestPaddedTargets:
         backend -- ``device.type`` is ``"xla"`` under ``PJRT_DEVICE=CPU`` too, which is all the host-sync counter
         depends on, so this needs no TPU silicon.
         """
-        pytest.importorskip("torch_xla")
         import torch_xla
         import torch_xla.debug.metrics as met
 

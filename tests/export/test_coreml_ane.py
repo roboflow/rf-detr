@@ -194,10 +194,8 @@ def _compute_plan(mlpackage_path: Path) -> Any:
         >>> plan.model_structure.program.functions["main"] is not None  # doctest: +SKIP
         True
     """
-    compute_plan = pytest.importorskip(
-        "coremltools.models.compute_plan", reason="MLComputePlan needs coremltools>=8 and macOS>=14.4"
-    )
     import coremltools as ct
+    from coremltools.models import compute_plan
 
     plan = compute_plan.MLComputePlan.load_from_path(
         path=ct.utils.compile_model(str(mlpackage_path)), compute_units=ct.ComputeUnit.CPU_AND_NE
@@ -276,4 +274,64 @@ class TestCoreMLNeuralEngineFallbackBoundary:
         assert total_cost > 0.0
         assert ane_cost / total_cost >= _MIN_ANE_COST_SHARE, (
             f"only {ane_cost / total_cost:.3f} of the estimated work stays on the Neural Engine"
+        )
+
+
+@pytest.fixture(scope="module")
+def nano_fp16_neural_engine_export(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Export an untrained RFDETRNano to fp16 CoreML with ``coreml_neural_engine=True``.
+
+    Examples:
+        Skipped: a pytest fixture that needs coremltools, so it cannot run standalone.
+
+        >>> nano_fp16_neural_engine_export.suffix  # doctest: +SKIP
+        '.mlpackage'
+    """
+    seed_all(_EXPORT_SEED)
+    detector = RFDETRNano(pretrain_weights=None)
+    out_dir = tmp_path_factory.mktemp("coreml_neural_engine")
+    return Path(
+        detector.export(
+            output_dir=str(out_dir),
+            format="coreml",
+            coreml_precision="float16",
+            coreml_neural_engine=True,
+            verbose=False,
+        )
+    )
+
+
+#: The two-stage query-selection ops among ``_ANE_UNSUPPORTED_OPS``: ``topk`` and the ops that consume its indices.
+#: ``coreml_neural_engine=True`` exists to take exactly these off the CPU.
+_QUERY_SELECTION_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_dims"})
+
+
+@coreml_runtime_only
+@pytest.mark.integration
+@pytest.mark.e2e_coreml
+class TestCoreMLNeuralEngineRewrites:
+    """With ``coreml_neural_engine=True``, only the iOS 15 ``resample`` boundary may stay off the Neural Engine."""
+
+    def test_only_the_resample_boundary_prefers_the_cpu(self, nano_fp16_neural_engine_export: Path) -> None:
+        """The query-selection ops leave the CPU; what stays there is within the known ``resample``/``cast`` set.
+
+        The iOS 15 program keeps ``resample`` and the ``cast`` ops beside it off the Neural Engine on purpose (see
+        ``TestCoreMLNeuralEngineFallbackBoundary``), so the rewrite cannot empty the CPU set: it must move the selection
+        island of the default export off the CPU and add nothing new.
+        """
+        plan = _compute_plan(nano_fp16_neural_engine_export)
+        operations = plan.model_structure.program.functions["main"].block.operations
+
+        off_neural_engine = {
+            operation.operator_name
+            for operation in operations
+            if (usage := plan.get_compute_device_usage_for_mlprogram_operation(operation)) is not None
+            and "NeuralEngine" not in type(usage.preferred_compute_device).__name__
+        }
+
+        assert not off_neural_engine & _QUERY_SELECTION_OPS, (
+            f"query selection still prefers the CPU: {sorted(off_neural_engine & _QUERY_SELECTION_OPS)}"
+        )
+        assert off_neural_engine <= _ANE_UNSUPPORTED_OPS - _QUERY_SELECTION_OPS, (
+            f"ops newly off the Neural Engine: {sorted(off_neural_engine - _ANE_UNSUPPORTED_OPS)}"
         )

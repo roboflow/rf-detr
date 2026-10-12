@@ -169,9 +169,8 @@ def check_onnx_available(
     """Raise the install hint when ``onnx`` is missing.
 
     ``torch.onnx.export`` needs ``onnx`` too, but reports it only once the whole trace has run, without the hint. The
-    TFLite and TensorRT exporters, which export through the ONNX stage, check it with this too — from here rather than
-    from :mod:`rfdetr.export._onnx.exporter` so that neither format has to reach into another format's module (and its
-    eager ``onnx`` import) just to run this probe.
+    TFLite and TensorRT exporters, which export through the ONNX stage, check it with this too, each naming its own
+    extra.
 
     ``onnx`` is imported here rather than read from a module-level binding, which is fixed once first imported: a user
     who installs it after a refused export and retries in the same process (a notebook) would otherwise be refused by

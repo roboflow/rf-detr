@@ -37,6 +37,7 @@ from typing import Any
 import torch
 from torch import nn
 
+from rfdetr.export._litert.sampling import pixel_row_sampling
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -150,7 +151,8 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             raise NotImplementedError(
                 f"LiteRT export writes a float32 .tflite; quantization={quantization!r} is not supported on this "
                 "route yet. Use format='tflite' for its fp16/int8 modes, or quantize the exported file with "
-                "ai-edge-quantizer."
+                "ai-edge-quantizer, leaving the deformable-attention sampling in float32 (its pixel indices are exact "
+                "only in float32)."
             )
         return {}
 
@@ -251,7 +253,7 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             RuntimeError: If ``torch.export`` capture, lowering, or writing the file otherwise fails.
         """
         try:
-            with torch.no_grad():
+            with torch.no_grad(), pixel_row_sampling(wrapped_model):
                 edge_model = litert_torch.convert(wrapped_model, (input_tensors,))
                 edge_model.export(str(output_file))
         except (ImportError, NotImplementedError, TypeError):

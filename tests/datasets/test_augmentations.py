@@ -21,8 +21,40 @@ from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
+from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
 
-alb = pytest.importorskip("albumentations")
+albumentations_only = pytest.mark.skipif(
+    not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed; skip Albumentations wrapper tests"
+)
+pytestmark = albumentations_only
+
+__doctest_requires__ = {"_has_albumentations_transform": ["albumentations"]}
+
+
+def _has_albumentations_transform(name: str) -> bool:
+    """Report whether the installed Albumentations exports a transform.
+
+    Albumentations is imported inside the call, not at module scope. The call still runs at collection time, because
+    ``skipif`` conditions and parametrize arguments evaluate it, so an Albumentations that is installed but fails to
+    import errors during collection instead of skipping.
+
+    Args:
+        name: Albumentations attribute name, e.g. ``"SquareSymmetry"``.
+
+    Returns:
+        ``True`` when Albumentations is installed and exposes ``name``.
+
+    Examples:
+        >>> _has_albumentations_transform("HorizontalFlip")
+        True
+        >>> _has_albumentations_transform("NoSuchTransform")
+        False
+    """
+    if not _IS_ALBUMENTATIONS_INSTALLED:
+        return False
+    import albumentations as alb
+
+    return hasattr(alb, name)
 
 
 class _FakeRandomSizedCropV2:
@@ -99,24 +131,24 @@ class TestAlbumentationsWrapper:
     """Tests for AlbumentationsWrapper class."""
 
     @pytest.mark.parametrize(
-        "transform_class,params,box_in,box_out",
+        "transform_name,params,box_in,box_out",
         [
             pytest.param(
-                alb.HorizontalFlip,
+                "HorizontalFlip",
                 {"p": 1.0},
                 [10.0, 20.0, 30.0, 40.0],
                 [70.0, 20.0, 90.0, 40.0],
                 id="horizontal-flip",
             ),
             pytest.param(
-                alb.TimeReverse,
+                "TimeReverse",
                 {"p": 1.0},
                 [10.0, 20.0, 30.0, 40.0],
                 [70.0, 20.0, 90.0, 40.0],
                 id="time-reverse",
             ),
             pytest.param(
-                alb.VerticalFlip,
+                "VerticalFlip",
                 {"p": 1.0},
                 [10.0, 20.0, 30.0, 40.0],
                 [10.0, 60.0, 30.0, 80.0],
@@ -124,9 +156,11 @@ class TestAlbumentationsWrapper:
             ),
         ],
     )
-    def test_flip_transforms_with_boxes(self, transform_class, params, box_in, box_out):
+    def test_flip_transforms_with_boxes(self, transform_name, params, box_in, box_out):
         """Test flip transforms correctly transform bounding boxes."""
-        transform = transform_class(**params)
+        import albumentations as alb
+
+        transform = getattr(alb, transform_name)(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new("RGB", (100, 100))
@@ -140,6 +174,8 @@ class TestAlbumentationsWrapper:
 
     def test_resize_transforms_keypoint_coordinates(self):
         """Resize scales keypoint coordinates and preserves visibility values."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(alb.Resize(height=100, width=200, p=1.0))
         image = Image.new("RGB", (100, 50))
         target = {
@@ -165,6 +201,8 @@ class TestAlbumentationsWrapper:
 
     def test_horizontal_flip_transforms_keypoint_coordinates(self):
         """Horizontal flip mirrors keypoint coordinates using Albumentations geometry."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(alb.HorizontalFlip(p=1.0))
         image = Image.new("RGB", (100, 50))
         target = {
@@ -204,6 +242,8 @@ class TestAlbumentationsWrapper:
         truth value of an array with more than one element is ambiguous`` on any ndarray with more than one element.
         This test exercises that path across multi/single/empty instance counts.
         """
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(
             alb.HorizontalFlip(p=1.0),
             keypoint_flip_pairs=[0, 1],
@@ -238,16 +278,18 @@ class TestAlbumentationsWrapper:
         assert aug_target["keypoints"].shape[0] == num_instances
 
     @pytest.mark.parametrize(
-        "transform_class",
+        "transform_name",
         [
-            pytest.param(alb.HorizontalFlip, id="HorizontalFlip"),
-            pytest.param(alb.TimeReverse, id="TimeReverse"),
+            pytest.param("HorizontalFlip", id="HorizontalFlip"),
+            pytest.param("TimeReverse", id="TimeReverse"),
         ],
     )
-    def test_horizontal_flip_swaps_paired_keypoints(self, transform_class):
+    def test_horizontal_flip_swaps_paired_keypoints(self, transform_name):
         """HFlip-type transforms, including the TimeReverse alias, exchange keypoint slots for the configured pair."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(
-            transform_class(p=1.0),
+            getattr(alb, transform_name)(p=1.0),
             keypoint_flip_pairs=[0, 1],
         )
         image = Image.new("RGB", (100, 50))
@@ -267,10 +309,13 @@ class TestAlbumentationsWrapper:
         torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
 
     @pytest.mark.skipif(
-        not hasattr(alb, "SquareSymmetry"), reason="SquareSymmetry is unavailable in this Albumentations version"
+        not _has_albumentations_transform("SquareSymmetry"),
+        reason="SquareSymmetry is unavailable in this Albumentations version",
     )
     def test_square_symmetry_explicit_pairs_keeps_instances_aligned(self, monkeypatch):
         """SquareSymmetry's horizontal element keeps image annotations and keypoint slots aligned."""
+        import albumentations as alb
+
         square_symmetry = alb.SquareSymmetry(p=1.0)
         monkeypatch.setattr(square_symmetry, "get_params", lambda: {"group_element": "h"})
         if hasattr(square_symmetry, "get_params_dependent_on_data"):
@@ -327,13 +372,16 @@ class TestAlbumentationsWrapper:
     @pytest.mark.parametrize(
         "transform_name",
         # SquareSymmetry is not exported by the minimum supported Albumentations version.
-        ["HorizontalFlip", "TimeReverse", "D4"] + (["SquareSymmetry"] if hasattr(alb, "SquareSymmetry") else []),
+        ["HorizontalFlip", "TimeReverse", "D4"]
+        + (["SquareSymmetry"] if _has_albumentations_transform("SquareSymmetry") else []),
     )
     @pytest.mark.parametrize("container_name", ["Sequential", "OneOf", "SomeOf", "SomeOf-replacement"])
     def test_repeated_horizontal_flips_preserve_keypoint_identities(
         self, num_flips: int, transform_name: str, container_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Swap joint identities and visibility only for an odd number of applied flips."""
+        import albumentations as alb
+
         num_transforms = 1 if container_name == "SomeOf-replacement" else num_flips
         transforms = [getattr(alb, transform_name)(p=1.0) for _ in range(num_transforms)]
         if transform_name in {"D4", "SquareSymmetry"}:
@@ -381,6 +429,8 @@ class TestAlbumentationsWrapper:
     @pytest.mark.parametrize("scenario", ["skip-between-flips", "skip-last-flip", "vary-d4-elements"])
     def test_repeated_transform_uses_each_execution(self, scenario: str, monkeypatch: pytest.MonkeyPatch) -> None:
         """Repeated transforms count only applied horizontal mirrors with their own parameters."""
+        import albumentations as alb
+
         if scenario == "vary-d4-elements":
             transform = alb.D4(p=1.0)
             monkeypatch.setattr(
@@ -421,6 +471,8 @@ class TestAlbumentationsWrapper:
         names on the execution-log allowlist (Compose, RandomOrder) as the outer container, proving parity is derived
         from the execution log rather than silently falling back to ReplayCompose metadata.
         """
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         some_of = alb.SomeOf([transform], n=3, replace=True, p=1.0)
         outer = alb.Compose([some_of]) if outer_container == "Compose" else alb.RandomOrder([some_of], n=1, p=1.0)
@@ -452,6 +504,8 @@ class TestAlbumentationsWrapper:
     @pytest.mark.parametrize("pipeline", ["direct", "nested", "mixed"])
     def test_one_or_other_preserves_flip_parity(self, pipeline: str) -> None:
         """Containers without execution logging still preserve paired keypoint identities."""
+        import albumentations as alb
+
         transform = alb.OneOrOther(alb.HorizontalFlip(p=1.0), alb.VerticalFlip(p=1.0), p=1.0)
         if pipeline == "nested":
             transform = alb.Sequential([alb.OneOf([transform], p=1.0)], p=1.0)
@@ -482,6 +536,8 @@ class TestAlbumentationsWrapper:
 
     def test_nested_horizontal_flip_swaps_slots_after_all_geometry(self):
         """Nested HFlip+VFlip should mirror coordinates once, then swap only the left/right slots."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(
             alb.Sequential([alb.HorizontalFlip(p=1.0), alb.VerticalFlip(p=1.0)], p=1.0),
             keypoint_flip_pairs=[0, 1],
@@ -511,33 +567,41 @@ class TestAlbumentationsWrapper:
         )
 
     @pytest.mark.parametrize(
-        "transform,expected_keypoints",
+        "transform_name,transform_kwargs,expected_keypoints",
         [
             pytest.param(
-                alb.HorizontalFlip(p=0.0),
+                "HorizontalFlip",
+                {"p": 0.0},
                 torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
                 id="disabled-horizontal-flip",
             ),
             pytest.param(
-                alb.VerticalFlip(p=1.0),
+                "VerticalFlip",
+                {"p": 1.0},
                 torch.tensor([[[10.0, 39.0, 2.0], [80.0, 19.0, 2.0]]]),
                 id="vertical-flip",
             ),
             pytest.param(
-                alb.Resize(height=50, width=100, p=1.0),
+                "Resize",
+                {"height": 50, "width": 100, "p": 1.0},
                 torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
                 id="resize",
             ),
             pytest.param(
-                alb.Crop(x_min=0, y_min=0, x_max=100, y_max=50, p=1.0),
+                "Crop",
+                {"x_min": 0, "y_min": 0, "x_max": 100, "y_max": 50, "p": 1.0},
                 torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 2.0]]]),
                 id="full-image-crop",
             ),
         ],
     )
-    def test_non_horizontal_geometry_does_not_swap_paired_keypoints(self, transform, expected_keypoints):
+    def test_non_horizontal_geometry_does_not_swap_paired_keypoints(
+        self, transform_name, transform_kwargs, expected_keypoints
+    ):
         """Configured HFlip pairs should not swap slots when no horizontal flip applied."""
-        wrapper = AlbumentationsWrapper(transform, keypoint_flip_pairs=[0, 1])
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(getattr(alb, transform_name)(**transform_kwargs), keypoint_flip_pairs=[0, 1])
         image = Image.new("RGB", (100, 50))
         target = {
             "boxes": torch.tensor([[5.0, 5.0, 95.0, 45.0]]),
@@ -551,6 +615,8 @@ class TestAlbumentationsWrapper:
 
     def test_crop_filters_keypoints_with_removed_boxes(self):
         """When a crop removes a box, its keypoints are removed with the same instance."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(alb.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0))
         image = Image.new("RGB", (100, 50))
         target = {
@@ -578,6 +644,8 @@ class TestAlbumentationsWrapper:
 
     def test_non_geometric_transform_preserves_boxes(self):
         """Test that non-geometric transforms preserve bounding boxes."""
+        import albumentations as alb
+
         transform = alb.GaussianBlur(blur_limit=3, p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -593,6 +661,8 @@ class TestAlbumentationsWrapper:
 
     def test_empty_boxes_handling(self):
         """Test wrapper handles empty boxes correctly."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -607,6 +677,8 @@ class TestAlbumentationsWrapper:
 
     def test_multiple_boxes(self):
         """Test wrapper handles multiple bounding boxes."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -630,6 +702,8 @@ class TestAlbumentationsWrapper:
 
     def test_none_target_inference_mode(self):
         """Test wrapper accepts None target for inference (no ground-truth annotations)."""
+        import albumentations as alb
+
         transform = alb.Resize(height=64, width=64)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -642,6 +716,8 @@ class TestAlbumentationsWrapper:
 
     def test_invalid_target_type(self):
         """Test wrapper raises error for invalid target type."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -652,6 +728,8 @@ class TestAlbumentationsWrapper:
 
     def test_missing_labels_key(self):
         """Test wrapper raises error when labels key is missing."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -663,6 +741,8 @@ class TestAlbumentationsWrapper:
 
     def test_invalid_boxes_shape(self):
         """Test wrapper raises error for invalid boxes shape."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -682,6 +762,8 @@ class TestAlbumentationsWrapper:
         when there were exactly 2 boxes, causing orig_size to be filtered/indexed incorrectly and leading to
         inconsistent tensor shapes in batches.
         """
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -717,6 +799,8 @@ class TestAlbumentationsWrapper:
         - orig_size (shape [2]): global field, should NOT be filtered
         - masks (shape [2, H, W]): per-instance field, SHOULD be transformed
         """
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -766,16 +850,18 @@ class TestAlbumentationsWrapper:
         assert torch.equal(aug_target["image_id"], target["image_id"])
 
     @pytest.mark.parametrize(
-        "transform_class,params",
+        "transform_name,params",
         [
-            (alb.HorizontalFlip, {"p": 1.0}),
-            (alb.VerticalFlip, {"p": 1.0}),
-            (alb.Rotate, {"limit": 45, "p": 1.0}),
+            ("HorizontalFlip", {"p": 1.0}),
+            ("VerticalFlip", {"p": 1.0}),
+            ("Rotate", {"limit": 45, "p": 1.0}),
         ],
     )
-    def test_various_geometric_transforms(self, transform_class, params):
+    def test_various_geometric_transforms(self, transform_name, params):
         """Test various geometric transforms work correctly."""
-        transform = transform_class(**params)
+        import albumentations as alb
+
+        transform = getattr(alb, transform_name)(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new("RGB", (100, 100))
@@ -791,6 +877,8 @@ class TestAlbumentationsWrapper:
 
     def test_masks_transform_with_horizontal_flip(self):
         """Masks should be transformed consistently with boxes for geometric transforms."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -833,16 +921,18 @@ class TestAlbumentationsWrapper:
         assert torch.allclose(mask_bbox, aug_target["boxes"][0].to(dtype=torch.float32), atol=1.0)
 
     @pytest.mark.parametrize(
-        "transform_class,params",
+        "transform_name,params",
         [
-            (alb.HorizontalFlip, {"p": 1.0}),
-            (alb.VerticalFlip, {"p": 1.0}),
-            (alb.Rotate, {"limit": 15, "p": 1.0}),  # Small angle to avoid boxes going out
+            ("HorizontalFlip", {"p": 1.0}),
+            ("VerticalFlip", {"p": 1.0}),
+            ("Rotate", {"limit": 15, "p": 1.0}),  # Small angle to avoid boxes going out
         ],
     )
-    def test_various_geometric_transforms_with_masks(self, transform_class, params):
+    def test_various_geometric_transforms_with_masks(self, transform_name, params):
         """Test various geometric transforms correctly transform masks."""
-        transform = transform_class(**params)
+        import albumentations as alb
+
+        transform = getattr(alb, transform_name)(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
@@ -869,16 +959,18 @@ class TestAlbumentationsWrapper:
             assert aug_target["masks"].any()
 
     @pytest.mark.parametrize(
-        "transform_class,params",
+        "transform_name,params",
         [
-            (alb.GaussianBlur, {"blur_limit": 3, "p": 1.0}),
-            (alb.RandomBrightnessContrast, {"p": 1.0}),
-            (alb.GaussNoise, {"p": 1.0}),
+            ("GaussianBlur", {"blur_limit": 3, "p": 1.0}),
+            ("RandomBrightnessContrast", {"p": 1.0}),
+            ("GaussNoise", {"p": 1.0}),
         ],
     )
-    def test_pixel_transforms_preserve_masks(self, transform_class, params):
+    def test_pixel_transforms_preserve_masks(self, transform_name, params):
         """Test pixel-level transforms preserve masks unchanged."""
-        transform = transform_class(**params)
+        import albumentations as alb
+
+        transform = getattr(alb, transform_name)(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
@@ -901,6 +993,8 @@ class TestAlbumentationsWrapper:
 
     def test_multiple_masks_with_geometric_transform(self):
         """Test multiple masks are correctly transformed together."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -931,6 +1025,8 @@ class TestAlbumentationsWrapper:
 
     def test_empty_masks_handling(self):
         """Test wrapper correctly handles empty masks (no 'masks' key when empty)."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -955,6 +1051,8 @@ class TestAlbumentationsWrapper:
         Regression test for: when a prior crop removes all annotations, target["masks"] has shape (0, H, W). Passing an
         empty list to albumentations raises ValueError: masks cannot be empty.
         """
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -982,6 +1080,8 @@ class TestAlbumentationsWrapper:
     def test_pixel_transform_with_masks_no_boxes(self):
         """Test that pixel transforms work with masks but no boxes."""
         # Use a non-geometric transform which doesn't need boxes
+        import albumentations as alb
+
         transform = alb.GaussianBlur(blur_limit=3, p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -1003,6 +1103,8 @@ class TestAlbumentationsWrapper:
 
     def test_invalid_mask_shape_raises_error(self):
         """Test that invalid mask shape raises ValueError."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -1022,6 +1124,8 @@ class TestAlbumentationsWrapper:
     @pytest.mark.parametrize("mask_dtype", [torch.uint8, torch.float32])
     def test_mask_dtype_handling(self, mask_dtype):
         """Test wrapper handles different mask dtypes correctly (uint8, float32)."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -1050,6 +1154,8 @@ class TestAlbumentationsWrapper:
         # Original image 100x100
         # Box 1: [10, 10, 20, 20] (will be kept if we crop top-left)
         # Box 2: [80, 80, 90, 90] (will be dropped if we crop top-left to 50x50)
+        import albumentations as alb
+
         transform = alb.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -1082,6 +1188,8 @@ class TestAlbumentationsWrapper:
         equal the image width (normalized: 1.0). Albumentations' check_bboxes rejects these with "x_max is less than or
         equal to x_min", crashing the DataLoader worker.
         """
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -1113,6 +1221,8 @@ class TestAlbumentationsWrapper:
 
     def test_degenerate_bbox_mixed_with_masks(self):
         """Degenerate boxes are dropped together with their corresponding masks."""
+        import albumentations as alb
+
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
@@ -1247,6 +1357,8 @@ class TestAlbumentationsWrapperFromConfig:
         repeating SomeOf via from_config and checks it behaves identically to the same container built directly with
         AlbumentationsWrapper, proving the execution-log path also works end-to-end through config-driven construction.
         """
+        import albumentations as alb
+
         config = {
             "SomeOf": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
@@ -1402,21 +1514,29 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_one_of_geometric_detection(self):
         """OneOf containing a geometric transform is treated as geometric."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(alb.OneOf([alb.HorizontalFlip(p=1.0), alb.GaussianBlur(p=1.0)]))
         assert wrapper._is_geometric is True
 
     def test_one_of_pixel_detection(self):
         """OneOf containing only pixel transforms is treated as pixel-level."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(alb.OneOf([alb.GaussianBlur(p=1.0), alb.Blur(p=1.0)]))
         assert wrapper._is_geometric is False
 
     def test_sequential_geometric_detection(self):
         """Sequential containing a geometric transform is treated as geometric."""
+        import albumentations as alb
+
         wrapper = AlbumentationsWrapper(alb.Sequential([alb.Rotate(limit=45, p=1.0), alb.GaussianBlur(p=1.0)]))
         assert wrapper._is_geometric is True
 
     def test_from_config_nested_one_of(self):
         """from_config builds a OneOf wrapper from nested config."""
+        import albumentations as alb
+
         config = {
             "OneOf": {
                 "transforms": [
@@ -1453,6 +1573,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_from_config_deeply_nested(self):
         """from_config handles nested containers (OneOf inside Sequential)."""
+        import albumentations as alb
+
         config = {
             "Sequential": {
                 "transforms": [
@@ -1478,6 +1600,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_from_config_shorthand_list(self):
         """from_config supports shorthand {OneOf: [...]} without explicit transforms key."""
+        import albumentations as alb
+
         config = {
             "OneOf": [
                 {"HorizontalFlip": {"p": 1.0}},
@@ -1493,6 +1617,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_from_config_nested_sequential(self):
         """from_config builds a Sequential wrapper from nested config."""
+        import albumentations as alb
+
         config = {
             "Sequential": {
                 "transforms": [
@@ -1510,6 +1636,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_from_config_list_format(self):
         """from_config accepts list-of-single-key-dicts format."""
+        import albumentations as alb
+
         config = [
             {"HorizontalFlip": {"p": 0.5}},
             {
@@ -1593,6 +1721,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_one_of_explicit_p_is_respected(self):
         """Explicit p supplied for OneOf in config is preserved."""
+        import albumentations as alb
+
         config = {
             "OneOf": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
@@ -1606,6 +1736,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_one_of_default_p_is_one_when_omitted(self):
         """OneOf defaults to p=1.0 when no container-level p is supplied."""
+        import albumentations as alb
+
         config = {
             "OneOf": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
@@ -1623,6 +1755,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_sequential_explicit_p_is_respected(self):
         """Explicit p supplied for Sequential in config is preserved."""
+        import albumentations as alb
+
         config = {
             "Sequential": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
@@ -1636,6 +1770,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_sequential_default_p_is_one_when_omitted(self):
         """Sequential defaults to p=1.0 when no container-level p is supplied."""
+        import albumentations as alb
+
         config = {
             "Sequential": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
@@ -1648,6 +1784,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_some_of_single_p_still_works(self):
         """SomeOf with a plain p (block probability) still works without probs."""
+        import albumentations as alb
+
         config = {
             "SomeOf": {
                 "transforms": [
@@ -1908,6 +2046,8 @@ class TestTrainingLoop:
         the batch.
         """
         # Create augmentations
+        import albumentations as alb
+
         aug_transforms = [
             AlbumentationsWrapper(alb.HorizontalFlip(p=0.5)),
             AlbumentationsWrapper(alb.Rotate(limit=10, p=0.5)),
@@ -1950,6 +2090,8 @@ class TestTrainingLoop:
         This specifically tests the edge case where some samples have 2 boxes (which matches orig_size shape [2]),
         ensuring they don't get mixed up.
         """
+        import albumentations as alb
+
         aug_transforms = [AlbumentationsWrapper(alb.HorizontalFlip(p=0.5))]
         transforms = Compose(aug_transforms)
 
@@ -1983,18 +2125,19 @@ class TestTrainingLoop:
         assert orig_sizes.shape == torch.Size([len(targets), 2])
 
     @pytest.mark.parametrize(
-        "transform_class,transform_kwargs",
+        "transform_name,transform_kwargs",
         [
-            pytest.param(alb.HorizontalFlip, {"p": 1.0}, id="horizontal_flip"),
-            pytest.param(alb.VerticalFlip, {"p": 1.0}, id="vertical_flip"),
-            pytest.param(alb.RandomRotate90, {"p": 1.0}, id="random_rotate_90"),
+            pytest.param("HorizontalFlip", {"p": 1.0}, id="horizontal_flip"),
+            pytest.param("VerticalFlip", {"p": 1.0}, id="vertical_flip"),
+            pytest.param("RandomRotate90", {"p": 1.0}, id="random_rotate_90"),
         ],
     )
     @pytest.mark.parametrize(
         "include_masks", [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")]
     )
-    def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
+    def test_geometric_dataloader_compatibility(self, include_masks, transform_name, transform_kwargs):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
+        import albumentations as alb
 
         class _TinyTrainDataset:
             def __init__(self, transforms):
@@ -2024,7 +2167,7 @@ class TestTrainingLoop:
                 image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
                 return image, target
 
-        transforms = Compose([AlbumentationsWrapper(transform_class(**transform_kwargs))])
+        transforms = Compose([AlbumentationsWrapper(getattr(alb, transform_name)(**transform_kwargs))])
         dataloader = DataLoader(_TinyTrainDataset(transforms), batch_size=2, collate_fn=collate_fn, num_workers=0)
         images, targets = next(iter(dataloader))
 
@@ -2555,6 +2698,8 @@ class TestFirstUnloggedContainer:
 
     def test_empty_container_is_fully_logged(self) -> None:
         """A container with zero children reports no offending container."""
+        import albumentations as alb
+
         assert AlbumentationsWrapper._first_unlogged_container(alb.Compose([])) is None
 
     def test_deeply_nested_allowlisted_containers_are_fully_logged(self) -> None:
@@ -2563,6 +2708,8 @@ class TestFirstUnloggedContainer:
         Exercises depth > 2 nesting where every container along the path is on the execution-log allowlist, confirming
         the recursive walk does not mistake depth alone for an unlogged container.
         """
+        import albumentations as alb
+
         tree = alb.Sequential(
             [
                 alb.SomeOf(
@@ -2579,6 +2726,8 @@ class TestFirstUnloggedContainer:
 
     def test_deeply_nested_offending_container_is_reported(self) -> None:
         """A non-allowlisted container nested below allowlisted ones is still identified as the offender."""
+        import albumentations as alb
+
         tree = alb.Sequential(
             [
                 alb.SomeOf(

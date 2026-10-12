@@ -46,8 +46,8 @@ logger = get_logger()
 #: it: a consumer ignores the keys it does not know.
 METADATA_SCHEMA_VERSION: Final[int] = 1
 
-#: dtype of every engine input and output. ``fp16`` builds keep FP32 I/O too: the FP16 cast graph restores FP32 at the
-#: boundary and the builder flag only changes the layers in between.
+#: dtype of every engine input and output. ``fp16`` and ``int8`` builds keep FP32 I/O too: the FP16 cast graph restores
+#: FP32 at the boundary and only the layers in between change precision.
 _IO_DTYPE: Final[str] = "float32"
 
 #: Largest file :func:`is_engine_description` reads. A description is a few kilobytes; a bigger file with the same name
@@ -216,8 +216,8 @@ def build_engine_metadata(
         config: The exporter configuration the engine was built from.
         graph: The prepared graph the engine was built from.
         engine: The engine's size and digest, from :func:`serialized_engine_facts`.
-        precision: The precision the engine was actually built with (``"fp16"`` or ``"fp32"``), which can differ from
-            the request on a lean TensorRT wheel.
+        precision: The precision the engine was actually built with (``"fp16"``, ``"fp32"`` or ``"int8"``), which can
+            differ from the request on a lean TensorRT wheel.
         tensorrt_version: The version TensorRT reported for the build.
         gpu: The building GPU, as :func:`gpu_facts` returns it.
 

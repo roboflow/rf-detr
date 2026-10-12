@@ -8,7 +8,8 @@
 This module provides GPU-side augmentation as an alternative to the CPU-based Albumentations pipeline.  All transforms
 run on the device where the batch already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
 
-Supports detection (boxes only) and segmentation (boxes + instance masks).
+Supports detection (boxes only), segmentation (boxes + instance masks), and
+keypoints (boxes + visible joint coordinates).
 
 Usage::
 
@@ -40,19 +41,25 @@ Usage::
 
 from __future__ import annotations
 
+import numbers
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import torch
 from torch import Tensor
 
 from rfdetr.config import AugmentationBackend
-from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations
+from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations, keypoint_flip_permutation
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    # Annotation only: the module imports Kornia, an optional dependency, at import time.
+    from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
 
 logger = get_logger()
 
-__doctest_requires__ = {"build_kornia_pipeline": ["kornia"]}
+__doctest_requires__ = {"build_kornia_pipeline": ["kornia"], "keypoint_horizontal_flip_mask": ["kornia"]}
 
 #: ImageNet channel-wise mean (RGB order).
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -94,7 +101,8 @@ def resolve_augmentation_backend(backend: str, *, has_cuda: bool | None = None) 
 
     Auto-pick priority (for ``"cpu"``/``"auto"``) is implemented by
     :meth:`AugmentationBackend.from_str`; this function supplies the fork-safe CUDA check that
-    gates ``"auto"``'s GPU-Kornia preference and fails fast when ``"albumentations"``/``"albu"``
+    gates every Kornia pick for ``"cpu"``/``"auto"`` (neither resolves to Kornia without CUDA) and
+    fails fast when ``"albumentations"``/``"albu"``
     is explicitly requested but Albumentations is not installed.
 
     This is a pure resolution step — explicit ``"kornia"``/``"gpu"`` requests always pass through
@@ -394,18 +402,283 @@ def _make_rotate(params: dict[str, Any]) -> Any:
     return rotation
 
 
-def _make_affine(params: dict[str, Any]) -> Any:
-    """Build a ``K.RandomAffine`` from aug_config params.
+#: Smallest and largest signed 64-bit integers. ``PixelTranslatedAffine`` samples offsets with
+#: ``torch.randint(lower, upper + 1)``, so a pixel bound must satisfy ``lower >= _INT64_MIN`` and
+#: ``upper < _INT64_MAX``.
+_INT64_MIN: int = torch.iinfo(torch.int64).min
+_INT64_MAX: int = torch.iinfo(torch.int64).max
 
-    Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)`` signed range. Kornia ``translate`` is a
-    non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``. The conversion
-    takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve Albumentations' fixed positive translation, so
-    this builder warns before approximating it with symmetric signed sampling. Albumentations ``scale`` also accepts a
-    scalar, while Kornia requires a range, so scalars become ``(v, v)``.
+#: Value Albumentations ``Affine`` gives an axis missing from a per-axis ``scale`` or ``shear`` mapping (the default of
+#: its ``_handle_dict_arg``). It is ``1.0`` for both, so ``shear={"x": 0}`` is a one-degree vertical shear there.
+_ALBUMENTATIONS_AFFINE_MISSING_AXIS: float = 1.0
+
+#: OpenCV interpolation codes Albumentations ``Affine`` accepts for ``interpolation`` and ``mask_interpolation``:
+#: nearest, linear, cubic, area and Lanczos-4. Each output pixel of a whole-pixel shift copies exactly one source pixel,
+#: so all five produce the same result there.
+_OPENCV_INTERPOLATION_CODES: tuple[int, ...] = (0, 1, 2, 3, 4)
+
+#: OpenCV ``border_mode`` codes a whole-pixel shift reproduces on Kornia, mapped to ``PixelTranslatedAffine`` padding
+#: modes: ``cv2.BORDER_CONSTANT`` and ``cv2.BORDER_REPLICATE``.
+_PIXEL_AFFINE_PADDING_MODES: dict[int, str] = {0: "zeros", 1: "border"}
+
+#: Deprecated Albumentations 1.x ``Affine`` aliases, mapped to the parameter that replaced each. Albumentations 1.x
+#: copies a set alias onto its replacement (2.x ignores it with a warning); no Kornia builder reads them, so a set alias
+#: would otherwise bypass the border and fill checks of the pixel-translation path.
+_ALBUMENTATIONS_1X_AFFINE_ALIASES: dict[str, str] = {"cval": "fill", "cval_mask": "fill_mask", "mode": "border_mode"}
+
+
+def _pixel_offset(value: Any) -> int:
+    """Read one Albumentations ``translate_px`` offset as an exact number of pixels.
+
+    Albumentations accepts any real number here and truncates it with ``int()`` when it samples. Integers of any type
+    (NumPy integers included) and integral floats such as ``4.0`` denote a whole-pixel offset and are accepted. A
+    fractional offset is refused rather than truncated, so the configured shift is never silently changed. Booleans are
+    integers to Python but never a deliberate offset.
+
+    Args:
+        value: One configured offset.
+
+    Returns:
+        The offset as a Python ``int``, the type ``torch.randint`` requires.
+
+    Raises:
+        ValueError: If ``value`` is a boolean, is not a real number, or is not a whole number.
+
+    Examples:
+        >>> _pixel_offset(4.0)
+        4
+    """
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"Affine translate_px offsets must be integers, not booleans; got {value!r}.")
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real) and float(value).is_integer():
+        return int(float(value))
+    raise ValueError(
+        f"Affine translate_px offsets must be whole pixels (integers or integral floats such as 4.0); got {value!r}. "
+        "Round a fractional offset explicitly: the Kornia backend does not truncate it."
+    )
+
+
+def _pixel_translation_bounds(value: Any) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Normalize Albumentations pixel translation to inclusive x/y ranges.
+
+    Args:
+        value: An offset, a ``(min, max)`` pair, or a mapping with ``x`` and/or ``y`` entries holding either; a missing
+            axis is ``0``. Each offset may be any integer or integral float, as read by :func:`_pixel_offset`.
+
+    Returns:
+        Separate horizontal and vertical ``int`` bounds.
+
+    Raises:
+        ValueError: If a mapping has keys other than ``x``/``y``, an axis is neither an offset nor a two-element range,
+            an offset is not a whole number of pixels, a range is reversed, or a bound does not fit the signed 64-bit
+            range ``torch.randint`` samples from.
+
+    Examples:
+        >>> _pixel_translation_bounds({"x": (-2, 4), "y": 3.0})
+        ((-2, 4), (3, 3))
+    """
+    if isinstance(value, dict):
+        if not value.keys() & {"x", "y"} or value.keys() - {"x", "y"}:
+            raise ValueError("Affine translate_px must have only 'x' and/or 'y' keys.")
+        components = (value.get("x", 0), value.get("y", 0))
+    else:
+        components = (value, value)
+
+    bounds: list[tuple[int, int]] = []
+    for component in components:
+        if not isinstance(component, (tuple, list)):
+            lower = upper = _pixel_offset(component)
+        elif len(component) == 2:
+            lower, upper = _pixel_offset(component[0]), _pixel_offset(component[1])
+        else:
+            raise ValueError(
+                "Affine translate_px axes must be a single offset or a two-element (min, max) range of integers; "
+                f"got {component!r}."
+            )
+        if lower > upper:
+            raise ValueError(f"Affine translate_px range minimum must not exceed maximum; got {component!r}.")
+        if lower < _INT64_MIN or upper >= _INT64_MAX:
+            raise ValueError(f"Affine translate_px offsets must fit in a signed 64-bit integer; got {component!r}.")
+        bounds.append((lower, upper))
+    return bounds[0], bounds[1]
+
+
+def _affine_range_is(value: Any, identity: float) -> bool:
+    """Return whether an Albumentations ``Affine`` geometry range is fixed at its identity value.
+
+    The value is read the way Albumentations reads it: a scalar ``v`` is ``(v, v)``, a pair is ``(min, max)``, and a
+    per-axis mapping holds a scalar or pair for ``x`` and ``y``, with a missing axis set to
+    :data:`_ALBUMENTATIONS_AFFINE_MISSING_AXIS`.
+
+    Args:
+        value: A configured ``rotate``, ``shear`` or ``scale``.
+        identity: The value at which the parameter leaves the image unchanged: ``0`` for ``rotate`` and ``shear``,
+            ``1`` for ``scale``.
+
+    Returns:
+        ``True`` when every axis is a two-element range whose endpoints both equal ``identity``.
+
+    Examples:
+        >>> _affine_range_is({"x": (1.0, 1.0)}, 1.0)
+        True
+        >>> _affine_range_is({"x": 0}, 0.0)
+        False
+    """
+    missing = _ALBUMENTATIONS_AFFINE_MISSING_AXIS
+    axes: tuple[Any, ...] = (value.get("x", missing), value.get("y", missing)) if isinstance(value, dict) else (value,)
+    for axis in axes:
+        endpoints = tuple(axis) if isinstance(axis, (list, tuple)) else (axis, axis)
+        if len(endpoints) != 2 or any(endpoint != identity for endpoint in endpoints):
+            return False
+    return True
+
+
+def _require_pure_pixel_translation(params: dict[str, Any]) -> None:
+    """Refuse ``Affine`` geometry other than translation, which ``PixelTranslatedAffine`` cannot apply.
+
+    Args:
+        params: The ``Affine`` aug_config params. An unset or ``None`` ``rotate``, ``shear`` or ``scale`` is the
+            identity.
+
+    Raises:
+        ValueError: If ``rotate`` or ``shear`` is not fixed at ``0``, or ``scale`` is not fixed at ``1``, read as
+            Albumentations reads them (see :func:`_affine_range_is`).
+
+    Examples:
+        >>> _require_pure_pixel_translation({"translate_px": 4, "scale": {"x": 1.0}, "shear": (0, 0)})
+    """
+    for name, identity in (("rotate", 0.0), ("shear", 0.0), ("scale", 1.0)):
+        value = params.get(name)
+        if value is not None and not _affine_range_is(value, identity):
+            raise ValueError(
+                f"Kornia Affine translate_px supports pure pixel translation only ({name}={identity:g}); "
+                f"got {name}={value!r}. Use the albumentations backend otherwise."
+            )
+
+
+def _pixel_affine_padding_mode(params: dict[str, Any]) -> str:
+    """Resolve the ``Affine`` border options to the ``PixelTranslatedAffine`` padding mode that reproduces them.
+
+    A replicate border never reads ``fill`` or ``fill_mask``, on Albumentations or here, so those are checked only for a
+    constant border, where the pixel-translation path can fill with zeros alone.
+
+    Args:
+        params: The ``Affine`` aug_config params.
+
+    Returns:
+        ``"zeros"`` for ``cv2.BORDER_CONSTANT`` and ``"border"`` for ``cv2.BORDER_REPLICATE``.
+
+    Raises:
+        ValueError: If ``border_mode`` is neither constant (``0``) nor replicate (``1``), or a constant border has a
+            nonzero ``fill`` or ``fill_mask``.
+
+    Examples:
+        >>> _pixel_affine_padding_mode({"border_mode": 1, "fill": 5})
+        'border'
+    """
+    border_mode = params.get("border_mode", 0)
+    if border_mode not in _PIXEL_AFFINE_PADDING_MODES:
+        raise ValueError(
+            "Kornia Affine translate_px supports only constant (0) or replicate (1) borders; "
+            f"got border_mode={border_mode!r}. Use the albumentations backend otherwise."
+        )
+    if border_mode == 0:
+        for name in ("fill", "fill_mask"):
+            # ``np.asarray`` lets an array-valued fill compare elementwise instead of failing on its truth value.
+            if np.any(np.asarray(params.get(name, 0)) != 0):
+                raise ValueError(
+                    f"Kornia Affine translate_px requires {name}=0 with a constant border; "
+                    f"got {name}={params[name]!r}. Use the albumentations backend otherwise."
+                )
+    return _PIXEL_AFFINE_PADDING_MODES[border_mode]
+
+
+def _make_pixel_affine(params: dict[str, Any]) -> PixelTranslatedAffine:
+    """Build a ``PixelTranslatedAffine`` from ``Affine`` aug_config params that set ``translate_px``.
+
+    Options that cannot change a whole-pixel shift are accepted and have no effect, as on Albumentations:
+    ``interpolation`` and ``mask_interpolation`` codes 0-4, ``keep_ratio``, ``balanced_scale``, ``rotate_method``, a
+    unit ``scale`` or zero ``shear`` (scalar, pair or per-axis mapping), and ``fill``/``fill_mask`` with a replicate
+    border.
+
+    Args:
+        params: The ``Affine`` aug_config params; ``translate_px`` must be set.
+
+    Returns:
+        A transform that shifts images, boxes and masks by whole pixels sampled from the configured bounds.
+
+    Raises:
+        ValueError: If a deprecated Albumentations 1.x alias ``cval``, ``cval_mask`` or ``mode`` is set (the message
+            names ``fill``, ``fill_mask`` or ``border_mode``); if ``rotate`` or ``shear`` is not fixed at ``0`` or
+            ``scale`` is not fixed at ``1``, where a per-axis mapping's missing axis counts as ``1`` as on
+            Albumentations; if ``fit_output`` is true; if ``interpolation`` or ``mask_interpolation`` is not an OpenCV
+            code 0-4; if ``border_mode`` is neither constant (``0``) nor replicate (``1``), or a constant border has a
+            nonzero ``fill`` or ``fill_mask``; or if ``translate_px`` has keys other than ``x``/``y``, an axis that is
+            neither an offset nor a two-element range, a boolean or fractional offset, a reversed range, or a bound
+            outside the signed 64-bit range.
+    """
+    from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+    for alias, replacement in _ALBUMENTATIONS_1X_AFFINE_ALIASES.items():
+        if params.get(alias) is not None:
+            raise ValueError(
+                "Kornia Affine translate_px does not accept the deprecated Albumentations 1.x alias "
+                f"{alias}={params[alias]!r}; use {replacement} instead."
+            )
+    _require_pure_pixel_translation(params)
+    if params.get("fit_output", False):
+        raise ValueError(f"Kornia Affine translate_px does not support fit_output={params['fit_output']!r}.")
+    for name in ("interpolation", "mask_interpolation"):
+        if params.get(name, 0) not in _OPENCV_INTERPOLATION_CODES:
+            raise ValueError(
+                f"Kornia Affine translate_px accepts only the OpenCV interpolation codes 0-4 for {name}; "
+                f"got {name}={params[name]!r}."
+            )
+    padding_mode = _pixel_affine_padding_mode(params)
+    return PixelTranslatedAffine(
+        _pixel_translation_bounds(params["translate_px"]),
+        p=params.get("p", 0.5),
+        padding_mode=padding_mode,
+    )
+
+
+def _make_affine(params: dict[str, Any]) -> Any:
+    """Build a Kornia affine transform from ``Affine`` aug_config params.
+
+    With ``translate_px`` set, the params go to :func:`_make_pixel_affine`, which applies whole-pixel shifts only and
+    refuses every other geometry. Otherwise: Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)``
+    signed range. Kornia ``translate`` is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled
+    from ``[-tx, tx]``. The conversion takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve
+    Albumentations' fixed positive translation, so this builder warns before approximating it with symmetric signed
+    sampling. Albumentations ``scale`` also accepts a scalar, while Kornia requires a range, so scalars become
+    ``(v, v)``.
+
+    Args:
+        params: The ``Affine`` aug_config params.
+
+    Returns:
+        A ``K.RandomAffine``; for ``translate_px``, its ``PixelTranslatedAffine`` subclass.
+
+    Raises:
+        ValueError: If both ``translate_px`` and ``translate_percent`` are set, for any ``translate_px`` refusal listed
+            in :func:`_make_pixel_affine`, or if a scalar ``scale`` normalization receives a malformed range.
     """
     from kornia.augmentation import RandomAffine
 
+    translate_px = params.get("translate_px")
     translate_percent = params.get("translate_percent")
+    if translate_px is not None and translate_percent is not None:
+        raise ValueError("Affine accepts either translate_px or translate_percent, not both.")
+
+    if translate_px is not None:
+        return _make_pixel_affine(params)
+
+    scale = params.get("scale")
+    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
+        scale = _as_range(scale)
+
     if isinstance(translate_percent, (int, float)) and not isinstance(translate_percent, bool):
         logger.warning(
             "GPU augmentation (Kornia) Affine scalar translate_percent=%s samples signed translations on both axes; "
@@ -419,10 +692,6 @@ def _make_affine(params: dict[str, Any]) -> Any:
         translate: float | tuple[float, float] | list[float] | None = (magnitude, magnitude)
     else:
         translate = translate_percent
-
-    scale = params.get("scale")
-    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
-        scale = _as_range(scale)
 
     return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),
@@ -851,6 +1120,8 @@ def build_kornia_pipeline(
     resolution: int,
     with_masks: bool = False,
     include_keypoints: bool = False,
+    with_keypoints: bool = False,
+    keypoint_flip_pairs: list[int] | None = None,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
@@ -867,14 +1138,23 @@ def build_kornia_pipeline(
             to transport its padding mask; segmentation batches concatenate instance-mask channels before the final
             padding channel. The pipeline then expects three inputs ``(img, boxes, masks)`` and returns three outputs.
             Defaults to ``False`` for direct detection-only callers.
-        include_keypoints: When ``True``, keypoint-unsafe horizontal-flip
-            transforms are dropped with a warning before the Kornia pipeline is built.
+        include_keypoints: Preserve the existing flip-safety behavior: drop
+            horizontal flips when no flip pairs are provided.
+        with_keypoints: When ``True``, add ``"keypoints"`` to ``data_keys``. The pipeline then takes one extra
+            trailing input, keypoint xy coordinates ``[B, N, 2]`` (as built by :func:`collate_keypoints`), and
+            returns one extra trailing output: ``(img, boxes, keypoints)``, or ``(img, boxes, masks, keypoints)``
+            with *with_masks*. This is separate from ``include_keypoints`` so existing direct
+            callers using that flag keep the same input arity.
+        keypoint_flip_pairs: Flat left/right joint pairs. A nonempty list keeps
+            horizontal flips; the caller swaps joint slots after each flip.
 
     Returns:
         A ``kornia.augmentation.AugmentationSequential`` instance.
 
     Raises:
-        ValueError: If *aug_config* contains an unsupported augmentation key.
+        ValueError: If *aug_config* contains an unsupported augmentation key; if *keypoint_flip_pairs* has an odd
+            number of entries while *include_keypoints* or *with_keypoints* is set; or if *keypoint_flip_pairs* is
+            non-empty while *with_keypoints* is ``False``.
 
     Examples:
         >>> from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE
@@ -884,9 +1164,16 @@ def build_kornia_pipeline(
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
 
+    if (include_keypoints or with_keypoints) and keypoint_flip_pairs and len(keypoint_flip_pairs) % 2:
+        raise ValueError("keypoint_flip_pairs must contain an even number of joint indices")
+    if keypoint_flip_pairs and not with_keypoints:
+        # Without the keypoints data key the caller never receives augmented joints to relabel, so the pairs would
+        # only keep horizontal flips enabled while silently doing nothing.
+        raise ValueError("keypoint_flip_pairs requires with_keypoints=True so flipped joints can be relabeled")
+
     filtered_aug_config = filter_keypoint_hflip_augmentations(
         aug_config,
-        include_keypoints=include_keypoints,
+        include_keypoints=(include_keypoints or with_keypoints) and not keypoint_flip_pairs,
         warn=logger.warning,
     )
     assert isinstance(filtered_aug_config, dict)
@@ -901,6 +1188,8 @@ def build_kornia_pipeline(
         transforms.append(factory(params))
 
     data_keys = ["input", "bbox_xyxy", "mask"] if with_masks else ["input", "bbox_xyxy"]
+    if with_keypoints:
+        data_keys.append("keypoints")
     return AugmentationSequential(
         *transforms,
         data_keys=data_keys,
@@ -1032,6 +1321,106 @@ def collate_masks(
     return masks_padded
 
 
+def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max: int) -> tuple[Tensor, Tensor]:
+    """Pad keypoints to the box count and retain visibility separately.
+
+    Kornia transforms only xy coordinates, so visibility travels outside the pipeline. Coordinates are copied
+    unchanged, in the same frame as the input keypoints; this function performs no frame shift. Kornia's pixel-index
+    convention flips ``x`` to ``width - 1 - x`` while RF-DETR's continuous coordinates flip to ``width - x``, so a
+    caller that needs the latter shifts points (and boxes) by ``-0.5`` before the pipeline and ``+0.5`` after it, as
+    ``RFDETRDataModule.on_after_batch_transfer`` does.
+
+    Args:
+        targets: Per-image targets with ``[N, K, 3]`` keypoints.
+        device: Device holding the batch.
+        n_max: Padded box count from :func:`collate_boxes`.
+
+    Returns:
+        Kornia xy points ``[B, n_max * K, 2]`` in the input coordinate frame and visibility
+        ``[B, n_max, K]``. Both are float32; rows past an image's own instance count stay zero, and
+        :func:`unpack_boxes` later zeroes joints that end up outside the image or invisible.
+
+    Raises:
+        ValueError: If a target's keypoints are not shaped ``[N, K, 3]`` with ``N <= n_max`` and the joint count
+            ``K`` of the first target.
+
+    Examples:
+        >>> points, visibility = collate_keypoints(
+        ...     [{"keypoints": torch.tensor([[[3., 4., 2.]]])}], torch.device("cpu"), 1
+        ... )
+        >>> points.tolist(), visibility.tolist()
+        ([[[3.0, 4.0]]], [[[2.0]]])
+    """
+    if not targets:
+        return torch.zeros(0, 0, 2, device=device), torch.zeros(0, 0, 0, device=device)
+    k = targets[0]["keypoints"].shape[1]
+    points = torch.zeros(len(targets), n_max, k, 2, dtype=torch.float32, device=device)
+    visibility = torch.zeros(len(targets), n_max, k, dtype=torch.float32, device=device)
+    for i, target in enumerate(targets):
+        keypoints = target["keypoints"]
+        if keypoints.ndim != 3 or keypoints.shape[1:] != (k, 3) or keypoints.shape[0] > n_max:
+            raise ValueError(f"Expected keypoints with shape (N <= {n_max}, {k}, 3), got {tuple(keypoints.shape)}")
+        n = keypoints.shape[0]
+        points[i, :n] = keypoints[..., :2].to(device=device, dtype=torch.float32)
+        visibility[i, :n] = keypoints[..., 2].to(device=device, dtype=torch.float32)
+    return points.reshape(len(targets), n_max * k, 2), visibility
+
+
+def keypoint_horizontal_flip_mask(pipeline: Any, batch_size: int, device: torch.device) -> Tensor:
+    """Read per-image horizontal-flip draws from the completed Kornia pipeline.
+
+    Kornia exposes sampled parameters through ``_params`` after a forward pass;
+    the transform matrix alone cannot distinguish horizontal from vertical
+    reflection. This mirrors the CPU-backend convention: only horizontal flips relabel left/right joint slots, and
+    ``VerticalFlip`` is intentionally not relabeled.
+
+    Args:
+        pipeline: The just-executed AugmentationSequential.
+        batch_size: Number of images in the batch.
+        device: Device holding the batch.
+
+    Returns:
+        Boolean ``[B]`` tensor marking odd horizontal-flip parity.
+
+    Raises:
+        RuntimeError: If the pipeline contains a horizontal flip but exposed no horizontal-flip draws, so paired
+            joints cannot be relabeled safely.
+
+    Examples:
+        >>> pipeline = build_kornia_pipeline({"VerticalFlip": {"p": 1.0}}, 16, with_keypoints=True)
+        >>> keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu")).tolist()
+        [False, False]
+    """
+    from kornia.augmentation import RandomHorizontalFlip
+
+    flipped = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    found = False
+    for item in _sampled_param_items(pipeline):
+        if item.name.startswith("RandomHorizontalFlip_"):
+            found = True
+            flipped ^= item.data["batch_prob"].to(device=device, dtype=torch.bool)
+    has_horizontal_flip = any(isinstance(child, RandomHorizontalFlip) for child in pipeline.children())
+    if has_horizontal_flip and not found:
+        raise RuntimeError("Kornia did not expose horizontal-flip draws; cannot safely relabel paired keypoints")
+    return flipped
+
+
+def _sampled_param_items(pipeline: Any) -> list[Any]:
+    """Return the per-transform parameters Kornia sampled on the pipeline's last forward pass.
+
+    Kornia exposes them only through the private ``AugmentationSequential._params`` attribute, a list of
+    ``ParamItem`` entries named ``<TransformClass>_<index>``. Reading it here keeps that private-API dependency in one
+    place.
+
+    Args:
+        pipeline: A Kornia ``AugmentationSequential``.
+
+    Returns:
+        The sampled ``ParamItem`` entries; empty before the first forward pass.
+    """
+    return list(getattr(pipeline, "_params", None) or [])
+
+
 def unpack_boxes(
     boxes_aug: Tensor,
     valid: Tensor,
@@ -1039,12 +1428,21 @@ def unpack_boxes(
     image_height: int,
     image_width: int,
     masks_aug: Tensor | None = None,
+    keypoints_aug: Tensor | None = None,
+    keypoint_visibility: Tensor | None = None,
+    keypoint_flip_pairs: list[int] | None = None,
+    keypoint_flip_mask: Tensor | None = None,
 ) -> list[dict[str, Any]]:
-    """Unpack augmented boxes (and optionally masks), clamp to image bounds, remove zero-area boxes.
+    """Unpack augmented boxes, masks and keypoints, removing zero-area instances.
 
     After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked back into per-image target dicts.  Boxes
     are clamped to ``[0, W] x [0, H]`` and any that collapse to zero area are removed along with their corresponding
     ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks`` entries.
+
+    Keypoint visibility is decided once, from the final coordinates after every augmentation op has run; it is not
+    tracked per op. A joint that one op moves outside the image and a later op moves back inside therefore keeps its
+    original visibility. This matches the default Albumentations CPU path, which also judges joints only on the
+    pipeline's final output.
 
     Args:
         boxes_aug: Augmented boxes tensor ``[B, N_max, 4]`` in xyxy format.
@@ -1057,10 +1455,25 @@ def unpack_boxes(
             (float32) from Kornia.  When provided, masks are filtered by the same ``keep`` mask as boxes, thresholded at
             ``> 0.5`` to bool, and stored under ``"masks"`` in each output target dict.  When ``None``, any existing
             ``"masks"`` entry in the target dict is preserved unchanged.
+        keypoints_aug: Optional augmented xy points ``[B, N_max * K, 2]`` in the same coordinate frame as
+            *boxes_aug*; this function performs no frame shift, so a caller that moved points into Kornia's
+            pixel-index frame must move them back before calling.
+        keypoint_visibility: Original visibility values ``[B, N_max, K]``.
+        keypoint_flip_pairs: Flat left/right index pairs for slot relabeling.
+        keypoint_flip_mask: Per-image horizontal-flip draws ``[B]``.
 
     Returns:
         A new list of target dicts with updated ``boxes``, ``labels``, ``area``, ``iscrowd``, and (when *masks_aug* is
-        given) ``masks`` entries.
+        given) ``masks`` entries. When *keypoints_aug* is given, each dict also gets ``keypoints`` ``[N_kept, K, 3]``
+        in the same coordinate frame as *keypoints_aug* (no frame shift is applied here): rows follow the same
+        ``keep`` mask as boxes, and a joint whose xy falls outside ``[0, W] x [0, H]`` or whose visibility is
+        ``<= 0`` is zeroed entirely (x, y and v). On images whose *keypoint_flip_mask* entry is set, joint slots are
+        then swapped per *keypoint_flip_pairs*.
+
+    Raises:
+        ValueError: If *keypoints_aug* is given without *keypoint_visibility*, or its batch and point dimensions
+            do not equal ``(B, N_max * K)`` for the padded box count and the joint count ``K`` of
+            *keypoint_visibility*.
     """
     if masks_aug is not None:
         assert masks_aug.shape[:2] == valid.shape, (
@@ -1068,6 +1481,13 @@ def unpack_boxes(
             f"valid shape {tuple(valid.shape)}; ensure collate_masks is called with "
             "n_max=valid.shape[1] from collate_boxes"
         )
+    _check_keypoint_inputs(keypoints_aug, keypoint_visibility, valid)
+    flip_flags: list[bool] = []
+    flip_permutation: list[int] = []
+    if keypoint_flip_pairs and keypoint_flip_mask is not None and keypoint_visibility is not None:
+        # Read every per-image flip draw with one device sync, and none at all when no pairs are configured.
+        flip_flags = keypoint_flip_mask.tolist()
+        flip_permutation = keypoint_flip_permutation(keypoint_flip_pairs, keypoint_visibility.shape[2])
     new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
@@ -1105,10 +1525,68 @@ def unpack_boxes(
         if masks_aug is not None:
             masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
-        # TODO(keypoints): First public keypoint preview keeps keypoint coordinates unchanged through GPU augmentation
-        # to preserve existing training paths without introducing partial geometry transforms. Add keypoint-aware
-        # Kornia unpack/keep logic once augmentation parity is implemented.
+        if keypoints_aug is not None and keypoint_visibility is not None:
+            k = keypoint_visibility.shape[2]
+            t["keypoints"] = _unpack_image_keypoints(
+                keypoints_aug[i].reshape(valid.shape[1], k, 2)[:n_orig][keep],
+                keypoint_visibility[i, :n_orig][keep],
+                image_height,
+                image_width,
+                flip_permutation if flip_flags and flip_flags[i] else None,
+            )
 
         new_targets.append(t)
 
     return new_targets
+
+
+def _check_keypoint_inputs(keypoints_aug: Tensor | None, keypoint_visibility: Tensor | None, valid: Tensor) -> None:
+    """Check that augmented keypoints line up with the padded boxes and the visibility tensor.
+
+    Args:
+        keypoints_aug: Augmented xy points ``[B, N_max * K, 2]``, or ``None`` when keypoints are not transported.
+        keypoint_visibility: Visibility ``[B, N_max, K]`` from :func:`collate_keypoints`.
+        valid: Boolean mask ``[B, N_max]`` from :func:`collate_boxes`.
+
+    Raises:
+        ValueError: If *keypoints_aug* is given without *keypoint_visibility*, or its batch and point dimensions
+            do not equal ``(B, N_max * K)``.
+    """
+    if keypoints_aug is None:
+        return
+    if keypoint_visibility is None or keypoints_aug.shape[:2] != (
+        valid.shape[0],
+        valid.shape[1] * keypoint_visibility.shape[2],
+    ):
+        raise ValueError("keypoints_aug and keypoint_visibility must match the padded box and joint counts")
+
+
+def _unpack_image_keypoints(
+    xy: Tensor,
+    visibility: Tensor,
+    image_height: int,
+    image_width: int,
+    flip_permutation: list[int] | None,
+) -> Tensor:
+    """Rebuild one image's ``[N, K, 3]`` keypoints after augmentation.
+
+    Visibility is decided once, from the final coordinates only: a joint is zeroed entirely (x, y and v) when it lies
+    outside ``[0, W] x [0, H]`` or its visibility is ``<= 0``.
+
+    Args:
+        xy: Augmented joint coordinates ``[N, K, 2]`` of the kept instances.
+        visibility: Original visibility ``[N, K]`` of the kept instances.
+        image_height: Augmented image height in pixels.
+        image_width: Augmented image width in pixels.
+        flip_permutation: Joint-slot permutation from :func:`keypoint_flip_permutation` when this image was
+            horizontally flipped, else ``None``.
+
+    Returns:
+        Float tensor ``[N, K, 3]`` of ``(x, y, v)`` rows.
+    """
+    keypoints = torch.cat((xy, visibility.unsqueeze(-1)), dim=-1)
+    inside = (xy[..., 0] >= 0) & (xy[..., 0] <= image_width) & (xy[..., 1] >= 0) & (xy[..., 1] <= image_height)
+    keypoints = keypoints.masked_fill((~inside | (visibility <= 0)).unsqueeze(-1), 0)
+    if flip_permutation is not None:
+        keypoints = keypoints[:, flip_permutation]
+    return keypoints

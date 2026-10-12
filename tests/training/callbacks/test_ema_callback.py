@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.model_ema import ModelEma
+from tests._markers import requires_torch_xla
 
 
 class _EMAContainerModule(nn.Module):
@@ -344,6 +345,7 @@ class TestXLARealDeviceExecution:
     ``tests/models/test_criterion.py``; runs on any PJRT backend, so ``PJRT_DEVICE=CPU`` exercises it with no TPU)."""
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_num_averaged_value_does_not_read_the_lazy_per_group_counter_back_to_the_host(self) -> None:
         """No ``aten::_local_scalar_dense`` host read: the XLA branch must use the CPU-resident model counter.
 
@@ -351,7 +353,6 @@ class TestXLARealDeviceExecution:
         ``self._average_model.n_averaged`` would both return the wrong value (0, not 7) and trigger a real
         device-to-host transfer on the XLA tensor below -- this test fails on either symptom.
         """
-        pytest.importorskip("torch_xla")
         import torch_xla
         import torch_xla.debug.metrics as met
 
@@ -964,6 +965,7 @@ class TestRealXLATrainerEMA:
     """Run the XLA optimizer-hook lifecycle through a real Lightning Trainer when hardware is available."""
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_optimizer_hook_updates_once_per_interval_across_resume(self, tmp_path: Path) -> None:
         """A real XLA Trainer updates EMA at steps 2 and 4, including after checkpoint resume.
 
@@ -971,7 +973,6 @@ class TestRealXLATrainerEMA:
         without actual XLA hardware. This test therefore remains hardware-gated while exercising the production
         optimizer hook, rather than replacing that lifecycle with the existing raw-optimizer simulation.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.accelerators import XLAAccelerator
 
         if not XLAAccelerator.is_available():
