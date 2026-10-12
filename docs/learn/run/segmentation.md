@@ -60,7 +60,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
 !!! note "Using COCO classes vs. fine-tuned model classes"
 
-    `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79). For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
+    `COCO_CLASSES` maps sparse COCO category IDs (1–90, with gaps) to names. COCO-pretrained models return those sparse IDs as `class_id`; for fine-tuned models, use `detections.data["class_name"]` to get names from the checkpoint.
 
 ### Read the masks
 
@@ -92,7 +92,7 @@ model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
 
 An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
 
-PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. It requires a compatible device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support on the target device. CUDA is required only for the CUDA Graph backend above. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. Inductor compiles with `torch.compile` on a device supported by the installed PyTorch version and its operators; it does not require CUDA. `dtype="float16"` also requires FP16 support on that device. The external `inference` package API shown above does not expose `RFDETR.inference()`:
 
 ```python
 model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
