@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
+        <meta name="description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
       
       
         <meta name="author" content="Roboflow">
@@ -87,7 +87,7 @@
   
   
   <meta property="og:title" content="How It Works - RF-DETR">
-  <meta property="og:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
+  <meta property="og:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/learn/how-it-works/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
@@ -98,21 +98,21 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
   <meta name="twitter:title" content="How It Works - RF-DETR">
-  <meta name="twitter:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
+  <meta name="twitter:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-10-08T12:31:02">
+  <meta property="article:modified_time" content="2026-10-12T19:19:17">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "How It Works",
-    "description": "A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.",
+    "description": "A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.",
     "url": "https://rfdetr.roboflow.com/develop/learn/how-it-works/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-08T12:31:02",
+    "dateModified": "2026-10-12T19:19:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -888,6 +888,56 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-boxes-to-masks-instance-segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From boxes to masks: instance segmentation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="From boxes to masks: instance segmentation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-mask-is-a-dot-product" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A mask is a dot product
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-masks-are-learned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the masks are learned
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-masks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the masks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3225,6 +3275,56 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#from-boxes-to-masks-instance-segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From boxes to masks: instance segmentation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="From boxes to masks: instance segmentation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-mask-is-a-dot-product" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A mask is a dot product
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-masks-are-learned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the masks are learned
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-masks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the masks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#one-training-run-a-whole-family-of-models" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3296,6 +3396,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Its backbone is DINOv2, a vision transformer pretrained without labels, which is why it adapts well to small and unusual datasets</li>
 <li>Windowed attention keeps the backbone cheap, and deformable attention lets each query read only a few points of the image instead of all of them</li>
 <li>Training uses one-to-one Hungarian matching, which is what teaches the model not to produce duplicates</li>
+<li>For instance segmentation, each query also paints its own mask: a dot product between the query and a shared map of pixel features, so mask, box and class always describe the same object</li>
 <li>In the RF-DETR paper, one training run covers the Nano through Large sizes as points on a single accuracy–latency curve</li>
 </ul>
 </div>
@@ -3412,7 +3513,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"https://media.roboflow.com/dog.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Segmentation and keypoint models add a head that turns each query into a mask or a set of keypoints. The rest of the pipeline is the same.</p>
+<p>Segmentation and keypoint models add a head that turns each query into a mask or a set of keypoints. The rest of the pipeline is the same. <a href="#from-boxes-to-masks-instance-segmentation">From boxes to masks</a> below shows how the segmentation head works.</p>
 <h2 id="how-it-learns-matching-not-sorting">How it learns: matching, not sorting<a class="headerlink" href="#how-it-learns-matching-not-sorting" title="Permanent link">&para;</a></h2>
 <p>Training is where the "one answer per object" behavior comes from. For each training image, RF-DETR has 300 predictions and, say, 3 ground-truth objects. Which prediction should be compared with which object?</p>
 <p><img alt="A cost matrix scores every pair of predicted query and ground-truth object. The Hungarian algorithm picks the cheapest assignment in which each object gets exactly one query. Query 3 is close to object A but loses to query 2, so it is trained to predict no object." loading="lazy" src="../../assets/how-it-works/matching.svg" /></p>
@@ -3424,6 +3525,89 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>IoU-aware classification.</strong> The classification target for a matched query is not a plain 1. It blends the predicted score with the IoU of the predicted box, so the model learns to be confident in proportion to how well its box fits. Scores then rank boxes by quality as well as by class.</li>
 <li><strong>A loss on every decoder layer.</strong> Each decoder layer's output is supervised directly. One consequence is that later layers can be removed at inference and the earlier ones still produce useful boxes, which the next section relies on.</li>
 </ul>
+<h2 id="from-boxes-to-masks-instance-segmentation">From boxes to masks: instance segmentation<a class="headerlink" href="#from-boxes-to-masks-instance-segmentation" title="Permanent link">&para;</a></h2>
+<p>A box says roughly where an object is. Instance segmentation asks for its exact pixels, and keeps every object separate: two dogs lying on top of each other get two masks, not one "dog" region. RF-DETR-Seg does this without changing anything above. The backbone, the projector, the queries, the decoder and the matching all stay. One small head is added, and every query that claims an object also paints that object's mask.</p>
+<p><img alt="The coarse memory feature map is upsampled to a quarter of the input resolution and refined by small convolutional blocks into per-pixel features. Each query embedding from the decoder passes through a small MLP. The mask logit at every pixel is the dot product of the query embedding with that pixel's feature, plus a bias, so every query paints its own mask; a query below the score threshold is dropped." loading="lazy" src="../../assets/how-it-works/segmentation.svg" /></p>
+<h3 id="a-mask-is-a-dot-product">A mask is a dot product<a class="headerlink" href="#a-mask-is-a-dot-product" title="Permanent link">&para;</a></h3>
+<p>The memory from Step 3 is too coarse for a mask: it holds one feature per patch. The segmentation head first upsamples it to a quarter of the input resolution, so the 384 × 384 input of RF-DETR-Seg Small becomes a 96 × 96 grid. A few small convolutional blocks, one per decoder layer, then refine it into <strong>pixel features</strong>. Each block is a depthwise 3 × 3 convolution followed by LayerNorm and a pointwise layer.</p>
+<p>The decoder already gives every query an embedding: the same vector that predicts its box and class. A small MLP adapts it for the mask. The mask logit at a pixel is then the dot product of that query embedding with the pixel's feature, plus one learned bias. A positive logit means "this pixel belongs to my object".</p>
+<p>Two consequences fall out of this design:</p>
+<ul>
+<li><strong>All masks come from one matrix multiplication.</strong> The pixel features are computed once per image and shared by every query. A mask costs one dot product per pixel, not a separate network run per object.</li>
+<li><strong>Masks never need to be paired with boxes.</strong> Mask, box and class come from the same query embedding, so they always describe the same object. Just as there is no NMS, there is no step that assigns masks to detections afterwards.</li>
+</ul>
+<div class="admonition question">
+<p class="admonition-title">Pause and ponder</p>
+<p>The pixel features know nothing about any particular object; they are shared by all queries. So what makes the dog query light up only the dog's pixels, and not the cat's? The answer is in the query embedding: after self-attention with the other queries and cross-attention into the image, it encodes <em>which</em> object it claimed, and the dot product matches pixels that look like that object.</p>
+</div>
+<h3 id="how-the-masks-are-learned">How the masks are learned<a class="headerlink" href="#how-the-masks-are-learned" title="Permanent link">&para;</a></h3>
+<p>Masks enter training in two places:</p>
+<ul>
+<li><strong>Matching.</strong> The cost of a (query, object) pair gains two mask terms next to the class, L1 and GIoU terms: a binary cross-entropy between the predicted and the true mask, and a Dice cost. A query whose box looks right but whose mask covers the wrong pixels becomes a worse match.</li>
+<li><strong>The loss.</strong> Each matched query is trained with the same two terms. Binary cross-entropy scores every pixel on its own. Dice scores the overlap of the whole shape, so a small object with few pixels still counts.</li>
+</ul>
+<p>Comparing every pixel of every mask with its target would be expensive, so training compares them at sampled points, an idea from <a href="https://arxiv.org/abs/1912.08193">PointRend</a>. For matching, the head samples shared pixel features before evaluating each query's dot product. For the loss, it first builds dense logits for matched queries and then evaluates sampled points from those logits. By default, the loss samples about one point per 16 mask pixels, with at least as many points as the mask has rows. Three quarters of the points go where the prediction is least certain, usually along object boundaries; the rest are spread at random.</p>
+<p>As with boxes, every decoder layer gets its own mask, and each one is supervised directly.</p>
+<h3 id="reading-the-masks">Reading the masks<a class="headerlink" href="#reading-the-masks" title="Permanent link">&para;</a></h3>
+<p>At inference, the queries scoring below your confidence threshold are dropped first. Only the remaining masks are upsampled to the original image size and cut at logit 0, which turns them into boolean masks. That ordering means a higher threshold also saves mask memory and time. There is still no NMS. Two overlapping objects are two queries, so they get two masks, and a pixel can belong to both.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegSmall</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegSmall</span><span class="p">()</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"https://media.roboflow.com/dog.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">detections</span><span class="o">.</span><span class="n">mask</span>  <span class="c1"># boolean array, one (H, W) mask per detected object</span>
+</span></code></pre></div>
+<p>The segmentation models use 12 pixel patches instead of 16, so their memory is finer at the same resolution. They also use fewer queries than detection at the small sizes:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Model</th>
+<th style="text-align: center;">Resolution [px]</th>
+<th style="text-align: center;">Patch size [px]</th>
+<th style="text-align: center;">Tokens [-]</th>
+<th style="text-align: center;">Decoder layers [-]</th>
+<th style="text-align: center;">Queries [-]</th>
+<th style="text-align: center;">Mask grid [-]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">RF-DETR-Seg Nano</td>
+<td style="text-align: center;">312</td>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">676</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">100</td>
+<td style="text-align: center;">78 × 78</td>
+</tr>
+<tr>
+<td style="text-align: left;">RF-DETR-Seg Small</td>
+<td style="text-align: center;">384</td>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">1,024</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">100</td>
+<td style="text-align: center;">96 × 96</td>
+</tr>
+<tr>
+<td style="text-align: left;">RF-DETR-Seg Medium</td>
+<td style="text-align: center;">432</td>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">1,296</td>
+<td style="text-align: center;">5</td>
+<td style="text-align: center;">200</td>
+<td style="text-align: center;">108 × 108</td>
+</tr>
+<tr>
+<td style="text-align: left;">RF-DETR-Seg Large</td>
+<td style="text-align: center;">504</td>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">1,764</td>
+<td style="text-align: center;">5</td>
+<td style="text-align: center;">200</td>
+<td style="text-align: center;">126 × 126</td>
+</tr>
+</tbody>
+</table>
 <h2 id="one-training-run-a-whole-family-of-models">One training run, a whole family of models<a class="headerlink" href="#one-training-run-a-whole-family-of-models" title="Permanent link">&para;</a></h2>
 <p>Most detector families are trained once per size. In the RF-DETR paper, the Nano through Large sizes come from a single training run, using weight-sharing neural architecture search (NAS). The Atto, Femto, and Pico models use a different backbone (PE-Core-T), and the XL and 2XL models have about 126 M parameters, so they cannot share weights with that family.</p>
 <p><img alt="Five architecture knobs (patch size, resolution, number of attention windows, decoder layers and queries) are sampled at random during a single training run, and every setting can then be evaluated without retraining. The N, S, M and L points on the accuracy-latency curve come from the benchmark table; the grey dots are illustrative, not measured." loading="lazy" src="../../assets/how-it-works/nas.svg" /></p>
@@ -3537,6 +3721,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <ul>
 <li><a href="../benchmarks/">Benchmarks</a>: the full accuracy and latency tables behind the numbers on this page</li>
 <li><a href="../run/detection/">Run Model</a>: use a pretrained model in a few lines</li>
+<li><a href="../run/segmentation/">Run Segmentation</a>: predict instance masks with RF-DETR-Seg</li>
 <li><a href="../train/">Train Model</a>: fine-tune on your own dataset</li>
 <li><a href="../../exports/">Export Model</a>: deploy to ONNX, TensorRT, CoreML, and other runtimes</li>
 <li><a href="https://arxiv.org/abs/2511.09554">RF-DETR paper</a>: the full method and ablations</li>
@@ -3561,7 +3746,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 12:31:02 UTC">2026-10-08 12:31:02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 12, 2026 19:19:17 UTC">2026-10-12 19:19:17</span>
   </span>
 
     
