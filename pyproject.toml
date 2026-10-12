@@ -295,6 +295,7 @@ typing = [
 
 docs = [
     "mkdocs-material[imaging]>=9.7",
+    "pymdown-extensions<12.2",  # 12.2 requires md in Highlight.__init__, which mkdocstrings does not pass.
     "mkdocs-redirects>=1.2.2,<1.2.3",  # 1.2.3 adds ProperDocs and warns on MkDocs builds.
     "mkdocstrings>=0.25.2,<0.30.0",
     "mkdocstrings-python>=1.10.9",
