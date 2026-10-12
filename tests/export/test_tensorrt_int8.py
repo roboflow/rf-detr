@@ -2485,12 +2485,18 @@ class TestSegmentationAndKeypointInt8Plan:
         quantized = [name for name in plans[kind].weighted if not name.startswith(quantize._QUANTIZED_REGIONS)]
         assert (quantized, [n for n in plans[kind].weighted if n.startswith(head)]) == ([], [])
 
-    @pytest.mark.parametrize("kind", ["segmentation-small", "segmentation-medium"])
+    @pytest.mark.parametrize(
+        ("kind", "weighted", "activations"),
+        [("segmentation-small", 86, 122), ("segmentation-medium", 92, 128)],
+    )
     def test_windowed_attention_of_small_and_medium_is_int8(
-        self, kind: str, plans: dict[str, quantize.Int8Plan]
+        self, kind: str, weighted: int, activations: int, plans: dict[str, quantize.Int8Plan]
     ) -> None:
-        # Nine windowed blocks, each adding four INT8 inputs: the scores' two operands and the context's two.
-        assert len(plans[kind].activations) - len(plans[kind].weighted) == 9 * 4
+        # Both counts are pinned: nine windowed blocks add 9 * 4 = 36 activation inputs (the scores' two operands and
+        # the context's two) on top of the weights, and a difference alone would pass a regression that moved the
+        # projections and the attention by the same amount.
+        assert (len(plans[kind].weighted), len(plans[kind].activations)) == (weighted, activations)
+        assert activations - weighted == 9 * 4
 
     @onnx_and_onnxruntime_only
     @onnxconverter_common_only
