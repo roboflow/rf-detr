@@ -382,6 +382,25 @@ class TestRFDETRCliTrainer:
 
         assert trainer_fit.call_args.kwargs["ckpt_path"] == str(tmp_path / resumed_from)
 
+    @pytest.mark.parametrize("subcommand", ["validate", "test"])
+    def test_evaluation_hides_the_missing_logger_warning(self, tmp_path: Path, subcommand: str) -> None:
+        """The evaluation-only trainer has no logger; Lightning's warning about that, once per metric, is not shown."""
+        cli = _cli(tmp_path, subcommand=subcommand)
+        metrics = [{"val/mAP_50_95": 0.5}]
+
+        def run_logging_one_metric(**kwargs: Any) -> list[dict[str, float]]:
+            warnings.warn("You called `self.log(...)` but have no logger configured.", UserWarning, stacklevel=1)
+            return metrics
+
+        with (
+            patch.object(cli.trainer, subcommand, side_effect=run_logging_one_metric),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            results = getattr(RFDETRCli, subcommand)(cli, model=cli.model)
+
+        assert (results, [str(warning.message) for warning in caught]) == (metrics, [])
+
     def test_custom_trainer_class_is_refused(self, tmp_path: Path) -> None:
         """``build_trainer`` always builds a ``Trainer``, so a custom ``trainer_class`` is refused, not ignored."""
         with pytest.raises(ValueError, match="trainer_class"):

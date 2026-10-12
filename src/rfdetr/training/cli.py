@@ -87,6 +87,8 @@ def _command_line_trainer_arguments(args: ArgsType) -> set[str]:
         >>> args = ["fit", "--trainer.max_epochs", "3", "--trainer.callbacks+=Timer", "--trainer.logger.init_args.x=1"]
         >>> sorted(_command_line_trainer_arguments(args))
         ['callbacks', 'logger', 'max_epochs']
+        >>> _command_line_trainer_arguments({"trainer": {"max_epochs": 3}})
+        set()
     """
     if not isinstance(args, (list, tuple)):
         return set()
