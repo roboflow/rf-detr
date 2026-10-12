@@ -260,7 +260,7 @@ class SegmentationHead(nn.Module):
     def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export  # type: ignore[method-assign]
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
         for name, m in self.named_modules():
             if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()
@@ -271,18 +271,23 @@ class SegmentationHead(nn.Module):
         query_features: list[Tensor],
         image_size: tuple[int, int],
         skip_blocks: bool = False,
+        final_layer_only: bool = False,
     ) -> list[Tensor]:
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
-        # output: (B, N, H*r, W*r)
+        # output: (B, N, H*r, W*r) for each decoder layer, or for the last one only when final_layer_only is set
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
         spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
         # Both branches below contract with einsum; forward_export writes the same math as a MatMul for CoreML.
         if not skip_blocks:
-            for block, qf in zip(self.blocks, query_features):
+            last_layer = min(len(self.blocks), len(query_features)) - 1
+            for layer, (block, qf) in enumerate(zip(self.blocks, query_features)):
+                # Every block runs, since each feeds the next; the projections and the einsum are per layer.
                 spatial_features = block(spatial_features)
+                if final_layer_only and layer < last_layer:
+                    continue
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
                 mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
