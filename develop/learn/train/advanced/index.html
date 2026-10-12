@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-08T12:20:40">
+  <meta property="article:modified_time" content="2026-10-12T17:21:36">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-08T12:20:40",
+    "dateModified": "2026-10-12T17:21:36",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3990,7 +3990,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Learning rate scheduler state</li>
 <li>Training epoch number</li>
 </ul>
-<p>Resuming rewrites <code>training_config.json</code> in <code>output_dir</code> with the resumed run's own configuration — once when the run starts and again when it finishes — so a previous run's copy in that directory is replaced as soon as the resumed run begins.</p>
+<p>The optimizer's moments and the schedule's progress carry over. Its learning rates and weight decay follow the order defaults, then the checkpoint, then what you pass: an <code>lr</code>, <code>lr_encoder</code>, <code>lr_vit_layer_decay</code>, <code>lr_component_decay</code> or <code>weight_decay</code> you set to a new value replaces the checkpoint's, and one you leave out keeps the value the checkpoint records. Only the parameter groups a setting you pass feeds change; the others keep the learning rate and weight decay their saved optimizer holds, even where the recorded settings say otherwise. A group a setting you pass feeds is rebuilt from all the settings that feed it, so one you leave out (the decoder's rate is <code>lr * lr_component_decay</code>, for one) comes from the checkpoint's recorded settings there. A new <code>lr</code> becomes the base the schedule scales: a schedule without an absolute floor that had decayed to 40% of the old <code>lr</code> continues at 40% of the new one, and the floor of a <code>CosineAnnealingLR</code>, alone or after the warmup ramp (<code>eta_min</code>), or of a <code>ReduceLROnPlateau</code> (<code>min_lr</code>) stays where the checkpoint's scheduler has it, while the base moves. For a supported scheduler composition, a group saved at a base of zero, or at its cosine's <code>eta_min</code>, restarts at its configured base, wherever the schedule stands. Scheduler and optimizer keyword arguments you change on resume are overridden by the restored state. A scheduler that sets its own learning rates from <code>lr_scheduler_kwargs</code>, such as <code>OneCycleLR</code> or <code>CyclicLR</code>, ignores <code>lr</code> as it does in a fresh run, and a <code>ReduceLROnPlateau</code> checkpoint written by an earlier release restarts at a changed learning rate instead of keeping its reductions. A change that merges or splits parameter groups, such as <code>weight_decay</code> to or from <code>0</code>, does not fit the saved optimizer state, and loading the checkpoint fails. Resuming logs which values came from the checkpoint and which you set.</p>
+<p>An explicitly supplied optimizer setting wins even when it equals the default. Every key supplied in a complete Python or JSON mapping is explicit; remove optimizer keys you want to inherit from the checkpoint. The CLI tracks the keys supplied in arguments or configuration files before adding defaults. A cosine wrapped in a single-member <code>ChainedScheduler</code> keeps its absolute floor too. Changing learning rates for a multi-member chain with an active nonzero cosine floor is unsupported and raises before changing optimizer or scheduler state; resuming that chain with unchanged learning rates or only a weight-decay override remains supported.</p>
+<p>Resuming rewrites <code>training_config.json</code> in <code>output_dir</code> with the resumed run's own configuration — once when the run starts and again when it finishes — so a previous run's copy in that directory is replaced as soon as the resumed run begins. Both this file and the checkpoints the resumed run writes record the settings above, but a setting you leave out is recorded as the checkpoint states it, which differs from what the optimizer trains with when the checkpoint recorded stale settings; with a <code>resume</code> that names no checkpoint file, such as <code>"last"</code>, or one that cannot be read ahead of training, only the checkpoints do. A <code>last.ckpt</code> written before rfdetr 1.11.1 does not record the settings it was trained with: resumed without any of them passed, it keeps its saved values while the files record the defaults; with one passed, that one applies and the ones you leave out take their defaults in the parameter groups it feeds, with a warning naming them.</p>
 <div class="admonition warning">
 <p class="admonition-title">Lightweight checkpoints resume without optimizer/scheduler state</p>
 <p>The above applies to the trainer's own full checkpoints (<code>last.ckpt</code>, <code>checkpoint_&lt;epoch&gt;.ckpt</code>). The best-model tracker also writes four lighter <code>.pth</code> files — <code>checkpoint_best_regular.pth</code>, <code>checkpoint_best_ema.pth</code>, <code>checkpoint_best_total.pth</code>, <code>last_ema.pth</code> — that intentionally omit optimizer/scheduler state to stay small. New files with matching configured callbacks can restore callback state (EMA and early stopping). Best-score tracking additionally requires <code>output_dir</code> to be the exact directory where the checkpoint was written. Files created before callback-state persistence (or with an empty callback section) restart callback state. The optimizer and LR scheduler always start cold. <code>resume=</code> logs the applicable warning; pass a full trainer checkpoint instead if you need optimizer/scheduler continuity.</p>
@@ -4651,7 +4653,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 12:20:40 UTC">2026-10-08 12:20:40</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 12, 2026 17:21:36 UTC">2026-10-12 17:21:36</span>
   </span>
 
     

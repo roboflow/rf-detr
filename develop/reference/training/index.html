@@ -6433,6 +6433,8 @@ applied in order:</p>
    the destination's FP32 DDP route must keep <code>fused=False</code>.</p>
 </li>
 </ol>
+<p>A checkpoint carrying optimizer state also orders the run's learning-rate and weight-decay settings as defaults,
+then the checkpoint, then <code>train_config</code>'s explicit values; see :meth:<code>_adopt_resumed_param_group_settings</code>.</p>
 
 
 <details class="note" open>

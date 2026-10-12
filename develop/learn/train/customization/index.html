@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-27T10:01:04">
+  <meta property="article:modified_time" content="2026-10-12T17:21:36">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-27T10:01:04",
+    "dateModified": "2026-10-12T17:21:36",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3830,6 +3830,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="c1"># or a legacy checkpoint:</span>
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="s2">"output/checkpoint.pth"</span><span class="p">)</span>
 </span></code></pre></div>
+<p>When the checkpoint carries optimizer state, <code>on_load_checkpoint</code> orders the learning-rate and weight-decay settings (<code>lr</code>, <code>lr_encoder</code>, <code>lr_vit_layer_decay</code>, <code>lr_component_decay</code>, <code>weight_decay</code>) as <code>model.train(resume=...)</code> does: a value the module's <code>TrainConfig</code> sets explicitly wins, and one it leaves out takes the value recorded in the checkpoint. Explicit values win even when they equal defaults. A <code>TrainConfig</code> built from a complete Python or JSON mapping treats every supplied key as explicit; omit optimizer keys you want to inherit from the checkpoint. LightningCLI tracks the keys supplied in arguments or configuration files before adding defaults, and preserves those choices when merging checkpoint hyperparameters. The optimizer's moments and the schedule's progress carry over. A <code>configure_optimizers</code> of your own records nothing to compare with, so the resumed optimizer then keeps its saved learning rates and weight decay, and warns when one of these settings is set.</p>
 <blockquote>
 <p><strong>Note:</strong> When <code>checkpoint_interval=1</code>, no <code>last.ckpt</code> is written. Use <code>checkpoint_{epoch}.ckpt</code> (e.g. <code>output/checkpoint_epoch=4.ckpt</code>) to resume instead.</p>
 </blockquote>
@@ -4159,7 +4160,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 27, 2026 10:01:04 UTC">2026-09-27 10:01:04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 12, 2026 17:21:36 UTC">2026-10-12 17:21:36</span>
   </span>
 
     
