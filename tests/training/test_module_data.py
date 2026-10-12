@@ -1993,8 +1993,8 @@ class TestOnAfterBatchTransfer:
 
         samples, targets = self._make_kornia_batch()
         img_aug = samples.tensors.clone()
-        # Mock pipeline returns the image, boxes, and transported padding mask.
-        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        # Mock pipeline returns pixel-index boxes, the image, and transported padding mask.
+        boxes_padded = torch.tensor([[[1.5, 1.5, 9.5, 9.5]]] * 2)
         padding_masks_aug = torch.zeros(2, 1, 16, 16, dtype=torch.float32)
         mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, padding_masks_aug))
         dm._kornia_pipeline = mock_pipeline
@@ -2016,6 +2016,128 @@ class TestOnAfterBatchTransfer:
             torch.testing.assert_close(
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
+
+    @kornia_only
+    @pytest.mark.parametrize("segmentation_head", [False, True])
+    @pytest.mark.parametrize("flip", ["HorizontalFlip", "VerticalFlip"])
+    def test_detection_box_edges_follow_flipped_pixels(
+        self, tmp_path: Path, segmentation_head: bool, flip: str
+    ) -> None:
+        """Continuous box edges, full-frame boxes, and optional masks follow the same flip."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        height, width = 16, 32
+        dm = self._attach_mock_trainer(self._build_dm(tmp_path, segmentation_head=segmentation_head))
+        dm._kornia_pipeline = build_kornia_pipeline({flip: {"p": 1.0}}, height, with_masks=True)
+        dm._kornia_normalize = torch.nn.Identity()
+        image = torch.zeros(1, 3, height, width)
+        image[:, :, 3:9, 4:12] = 1.0
+        boxes = torch.tensor([[4.0, 3.0, 12.0, 9.0], [0.0, 0.0, float(width), float(height)]])
+        target = {"boxes": boxes, "labels": torch.tensor([1, 2]), "area": torch.tensor([48.0, 512.0])}
+        if segmentation_head:
+            target["masks"] = torch.cat((image[0, :1].bool(), torch.ones(1, height, width, dtype=torch.bool)))
+
+        samples_out, targets_out = dm.on_after_batch_transfer((NestedTensor(image, None), [target]), 0)
+
+        # Expected continuous edges are W-x2/W-x1 or H-y2/H-y1, not the pixel-center W-1-x/H-1-y.
+        expected_box = [20.0, 3.0, 28.0, 9.0] if flip == "HorizontalFlip" else [4.0, 7.0, 12.0, 13.0]
+        x1, y1, x2, y2 = expected_box
+        expected_boxes = torch.tensor(
+            [
+                [(x1 + x2) / (2 * width), (y1 + y2) / (2 * height), (x2 - x1) / width, (y2 - y1) / height],
+                [0.5, 0.5, 1.0, 1.0],
+            ]
+        )
+        torch.testing.assert_close(targets_out[0]["boxes"], expected_boxes)
+        torch.testing.assert_close(targets_out[0]["labels"], target["labels"])
+        torch.testing.assert_close(targets_out[0]["area"], target["area"])
+        dimension = -1 if flip == "HorizontalFlip" else -2
+        torch.testing.assert_close(samples_out.tensors, image.flip(dimension))
+        if segmentation_head:
+            torch.testing.assert_close(targets_out[0]["masks"], target["masks"].flip(dimension))
+
+    @kornia_only
+    def test_detection_identity_preserves_fractional_subpixel_and_padded_boxes(self, tmp_path: Path) -> None:
+        """An identity pipeline preserves continuous edges and ignores padding for an empty image."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        dm = self._attach_mock_trainer(self._build_dm(tmp_path))
+        dm._kornia_pipeline = build_kornia_pipeline({}, 16, with_masks=True)
+        dm._kornia_normalize = torch.nn.Identity()
+        image = torch.zeros(2, 3, 16, 32)
+        boxes = torch.tensor([[3.2, 2.1, 8.7, 6.4], [2.0, 2.0, 2.5, 2.5]])
+        labels = torch.tensor([1, 2])
+        targets = [
+            {"boxes": boxes, "labels": labels},
+            {"boxes": torch.zeros(0, 4), "labels": torch.zeros(0, dtype=torch.long)},
+        ]
+
+        _, targets_out = dm.on_after_batch_transfer((NestedTensor(image, None), targets), 0)
+
+        expected = torch.tensor(
+            [[5.95 / 32, 4.25 / 16, 5.5 / 32, 4.3 / 16], [2.25 / 32, 2.25 / 16, 0.5 / 32, 0.5 / 16]]
+        )
+        torch.testing.assert_close(targets_out[0]["boxes"], expected)
+        torch.testing.assert_close(targets_out[0]["labels"], labels)
+        assert targets_out[1]["boxes"].shape == (0, 4)
+        assert targets_out[1]["labels"].shape == (0,)
+        torch.testing.assert_close(targets[0]["boxes"], boxes)
+
+    @kornia_only
+    @pytest.mark.parametrize("flip", ["HorizontalFlip", "VerticalFlip"])
+    def test_detection_flip_preserves_fractional_and_subpixel_edges(self, tmp_path: Path, flip: str) -> None:
+        """Flips reflect fractional edges through width/height without changing subpixel extent."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        dm = self._attach_mock_trainer(self._build_dm(tmp_path))
+        dm._kornia_pipeline = build_kornia_pipeline({flip: {"p": 1.0}}, 16, with_masks=True)
+        dm._kornia_normalize = torch.nn.Identity()
+        image = torch.zeros(1, 3, 16, 32)
+        target = {"boxes": torch.tensor([[3.2, 2.1, 8.7, 6.4], [2.0, 2.0, 2.5, 2.5]]), "labels": torch.tensor([1, 2])}
+
+        _, targets_out = dm.on_after_batch_transfer((NestedTensor(image, None), [target]), 0)
+
+        expected = torch.tensor(
+            [[5.95 / 32, 4.25 / 16, 5.5 / 32, 4.3 / 16], [2.25 / 32, 2.25 / 16, 0.5 / 32, 0.5 / 16]]
+        )
+        axis = 0 if flip == "HorizontalFlip" else 1
+        expected[:, axis] = 1.0 - expected[:, axis]
+        torch.testing.assert_close(targets_out[0]["boxes"], expected)
+        torch.testing.assert_close(targets_out[0]["labels"], target["labels"])
+
+    @kornia_only
+    def test_detection_flip_handles_all_empty_targets(self, tmp_path: Path) -> None:
+        """An all-empty detection batch keeps zero-length annotation tensors through the bridge."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        dm = self._attach_mock_trainer(self._build_dm(tmp_path))
+        dm._kornia_pipeline = build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, 16, with_masks=True)
+        dm._kornia_normalize = torch.nn.Identity()
+        image = torch.zeros(1, 3, 16, 32)
+        target = {"boxes": torch.zeros(0, 4), "labels": torch.zeros(0, dtype=torch.long)}
+
+        _, targets_out = dm.on_after_batch_transfer((NestedTensor(image, None), [target]), 0)
+
+        assert targets_out[0]["boxes"].shape == (0, 4)
+        assert targets_out[0]["labels"].shape == (0,)
+
+    @kornia_only
+    def test_detection_affine_scales_continuous_box_width(self, tmp_path: Path) -> None:
+        """Scaling around the image center doubles fractional box extent without a one-pixel correction."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        dm = self._attach_mock_trainer(self._build_dm(tmp_path))
+        dm._kornia_pipeline = build_kornia_pipeline(
+            {"Affine": {"scale": (2.0, 2.0), "rotate": (0.0, 0.0), "p": 1.0}}, 16, with_masks=True
+        )
+        dm._kornia_normalize = torch.nn.Identity()
+        image = torch.zeros(1, 3, 16, 32)
+        target = {"boxes": torch.tensor([[13.25, 5.5, 18.75, 10.5]]), "labels": torch.tensor([1])}
+
+        _, targets_out = dm.on_after_batch_transfer((NestedTensor(image, None), [target]), 0)
+
+        # Continuous image center is (16, 8): [13.25, 5.5, 18.75, 10.5] -> [10.5, 3, 21.5, 13].
+        torch.testing.assert_close(targets_out[0]["boxes"], torch.tensor([[0.5, 0.5, 11 / 32, 10 / 16]]))
 
     @kornia_only
     @pytest.mark.parametrize(
