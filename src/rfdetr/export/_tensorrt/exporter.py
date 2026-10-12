@@ -747,8 +747,8 @@ class TensorRTConfig(ExportConfig):
         quantization: ``None`` builds an FP16 or FP32 engine as ``fp16`` says. ``"int8"`` builds an engine that runs
             most of the backbone encoder and decoder in INT8 and the rest in FP16, from a graph quantized with ranges
             calibrated on *calibration_data* (placement rules in :mod:`rfdetr.export._tensorrt.quantize`). It needs
-            ``fp16``, a static batch, a full model (no ``backbone_only``) and TensorRT 10 or newer. Segmentation and
-            keypoint heads stay FP16.
+            ``fp16``, a static batch, a full model (no ``backbone_only``) and TensorRT 10 or newer. The mask head and
+            the keypoint head stay FP16; the keypoint decoder's cross-attention and feed-forward layers are INT8.
         calibration_data: Representative images for ``quantization="int8"``: a directory of images, a ``.npy`` file
             or an array shaped ``(N, C, H, W)`` already normalized as :meth:`~rfdetr.detr.RFDETR.predict` does.
             Required with ``"int8"``, refused without it.
@@ -1186,7 +1186,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         self._prepare_timing_cache()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
-        # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
+        # custom output_name does not silently produce an engine indistinguishable from a full-model one.
         output_name = onnx_path.stem if graph.backbone_only and self.config.output_name else self.config.output_name
         if self.config.metadata:
             self._refuse_to_replace_a_foreign_file(str(onnx_path), output_name)

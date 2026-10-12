@@ -115,8 +115,8 @@ _TYPE_ONLY_CHANGES = frozenset(
 #: Ops whose schema changed between these opsets and :data:`_FP16_QDQ_OPSET` only by a new attribute whose default keeps
 #: the old behavior (``Resize``: ``antialias``, ``axes``, ``keep_aspect_ratio_policy``), a new value of an attribute
 #: (``Resize``: the ``half_pixel_symmetric`` coordinate mode, which an older graph cannot carry; ``ScatterND``:
-#: ``reduction`` ``max`` and ``min``) or more types. A graph at a lower opset is checked as any other op: ``Resize``
-#: took ``roi`` as its second input before opset 11, and its ``scales`` moved there.
+#: ``reduction`` ``max`` and ``min``) or more types. A graph at a lower opset is checked as any other op: before opset
+#: 11 ``Resize`` took ``scales`` as its second input, and opset 11 inserted ``roi`` ahead of it.
 _UNCHANGED_SINCE = {"Resize": 13, "ScatterND": 16}
 
 #: Head sizes TensorRT's INT8 fused-attention kernel accepts (TensorRT 11.3 "Attention fusion", SM75-90, SM120-121).
@@ -521,7 +521,7 @@ def plan_int8(model: Any) -> Int8Plan:
         The plan, in graph order.
 
     Raises:
-        ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR detector export; if an FP16
+        ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR model export; if an FP16
             attention block's output projection cannot be identified; or if a top-level ``Softmax`` feeds a
             multiply of two activations without being a recognised attention block.
     """
