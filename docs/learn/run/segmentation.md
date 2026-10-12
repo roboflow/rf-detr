@@ -92,7 +92,7 @@ model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
 
 An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
 
-PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. It requires a compatible CUDA device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. It requires a compatible device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support on the target device. CUDA is required only for the CUDA Graph backend above. The external `inference` package API shown above does not expose `RFDETR.inference()`:
 
 ```python
 model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
