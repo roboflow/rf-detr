@@ -37,7 +37,7 @@ uv build
 
 > [!IMPORTANT]
 >
-> Run `uv sync` after pulling changes to update dependencies.
+> Re-run the install command above after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
 
