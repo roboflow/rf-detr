@@ -56,21 +56,21 @@ This writes `output/rfdetr-small_int8.trt` (next to the intermediate `output/rfd
 
 ### Results
 
-**Summary.** On the Tesla T4, the reference GPU (the GPU of the paper's latency table, measured on Colab), INT8 is faster than FP16 in every row, by 1.02× to 1.28×, and loses 0.4 to 1.2 AP points. The INT8 engine is smaller than FP16 at batch 1 for most models. It is larger for detection Large and Keypoint Preview at batch 1, for Nano (detection and segmentation) at batch 8 and 32, and for Keypoint Preview at batch 8. It grows with the batch much faster than FP16 (see the warning below). The RTX 5070, a local machine kept for comparison, gives 1.05× to 1.43×, with a smaller engine in every row.
+**Summary.** On the Tesla T4, the reference GPU (the GPU of the paper's latency table, measured on Colab), INT8 is faster than FP16 in every row, by 1.03× to 1.28× with a CUDA graph (1.02× to 1.28× with a plain call), and loses 0.4 to 1.2 AP points. The INT8 engine is smaller than FP16 at batch 1 for most models. It is larger for detection Large and Keypoint Preview at batch 1, for Nano (detection and segmentation) at batch 8 and 32, and for Keypoint Preview at batch 8. It grows with the batch much faster than FP16 (see the warning below). The RTX 5070, a local machine kept for comparison, gives 1.05× to 1.43× with a CUDA graph, with a smaller engine in every row.
 
-**At a glance, batch 1 with a CUDA graph.** ΔAP is INT8 minus FP16 in COCO AP points: box AP for detection, mask AP for segmentation and keypoint AP for keypoints. Engine sizes are the `.trt` files. The tables below give batch 8 and 32, the plain call and the AP of each model.
+**At a glance, batch 1 with a CUDA graph.** ΔAP is INT8 minus FP16 in COCO AP points: box AP for detection, mask AP for segmentation and keypoint AP for keypoints. Speedup is FP16 latency divided by INT8 latency. The tables below give the engine sizes, batch 8 and 32, the plain call and the AP of each model.
 
-| Model            | T4: ΔAP | T4: speedup | T4: engine, FP16 → INT8 | RTX 5070: ΔAP | RTX 5070: speedup | RTX 5070: engine, FP16 → INT8 |
-| ---------------- | ------- | ----------- | ----------------------- | ------------- | ----------------- | ----------------------------- |
-| Detection Nano   | −0.77   | 1.21×       | 60 → 48 MB              | −0.63         | 1.33×             | 62 → 41 MB                    |
-| Detection Small  | −0.60   | 1.16×       | 64 → 59 MB              | −0.61         | 1.24×             | 67 → 45 MB                    |
-| Detection Medium | −0.85   | 1.16×       | 69 → 67 MB              | −0.85         | 1.19×             | 71 → 48 MB                    |
-| Detection Large  | −0.55   | 1.11×       | 70 → 83 MB              | −0.50         | 1.10×             | 68 → 51 MB                    |
-| Seg Nano         | −0.59   | 1.03×       | 66 → 54 MB              | −0.50         | 1.05×             | 69 → 51 MB                    |
-| Seg Small        | −0.81   | 1.08×       | 67 → 55 MB              | −0.81         | 1.23×             | 69 → 46 MB                    |
-| Seg Medium       | −1.00   | 1.08×       | 71 → 60 MB              | −0.94         | 1.17×             | 73 → 49 MB                    |
-| Seg Large        | −0.40   | 1.12×       | 72 → 70 MB              | −0.45         | 1.10×             | 73 → 55 MB                    |
-| Keypoint Preview | −0.69   | 1.13×       | 81 → 83 MB              | −0.68         | 1.16×             | 81 → 62 MB                    |
+| Model            | T4: ΔAP | T4: speedup | RTX 5070: ΔAP | RTX 5070: speedup |
+| ---------------- | ------- | ----------- | ------------- | ----------------- |
+| Detection Nano   | −0.77   | 1.21×       | −0.63         | 1.33×             |
+| Detection Small  | −0.60   | 1.16×       | −0.61         | 1.24×             |
+| Detection Medium | −0.85   | 1.16×       | −0.85         | 1.19×             |
+| Detection Large  | −0.55   | 1.11×       | −0.50         | 1.10×             |
+| Seg Nano         | −0.59   | 1.03×       | −0.50         | 1.05×             |
+| Seg Small        | −0.81   | 1.08×       | −0.81         | 1.23×             |
+| Seg Medium       | −1.00   | 1.08×       | −0.94         | 1.17×             |
+| Seg Large        | −0.40   | 1.12×       | −0.45         | 1.10×             |
+| Keypoint Preview | −0.69   | 1.13×       | −0.68         | 1.16×             |
 
 The Tesla T4 (sm_75, Colab) is the reference GPU, and the RTX 5070 (sm_120) is a local machine kept for comparison. Detection was measured with TensorRT 11.3 on both, the RTX 5070 under WSL2 and the T4 on Colab, calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Segmentation and keypoint models were measured with TensorRT 11.4 (see below). For detection, latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved), from back-to-back `execute_async_v3` calls with no synchronization in between (the plain call) and from a captured CUDA graph. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is small on the T4, where Nano at batch 1 takes 3.26 ms plain and 3.21 ms with a graph. On the RTX 5070 it is large only at batch 1 (1.675 ms plain against 0.922 ms graph for Nano). The speedups and the AP differences in parentheses are computed from the unrounded values, so recomputing them from the rounded cells can differ in the last digit. The RTX 5070 ran under WSL2 and was not measured on native Linux, so how much of that launch time WSL2 adds is not known.
 
@@ -133,7 +133,7 @@ Segmentation and keypoint models, measured with TensorRT 11.4 on a Tesla T4 (fro
 | Seg Large        | 54.92        | 54.00 (−0.92) | 46.42                     | 45.97 (−0.45)             |
 | Keypoint Preview | 51.52        | 51.02 (−0.50) | 71.77                     | 71.10 (−0.68)             |
 
-Latency and engine size for the same models. AP was scored at batch 1 only. The "INT8 attention" column gives the tokens per backbone window in brackets: only windows of at most 325 tokens get INT8 attention (see the placement rules below).
+Latency and engine size for the same models. AP was scored at batch 1 only. The "INT8 attention" column gives the tokens per backbone window in brackets: only windows of at most 325 tokens get INT8 attention (see the placement rules below). As in the detection tables, each speedup divides the FP16 latency of the same mode by the INT8 latency, so the two FP16 columns differ: a plain call adds CPU launch time that a graph replay removes.
 
 **Tesla T4 (reference)**
 
@@ -161,7 +161,7 @@ Latency and engine size for the same models. AP was scored at batch 1 only. The 
 | Seg Nano, 32        | No (677)       | 0.855 ms         | 0.743 ms (1.15×) | 0.854 ms         | 0.742 ms (1.15×) | 76 MB        | 57 MB        |
 | Keypoint Preview, 8 | No (577)       | 2.590 ms         | 2.168 ms (1.19×) | 2.582 ms         | 2.163 ms (1.19×) | 90 MB        | 71 MB        |
 
-Seg Nano attends over one 677-token window per backbone block, where detection Nano has windows of 145 tokens, so its attention stays FP16. On the Tesla T4, INT8 attention brings no advantage: with a CUDA graph, Seg Small (1.08×) and Seg Medium (1.08×), which run it, gain no more than Seg Large (1.12×) and Keypoint Preview (1.13×), which keep attention in FP16. The cause was not measured. On the RTX 5070 the gains follow the INT8 attention: Seg Small (1.23×) and Seg Medium (1.17×) gain most.
+Seg Nano attends over one 677-token window per backbone block, where detection Nano has windows of 145 tokens, so its attention stays FP16. On the Tesla T4, INT8 attention brings no advantage: with a CUDA graph, Seg Small (1.08×) and Seg Medium (1.08×), which run it, gain no more than Seg Large (1.12×) and Keypoint Preview (1.13×), which keep attention in FP16. The cause was not measured. On the RTX 5070 the gains follow the INT8 attention: with a CUDA graph, Seg Small (1.23×) and Seg Medium (1.17×) gain most.
 
 #### Sources
 
@@ -190,7 +190,7 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 - The attention rule above applies unchanged. Only `RFDETRSegSmall` (257 tokens per window) and `RFDETRSegMedium` (325) run INT8 attention, in the 9 windowed blocks of their 12 backbone blocks (the other 3 attend globally). `RFDETRSegNano` (one 677-token window per block), `RFDETRSegLarge` (442) and `RFDETRKeypointPreview` (577) keep all attention in FP16, so only their backbone MLPs and the decoder's cross-attention, feed-forward and reference-point layers run in INT8.
 - `RFDETRSegXLarge` and `RFDETRSeg2XLarge` (`rfdetr_plus`) are accepted but were not measured. `backbone_only=True` is refused with `ValueError`.
 - A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. Detection was measured on TensorRT 10.16 and 11.3, and segmentation and keypoints on 11.4 (T4 and RTX 5070); the 10.x releases before 10.16 are accepted but untested. The batch is fixed when you build the engine, and the INT8 engine grows with it faster than the FP16 one (see the warning above).
-- Detection engines at batch 1 are launch-bound on the RTX 5070 under WSL2: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column of the RTX 5070 detection table). On the T4 the detection engines gain 1.09–1.22× at batch 1 without a graph, and 1.26× and 1.28× for Nano at batch 8 and 32. The segmentation and keypoint engines gain about the same with and without a graph: 1.02–1.13× on the T4, and 1.05–1.23× on the RTX 5070 under native Linux.
+- Detection engines at batch 1 are launch-bound on the RTX 5070 under WSL2: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column of the RTX 5070 detection table). On the T4 the detection engines gain 1.09–1.22× at batch 1 without a graph, and 1.26× and 1.28× for Nano at batch 8 and 32. The segmentation and keypoint engines gain about the same with and without a graph. On the T4 that is 1.02–1.13× with a plain call and 1.03–1.13× with a CUDA graph; on the RTX 5070 under native Linux, 1.05–1.23× in both modes.
 - Detection, segmentation and keypoint engines were each measured on two GPUs (sm_75 T4 and sm_120 RTX 5070), all without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`: those settings are accepted with `quantization="int8"`, but INT8 engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the gain relies on. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.
 
 !!! note "Who consumes the `.trt` engine?"
