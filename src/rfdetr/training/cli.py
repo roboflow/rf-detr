@@ -7,10 +7,10 @@
 
 Provides the ``rfdetr`` command with auto-generated subcommands::
 
-    rfdetr fit      --config configs/rfdetr_base.yaml
-    rfdetr validate --config configs/rfdetr_base.yaml --ckpt_path output/rfdetr_base/last.ckpt
-    rfdetr test     --config configs/rfdetr_base.yaml --ckpt_path output/rfdetr_base/last.ckpt
-    rfdetr predict  --config configs/rfdetr_base.yaml --ckpt_path output/rfdetr_base/last.ckpt
+    rfdetr fit      --config configs/rfdetr_small.yaml
+    rfdetr validate --config configs/rfdetr_small.yaml --ckpt_path output/rfdetr_small/last.ckpt
+    rfdetr test     --config configs/rfdetr_small.yaml --ckpt_path output/rfdetr_small/last.ckpt
+    rfdetr predict  --config configs/rfdetr_small.yaml --ckpt_path output/rfdetr_small/last.ckpt
 
 Both ``RFDETRModelModule`` and ``RFDETRDataModule`` share the same ``(model_config, train_config)`` constructor
 signature.  ``link_arguments`` eliminates the duplication so the user specifies each config group once; the datamodule
@@ -132,7 +132,7 @@ class RFDETRCli(LightningCLI):
         """Create the parser, letting ``class_path`` name a subclass of ``ModelConfig`` or ``TrainConfig``.
 
         jsonargparse treats pydantic models as final unless told otherwise, so it rejects the subclass ``class_path``
-        that every shipped config uses, such as ``rfdetr.config.RFDETRBaseConfig``. The setting is process-wide: a
+        that every shipped config uses, such as ``rfdetr.config.RFDETRSmallConfig``. The setting is process-wide: a
         jsonargparse parser built later in the same process also accepts subclasses of both.
 
         Args:
@@ -199,9 +199,9 @@ class RFDETRCli(LightningCLI):
         ``predict`` get the evaluation-only trainer that ``RFDETR.evaluate()`` uses, which writes nothing to
         ``output_dir``.
 
-        Callbacks from ``--trainer.callbacks`` and ``trainer_defaults`` are added to the RF-DETR callbacks once the
-        trainer is built, as the customization guide shows for ``build_trainer``, instead of replacing them. As in
-        ``LightningCLI``, callbacks in *kwargs* take the place of ``--trainer.callbacks``.
+        Callbacks from ``--trainer.callbacks`` and ``trainer_defaults`` go to ``build_trainer`` as ``extra_callbacks``,
+        which adds them to the RF-DETR callbacks before the trainer is built, where Lightning checks them with the rest.
+        As in ``LightningCLI``, callbacks in *kwargs* take the place of ``--trainer.callbacks``.
 
         Args:
             **kwargs: Trainer arguments that take precedence over the parsed ones.
@@ -248,14 +248,13 @@ class RFDETRCli(LightningCLI):
             # build_trainer keeps the metrics.csv rows of the epochs before a resume only when train_config.resume
             # names the checkpoint, as RFDETR.train() sets it; the CLI hands the checkpoint to Lightning as ckpt_path.
             train_config = train_config.model_copy(update={"resume": str(resume)})
-        trainer = build_trainer(
+        return build_trainer(
             train_config,
             self.model.model_config,
             include_training_callbacks=training,
+            extra_callbacks=callbacks,
             **overrides,
         )
-        trainer.callbacks.extend(callbacks)  # type: ignore[attr-defined]
-        return trainer
 
     def fit(self, model: LightningModule, ckpt_path: str | None = None, **kwargs: Any) -> None:
         """Run ``Trainer.fit``, resuming from ``train_config.resume`` when ``--ckpt_path`` is not given.

@@ -355,37 +355,27 @@ Maintain an effective batch size of 16 regardless of GPU count:
 
 ## Custom callbacks
 
-`build_trainer` builds the default callback stack. To add your own callbacks alongside the built-in ones, pass them via `trainer_kwargs`:
+`build_trainer` builds the default callback stack. To add your own callbacks alongside the built-in ones, pass them as `extra_callbacks`:
 
 ```python
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelSummary
 from rfdetr.training import build_trainer
 
-extra_callbacks = [
-    LearningRateMonitor(logging_interval="step"),
-    ModelSummary(max_depth=3),
-]
-
 trainer = build_trainer(
     train_config,
     model_config,
-    callbacks=extra_callbacks,  # replaces the default callback list entirely
+    extra_callbacks=[
+        LearningRateMonitor(logging_interval="step"),
+        ModelSummary(max_depth=3),
+    ],
 )
 ```
 
-!!! warning "Replacing vs. extending callbacks"
+They reach the `Trainer` together with the built-in callbacks, so Lightning checks them all at once: a second progress bar raises, and `ModelSummary` takes the place of the default summary.
 
-    Passing `callbacks=` to `build_trainer` via `trainer_kwargs` **replaces** the entire default callback list built inside `build_trainer` (EMA, COCO eval, best-model checkpointing, etc.). To extend rather than replace, build the extra callbacks separately and merge them after calling `build_trainer`:
+!!! warning "Replacing the callbacks"
 
-    ```python
-    trainer = build_trainer(train_config, model_config)
-    trainer.callbacks.extend(
-        [
-            LearningRateMonitor(logging_interval="step"),
-        ]
-    )
-    trainer.fit(module, datamodule)
-    ```
+    Passing `callbacks=` to `build_trainer` via `trainer_kwargs` **replaces** the entire default callback list built inside `build_trainer` (EMA, COCO eval, best-model checkpointing, etc.).
 
 ### Built-in callbacks
 

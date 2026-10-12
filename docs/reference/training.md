@@ -129,10 +129,10 @@ This page documents the training primitives that power RF-DETR. For a narrative 
 auto-generates four subcommands from the PyTorch Lightning CLI machinery:
 
 ```bash
-rfdetr fit      --config configs/rfdetr_base.yaml
-rfdetr validate --config configs/rfdetr_base.yaml --ckpt_path output/rfdetr_base/last.ckpt
-rfdetr test     --config configs/rfdetr_base.yaml --ckpt_path output/rfdetr_base/last.ckpt
-rfdetr predict  --config configs/rfdetr_base.yaml --ckpt_path output/rfdetr_base/last.ckpt
+rfdetr fit      --config configs/rfdetr_small.yaml
+rfdetr validate --config configs/rfdetr_small.yaml --ckpt_path output/rfdetr_small/last.ckpt
+rfdetr test     --config configs/rfdetr_small.yaml --ckpt_path output/rfdetr_small/last.ckpt
+rfdetr predict  --config configs/rfdetr_small.yaml --ckpt_path output/rfdetr_small/last.ckpt
 ```
 
 Both `model_config` and `train_config` are specified once; `RFDETRCli`
@@ -149,9 +149,12 @@ Lightning's default: the `config.yaml` that `fit` saves lists every trainer
 argument, and running from it again keeps the values from `train_config`.
 Arguments apply in order, so put `--trainer.*` after `--config`, as the
 configs' usage lines do. `--trainer.callbacks` adds callbacks to the RF-DETR
-ones. Change the number of epochs with `--model.train_config.init_args.epochs`:
-`--trainer.max_epochs` or `--trainer.max_steps` ends the run but leaves the
-learning-rate and drop-path schedules sized for `epochs`, and warns.
+ones, and Lightning checks them together, so set the progress bar to `tqdm` or
+`rich` with `--model.train_config.init_args.progress_bar` rather than as a
+callback. Change the number of epochs with
+`--model.train_config.init_args.epochs`: `--trainer.max_epochs` or
+`--trainer.max_steps` ends the run but leaves the learning-rate and drop-path
+schedules sized for `epochs`, and warns.
 
 `validate`, `test` and `predict` build the evaluation-only trainer that
 `RFDETR.evaluate()` uses. `validate` and `test` score the weights saved in

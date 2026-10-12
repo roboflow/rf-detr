@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, Timer
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary, Timer
 from pytorch_lightning.cli import SaveConfigCallback
 
 from rfdetr.training import BestModelCallback, COCOEvalCallback, RFDETREMACallback
@@ -291,6 +291,12 @@ class TestRFDETRCliTrainer:
 
         counts = Counter(type(callback) for callback in cli.trainer.callbacks)
         assert (counts[LearningRateMonitor], counts[COCOEvalCallback]) == (1, 1)
+
+    def test_trainer_model_summary_takes_the_place_of_the_default_one(self, tmp_path: Path) -> None:
+        """A ``--trainer.callbacks`` model summary reaches ``Trainer.__init__``, so Lightning adds no second one."""
+        cli = _cli(tmp_path, "--trainer.callbacks+=ModelSummary")
+
+        assert sum(isinstance(callback, ModelSummary) for callback in cli.trainer.callbacks) == 1
 
     def test_trainer_logger_flag_reaches_the_trainer(self, tmp_path: Path) -> None:
         """A logger given as ``--trainer.logger`` replaces the ``train_config`` loggers, instantiated."""
