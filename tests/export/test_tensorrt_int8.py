@@ -6,9 +6,9 @@
 """Tests for ``export(format="tensorrt", quantization="int8")``.
 
 The request checks and the build wiring run without TensorRT. The quantization plan and the Q/DQ rewrite are pure ONNX
-work and run on CPU with ``onnx``, on small synthetic graphs that mirror RF-DETR's naming, plus one exact-count check on
-a real exported Nano graph. Calibration needs onnxruntime and runs in the ``onnx`` integration job. The end-to-end class
-builds real FP16 and INT8 engines on a GPU and compares their detections on a photo.
+work and run on CPU with ``onnx``, on small synthetic graphs that mirror RF-DETR's naming, plus exact-count checks on
+real exported Nano, segmentation and keypoint graphs. Calibration needs onnxruntime and runs in the ``onnx`` integration
+job. The end-to-end classes build real FP16 and INT8 engines on a GPU and compare their outputs.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import os
 import pickle
 import sys
 import types
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -2486,19 +2487,17 @@ class TestSegmentationAndKeypointInt8Plan:
 
     @pytest.mark.parametrize("kind", ["segmentation-small", "segmentation-medium"])
     def test_windowed_attention_of_small_and_medium_is_int8(
-        self, kind: str, exports: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+        self, kind: str, plans: dict[str, quantize.Int8Plan]
     ) -> None:
-        messages: list[str] = []
-        monkeypatch.setattr(quantize.logger, "info", messages.append)
-        quantize.plan_int8(onnx.load(str(exports[kind])))
-        assert [m.split(";")[0] for m in messages if "stay FP16" in m] == [
-            "INT8 attention in 9 of 12 backbone attention blocks"
-        ]
+        # Nine windowed blocks, each adding four INT8 inputs: the scores' two operands and the context's two.
+        assert len(plans[kind].activations) - len(plans[kind].weighted) == 9 * 4
 
     @onnx_and_onnxruntime_only
     @onnxconverter_common_only
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
-    def test_int8_source_graph_builds_from_the_real_export(self, kind: str, exports: dict[str, Path]) -> None:
+    def test_int8_source_graph_builds_from_the_real_export(
+        self, kind: str, exports: dict[str, Path], plans: dict[str, quantize.Int8Plan]
+    ) -> None:
         model = onnx.load(str(exports[kind]))
         shape = [dim.dim_value for dim in model.graph.input[0].type.tensor_type.shape.dim]
         samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
@@ -2513,6 +2512,10 @@ class TestSegmentationAndKeypointInt8Plan:
         onnx.checker.check_model(quantized, full_check=True)
         opsets = {entry.domain: entry.version for entry in quantized.opset_import}
         assert (opsets[""], [o.name for o in quantized.graph.output]) == (19, [o.name for o in model.graph.output])
+        # One DequantizeLinear per weight of each planned layer, plus one per quantized activation tensor (each of which
+        # has one QuantizeLinear).
+        ops = Counter(node.op_type for node in quantized.graph.node)
+        assert ops["DequantizeLinear"] == len(plans[kind].weighted) + ops["QuantizeLinear"]
 
     def test_keypoint_instance_self_attention_is_left_float(self, plans: dict[str, quantize.Int8Plan]) -> None:
         assert [n for n in plans["keypoint"].weighted if "_self_attn/" in n] == []
