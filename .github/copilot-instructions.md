@@ -123,7 +123,7 @@ Before submitting changes:
 1. ✅ Run tests: `uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu"`
 2. ✅ Run pre-commit: `pre-commit run --all-files`
 3. ✅ Verify new functions have type hints + docstrings
-4. ✅ Review changes for minimal scope
+4. ✅ For code reviews, follow the [code-review skill](skills/code-review/SKILL.md).
 
 ## Resources
 
