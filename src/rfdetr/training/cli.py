@@ -28,6 +28,7 @@ from pytorch_lightning.cli import ArgsType, LightningArgumentParser, LightningCL
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.training.param_groups import _PARAM_GROUP_SETTINGS
 from rfdetr.training.trainer import build_trainer
 
 _PARSER_KWARGS = {
@@ -173,7 +174,7 @@ class RFDETRCli(LightningCLI):
         parser.link_arguments("model.train_config", "data.train_config", apply_on="parse")
 
     def parse_arguments(self, parser: LightningArgumentParser, args: ArgsType) -> None:
-        """Parse the arguments, noting which trainer arguments ``--trainer.*`` flags set.
+        """Parse arguments while retaining trainer overrides and explicit optimizer settings.
 
         Args:
             parser: The parser.
@@ -181,6 +182,39 @@ class RFDETRCli(LightningCLI):
         """
         self._flagged_trainer_arguments = _command_line_trainer_arguments(sys.argv[1:] if args is None else args)
         super().parse_arguments(parser, args)
+        # Defaults erase whether an optimizer value was explicitly supplied, which matters when resuming.
+        from jsonargparse import Namespace
+
+        sparse = (
+            parser.parse_object(args, defaults=False)
+            if isinstance(args, (dict, Namespace))
+            else parser.parse_args(args, defaults=False)
+        )
+        if sparse.get("subcommand"):
+            sparse = sparse[sparse.subcommand]
+        supplied = sparse.get("model.train_config", {})
+        supplied = supplied.get("init_args", supplied)
+        self._explicit_optimizer_settings: dict[str, Any] = {
+            name: supplied[name] for name in _PARAM_GROUP_SETTINGS if name in supplied
+        }
+
+    def before_instantiate_classes(self) -> None:
+        """Restore explicitly supplied optimizer settings after Lightning merges checkpoint values."""
+        config = self.config[self.subcommand] if self.subcommand else self.config
+        for component in ("model", "data"):
+            train_config = config.get(f"{component}.train_config")
+            if train_config is not None:
+                train_config = train_config.get("init_args", train_config)
+                for name, value in self._explicit_optimizer_settings.items():
+                    train_config[name] = value
+
+    def after_instantiate_classes(self) -> None:
+        """Preserve explicit optimizer-setting membership on the instantiated training configs."""
+        for component in (self.model, self.datamodule):
+            train_config = getattr(component, "train_config", None)
+            if isinstance(train_config, TrainConfig):
+                train_config.model_fields_set.difference_update(_PARAM_GROUP_SETTINGS)
+                train_config.model_fields_set.update(self._explicit_optimizer_settings)
 
     def instantiate_trainer(self, **kwargs: Any) -> Trainer:
         """Build the trainer with :func:`~rfdetr.training.trainer.build_trainer`, as ``RFDETR.train()`` does.

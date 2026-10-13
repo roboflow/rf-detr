@@ -11,6 +11,7 @@ YAML roundtrip) live in T4-7.
 """
 
 import csv
+import json
 import sys
 import warnings
 from collections import Counter
@@ -20,14 +21,19 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from pytorch_lightning import Trainer
+import torch
+import yaml
+from jsonargparse import Namespace
+from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary, Timer
 from pytorch_lightning.cli import SaveConfigCallback
 
+from rfdetr.config import ModelConfig, RFDETRNanoConfig, TrainConfig
 from rfdetr.training import BestModelCallback, COCOEvalCallback, RFDETREMACallback
 from rfdetr.training.cli import RFDETRCli
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.training.param_groups import _PARAM_GROUP_SETTINGS, _resolve_resumed_param_group_settings
 
 from .test_module_model import _fake_criterion, _fake_model, _fake_postprocess
 
@@ -103,6 +109,123 @@ def _cli(
             run=subcommand is not None,
             **cli_kwargs,
         )
+
+
+class ConfigModel(LightningModule):
+    """Exercise actual CLI config instantiation without constructing the detection network."""
+
+    def __init__(self, model_config: ModelConfig, train_config: TrainConfig) -> None:
+        """Store the configs the parser instantiated.
+
+        Examples:
+            >>> ConfigModel(RFDETRNanoConfig(), TrainConfig(dataset_dir="data")).train_config.batch_size
+            4
+        """
+        super().__init__()
+        self.model_config = model_config
+        self.train_config = train_config
+
+
+class ConfigData(LightningDataModule):
+    """Receive the CLI's linked training config."""
+
+    def __init__(self, model_config: ModelConfig, train_config: TrainConfig) -> None:
+        """Store the linked instantiated configs.
+
+        Examples:
+            >>> ConfigData(RFDETRNanoConfig(), TrainConfig(dataset_dir="data")).train_config.batch_size
+            4
+        """
+        super().__init__()
+        self.model_config = model_config
+        self.train_config = train_config
+
+
+class ParseOnlyCli(RFDETRCli):
+    """Run real subcommand parsing and checkpoint merge without starting training."""
+
+    def _run_subcommand(self, subcommand: str) -> None:
+        """Stop after the instantiated configs are available.
+
+        Examples:
+            >>> ParseOnlyCli._run_subcommand(None, "fit")
+        """
+
+
+class TestCliResumeIntent:
+    """Caller intent survives defaults, config files and Lightning checkpoint hyperparameters."""
+
+    def test_without_subcommand_preserves_explicit_default(self) -> None:
+        """Programmatic CLI construction has the same sparse-intent contract."""
+        cli = RFDETRCli(
+            ConfigModel,
+            ConfigData,
+            run=False,
+            args={
+                "model": {
+                    "model_config": RFDETRNanoConfig().model_dump(mode="json"),
+                    "train_config": {"dataset_dir": "data", "lr": 1e-4},
+                }
+            },
+            save_config_callback=None,
+            auto_configure_optimizers=False,
+        )
+        assert set(_PARAM_GROUP_SETTINGS) & cli.model.train_config.model_fields_set == {"lr"}
+        resolved, _, _ = _resolve_resumed_param_group_settings(cli.model.train_config, {"args": {"lr": 0.123}})
+        assert resolved.lr == 1e-4
+
+    @pytest.mark.parametrize("setting", _PARAM_GROUP_SETTINGS)
+    @pytest.mark.parametrize("input_kind", ["list", "dict", "namespace", "yaml"])
+    @pytest.mark.parametrize("explicit", [False, True])
+    def test_checkpoint_merge_preserves_optimizer_intent(
+        self, tmp_path: Path, setting: str, input_kind: str, explicit: bool
+    ) -> None:
+        """Check values and explicit membership on actual module and datamodule configs."""
+        checkpoint = tmp_path / "last.ckpt"
+        recorded = TrainConfig(dataset_dir="old", **{name: 0.123 for name in _PARAM_GROUP_SETTINGS})
+        torch.save(
+            {
+                "hyper_parameters": {
+                    "train_config": {"dataset_dir": "old", **{name: 0.123 for name in _PARAM_GROUP_SETTINGS}}
+                }
+            },
+            checkpoint,
+        )
+        train: dict[str, Any] = {"dataset_dir": "data", "batch_size": 2}
+        if explicit:
+            train[setting] = TrainConfig.model_fields[setting].default
+        config = {
+            "fit": {
+                "model": {"model_config": RFDETRNanoConfig().model_dump(mode="json"), "train_config": train},
+                "ckpt_path": str(checkpoint),
+            }
+        }
+        args: Any = config
+        if input_kind == "namespace":
+            args = Namespace(**config)
+        elif input_kind == "list":
+            args = [
+                "fit",
+                "--model.model_config=" + json.dumps(config["fit"]["model"]["model_config"]),
+                "--model.train_config.dataset_dir=data",
+                "--model.train_config.batch_size=2",
+                f"--ckpt_path={checkpoint}",
+            ]
+            if explicit:
+                args.append(f"--model.train_config.{setting}={train[setting]}")
+        elif input_kind == "yaml":
+            path = tmp_path / "config.yaml"
+            path.write_text(yaml.safe_dump(config["fit"]))
+            args = ["fit", f"--config={path}"]
+        cli = ParseOnlyCli(
+            ConfigModel, ConfigData, args=args, save_config_callback=None, auto_configure_optimizers=False
+        )
+        for component in (cli.model, cli.datamodule):
+            parsed = component.train_config
+            assert set(_PARAM_GROUP_SETTINGS) & parsed.model_fields_set == ({setting} if explicit else set())
+            assert "batch_size" in parsed.model_fields_set
+            resolved, _, _ = _resolve_resumed_param_group_settings(parsed, {"args": recorded.model_dump()})
+            assert getattr(resolved, setting) == (train[setting] if explicit else 0.123)
 
 
 # ---------------------------------------------------------------------------

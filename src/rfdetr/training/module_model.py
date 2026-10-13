@@ -46,7 +46,12 @@ from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.fused_adamw_ema import LIBDEVICE_FUNCTIONS, UNSUPPORTED_ADAMW_OPTIONS, FusedAdamWEMA
 from rfdetr.training.param_groups import (
+    _PARAM_GROUP_SETTINGS,
+    _apply_configured_param_group_settings,
     _build_param_dicts,
+    _configured_settings_fed_by,
+    _explicit_param_group_settings,
+    _resolve_resumed_param_group_settings,
     get_param_dict,
     regroup_unmerged_optimizer_state,
     regroup_unmerged_scheduler_kwargs,
@@ -409,6 +414,11 @@ class RFDETRModelModule(LightningModule):
         # step loop and the epoch-end hook. Defaults keep pre-configure behaviour (per-step stepping).
         self._lr_scheduler_interval: str = "step"
         self._lr_scheduler_monitor: str | None = None
+        # (initial_lr, weight_decay) of each parameter group as configure_optimizers() built it, and the explicit
+        # settings whose groups on_train_start() puts back over the ones a resumed checkpoint restores (#1613).
+        self._configured_param_group_settings: list[tuple[float, float | None]] = []
+        self._reapplied_param_group_settings: list[str] = []
+        self._restarts_groups_without_base: bool = False
         self._accumulated_box_normalizer: Tensor | None = None
         # Set by _clip_manual_optimization_gradients (proof that on_before_optimizer_step actually ran
         # for the current optimizer step) and checked/cleared by _step_optimizer. An optimizer whose
@@ -435,6 +445,9 @@ class RFDETRModelModule(LightningModule):
         # Compilation can remain enabled after the narrower Inductor graph-tree gate declines a request.
         # Keep this separate so the eager runner never captures an OptimizedModule in a compile-only fallback.
         self._compile_active: bool = False
+        # Epoch running sums (float32, weighted by batch size) and sample counts of the progress-bar loss terms.
+        self._progress_loss_sums: dict[str, Tensor] = {}
+        self._progress_sample_counts: dict[str, int] = {}
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -634,11 +647,15 @@ class RFDETRModelModule(LightningModule):
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
     def on_train_start(self) -> None:
-        """Configure the CUDA graph runner, then normalize restored fused-optimizer state.
+        """Configure the CUDA graph runner, then reconcile and normalize restored optimizer state.
 
         Device and world-size placement are only final once Lightning reaches this hook, so
         :meth:`_configure_cuda_graph_runner` is called first to decide, for this fit run, whether ``training_step``
         replays a captured graph or stays eager.
+
+        When the run resumed a checkpoint's optimizer state with a learning-rate or weight-decay setting passed
+        explicitly, :meth:`_reapply_configured_param_group_settings` then gives the parameter groups that setting feeds
+        the values this run configured.
 
         Lightning restores optimizer state after ``on_fit_start``.  Fused AdamW is strict about the dtype, device, and
         layout of its moment tensors, so resuming from a checkpoint can fail if Lightning rehydrates those tensors in a
@@ -646,6 +663,9 @@ class RFDETRModelModule(LightningModule):
         resumed optimizer compatible without discarding the saved momentum state.
         """
         self._configure_cuda_graph_runner()
+        if self._reapplied_param_group_settings:
+            self._reapply_configured_param_group_settings()
+            self._reapplied_param_group_settings = []
 
         if not self._use_fused_optimizer:
             return
@@ -671,6 +691,58 @@ class RFDETRModelModule(LightningModule):
             logger.info(
                 "Normalized %d restored fused AdamW state tensors after checkpoint resume.",
                 normalized_tensors,
+            )
+
+    def _reapply_configured_param_group_settings(self) -> None:
+        """Give the optimizer restored from a checkpoint the learning rates and weight decay this run configured.
+
+        ``trainer.fit(ckpt_path=...)`` restores them from the checkpoint after :meth:`configure_optimizers` built them
+        from ``train_config``, which used to drop a changed ``lr`` without a word (#1613). Only the groups that a
+        setting passed explicitly feeds change: the rest keep what the checkpoint's optimizer holds, which the ``args``
+        a resume hit by #1613 recorded may not match. Momentum and the schedule's progress carry over; see
+        :func:`~rfdetr.training.param_groups._apply_configured_param_group_settings`.
+        """
+        optimizer = self.optimizers(use_pl_optimizer=False)
+        if not isinstance(optimizer, torch.optim.Optimizer) or len(self._configured_param_group_settings) != len(
+            optimizer.param_groups
+        ):
+            # A configure_optimizers of its own (a subclass, LightningCLI's --optimizer) recorded nothing to compare,
+            # and may return several optimizers.
+            if self.global_rank == 0:
+                logger.warning(
+                    "configure_optimizers was replaced (or the optimizer is not a torch.optim.Optimizer), so the "
+                    "resumed optimizer keeps the learning rates and weight decay it saved instead of the ones set for "
+                    "this run."
+                )
+            return
+        configured = _configured_settings_fed_by(
+            self._reapplied_param_group_settings,
+            self._configured_param_group_settings,
+            optimizer,
+            _namespace_from_configs(self.model_config, self.train_config),
+            lambda namespace: get_param_dict(namespace, getattr(self.model, "_orig_mod", self.model)),
+        )
+        if not any(setting is not None for pair in configured for setting in pair):
+            # No trainable parameter takes these settings (a frozen encoder drops the encoder's), or the optimizer
+            # holds parameters other than the model's own (FSDP and DeepSpeed flatten them), so no group could be
+            # matched with what a setting feeds, and the resumed values would pass unchanged.
+            if self.global_rank == 0:
+                logger.warning(
+                    "No parameter group of the resumed optimizer is fed by %s (no trainable parameter takes it, or the "
+                    "strategy replaced the model's parameters, as FSDP and DeepSpeed do), so it keeps the learning "
+                    "rates and weight decay it saved instead of the ones set for this run.",
+                    ", ".join(self._reapplied_param_group_settings),
+                )
+            return
+        changed = _apply_configured_param_group_settings(
+            optimizer,
+            self._current_lr_scheduler(),
+            configured,
+            restart_without_base=self._restarts_groups_without_base,
+        )
+        if changed and self.global_rank == 0:
+            logger.info(
+                "Gave the learning rate and weight decay set for this run to %d resumed parameter group(s).", changed
             )
 
     def _configure_cuda_graph_runner(self) -> None:
@@ -789,21 +861,25 @@ class RFDETRModelModule(LightningModule):
                 )
 
     def on_train_epoch_start(self) -> None:
-        """Reset the accumulated box normalizer at the start of every training epoch.
+        """Reset the per-epoch state at the start of every training epoch.
+
+        That state is the accumulated box normalizer and the progress-bar running means.
 
         Lightning may reuse the module across epochs without calling ``_step_optimizer`` at the boundary (for example
         when an epoch ends mid-accumulation window with a non-divisible batch count). Clearing the accumulator here
         guarantees the manual-optimization path always starts each epoch from a known state, so the first microbatch's
         gradients are scaled by its own box count and not by a stale previous-epoch denominator.
 
-        This is a no-op for non-keypoint models because they use Lightning's automatic optimization path and never
-        populate ``self._accumulated_box_normalizer``.
+        The box-normalizer reset is a no-op for non-keypoint models because they use Lightning's automatic optimization
+        path and never populate ``self._accumulated_box_normalizer``.
 
         Note: on finite datasets the final-batch fallback in ``_should_step_optimizer`` always flushes a partial
         trailing window, so this reset is the only change needed.  On IterableDatasets (infinite
         ``num_training_batches``) a partial window may survive epoch end with un-stepped gradients; those are
         discarded here and the optimizer is zeroed so the first microbatch of the new epoch starts from a clean state.
         """
+        self._progress_loss_sums = {}
+        self._progress_sample_counts = {}
         if self._accumulated_box_normalizer is not None:
             # Discard any partial accumulation window that survived the epoch boundary
             # (only possible for IterableDatasets where num_training_batches is infinite).
@@ -1301,33 +1377,40 @@ class RFDETRModelModule(LightningModule):
         *,
         batch_size: int,
     ) -> None:
-        """Log compact per-step convergence metrics for the progress bar only.
+        """Log the epoch running mean of the convergence metrics shown on the progress bar.
+
+        Each term shows the mean of every step since the epoch started, weighted by batch size, so one noisy batch
+        does not hide the trend. The sums stay on the device and are detached, so this adds no host sync. With
+        ``train_log_on_step=True`` every term is logged per batch and no running sums are kept.
 
         Args:
             loss: Unscaled aggregate training loss.
             loss_dict: Raw criterion loss dictionary.
-            batch_size: Current batch size used by Lightning for metric reduction metadata.
+            batch_size: Current batch size, used as the weight of this step in the running mean.
         """
         # When ``train_log_on_step`` is True, the ``train/loss`` call in ``training_step``
         # logs with ``on_step=True, on_epoch=True``; Lightning forks that into
         # ``train/loss_step`` + ``train/loss_epoch``, and ``train/loss_step`` already
-        # provides the live per-step progress-bar view. Emitting this separate ``loss``
-        # scalar in that case just duplicates it, so only log it on the default
-        # ``train_log_on_step=False`` path.
-        if not bool(self.train_config.train_log_on_step):
-            self.log(
-                "loss",
-                loss,
-                prog_bar=True,
-                logger=False,
-                on_step=True,
-                on_epoch=False,
-                batch_size=batch_size,
-            )
+        # shows the per-batch aggregate on the bar. ``train_log_on_step=True`` asks for per-step values,
+        # so every progress term is logged per batch in that mode.
+        train_log_on_step = bool(self.train_config.train_log_on_step)
+        progress_values: dict[str, Tensor] = {}
+        if not train_log_on_step:
+            progress_values["loss"] = loss
         for loss_name, progress_name in _TRAIN_PROGRESS_LOSS_ALIASES.items():
             value = loss_dict.get(loss_name)
-            if value is None:
-                continue
+            if value is not None:
+                progress_values[progress_name] = value
+        for progress_name, value in progress_values.items():
+            if not train_log_on_step:
+                # float32 accumulation: a low-precision running sum drifts over thousands of steps.
+                weighted = value.detach().float() * batch_size
+                running_sum = self._progress_loss_sums.get(progress_name)
+                total = weighted if running_sum is None else running_sum + weighted
+                self._progress_loss_sums[progress_name] = total
+                sample_count = self._progress_sample_counts.get(progress_name, 0) + batch_size
+                self._progress_sample_counts[progress_name] = sample_count
+                value = total / sample_count
             self.log(
                 progress_name,
                 value,
@@ -1713,6 +1796,13 @@ class RFDETRModelModule(LightningModule):
 
         self._lr_scheduler_interval = interval
         self._lr_scheduler_monitor = monitor
+        # Every LRScheduler records each group's base as initial_lr; ReduceLROnPlateau does not, and a resumed run
+        # needs it to carry the plateau's reductions over to a changed lr.
+        for group in optimizer.param_groups:
+            group.setdefault("initial_lr", group["lr"])
+        self._configured_param_group_settings = [
+            (group["initial_lr"], group.get("weight_decay")) for group in optimizer.param_groups
+        ]
 
         lr_scheduler_config: LRSchedulerConfigType = {"scheduler": scheduler, "interval": interval}
         if monitor is not None:
@@ -1909,6 +1999,9 @@ class RFDETRModelModule(LightningModule):
            eligibility before PyTorch loads saved group options. A combined-route checkpoint records ``fused=True``;
            the destination's FP32 DDP route must keep ``fused=False``.
 
+        A checkpoint carrying optimizer state also orders the run's learning-rate and weight-decay settings as defaults,
+        then the checkpoint, then ``train_config``'s explicit values; see :meth:`_adopt_resumed_param_group_settings`.
+
         Note:
             This hook only fires on ``Trainer(ckpt_path=...)`` resume paths. Fresh-train bootstrap from a
             ``pretrain_weights`` checkpoint runs through :func:`~rfdetr.models.weights.load_pretrain_weights` during
@@ -1946,6 +2039,8 @@ class RFDETRModelModule(LightningModule):
         # one parameter group per parameter, a layout the optimizer no longer has. Regroup it so
         # resuming such a run keeps its momentum and LR schedule instead of failing to load.
         regroup_unmerged_optimizer_state(checkpoint)
+        if checkpoint.get("optimizer_states"):
+            self._adopt_resumed_param_group_settings(checkpoint)
 
         if _is_builtin_fused_adamw(self.train_config.optimizer):
             destination_fused = self._use_fused_optimizer
@@ -1965,6 +2060,61 @@ class RFDETRModelModule(LightningModule):
                 UserWarning,
                 stacklevel=2,
             )
+
+    def _adopt_resumed_param_group_settings(self, checkpoint: dict[str, Any]) -> None:
+        """Take the learning-rate and weight-decay settings ``train_config`` leaves out from the resumed checkpoint.
+
+        Defaults, then the checkpoint, then the caller (#1613): a setting in
+        :data:`~rfdetr.training.param_groups._PARAM_GROUP_SETTINGS` that ``train_config`` sets explicitly wins, and one
+        it leaves out takes the value recorded in the checkpoint's ``args``. Except under strategies that restore after
+        setup (FSDP, DeepSpeed), Lightning calls this hook before :meth:`configure_optimizers`, which then builds the
+        optimizer from the resolved config; every checkpoint this run writes records it.
+
+        When ``train_config`` sets any of these explicitly, :meth:`on_train_start` compares each restored parameter
+        group those settings feed with what this run configured and puts back the ones that differ; a group they do not
+        feed keeps what the checkpoint's optimizer holds, even where ``args`` records another value. The comparison is
+        per group rather than against ``args``, because a resume hit by #1613 recorded ``args`` its optimizer never
+        trained with; a resume that sets none of them continues exactly as saved. A group saved without the learning
+        rate it started from (a ``ReduceLROnPlateau`` checkpoint from an earlier release) can only restart at the
+        configured one, which happens only when a learning-rate setting changed.
+
+        A checkpoint written before rfdetr 1.11.1 records no ``args``. Resuming one without setting any of these keeps
+        its saved values; setting one applies the config as given to the groups it feeds, and the settings left out
+        take their defaults there, with a warning naming them.
+
+        Args:
+            checkpoint: Checkpoint dict carrying optimizer state, as passed to :meth:`on_load_checkpoint`.
+        """
+        explicit = _explicit_param_group_settings(self.train_config)
+        self.train_config, restored, overridden = _resolve_resumed_param_group_settings(self.train_config, checkpoint)
+        recorded = isinstance(checkpoint.get("args"), dict)
+        self._reapplied_param_group_settings = explicit
+        changed = overridden if recorded else explicit
+        self._restarts_groups_without_base = any(name != "weight_decay" for name in changed)
+        # global_rank, not trainer.is_global_zero: load_from_checkpoint calls this hook with no trainer attached.
+        if self.global_rank != 0:
+            return
+        if not recorded:
+            unset = [name for name in _PARAM_GROUP_SETTINGS if name not in explicit]
+            if explicit and unset:
+                logger.warning(
+                    "The resumed checkpoint does not record the settings it was trained with (it predates rfdetr "
+                    "1.11.1), so with %s set explicitly, %s use their defaults rather than the values it was trained "
+                    "with in the parameter groups those settings feed.",
+                    ", ".join(explicit),
+                    ", ".join(unset),
+                )
+            return
+        sources = []
+        if restored:
+            sources.append(", ".join(f"{name}={value}" for name, value in restored.items()) + " from the checkpoint")
+        if overridden:
+            sources.append(
+                ", ".join(f"{name}={value} (was {old})" for name, (old, value) in overridden.items())
+                + " set explicitly"
+            )
+        if sources:
+            logger.info("Resuming the optimizer with %s.", "; ".join(sources))
 
     def reinitialize_detection_head(self, num_classes: int) -> None:
         """Reinitialize the detection head for a new class count.
