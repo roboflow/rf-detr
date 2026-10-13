@@ -141,10 +141,7 @@ class TestEvalStepSegmentationMasks:
         assert all("pred_masks" not in aux for aux in outputs["aux_outputs"]), "aux masks computed without a loss"
         assert "pred_masks" not in outputs["enc_outputs"], "encoder masks computed without a loss"
 
-    @pytest.mark.parametrize(
-        "segmentation_config",
-        [False,True]
-    )
+    @pytest.mark.parametrize("segmentation_config", [False, True])
     def test_model_without_a_segmentation_head_is_called_with_the_images_alone(
         self, tmp_path: Path, segmentation_config: bool
     ) -> None:
