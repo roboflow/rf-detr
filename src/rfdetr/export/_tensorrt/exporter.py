@@ -121,8 +121,8 @@ _IS_FP16_CASTER_AVAILABLE = all(is_installed(name) for name in ("onnx", "onnxcon
 _STRONG_TYPING_MAJOR = 11
 
 #: Oldest TensorRT major an INT8 engine is built on. INT8 engines are strongly typed builds of an explicitly quantized
-#: graph; 10.16 and 11.3 are the only releases this was measured on (issue #1024). Earlier majors are refused rather
-#: than assumed to work; the 10.x releases before 10.16 are admitted but untested.
+#: graph; 10.16, 11.3 and 11.4 are the only releases this was measured on (issue #1024). Earlier majors are refused
+#: rather than assumed to work; the 10.x releases before 10.16 are admitted but untested.
 _INT8_MIN_TENSORRT_MAJOR = 10
 
 #: The oldest measured TensorRT release: an INT8 build on a 10.x release before ``(10, 16)`` is warned about rather
@@ -1022,9 +1022,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     def _warn_if_int8_is_unmeasured(self) -> None:
         """Warn when an INT8 build leaves the TensorRT releases and settings its accuracy and speed were measured with.
 
-        Those are TensorRT 10.16 and 11.3, with neither ``version_compatible`` nor ``hardware_compatibility``. Outside
-        them the engine still builds and runs, and the failures the measurements turned up built cleanly too, so the
-        request is honoured with a warning rather than refused.
+        Those are TensorRT 10.16, 11.3 and 11.4, with neither ``version_compatible`` nor ``hardware_compatibility``.
+        Outside them the engine still builds and runs, and the failures the measurements turned up built cleanly too, so
+        the request is honoured with a warning rather than refused.
         """
         try:
             import tensorrt as trt_module
@@ -1048,8 +1048,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             reasons.append(f"trt_hardware_compatibility={self.config.hardware_compatibility!r}")
         if reasons:
             logger.warning(
-                "TensorRT quantization='int8' was measured on TensorRT 10.16 and 11.3 without trt_version_compatible "
-                f"or trt_hardware_compatibility; this build uses {' and '.join(reasons)}. The engine may build and "
+                "TensorRT quantization='int8' was measured on TensorRT 10.16, 11.3 and 11.4 without "
+                f"trt_version_compatible or trt_hardware_compatibility; this build uses {' and '.join(reasons)}. The "
+                "engine may build and "
                 "still lose accuracy or speed: compare its COCO AP and latency with the FP16 engine before relying on "
                 "it."
             )

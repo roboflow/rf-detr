@@ -350,7 +350,7 @@ class TestInt8Host:
         with pytest.raises(ImportError, match="TensorRT 10 or newer"):
             TensorRTExporter._require_int8_host()
 
-    @pytest.mark.parametrize("version", ["10.0.1.6", "11.3.0.99"])
+    @pytest.mark.parametrize("version", ["10.0.1.6", "11.3.0.99", "11.4.0.106"])
     def test_supported_tensorrt_is_accepted(self, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
         monkeypatch.setattr(tensorrt_export, "_IS_ONNXRUNTIME_AVAILABLE", True)
         monkeypatch.setattr(tensorrt_export, "_IS_FP16_CASTER_AVAILABLE", True)
@@ -434,6 +434,7 @@ class TestInt8Host:
             pytest.param("12.0.0.1", True, id="newer-major"),
             pytest.param("10.16.1.11", False, id="10.16"),
             pytest.param("11.3.0.99", False, id="11.3"),
+            pytest.param("11.4.0.106", False, id="11.4"),
         ],
     )
     def test_unmeasured_tensorrt_is_warned_about_before_the_forward_pass(
@@ -1785,9 +1786,19 @@ class TestLiftOpset:
         with pytest.raises(ValueError, match="'pad' \\(Pad\\) changed meaning"):
             quantize._lift_opset(model)
 
-    @pytest.mark.parametrize(("op", "opset"), [("Resize", 10), ("ScatterND", 13)])
-    def test_resize_and_scatter_nd_below_the_opset_they_were_checked_from_are_refused(
-        self, op: str, opset: int
+    @pytest.mark.parametrize(
+        ("op", "opset", "refused"),
+        [
+            ("Resize", 10, True),
+            ("Resize", 12, True),
+            ("Resize", 13, False),
+            ("ScatterND", 13, True),
+            ("ScatterND", 15, True),
+            ("ScatterND", 16, False),
+        ],
+    )
+    def test_resize_and_scatter_nd_are_lifted_only_from_the_opset_they_were_checked_from(
+        self, op: str, opset: int, refused: bool
     ) -> None:
         """``Resize`` (before opset 13) and ``ScatterND`` (before 16) did mean something else than at opset 19.
 
@@ -1802,8 +1813,14 @@ class TestLiftOpset:
             [helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])],
         )
         model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
-        with pytest.raises(ValueError, match=f"\\({op}\\) changed meaning"):
+        if refused:
+            with pytest.raises(ValueError, match=f"\\({op}\\) changed meaning"):
+                quantize._lift_opset(model)
+        else:
             quantize._lift_opset(model)
+            assert [imported.version for imported in model.opset_import if imported.domain == ""] == [
+                quantize._FP16_QDQ_OPSET
+            ]
 
     def test_unknown_op_is_refused(self) -> None:
         """An op ONNX does not define is refused with a ValueError naming the node, not onnx's own SchemaError.
@@ -2432,16 +2449,17 @@ class TestSegmentationAndKeypointInt8Plan:
 
     @pytest.fixture(scope="class")
     def exports(self, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-        """Export an untrained RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium and RFDETRKeypointPreview to ONNX on CPU.
+        """Export an untrained RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge and RFDETRKeypointPreview.
 
-        Done once for the class. Small and Medium are the segmentation models whose windows fit INT8 attention.
+        Done once for the class, to ONNX on CPU. Small and Medium are the segmentation models whose windows fit INT8
+        attention; Nano's and Large's do not.
 
         Examples:
             A pytest fixture cannot be called directly.
 
             >>> paths = exports(tmp_path_factory)  # doctest: +SKIP
         """
-        from rfdetr import RFDETRKeypointPreview, RFDETRSegMedium, RFDETRSegNano, RFDETRSegSmall
+        from rfdetr import RFDETRKeypointPreview, RFDETRSegLarge, RFDETRSegMedium, RFDETRSegNano, RFDETRSegSmall
         from rfdetr.utilities.reproducibility import seed_all
 
         # The pretrained keypoint model has the person class behind a padding class, which is what puts ScatterND in
@@ -2450,6 +2468,7 @@ class TestSegmentationAndKeypointInt8Plan:
             ("segmentation", RFDETRSegNano, {}),
             ("segmentation-small", RFDETRSegSmall, {}),
             ("segmentation-medium", RFDETRSegMedium, {}),
+            ("segmentation-large", RFDETRSegLarge, {}),
             ("keypoint", RFDETRKeypointPreview, {"num_classes": 2, "num_keypoints_per_class": [0, 17]}),
         )
         paths = {}
@@ -2497,6 +2516,12 @@ class TestSegmentationAndKeypointInt8Plan:
         # projections and the attention by the same amount.
         assert (len(plans[kind].weighted), len(plans[kind].activations)) == (weighted, activations)
         assert activations - weighted == 9 * 4
+
+    def test_attention_of_large_stays_fp16(self, plans: dict[str, quantize.Int8Plan]) -> None:
+        # Seg Large's 442-token windows are above the 325 limit, so no attention input is added to the weights: both
+        # counts are equal, as for Seg Nano in ``test_counts``.
+        plan = plans["segmentation-large"]
+        assert (len(plan.weighted), len(plan.activations)) == (56, 56)
 
     @onnx_and_onnxruntime_only
     @onnxconverter_common_only
