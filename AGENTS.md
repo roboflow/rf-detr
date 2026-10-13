@@ -32,6 +32,7 @@ As an AI agent contributing to RF-DETR, you are responsible for:
     - Update `.github/copilot-instructions.md` when high-level guidance changes
     - Update `.github/CONTRIBUTING.md` when human workflow is affected
     - Apply updates after receiving major feedback in PR reviews
+    - For code reviews, follow the [code-review skill](.github/skills/code-review/SKILL.md)
 
 4. **Consulting maintainers before major changes**
 
