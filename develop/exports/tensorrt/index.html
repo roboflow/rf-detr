@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-08T17:02:29">
+  <meta property="article:modified_time" content="2026-10-13T11:28:56">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-08T17:02:29",
+    "dateModified": "2026-10-13T11:28:56",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1668,6 +1668,95 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="INT8">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-was-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it was measured
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latency-per-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency per image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#engine-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engine size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#placement-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placement rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#requirements-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements and limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3022,6 +3111,95 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="INT8">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-was-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it was measured
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latency-per-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency per image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#engine-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engine size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#placement-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placement rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#requirements-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements and limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3124,243 +3302,1669 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span> <span class="n">calibration_data</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
 </span></code></pre></div>
-<p>This writes <code>output/rfdetr-small_int8.trt</code> (next to the intermediate <code>output/rfdetr-small.onnx</code>). The export runs the first <code>max_images</code> (default <code>100</code>) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as <code>predict()</code> does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. <code>calibration_data</code> also accepts a <code>.npy</code> path or an array shaped <code>(N, C, H, W)</code>, already normalized the way <code>predict()</code> normalizes; an integer array, raw pixels, is refused. <code>max_images</code> caps only a directory of images; an array or <code>.npy</code> file is used whole, so pass as many samples as you want calibrated. Calibration runs the graph at the export's <code>batch_size</code>, so its host memory grows with the batch: about 9.5 GB for Nano at batch 32.</p>
-<p>Measured with TensorRT 11.3 on an RTX 5070 (sm_120) under WSL2 and a Tesla T4 (sm_75) on Colab, calibrated on 128 COCO <code>train2017</code> images (<code>max_images=128</code>) and scored on all 5000 <code>val2017</code> images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from back-to-back <code>execute_async_v3</code> calls with no synchronization in between (the plain call) and from a captured CUDA graph. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is large only where the engine is launch-bound, at batch 1 on the RTX 5070 (1.675 ms plain against 0.922 ms graph for Nano), and small on the T4 and at larger batches. The speedups and the AP differences in parentheses are computed from the unrounded values, so recomputing them from the rounded cells can differ in the last digit. The RTX 5070 ran under WSL2 and was not measured on native Linux, so how much of that launch time WSL2 adds is not known. On the RTX 5070, Nano across batch sizes:</p>
+<p>This writes <code>output/rfdetr-small_int8.trt</code> (next to the intermediate <code>output/rfdetr-small.onnx</code>). The export runs the first <code>max_images</code> (default <code>100</code>) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as <code>predict()</code> does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. <code>calibration_data</code> also accepts a <code>.npy</code> path or an array shaped <code>(N, C, H, W)</code>, already normalized the way <code>predict()</code> normalizes; an integer array, raw pixels, is refused. <code>max_images</code> caps only a directory of images; an array or <code>.npy</code> file is used whole, so pass as many samples as you want calibrated. Calibration runs the graph at the export's <code>batch_size</code>, so its host memory grows with the batch.</p>
+<h3 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h3>
+<p>The benchmark of <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a> ran on two GPUs, an RTX 5070 and a Tesla T4, with TensorRT 11.4.0.106 on both. Every row below is from that benchmark.</p>
+<p><strong>Summary.</strong> INT8 is faster than FP16 in every row on both GPUs and loses less than 1 AP point on each model's own task. On the Tesla T4 its engine is larger than the FP16 one at batch 4 and 8.</p>
 <table>
 <thead>
 <tr>
-<th>Batch</th>
-<th>Precision</th>
-<th>AP</th>
-<th>AP50</th>
-<th>Latency, plain call</th>
-<th>Latency, CUDA graph</th>
-<th>Engine</th>
+<th></th>
+<th>RTX 5070</th>
+<th>Tesla T4</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>1</td>
-<td>FP16</td>
-<td>48.03</td>
-<td>67.10</td>
-<td>1.675 ms</td>
-<td>0.922 ms</td>
-<td>62 MB</td>
+<td>Speedup, plain call</td>
+<td>1.06× to 1.37×</td>
+<td>1.02× to 1.31×</td>
 </tr>
 <tr>
-<td>1</td>
-<td>INT8</td>
-<td>47.40</td>
-<td>66.23</td>
-<td>1.582 ms (1.06×)</td>
-<td>0.693 ms (1.33×)</td>
-<td>41 MB</td>
+<td>Speedup, CUDA graph</td>
+<td>1.06× to 1.38×</td>
+<td>1.05× to 1.33×</td>
 </tr>
 <tr>
-<td>8</td>
-<td>FP16</td>
-<td>48.02</td>
-<td>67.11</td>
-<td>0.554 ms</td>
-<td>0.497 ms</td>
-<td>73 MB</td>
+<td>AP change at batch 1</td>
+<td>−0.47 to −0.91 points</td>
+<td>−0.37 to −0.98 points</td>
 </tr>
 <tr>
-<td>8</td>
-<td>INT8</td>
-<td>47.29</td>
-<td>66.19</td>
-<td>0.426 ms (1.30×)</td>
-<td>0.363 ms (1.37×)</td>
-<td>51 MB</td>
+<td>AP change, share of the FP16 AP</td>
+<td>0.9% to 2.0%</td>
+<td>0.8% to 2.2%</td>
 </tr>
 <tr>
-<td>32</td>
-<td>FP16</td>
-<td>48.03</td>
-<td>67.12</td>
-<td>0.494 ms</td>
-<td>0.482 ms</td>
-<td>68–108 MB</td>
-</tr>
-<tr>
-<td>32</td>
-<td>INT8</td>
-<td>47.30</td>
-<td>66.18</td>
-<td>0.350 ms (1.41×)</td>
-<td>0.338 ms (1.43×)</td>
-<td>49–87 MB</td>
+<td>Engine size, INT8 ÷ FP16</td>
+<td>0.66× to 0.79×</td>
+<td>0.78× to 2.89×</td>
 </tr>
 </tbody>
 </table>
-<p>Every model at batch 1, measured the same way:</p>
+<h4 id="how-it-was-measured">How it was measured<a class="headerlink" href="#how-it-was-measured" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>Machines:</strong> an RTX 5070 (sm_120, native Linux) and a Tesla T4 (sm_75, Colab). Both ran TensorRT 11.4.0.106.</li>
+<li><strong>Engines:</strong> a static FP16 and a static INT8 engine of every model at batch 1, 4 and 8. The INT8 engines are calibrated on the first 128 <code>train2017</code> images by file name.</li>
+<li><strong>Accuracy:</strong> batch 1, all 5000 <code>val2017</code> images, decoded the way <code>predict()</code> decodes. Box AP and mask AP come from <code>instances_val2017</code>; box AP (person class only) and keypoint AP from <code>person_keypoints_val2017</code>.</li>
+<li><strong>Latency:</strong> GPU time per image (CUDA events), the median of 15 rounds of 200 executions, FP16 and INT8 interleaved. A <em>plain call</em> is 200 back-to-back <code>execute_async_v3</code> calls with no synchronization in between. A <em>CUDA graph</em> replays one captured call 200 times.</li>
+<li><strong>Reproduce it:</strong> <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a> runs these exact steps on your GPU. It is written for Colab, takes hours for all nine models, and prints the GPU and the TensorRT version next to its table, because the numbers depend on them. The tables above used TensorRT 11.4.0.106, so compare the version it prints before you compare numbers.</li>
+</ul>
+<p>The RTX 5070 differences are computed from the unrounded values, and the Tesla T4 ones from the values its notebook printed (engine sizes in whole MB), so recomputing them from the rounded cells can differ in the last digit.</p>
+<h4 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h4>
+<p>Batch 1, all 5000 <code>val2017</code> images. Δ is INT8 minus FP16 in COCO AP points. Speedup is the FP16 latency divided by the INT8 latency, for a plain call. Each task has its own table, because each is scored on a different AP. The Tesla T4 tables have no box AP for the segmentation and keypoint models: that run kept only the AP of each model's own task.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">RTX 5070</label><label for="__tabbed_1_2">Tesla T4</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p><strong>Detection (box AP)</strong></p>
 <table>
 <thead>
 <tr>
 <th>Model</th>
-<th>AP, FP16</th>
-<th>AP, INT8</th>
-<th>Plain call, FP16</th>
-<th>Plain call, INT8</th>
-<th>CUDA graph, FP16</th>
-<th>CUDA graph, INT8</th>
-<th>Engine, FP16</th>
-<th>Engine, INT8</th>
+<th>Box AP, FP16</th>
+<th>Box AP, INT8</th>
+<th>Δ</th>
+<th>Speedup</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Nano</td>
-<td>48.03</td>
-<td>47.40 (−0.63)</td>
-<td>1.675 ms</td>
-<td>1.582 ms (1.06×)</td>
-<td>0.922 ms</td>
-<td>0.693 ms (1.33×)</td>
-<td>62 MB</td>
-<td>41 MB</td>
+<td>Detection Nano</td>
+<td>48.02</td>
+<td>47.42</td>
+<td>−0.60</td>
+<td>1.27×</td>
 </tr>
 <tr>
-<td>Small</td>
-<td>52.79</td>
-<td>52.18 (−0.61)</td>
-<td>2.221 ms</td>
-<td>1.998 ms (1.11×)</td>
-<td>1.432 ms</td>
-<td>1.157 ms (1.24×)</td>
-<td>67 MB</td>
-<td>45 MB</td>
+<td>Detection Small</td>
+<td>52.81</td>
+<td>52.21</td>
+<td>−0.60</td>
+<td>1.26×</td>
 </tr>
 <tr>
-<td>Medium</td>
-<td>54.69</td>
-<td>53.84 (−0.85)</td>
-<td>2.536 ms</td>
-<td>2.412 ms (1.05×)</td>
-<td>1.625 ms</td>
-<td>1.370 ms (1.19×)</td>
-<td>71 MB</td>
-<td>48 MB</td>
+<td>Detection Medium</td>
+<td>54.65</td>
+<td>53.79</td>
+<td>−0.86</td>
+<td>1.16×</td>
 </tr>
 <tr>
-<td>Large</td>
-<td>56.52</td>
-<td>56.02 (−0.50)</td>
-<td>2.806 ms</td>
-<td>2.682 ms (1.05×)</td>
-<td>2.000 ms</td>
-<td>1.820 ms (1.10×)</td>
-<td>68 MB</td>
-<td>51 MB</td>
+<td>Detection Large</td>
+<td>56.53</td>
+<td>55.99</td>
+<td>−0.55</td>
+<td>1.12×</td>
 </tr>
 </tbody>
 </table>
-<p>The same on a Tesla T4, from a Colab run of the same external harness (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):</p>
+<p><strong>Segmentation (mask AP)</strong></p>
 <table>
 <thead>
 <tr>
-<th>Model, batch</th>
-<th>AP, FP16</th>
-<th>AP, INT8</th>
-<th>Plain call, FP16</th>
-<th>Plain call, INT8</th>
-<th>CUDA graph, FP16</th>
-<th>CUDA graph, INT8</th>
-<th>Engine, FP16</th>
-<th>Engine, INT8</th>
+<th>Model</th>
+<th>Mask AP, FP16</th>
+<th>Mask AP, INT8</th>
+<th>Δ</th>
+<th>Box AP, FP16</th>
+<th>Box AP, INT8</th>
+<th>Δ box</th>
+<th>Speedup</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Nano, 1</td>
-<td>48.07</td>
-<td>47.31 (−0.77)</td>
-<td>3.26 ms</td>
-<td>2.68 ms (1.22×)</td>
-<td>3.21 ms</td>
-<td>2.65 ms (1.21×)</td>
-<td>60 MB</td>
-<td>48 MB</td>
+<td>Seg Nano</td>
+<td>40.09</td>
+<td>39.59</td>
+<td>−0.50</td>
+<td>48.42</td>
+<td>47.57</td>
+<td>−0.85</td>
+<td>1.06×</td>
 </tr>
 <tr>
-<td>Small, 1</td>
-<td>52.83</td>
-<td>52.23 (−0.60)</td>
-<td>5.25 ms</td>
-<td>4.68 ms (1.12×)</td>
-<td>5.31 ms</td>
-<td>4.60 ms (1.16×)</td>
-<td>64 MB</td>
-<td>59 MB</td>
+<td>Seg Small</td>
+<td>42.95</td>
+<td>42.13</td>
+<td>−0.82</td>
+<td>51.10</td>
+<td>49.97</td>
+<td>−1.13</td>
+<td>1.22×</td>
 </tr>
 <tr>
-<td>Medium, 1</td>
-<td>54.66</td>
-<td>53.80 (−0.85)</td>
-<td>6.69 ms</td>
-<td>5.89 ms (1.14×)</td>
-<td>6.71 ms</td>
-<td>5.76 ms (1.16×)</td>
-<td>69 MB</td>
-<td>67 MB</td>
+<td>Seg Medium</td>
+<td>44.94</td>
+<td>44.03</td>
+<td>−0.91</td>
+<td>53.42</td>
+<td>52.19</td>
+<td>−1.22</td>
+<td>1.17×</td>
 </tr>
 <tr>
-<td>Large, 1</td>
-<td>56.51</td>
-<td>55.96 (−0.55)</td>
-<td>10.13 ms</td>
-<td>9.28 ms (1.09×)</td>
-<td>10.18 ms</td>
-<td>9.14 ms (1.11×)</td>
-<td>70 MB</td>
-<td>83 MB</td>
-</tr>
-<tr>
-<td>Nano, 8</td>
-<td>47.98</td>
-<td>47.23 (−0.75)</td>
-<td>2.72 ms</td>
-<td>2.16 ms (1.26×)</td>
-<td>2.72 ms</td>
-<td>2.13 ms (1.28×)</td>
-<td>70 MB</td>
-<td>120 MB</td>
-</tr>
-<tr>
-<td>Nano, 32</td>
-<td>48.02</td>
-<td>47.28 (−0.75)</td>
-<td>2.98 ms</td>
-<td>2.33 ms (1.28×)</td>
-<td>2.97 ms</td>
-<td>2.31 ms (1.28×)</td>
-<td>113 MB</td>
-<td>366 MB</td>
+<td>Seg Large</td>
+<td>46.44</td>
+<td>45.97</td>
+<td>−0.47</td>
+<td>54.91</td>
+<td>54.00</td>
+<td>−0.91</td>
+<td>1.09×</td>
 </tr>
 </tbody>
 </table>
-<p>The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).</p>
-<p>These tables come from a benchmark harness outside this repository. <a href="../../cookbooks/export-cuda/#8-tensorrt-int8">Section 8 of the CUDA cookbook</a> runs the same kind of calibration (128 COCO images, there <code>val2017</code> images held out of the scored subset), export and FP16-against-INT8 comparison for Small at batch 1 on a <code>val2017</code> subset, from a synchronous call and a CUDA graph, so you can measure it on your own GPU; it does not regenerate these tables.</p>
-<div class="admonition warning">
-<p class="admonition-title">Engine size on the T4</p>
-<p>On the T4 the INT8 engine is larger than the FP16 one for Large at batch 1 (83 against 70 MB) and for Nano at batch 4, 8 and 32 (79, 120 and 366 MB against 65, 70 and 113 MB), where the RTX 5070 shows the opposite. The cause has not been diagnosed. What TensorRT's engine inspector shows on the T4: the layers' constants are the same at every batch (29 MB for INT8, 51 MB for FP16 on Nano), so it is not the weights; the bytes outside them grow by 10.3 MB per image of batch for INT8 against 1.5 MB for FP16, and by about 31 MB more than FP16 on Large at batch 1, so the cost follows the image size; and it does not change with INT8 attention switched off or with <code>builder_optimization_level=1</code>. Speed and accuracy are unaffected, but check the file size if disk or load time matters.</p>
+<p><strong>Keypoints (keypoint AP)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Keypoint AP, FP16</th>
+<th>Keypoint AP, INT8</th>
+<th>Δ</th>
+<th>Box AP, FP16</th>
+<th>Box AP, INT8</th>
+<th>Δ box</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keypoint Preview</td>
+<td>71.78</td>
+<td>71.11</td>
+<td>−0.67</td>
+<td>51.52</td>
+<td>51.02</td>
+<td>−0.50</td>
+<td>1.16×</td>
+</tr>
+</tbody>
+</table>
 </div>
-<p>The INT8 weights take 32 MB against FP16's 54 MB on Nano. On the RTX 5070 both engines also store a block of zeros: TensorRT pads the 3-channel image of the FP16 patch embedding to 4 or 8 channels, picked per build, and keeps the added channels as a constant of 0.3 or 1.5 MB per image of batch. Two builds of the same graph can therefore differ by up to 1.2 MB per image, which is why the batch-32 sizes are ranges.</p>
+<div class="tabbed-block">
+<p><strong>Detection (box AP)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Box AP, FP16</th>
+<th>Box AP, INT8</th>
+<th>Δ</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>48.01</td>
+<td>47.36</td>
+<td>−0.65</td>
+<td>1.18×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>52.79</td>
+<td>52.19</td>
+<td>−0.60</td>
+<td>1.10×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>54.62</td>
+<td>53.84</td>
+<td>−0.78</td>
+<td>1.14×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>56.51</td>
+<td>56.01</td>
+<td>−0.49</td>
+<td>1.10×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Segmentation (mask AP)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Mask AP, FP16</th>
+<th>Mask AP, INT8</th>
+<th>Δ</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seg Nano</td>
+<td>40.10</td>
+<td>39.52</td>
+<td>−0.58</td>
+<td>1.02×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>42.97</td>
+<td>42.19</td>
+<td>−0.78</td>
+<td>1.09×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>44.93</td>
+<td>43.95</td>
+<td>−0.98</td>
+<td>1.05×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>46.41</td>
+<td>46.04</td>
+<td>−0.37</td>
+<td>1.11×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Keypoints (keypoint AP)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Keypoint AP, FP16</th>
+<th>Keypoint AP, INT8</th>
+<th>Δ</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keypoint Preview</td>
+<td>71.75</td>
+<td>71.09</td>
+<td>−0.66</td>
+<td>1.12×</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<h4 id="latency-per-image">Latency per image<a class="headerlink" href="#latency-per-image" title="Permanent link">&para;</a></h4>
+<p>Latency is per image: the time of one call divided by its batch. Speedup is the FP16 latency divided by the INT8 latency, in the same mode, for the same model and batch.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">RTX 5070, plain call</label><label for="__tabbed_2_2">RTX 5070, CUDA graph</label><label for="__tabbed_2_3">Tesla T4, plain call</label><label for="__tabbed_2_4">Tesla T4, CUDA graph</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p><strong>Detection</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>1</td>
+<td>0.897 ms</td>
+<td>0.708 ms</td>
+<td>1.27×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>4</td>
+<td>0.568 ms</td>
+<td>0.426 ms</td>
+<td>1.33×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>8</td>
+<td>0.509 ms</td>
+<td>0.371 ms</td>
+<td>1.37×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>1</td>
+<td>1.395 ms</td>
+<td>1.102 ms</td>
+<td>1.26×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>4</td>
+<td>0.998 ms</td>
+<td>0.760 ms</td>
+<td>1.31×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>8</td>
+<td>0.921 ms</td>
+<td>0.687 ms</td>
+<td>1.34×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>1</td>
+<td>1.598 ms</td>
+<td>1.378 ms</td>
+<td>1.16×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>4</td>
+<td>1.182 ms</td>
+<td>0.925 ms</td>
+<td>1.28×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>8</td>
+<td>1.139 ms</td>
+<td>0.887 ms</td>
+<td>1.28×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>1</td>
+<td>2.018 ms</td>
+<td>1.802 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>4</td>
+<td>1.730 ms</td>
+<td>1.479 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>8</td>
+<td>1.752 ms</td>
+<td>1.466 ms</td>
+<td>1.20×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Segmentation</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seg Nano</td>
+<td>1</td>
+<td>1.255 ms</td>
+<td>1.189 ms</td>
+<td>1.06×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>4</td>
+<td>0.838 ms</td>
+<td>0.731 ms</td>
+<td>1.15×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>8</td>
+<td>0.801 ms</td>
+<td>0.686 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>1</td>
+<td>1.597 ms</td>
+<td>1.307 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>4</td>
+<td>1.236 ms</td>
+<td>0.994 ms</td>
+<td>1.24×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>8</td>
+<td>1.251 ms</td>
+<td>1.028 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>1</td>
+<td>1.941 ms</td>
+<td>1.654 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>4</td>
+<td>1.613 ms</td>
+<td>1.348 ms</td>
+<td>1.20×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>8</td>
+<td>1.722 ms</td>
+<td>1.469 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>1</td>
+<td>2.394 ms</td>
+<td>2.192 ms</td>
+<td>1.09×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>4</td>
+<td>2.292 ms</td>
+<td>2.051 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>8</td>
+<td>2.418 ms</td>
+<td>2.160 ms</td>
+<td>1.12×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Keypoints</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keypoint Preview</td>
+<td>1</td>
+<td>3.222 ms</td>
+<td>2.783 ms</td>
+<td>1.16×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>4</td>
+<td>2.632 ms</td>
+<td>2.225 ms</td>
+<td>1.18×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>8</td>
+<td>2.597 ms</td>
+<td>2.205 ms</td>
+<td>1.18×</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<p><strong>Detection</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>1</td>
+<td>0.882 ms</td>
+<td>0.689 ms</td>
+<td>1.28×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>4</td>
+<td>0.562 ms</td>
+<td>0.420 ms</td>
+<td>1.34×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>8</td>
+<td>0.506 ms</td>
+<td>0.368 ms</td>
+<td>1.38×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>1</td>
+<td>1.376 ms</td>
+<td>1.093 ms</td>
+<td>1.26×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>4</td>
+<td>0.993 ms</td>
+<td>0.754 ms</td>
+<td>1.32×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>8</td>
+<td>0.917 ms</td>
+<td>0.684 ms</td>
+<td>1.34×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>1</td>
+<td>1.575 ms</td>
+<td>1.357 ms</td>
+<td>1.16×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>4</td>
+<td>1.178 ms</td>
+<td>0.920 ms</td>
+<td>1.28×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>8</td>
+<td>1.135 ms</td>
+<td>0.883 ms</td>
+<td>1.29×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>1</td>
+<td>1.999 ms</td>
+<td>1.779 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>4</td>
+<td>1.723 ms</td>
+<td>1.472 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>8</td>
+<td>1.748 ms</td>
+<td>1.462 ms</td>
+<td>1.20×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Segmentation</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seg Nano</td>
+<td>1</td>
+<td>1.234 ms</td>
+<td>1.166 ms</td>
+<td>1.06×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>4</td>
+<td>0.833 ms</td>
+<td>0.725 ms</td>
+<td>1.15×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>8</td>
+<td>0.798 ms</td>
+<td>0.683 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>1</td>
+<td>1.576 ms</td>
+<td>1.283 ms</td>
+<td>1.23×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>4</td>
+<td>1.231 ms</td>
+<td>0.993 ms</td>
+<td>1.24×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>8</td>
+<td>1.247 ms</td>
+<td>1.024 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>1</td>
+<td>1.915 ms</td>
+<td>1.625 ms</td>
+<td>1.18×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>4</td>
+<td>1.607 ms</td>
+<td>1.342 ms</td>
+<td>1.20×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>8</td>
+<td>1.719 ms</td>
+<td>1.465 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>1</td>
+<td>2.366 ms</td>
+<td>2.167 ms</td>
+<td>1.09×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>4</td>
+<td>2.286 ms</td>
+<td>2.045 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>8</td>
+<td>2.415 ms</td>
+<td>2.157 ms</td>
+<td>1.12×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Keypoints</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keypoint Preview</td>
+<td>1</td>
+<td>3.204 ms</td>
+<td>2.764 ms</td>
+<td>1.16×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>4</td>
+<td>2.625 ms</td>
+<td>2.218 ms</td>
+<td>1.18×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>8</td>
+<td>2.590 ms</td>
+<td>2.189 ms</td>
+<td>1.18×</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<p><strong>Detection</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>1</td>
+<td>3.345 ms</td>
+<td>2.835 ms</td>
+<td>1.18×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>4</td>
+<td>2.729 ms</td>
+<td>2.251 ms</td>
+<td>1.21×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>8</td>
+<td>2.860 ms</td>
+<td>2.178 ms</td>
+<td>1.31×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>1</td>
+<td>5.242 ms</td>
+<td>4.765 ms</td>
+<td>1.10×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>4</td>
+<td>5.032 ms</td>
+<td>4.127 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>8</td>
+<td>5.385 ms</td>
+<td>4.448 ms</td>
+<td>1.21×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>1</td>
+<td>6.779 ms</td>
+<td>5.951 ms</td>
+<td>1.14×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>4</td>
+<td>6.669 ms</td>
+<td>5.436 ms</td>
+<td>1.23×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>8</td>
+<td>7.099 ms</td>
+<td>5.924 ms</td>
+<td>1.20×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>1</td>
+<td>10.311 ms</td>
+<td>9.355 ms</td>
+<td>1.10×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>4</td>
+<td>10.977 ms</td>
+<td>9.683 ms</td>
+<td>1.13×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>8</td>
+<td>11.453 ms</td>
+<td>9.873 ms</td>
+<td>1.16×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Segmentation</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seg Nano</td>
+<td>1</td>
+<td>5.205 ms</td>
+<td>5.097 ms</td>
+<td>1.02×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>4</td>
+<td>4.661 ms</td>
+<td>4.313 ms</td>
+<td>1.08×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>8</td>
+<td>5.049 ms</td>
+<td>4.461 ms</td>
+<td>1.13×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>1</td>
+<td>6.921 ms</td>
+<td>6.374 ms</td>
+<td>1.09×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>4</td>
+<td>6.900 ms</td>
+<td>5.648 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>8</td>
+<td>7.202 ms</td>
+<td>5.955 ms</td>
+<td>1.21×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>1</td>
+<td>9.532 ms</td>
+<td>9.035 ms</td>
+<td>1.05×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>4</td>
+<td>9.636 ms</td>
+<td>8.174 ms</td>
+<td>1.18×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>8</td>
+<td>10.113 ms</td>
+<td>8.795 ms</td>
+<td>1.15×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>1</td>
+<td>14.112 ms</td>
+<td>12.707 ms</td>
+<td>1.11×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>4</td>
+<td>14.274 ms</td>
+<td>12.678 ms</td>
+<td>1.13×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>8</td>
+<td>14.306 ms</td>
+<td>13.131 ms</td>
+<td>1.09×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Keypoints</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keypoint Preview</td>
+<td>1</td>
+<td>15.345 ms</td>
+<td>13.708 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>4</td>
+<td>16.083 ms</td>
+<td>14.101 ms</td>
+<td>1.14×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>8</td>
+<td>16.737 ms</td>
+<td>14.599 ms</td>
+<td>1.15×</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<p><strong>Detection</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>1</td>
+<td>3.483 ms</td>
+<td>2.965 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>4</td>
+<td>2.697 ms</td>
+<td>2.206 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>8</td>
+<td>2.859 ms</td>
+<td>2.150 ms</td>
+<td>1.33×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>1</td>
+<td>5.270 ms</td>
+<td>4.676 ms</td>
+<td>1.13×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>4</td>
+<td>5.033 ms</td>
+<td>4.077 ms</td>
+<td>1.23×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>8</td>
+<td>5.383 ms</td>
+<td>4.425 ms</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>1</td>
+<td>6.876 ms</td>
+<td>5.868 ms</td>
+<td>1.17×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>4</td>
+<td>6.684 ms</td>
+<td>5.427 ms</td>
+<td>1.23×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>8</td>
+<td>7.094 ms</td>
+<td>5.930 ms</td>
+<td>1.20×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>1</td>
+<td>10.372 ms</td>
+<td>9.220 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>4</td>
+<td>10.971 ms</td>
+<td>9.655 ms</td>
+<td>1.14×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>8</td>
+<td>11.525 ms</td>
+<td>9.936 ms</td>
+<td>1.16×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Segmentation</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Seg Nano</td>
+<td>1</td>
+<td>5.239 ms</td>
+<td>4.987 ms</td>
+<td>1.05×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>4</td>
+<td>4.598 ms</td>
+<td>4.228 ms</td>
+<td>1.09×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>8</td>
+<td>5.006 ms</td>
+<td>4.453 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>1</td>
+<td>6.965 ms</td>
+<td>6.416 ms</td>
+<td>1.09×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>4</td>
+<td>6.914 ms</td>
+<td>5.563 ms</td>
+<td>1.24×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>8</td>
+<td>7.223 ms</td>
+<td>5.962 ms</td>
+<td>1.21×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>1</td>
+<td>9.592 ms</td>
+<td>8.889 ms</td>
+<td>1.08×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>4</td>
+<td>9.601 ms</td>
+<td>8.083 ms</td>
+<td>1.19×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>8</td>
+<td>10.112 ms</td>
+<td>8.822 ms</td>
+<td>1.15×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>1</td>
+<td>14.050 ms</td>
+<td>12.703 ms</td>
+<td>1.11×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>4</td>
+<td>14.262 ms</td>
+<td>12.644 ms</td>
+<td>1.13×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>8</td>
+<td>14.300 ms</td>
+<td>13.143 ms</td>
+<td>1.09×</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Keypoints</strong></p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keypoint Preview</td>
+<td>1</td>
+<td>15.050 ms</td>
+<td>13.492 ms</td>
+<td>1.12×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>4</td>
+<td>16.066 ms</td>
+<td>14.098 ms</td>
+<td>1.14×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>8</td>
+<td>16.733 ms</td>
+<td>14.594 ms</td>
+<td>1.15×</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<p>On the RTX 5070, the models whose backbone attention runs in INT8 (detection Nano, Small and Medium, Seg Small and Seg Medium; see the placement rules below) gain 1.16× to 1.28× at batch 1 with a CUDA graph. The ones that keep it in FP16 (detection Large, Seg Nano, Seg Large and Keypoint Preview) gain 1.06× to 1.16×. The gain grows with the batch for detection and for Seg Nano; for Seg Small, Seg Medium, Seg Large and Keypoint Preview it changes by at most 0.03× between batch 1, 4 and 8. On the Tesla T4 that split does not hold: with a CUDA graph at batch 1, Seg Small (1.09×) and Seg Medium (1.08×), which run INT8 attention, gain no more than Seg Large (1.11×) and Keypoint Preview (1.12×), which keep it in FP16. The cause was not measured. On both GPUs the plain call and the CUDA graph give almost the same speedup: they differ by at most 0.01× on the RTX 5070 and 0.03× on the Tesla T4.</p>
+<h4 id="engine-size">Engine size<a class="headerlink" href="#engine-size" title="Permanent link">&para;</a></h4>
+<div class="admonition warning">
+<p class="admonition-title">On the Tesla T4 the INT8 engine grows with the batch much faster than the FP16 one</p>
+<p>On the Tesla T4 the INT8 engine is larger than the FP16 one at batch 4 and 8 for every model, 1.42× to 2.89× at batch 8: detection Nano at batch 8 is 120 MB against 70 MB, and detection Large 324 MB against 112 MB. At batch 1 it is larger for Detection Large (83 MB against 70 MB) and Keypoint Preview (83 MB against 82 MB). Plan the batch you serve when you build, and check the size of each engine before you deploy a large batch. The cause has not been diagnosed. On the RTX 5070 the INT8 engine is smaller than the FP16 one in every row.</p>
+</div>
+<p>The size of an engine is not a function of the batch alone. On the RTX 5070 the same model varies by up to 11 MB between batch 1, 4 and 8, and not always in step with the batch, and the size depends on the GPU and the TensorRT version. <code>INT8 ÷ FP16</code> is below 1 when the INT8 engine is the smaller one.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">RTX 5070</label><label for="__tabbed_3_2">Tesla T4</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>INT8 ÷ FP16</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>1</td>
+<td>62 MB</td>
+<td>41 MB</td>
+<td>0.66×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>4</td>
+<td>66 MB</td>
+<td>45 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>8</td>
+<td>72 MB</td>
+<td>51 MB</td>
+<td>0.71×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>1</td>
+<td>66 MB</td>
+<td>44 MB</td>
+<td>0.67×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>4</td>
+<td>74 MB</td>
+<td>52 MB</td>
+<td>0.70×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>8</td>
+<td>68 MB</td>
+<td>46 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>1</td>
+<td>70 MB</td>
+<td>48 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>4</td>
+<td>70 MB</td>
+<td>47 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>8</td>
+<td>72 MB</td>
+<td>50 MB</td>
+<td>0.69×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>1</td>
+<td>68 MB</td>
+<td>50 MB</td>
+<td>0.74×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>4</td>
+<td>72 MB</td>
+<td>54 MB</td>
+<td>0.75×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>8</td>
+<td>76 MB</td>
+<td>58 MB</td>
+<td>0.76×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>1</td>
+<td>69 MB</td>
+<td>51 MB</td>
+<td>0.74×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>4</td>
+<td>67 MB</td>
+<td>51 MB</td>
+<td>0.77×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>8</td>
+<td>70 MB</td>
+<td>53 MB</td>
+<td>0.75×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>1</td>
+<td>69 MB</td>
+<td>46 MB</td>
+<td>0.67×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>4</td>
+<td>69 MB</td>
+<td>47 MB</td>
+<td>0.67×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>8</td>
+<td>71 MB</td>
+<td>48 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>1</td>
+<td>72 MB</td>
+<td>49 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>4</td>
+<td>74 MB</td>
+<td>50 MB</td>
+<td>0.68×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>8</td>
+<td>75 MB</td>
+<td>52 MB</td>
+<td>0.69×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>1</td>
+<td>73 MB</td>
+<td>55 MB</td>
+<td>0.75×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>4</td>
+<td>75 MB</td>
+<td>56 MB</td>
+<td>0.75×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>8</td>
+<td>77 MB</td>
+<td>58 MB</td>
+<td>0.76×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>1</td>
+<td>80 MB</td>
+<td>62 MB</td>
+<td>0.77×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>4</td>
+<td>85 MB</td>
+<td>66 MB</td>
+<td>0.78×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>8</td>
+<td>90 MB</td>
+<td>71 MB</td>
+<td>0.79×</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Batch</th>
+<th>FP16</th>
+<th>INT8</th>
+<th>INT8 ÷ FP16</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Detection Nano</td>
+<td>1</td>
+<td>59 MB</td>
+<td>46 MB</td>
+<td>0.78×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>4</td>
+<td>64 MB</td>
+<td>78 MB</td>
+<td>1.22×</td>
+</tr>
+<tr>
+<td>Detection Nano</td>
+<td>8</td>
+<td>70 MB</td>
+<td>120 MB</td>
+<td>1.71×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>1</td>
+<td>64 MB</td>
+<td>57 MB</td>
+<td>0.89×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>4</td>
+<td>72 MB</td>
+<td>114 MB</td>
+<td>1.58×</td>
+</tr>
+<tr>
+<td>Detection Small</td>
+<td>8</td>
+<td>85 MB</td>
+<td>186 MB</td>
+<td>2.19×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>1</td>
+<td>69 MB</td>
+<td>67 MB</td>
+<td>0.97×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>4</td>
+<td>79 MB</td>
+<td>136 MB</td>
+<td>1.72×</td>
+</tr>
+<tr>
+<td>Detection Medium</td>
+<td>8</td>
+<td>96 MB</td>
+<td>227 MB</td>
+<td>2.36×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>1</td>
+<td>70 MB</td>
+<td>83 MB</td>
+<td>1.19×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>4</td>
+<td>88 MB</td>
+<td>185 MB</td>
+<td>2.10×</td>
+</tr>
+<tr>
+<td>Detection Large</td>
+<td>8</td>
+<td>112 MB</td>
+<td>324 MB</td>
+<td>2.89×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>1</td>
+<td>69 MB</td>
+<td>56 MB</td>
+<td>0.81×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>4</td>
+<td>70 MB</td>
+<td>74 MB</td>
+<td>1.06×</td>
+</tr>
+<tr>
+<td>Seg Nano</td>
+<td>8</td>
+<td>73 MB</td>
+<td>104 MB</td>
+<td>1.42×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>1</td>
+<td>67 MB</td>
+<td>55 MB</td>
+<td>0.82×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>4</td>
+<td>71 MB</td>
+<td>86 MB</td>
+<td>1.21×</td>
+</tr>
+<tr>
+<td>Seg Small</td>
+<td>8</td>
+<td>79 MB</td>
+<td>127 MB</td>
+<td>1.61×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>1</td>
+<td>71 MB</td>
+<td>60 MB</td>
+<td>0.85×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>4</td>
+<td>77 MB</td>
+<td>100 MB</td>
+<td>1.30×</td>
+</tr>
+<tr>
+<td>Seg Medium</td>
+<td>8</td>
+<td>86 MB</td>
+<td>152 MB</td>
+<td>1.77×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>1</td>
+<td>73 MB</td>
+<td>70 MB</td>
+<td>0.96×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>4</td>
+<td>82 MB</td>
+<td>122 MB</td>
+<td>1.49×</td>
+</tr>
+<tr>
+<td>Seg Large</td>
+<td>8</td>
+<td>94 MB</td>
+<td>193 MB</td>
+<td>2.05×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>1</td>
+<td>82 MB</td>
+<td>83 MB</td>
+<td>1.01×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>4</td>
+<td>95 MB</td>
+<td>152 MB</td>
+<td>1.60×</td>
+</tr>
+<tr>
+<td>Keypoint Preview</td>
+<td>8</td>
+<td>113 MB</td>
+<td>248 MB</td>
+<td>2.19×</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<h3 id="placement-rules">Placement rules<a class="headerlink" href="#placement-rules" title="Permanent link">&para;</a></h3>
 <p>The INT8 placement follows what was measured, not "quantize every matrix multiply":</p>
 <ul>
-<li><strong>INT8:</strong> every backbone MLP, the windowed backbone blocks' attention with its projections (up to 325 tokens; see below), and the decoder's cross-attention, feed-forward and reference-point layers. Q/DQ pairs carry FP16 scales on the FP16 graph, so every layer left unquantized stays FP16.</li>
-<li><strong>FP16:</strong> the projector, the two-stage proposal head and the detection heads (quantizing them cost accuracy and bought nothing), plus the attention blocks below.</li>
-<li><strong>The patch embedding stays FP16.</strong> TensorRT ran it in INT8 on the image padded to 32 channels and stored the 29 added zero channels in the engine, a constant the size of the batch. On Nano that made the engine 110 MB at batch 8 and 315 MB at batch 32, and INT8 1.21× instead of 1.37× faster than FP16 at batch 8. Every convolution whose input channels are not a multiple of 32 stays FP16.</li>
-<li><strong>Attention is all INT8 or all FP16.</strong> A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, which TensorRT fuses into one INT8 attention kernel: the windowed backbone blocks of Nano (145 tokens), Small (257) and Medium (325). 325 is the largest window measured to pay (Medium: 5% faster from a CUDA graph, about equal with a plain call, −0.28 AP); on Large's 485-token windows INT8 attention ran no faster and cost 1.0 AP, so Large keeps them FP16. Windows of 326 to 484 tokens are not measured and stay FP16. The global blocks (580 tokens on Nano) and the decoder self-attention keep projections and attention in FP16 too. A windowed block has <code>(resolution / patch_size / num_windows)² + 1</code> tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.</li>
+<li><strong>INT8:</strong> every backbone MLP, the windowed backbone blocks' attention with its projections (up to 325 tokens; see below), and the decoder's cross-attention, feed-forward and reference-point layers. Every layer left unquantized stays FP16.</li>
+<li><strong>FP16:</strong> the projector, the two-stage proposal head and the detection heads (quantizing them cost accuracy and bought nothing), the mask and keypoint heads (not measured), plus the attention blocks below.</li>
+<li><strong>The patch embedding stays FP16.</strong> TensorRT ran it in INT8 on the image padded to 32 channels and stored the added zero channels in the engine as a constant that grows with the batch, which made the engine larger and the INT8 speedup smaller. Every convolution whose input channels are not a multiple of 32 stays FP16.</li>
+<li><strong>Attention is all INT8 or all FP16.</strong> A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, which TensorRT fuses into one INT8 attention kernel: the windowed backbone blocks of detection Nano (145 tokens), Small (257) and Medium (325), and of Seg Small (257) and Seg Medium (325). 325 tokens is the largest window where INT8 attention was measured to pay; on Large's 485-token windows it was no faster and less accurate, so Large keeps them FP16. Windows of 326 to 484 tokens are not measured and stay FP16. The global blocks (580 tokens on Nano) and the decoder self-attention keep projections and attention in FP16 too. A windowed block has <code>(resolution / patch_size / num_windows)² + 1</code> tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.</li>
 </ul>
-<p>Requirements and limits:</p>
+<h3 id="requirements-and-limits">Requirements and limits<a class="headerlink" href="#requirements-and-limits" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Detection models only. Segmentation and keypoint models raise <code>NotImplementedError</code>; export them with <code>quantization=None</code>.</li>
-<li>A static batch (<code>dynamic_batch=True</code> is refused), <code>fp16=True</code>, and TensorRT 10 or newer. Only TensorRT 10.16 and 11.3 were measured; the 10.x releases before 10.16 are accepted but untested.</li>
-<li>On the RTX 5070 under WSL2, at batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column above). The T4 gains about as much without a graph (1.09–1.22×).</li>
-<li>Measured on two GPUs (sm_120 and sm_75), without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>: those settings are accepted with <code>quantization="int8"</code>, but INT8 engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the gain relies on. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.</li>
+<li>Detection, segmentation and keypoint models. The mask head and the keypoint embedding stay FP16 (quantizing them was not measured), and so does the keypoint decoder's self-attention between each detection and its keypoints (<code>kp_inst_self_attn</code>); the keypoint decoder's cross-attention and feed-forward layers run in INT8.</li>
+<li>The attention rule above applies unchanged. Only <code>RFDETRSegSmall</code> (257 tokens per window) and <code>RFDETRSegMedium</code> (325) run INT8 attention, in the 9 windowed blocks of their 12 backbone blocks (the other 3 attend globally). <code>RFDETRSegNano</code> (one 677-token window per block), <code>RFDETRSegLarge</code> (442) and <code>RFDETRKeypointPreview</code> (577) keep all attention in FP16, so only their backbone MLPs and the decoder's cross-attention, feed-forward and reference-point layers run in INT8.</li>
+<li><code>RFDETRSegXLarge</code> and <code>RFDETRSeg2XLarge</code> (<code>rfdetr_plus</code>) are accepted but were not measured. <code>backbone_only=True</code> is refused with <code>ValueError</code>.</li>
+<li>A static batch (<code>dynamic_batch=True</code> is refused), <code>fp16=True</code>, and TensorRT 10 or newer. Every table above was measured on TensorRT 11.4. The detection placement was also measured on 10.16 and 11.3, the segmentation and keypoint models only on 11.4; the other releases from 10 on are accepted but untested. The batch is fixed when you build the engine.</li>
+<li>Only an RTX 5070 (sm_120) and a Tesla T4 (sm_75) were measured, and only without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>. These settings are accepted with <code>quantization="int8"</code>, but engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the speedup relies on.</li>
+<li>INT8 attention relies on TensorRT's fused INT8 attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121. On other GPUs (for example sm_100, B200) it would run unfused, so measure on your GPU before deploying.</li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Who consumes the <code>.trt</code> engine?</p>
@@ -3506,7 +5110,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 17:02:29 UTC">2026-10-08 17:02:29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 13, 2026 11:28:56 UTC">2026-10-13 11:28:56</span>
   </span>
 
     
