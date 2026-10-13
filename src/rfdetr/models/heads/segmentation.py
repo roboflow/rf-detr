@@ -260,7 +260,7 @@ class SegmentationHead(nn.Module):
     def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export  # type: ignore[method-assign]
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
         for name, m in self.named_modules():
             if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()
@@ -271,18 +271,43 @@ class SegmentationHead(nn.Module):
         query_features: list[Tensor],
         image_size: tuple[int, int],
         skip_blocks: bool = False,
+        final_layer_only: bool = False,
     ) -> list[Tensor]:
+        """Compute mask logits for the paired decoder query layers.
+
+        Spatial features are resized to the image dimensions integer-divided by ``downsample_ratio``. Unless
+        ``skip_blocks`` is set, each paired query layer uses the next spatial block; blocks before the selected final
+        layer still run when ``final_layer_only`` is set, but their mask projections and logits are skipped.
+
+        Args:
+            spatial_features: Backbone spatial feature map.
+            query_features: Query features, one entry per decoder layer.
+            image_size: Height and width used to size the output masks.
+            skip_blocks: Skip the spatial blocks and compute a mask from the unblocked features. This path requires
+                exactly one query layer.
+            final_layer_only: Return only the mask for the last paired block and query layer.
+
+        Returns:
+            A list of mask-logit tensors shaped ``(B, N, H, W)``, where ``H`` and ``W`` are the image dimensions
+            integer-divided by ``downsample_ratio``. With blocks enabled, the list contains one tensor per paired block
+            and query layer, or one tensor when ``final_layer_only`` is set and at least one pair exists; it is empty
+            when there are no pairs. With ``skip_blocks=True``, it contains exactly one tensor.
+        """
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
-        # output: (B, N, H*r, W*r)
+        # output: (B, N, H*r, W*r) for each decoder layer, or for the last one only when final_layer_only is set
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
         spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
         # Both branches below contract with einsum; forward_export writes the same math as a MatMul for CoreML.
         if not skip_blocks:
-            for block, qf in zip(self.blocks, query_features):
+            last_layer = min(len(self.blocks), len(query_features)) - 1
+            for layer, (block, qf) in enumerate(zip(self.blocks, query_features)):
+                # Every block runs, since each feeds the next; the projections and the einsum are per layer.
                 spatial_features = block(spatial_features)
+                if final_layer_only and layer < last_layer:
+                    continue
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
                 mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)

@@ -540,6 +540,7 @@ def build_trainer(
     *,
     accelerator: str | None = None,
     include_training_callbacks: bool = True,
+    extra_callbacks: Sequence[Callback] = (),
     **trainer_kwargs: Any,
 ) -> Trainer:
     """Assemble a PTL ``Trainer`` with the full RF-DETR callback and logger stack.
@@ -561,6 +562,10 @@ def build_trainer(
             checkpointing, best-model selection, early stopping) along with the configured loggers. When ``False`` an
             evaluation-only trainer is built that keeps just the metric callback (and the progress bar): no
             checkpoints or logs are written. Used by :meth:`rfdetr.detr.RFDETR.evaluate`.
+        extra_callbacks: Callbacks to add to the RF-DETR ones. ``Trainer.__init__`` receives them with the rest,
+            so Lightning validates them together: a second progress bar raises, and a model summary replaces the
+            default one. A ``callbacks`` entry in ``trainer_kwargs`` still replaces the RF-DETR callbacks, and
+            ``extra_callbacks`` are added to that list.
         **trainer_kwargs: Extra keyword arguments forwarded to ``pytorch_lightning.Trainer``. Use this to pass
             PTL-native flags that are not exposed through ``TrainConfig``, for example::
 
@@ -991,6 +996,14 @@ def build_trainer(
     if not xla_accelerator:
         trainer_config["precision"] = _resolve_precision(devices)
     trainer_config.update(trainer_kwargs)
+    if extra_callbacks:
+        # The RF-DETR callbacks, or the caller's replacement for them from trainer_kwargs.
+        base_callbacks = trainer_config["callbacks"]
+        if base_callbacks is None:
+            base_callbacks = []
+        elif isinstance(base_callbacks, Callback):
+            base_callbacks = [base_callbacks]
+        trainer_config["callbacks"] = [*base_callbacks, *extra_callbacks]
     if xla_accelerator:
         from pytorch_lightning.plugins import XLAPrecision
 

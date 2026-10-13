@@ -1269,6 +1269,11 @@ class SetCriterion(nn.Module):
             Auxiliary-layer losses get a ``"_<i>"`` suffix; encoder-layer losses
             get an ``"_enc"`` suffix.
 
+        Raises:
+            ValueError: If the targets carry masks and the final layer's outputs do, but an auxiliary layer's or the
+                encoder proposals' outputs do not, as an eval-mode ``LWDETR`` returns them unless called with
+                ``all_layer_masks=True``.
+
         Examples:
             >>> import torch
             >>> from unittest.mock import MagicMock
@@ -1316,6 +1321,15 @@ class SetCriterion(nn.Module):
         if "enc_outputs" in outputs:
             matched_outputs.append(outputs["enc_outputs"])
             layer_suffixes.append("_enc")
+
+        # Mask targets make the matcher read every layer's pred_masks. An eval-mode segmentation LWDETR leaves them out
+        # of the auxiliary layers and encoder proposals unless it was called with all_layer_masks=True.
+        masks_needed = bool(targets) and "masks" in targets[0] and "pred_masks" in outputs_without_aux
+        if masks_needed and any("pred_masks" not in layer for layer in matched_outputs):
+            raise ValueError(
+                "The auxiliary-layer or encoder-proposal outputs carry no pred_masks, which mask targets need. An "
+                "eval-mode LWDETR computes them only when called with all_layer_masks=True."
+            )
 
         # The batched fast path calls `_match_many` unbound off the matcher's class, so it skips
         # `nn.Module.__call__` entirely. Anything that legitimately hangs off that call path must
