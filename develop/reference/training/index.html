@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-05T19:51:24">
+  <meta property="article:modified_time" content="2026-10-13T18:33:15">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-05T19:51:24",
+    "dateModified": "2026-10-13T18:33:15",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3351,6 +3351,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.trainer.build_trainer(extra_callbacks)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;extra_callbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4144,6 +4155,51 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.cli.RFDETRCli-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.training.cli.RFDETRCli.instantiate_trainer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;instantiate_trainer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" instantiate_trainer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.training.cli.RFDETRCli.instantiate_trainer(**kwargs)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;**kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4900,6 +4956,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.trainer.build_trainer(extra_callbacks)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;extra_callbacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.trainer.build_trainer(**trainer_kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5693,6 +5760,51 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.cli.RFDETRCli-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.training.cli.RFDETRCli.instantiate_trainer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;instantiate_trainer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" instantiate_trainer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.training.cli.RFDETRCli.instantiate_trainer(**kwargs)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;**kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -7015,6 +7127,25 @@ checkpoints or logs are written. Used by :meth:<code>rfdetr.detr.RFDETR.evaluate
             </td>
             <td>
                   <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.trainer.build_trainer(extra_callbacks)" class="doc doc-heading doc-heading-parameter">                  <code>extra_callbacks</code>
+<a href="#rfdetr.training.trainer.build_trainer(extra_callbacks)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="collections.abc.Sequence">Sequence</span>[<span title="pytorch_lightning.Callback">Callback</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Callbacks to add to the RF-DETR ones. <code>Trainer.__init__</code> receives them with the rest,
+so Lightning validates them together: a second progress bar raises, and a model summary replaces the
+default one. A <code>callbacks</code> entry in <code>trainer_kwargs</code> still replaces the RF-DETR callbacks, and
+<code>extra_callbacks</code> are added to that list.</p>
+              </div>
+            </td>
+            <td>
+                  <code>()</code>
             </td>
           </tr>
           <tr class="doc-section-item">
@@ -8384,14 +8515,44 @@ rank-zero warning is emitted, mirroring how <code>ProgressBar.get_metrics</code>
 <p><code>RFDETRCli</code> is the command-line entry point for RF-DETR. It wraps
 <code>RFDETRModelModule</code> and <code>RFDETRDataModule</code> under a single <code>rfdetr</code> command and
 auto-generates four subcommands from the PyTorch Lightning CLI machinery:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>rfdetr<span class="w"> </span>fit<span class="w">      </span>--config<span class="w"> </span>configs/rfdetr_base.yaml
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rfdetr<span class="w"> </span>validate<span class="w"> </span>--ckpt_path<span class="w"> </span>output/best.ckpt
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>rfdetr<span class="w"> </span><span class="nb">test</span><span class="w">     </span>--ckpt_path<span class="w"> </span>output/best.ckpt
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>rfdetr<span class="w"> </span>predict<span class="w">  </span>--ckpt_path<span class="w"> </span>output/best.ckpt
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>rfdetr<span class="w"> </span>fit<span class="w">      </span>--config<span class="w"> </span>configs/rfdetr_small.yaml
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rfdetr<span class="w"> </span>validate<span class="w"> </span>--config<span class="w"> </span>configs/rfdetr_small.yaml<span class="w"> </span>--ckpt_path<span class="w"> </span>output/rfdetr_small/last.ckpt
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>rfdetr<span class="w"> </span><span class="nb">test</span><span class="w">     </span>--config<span class="w"> </span>configs/rfdetr_small.yaml<span class="w"> </span>--ckpt_path<span class="w"> </span>output/rfdetr_small/last.ckpt
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>rfdetr<span class="w"> </span>predict<span class="w">  </span>--config<span class="w"> </span>configs/rfdetr_small.yaml<span class="w"> </span>--ckpt_path<span class="w"> </span>output/rfdetr_small/last.ckpt
 </span></code></pre></div>
 <p>Both <code>model_config</code> and <code>train_config</code> are specified once; <code>RFDETRCli</code>
 automatically links them to the datamodule so you do not need to repeat the
 same arguments under <code>--data.*</code>.</p>
+<p><code>rfdetr fit</code> builds its trainer with <code>build_trainer</code>, as <code>RFDETR.train()</code> does.
+<code>train_config</code> sets the epochs, precision, devices, gradient accumulation and
+clipping, the EMA, COCO metric, checkpoint and best-model callbacks, and the
+loggers, and everything is written to its <code>output_dir</code>. A <code>--trainer.*</code>
+argument overrides the value built from <code>train_config</code>. So does a value in a
+config file's <code>trainer:</code> section or in a <code>--trainer</code> file, unless it equals
+Lightning's default: the <code>config.yaml</code> that <code>fit</code> saves lists every trainer
+argument, and running from it again keeps the values from <code>train_config</code>.
+Arguments apply in order, so put <code>--trainer.*</code> after <code>--config</code>, as the
+configs' usage lines do. <code>--trainer.callbacks</code> adds callbacks to the RF-DETR
+ones, and Lightning checks them together, so set the progress bar to <code>tqdm</code> or
+<code>rich</code> with <code>--model.train_config.init_args.progress_bar</code> rather than as a
+callback. Change the number of epochs with
+<code>--model.train_config.init_args.epochs</code>: <code>--trainer.max_epochs</code> or
+<code>--trainer.max_steps</code> ends the run but leaves the learning-rate and drop-path
+schedules sized for <code>epochs</code>, and warns.</p>
+<p><code>validate</code>, <code>test</code> and <code>predict</code> build the evaluation-only trainer that
+<code>RFDETR.evaluate()</code> uses. <code>validate</code> and <code>test</code> score the weights saved in
+<code>--ckpt_path</code>. <code>last.ckpt</code>, which <code>fit</code> writes unless <code>checkpoint_interval</code> is
+1, holds the trained weights without the EMA average that validation during
+<code>fit</code> reports; <code>checkpoint_best_total.pth</code> holds the best weights, for
+<code>rfdetr.from_checkpoint</code>. <code>predict</code> passes its results to the trainer's
+callbacks only, so it prints and saves nothing unless you add a
+<code>BasePredictionWriter</code> with <code>--trainer.callbacks</code>; in Python,
+<code>rfdetr.from_checkpoint(path).predict(...)</code> returns detections.</p>
+<p>A <code>fit</code> with <code>--ckpt_path</code>, or with <code>resume</code> in <code>train_config</code> as
+<code>RFDETR.train()</code> takes it, resumes the run and appends to the <code>metrics.csv</code>
+already in <code>output_dir</code>. Resuming from <code>last.ckpt</code> restores the optimizer and
+learning-rate scheduler too; the best-model <code>.pth</code> files hold the weights and
+epoch only, so those two restart cold.</p>
 
 
 <div class="doc doc-object doc-class">
@@ -8407,7 +8568,8 @@ same arguments under <code>--data.*</code>.</p>
         <p>LightningCLI subclass for RF-DETR training and evaluation.</p>
 <p>Wires <code>RFDETRModelModule</code> and <code>RFDETRDataModule</code> under a unified CLI, with argument linking that shares
 <code>model_config</code> and <code>train_config</code> between module and datamodule so the user only specifies them once.</p>
-<p>Auto-generated subcommands: <code>fit</code>, <code>validate</code>, <code>test</code>, <code>predict</code>.</p>
+<p>Auto-generated subcommands: <code>fit</code>, <code>validate</code>, <code>test</code>, <code>predict</code>. Each builds its trainer with
+:func:<code>~rfdetr.training.trainer.build_trainer</code> from the parsed <code>train_config</code>; see :meth:<code>instantiate_trainer</code>.</p>
 
 
 
@@ -8426,7 +8588,94 @@ same arguments under <code>--data.*</code>.</p>
 
 
 
+<h2 id="rfdetr.training.cli.RFDETRCli-functions">Functions<a href="#rfdetr.training.cli.RFDETRCli-functions" class="headerlink" title="Permanent link">&para;</a></h2>
 
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.training.cli.RFDETRCli.instantiate_trainer" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">instantiate_trainer</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
+
+<a href="#rfdetr.training.cli.RFDETRCli.instantiate_trainer" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Build the trainer with :func:<code>~rfdetr.training.trainer.build_trainer</code>, as <code>RFDETR.train()</code> does.</p>
+<p><code>train_config</code> sets the epochs, precision, devices, gradient accumulation and clipping, callbacks and
+loggers. A <code>--trainer.*</code> flag overrides the value built from it, and so does a value in a config file's
+<code>trainer</code> section, in a <code>--trainer</code> file or in dict arguments, unless it equals Lightning's default: the
+<code>config.yaml</code> that <code>fit</code> saves lists every trainer argument, most at their defaults, and running from it
+again must not undo <code>train_config</code>. Arguments apply in order, as in jsonargparse, so a <code>--config</code> after a
+flag replaces it.</p>
+<p><code>fit</code> gets the training stack and saves the parsed config to <code>config.yaml</code> in <code>output_dir</code>, replacing the
+one a previous run there saved; resumed with <code>--ckpt_path</code> or <code>train_config.resume</code>, it appends to the
+<code>metrics.csv</code> already there. A <code>max_epochs</code> other than <code>train_config.epochs</code>, or any <code>max_steps</code>, warns,
+because the learning-rate and drop-path schedules follow <code>train_config.epochs</code>. <code>validate</code>, <code>test</code> and
+<code>predict</code> get the evaluation-only trainer that <code>RFDETR.evaluate()</code> uses, which writes nothing to
+<code>output_dir</code>.</p>
+<p>Callbacks from <code>--trainer.callbacks</code> and <code>trainer_defaults</code> go to <code>build_trainer</code> as <code>extra_callbacks</code>,
+which adds them to the RF-DETR callbacks before the trainer is built, where Lightning checks them with the rest.
+As in <code>LightningCLI</code>, callbacks in <em>kwargs</em> take the place of <code>--trainer.callbacks</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.training.cli.RFDETRCli.instantiate_trainer(**kwargs)" class="doc doc-heading doc-heading-parameter">                  <code>**kwargs</code>
+<a href="#rfdetr.training.cli.RFDETRCli.instantiate_trainer(**kwargs)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="typing.Any">Any</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Trainer arguments that take precedence over the parsed ones.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="pytorch_lightning.Trainer">Trainer</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The trainer.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
 
 
 
@@ -8455,7 +8704,7 @@ same arguments under <code>--data.*</code>.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 5, 2026 19:51:24 UTC">2026-08-05 19:51:24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 13, 2026 18:33:15 UTC">2026-10-13 18:33:15</span>
   </span>
 
     
