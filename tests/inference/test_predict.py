@@ -234,17 +234,22 @@ class TestPredictOptimizedInferenceKeypoints:
             pytest.param(torch.float64, id="float64"),
         ],
     )
-    def test_low_findability_retains_finite_keypoint_detection(self, dtype: torch.dtype) -> None:
+    @pytest.mark.parametrize("num_detections", [1, 2])
+    def test_low_findability_retains_finite_keypoint_detection(self, dtype: torch.dtype, num_detections: int) -> None:
         """Finite tuple predictions must survive trace fusion and public score filtering."""
         model, stub = _make_optimized_keypoint_model()
         model._optimized_dtype = dtype
         stub.args.num_keypoints_per_class = [2]
-        stub.postprocess = PostProcess(num_select=1, num_keypoints_per_class=[2])
-        keypoints = torch.zeros(1, 1, 2, 8, dtype=dtype)
+        stub.postprocess = PostProcess(num_select=num_detections, num_keypoints_per_class=[2])
+        keypoints = torch.zeros(1, num_detections, 2, 8, dtype=dtype)
         keypoints[..., :2] = 0.5
         keypoints[..., 2] = -20.0
         stub.inference_model = MagicMock(
-            return_value=(torch.full((1, 1, 4), 0.5, dtype=dtype), torch.full((1, 1, 1), 4.0, dtype=dtype), keypoints)
+            return_value=(
+                torch.full((1, num_detections, 4), 0.5, dtype=dtype),
+                torch.full((1, num_detections, 1), 4.0, dtype=dtype),
+                keypoints,
+            )
         )
         image = PIL.Image.new("RGB", (64, 48))
 
@@ -254,9 +259,9 @@ class TestPredictOptimizedInferenceKeypoints:
         fused_probability = object_probability * 2.0**-stub.postprocess.trace_alpha
         expected_score = fused_probability / (1.0 + fused_probability)
         assert isinstance(result, sv.KeyPoints)
-        assert len(result) == 1
-        assert result.detection_confidence[0] == pytest.approx(expected_score, rel=0.005)
-        np.testing.assert_array_equal(result.xy, [[[32.0, 24.0], [32.0, 24.0]]])
+        assert len(result) == num_detections
+        np.testing.assert_allclose(result.detection_confidence, expected_score, rtol=0.005)
+        np.testing.assert_array_equal(result.xy, np.tile([[[32.0, 24.0], [32.0, 24.0]]], (num_detections, 1, 1)))
 
 
 def test_predict_accepts_image_url() -> None:

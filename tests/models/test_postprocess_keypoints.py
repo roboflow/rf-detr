@@ -25,6 +25,36 @@ class TestKeypointTracePrecision:
             pytest.param(torch.float64, id="float64"),
         ],
     )
+    def test_multiple_detections_preserve_score_dtype(self, dtype: torch.dtype) -> None:
+        """Vector trace fusion preserves score dtype and finite identity-covariance scores."""
+        postprocess = PostProcess(num_select=2, num_keypoints_per_class=[2])
+        keypoints = torch.zeros(1, 2, 2, 8, dtype=dtype)
+        keypoints[..., 2] = -20.0
+        outputs = {
+            "pred_logits": torch.full((1, 2, 1), 4.0, dtype=dtype),
+            "pred_boxes": torch.full((1, 2, 4), 0.5, dtype=dtype),
+            "pred_keypoints": keypoints,
+        }
+        original_keypoints = keypoints.clone()
+
+        result = postprocess(outputs, torch.tensor([[48, 64]]))[0]
+
+        object_probability = torch.tensor(4.0, dtype=torch.float64).sigmoid()
+        fused_probability = object_probability * 2.0**-postprocess.trace_alpha
+        expected = (fused_probability / (1.0 + fused_probability)).expand(2)
+        assert result["scores"].dtype == dtype
+        torch.testing.assert_close(result["scores"].double(), expected, rtol=0.005, atol=1e-6)
+        torch.testing.assert_close(keypoints, original_keypoints, rtol=0, atol=0)
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.bfloat16, id="bfloat16"),
+            pytest.param(torch.float32, id="float32"),
+            pytest.param(torch.float64, id="float64"),
+        ],
+    )
     @pytest.mark.parametrize("findable_logit", [-100.0, -20.0, -8.0, 0.0, 8.0])
     def test_log_mean_trace_matches_covariance(self, dtype: torch.dtype, findable_logit: float) -> None:
         """Compare batched log traces with an independently inverted precision matrix."""
