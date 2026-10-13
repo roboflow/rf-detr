@@ -2910,6 +2910,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p>A custom <code>Affine(translate_px=...)</code> config on the Kornia augmentation backend behaves differently from 1.11.2. That release ignored <code>translate_px</code>: the config built, never shifted the image and, when <code>rotate</code> was omitted, rotated it by a random ±15°. The shift is now applied, the implicit rotation is gone, and combinations Kornia cannot reproduce, such as rotation, scale, shear, a nonzero fill or reflected borders, raise <code>ValueError</code> when the pipeline is built. Pass <code>augmentation_backend="cpu"</code> (Albumentations, <code>rfdetr[augment]</code>) to keep them; <code>augmentation_backend="auto"</code> resolves to Kornia on a CUDA machine with Kornia installed. The fix itself is listed under Fixed.</p>
 </li>
+<li>
+<p>In eval mode, a segmentation <code>LWDETR</code> no longer returns <code>pred_masks</code> in <code>aux_outputs</code> or <code>enc_outputs</code> unless it is called with <code>all_layer_masks=True</code>; the final <code>pred_masks</code> are unchanged. Code that runs <code>SetCriterion</code> on eval-mode outputs, such as an evaluation loop that computes a segmentation loss, got every layer's masks before and must now pass that keyword. Without it the criterion raises a <code>ValueError</code> that names it. See the matching entry under Changed. (<a href="https://github.com/roboflow/rf-detr/pull/1628">#1628</a>)</p>
+</li>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3047,6 +3050,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 <li>
 <p>Segmentation validation and test runs encode masks to COCO RLE on the GPU. The COCO metric used TorchMetrics' update, which copies every predicted and ground-truth mask to host memory at full image resolution and encodes it there one mask at a time; on 2000x2000 px images that was 92% of a <code>model.evaluate()</code> run. The metric now encodes masks on CUDA when they are there and copies only the encoded runs to the host; masks on any other device go through the same code on the CPU. The stored RLE bytes are identical, so every metric is unchanged on every <code>eval_backend</code>. With <code>RFDETRSegMedium</code> on one RTX 4090, validating 500 COCO val2017 images takes 8.8 s instead of 59.1 s at their own size, and 24.7 s instead of 508.5 s upscaled 3x to about 1920x1440. (<a href="https://github.com/roboflow/rf-detr/pull/1615">#1615</a>)</p>
+</li>
+<li>
+<p>Segmentation models in eval mode compute masks for the last decoder layer only, unless a loss is computed. <code>LWDETR</code> built a dense mask map, at a quarter of the input resolution by default, for every decoder layer and for the encoder proposals, although postprocessing reads the last layer alone and only the criterion reads the rest. <code>predict()</code>, validation without a loss (the default <code>compute_val_loss="auto"</code> when nothing monitors <code>val/loss</code>), <code>evaluate(split="val")</code> and <code>evaluate(compute_test_loss=False)</code> now skip those masks. A validation or test step that computes a loss calls the model with the new keyword <code>all_layer_masks=True</code> and gets every layer's masks as before; see the matching entry under Breaking Changes. The last layer's masks are bit-identical, so predictions and metrics do not change. With <code>RFDETRSeg2XLarge</code> on one RTX 4090, a <code>predict()</code> call on 8 images peaks at 1583 MiB of CUDA memory instead of 3612 MiB, and validating 500 COCO val2017 images at batch size 4 peaks at 1085 MiB instead of 2031 MiB. (<a href="https://github.com/roboflow/rf-detr/pull/1628">#1628</a>)</p>
 </li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
