@@ -143,7 +143,7 @@ class TestEvalStepSegmentationMasks:
 
     @pytest.mark.parametrize(
         "segmentation_config",
-        [pytest.param(False, id="detection_config"), pytest.param(True, id="segmentation_config")],
+        [False,True]
     )
     def test_model_without_a_segmentation_head_is_called_with_the_images_alone(
         self, tmp_path: Path, segmentation_config: bool
