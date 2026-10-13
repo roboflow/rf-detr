@@ -13,6 +13,42 @@ import torch
 from rfdetr.models.postprocess import PostProcess
 
 
+class TestKeypointTracePrecision:
+    """Trace fusion must retain finite predictions across inference dtypes."""
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.bfloat16, id="bfloat16"),
+            pytest.param(torch.float32, id="float32"),
+            pytest.param(torch.float64, id="float64"),
+        ],
+    )
+    @pytest.mark.parametrize("findable_logit", [-100.0, -20.0, -8.0, 0.0, 8.0])
+    def test_log_mean_trace_matches_covariance(self, dtype: torch.dtype, findable_logit: float) -> None:
+        """Compare batched log traces with an independently inverted precision matrix."""
+        active_keypoints = torch.zeros(2, 3, 8, dtype=dtype)
+        active_keypoints[..., 2] = torch.tensor([findable_logit, findable_logit + 1, findable_logit - 1], dtype=dtype)
+        active_keypoints[1, :, 4:7] = torch.tensor(
+            [[0.125, 0.375, -0.5], [-0.25, -0.5, 0.25], [0.5, 0.0, -0.125]], dtype=dtype
+        )
+        reference = active_keypoints.double()
+        cholesky = torch.zeros(2, 3, 2, 2, dtype=torch.float64)
+        cholesky[..., 0, 0] = reference[..., 4].exp()
+        cholesky[..., 1, 0] = reference[..., 5]
+        cholesky[..., 1, 1] = reference[..., 6].exp()
+        inverse = torch.linalg.inv(cholesky)
+        covariance = inverse.transpose(-1, -2) @ inverse
+        traces = covariance.diagonal(dim1=-2, dim2=-1).sum(-1)
+        weights = reference[..., 2].sigmoid().clamp(min=1e-12)
+        expected = ((traces * weights).sum(-1) / weights.sum(-1)).log()
+
+        actual = PostProcess._keypoint_log_mean_trace(active_keypoints)
+
+        torch.testing.assert_close(actual.double(), expected, rtol=1e-5, atol=1e-5)
+
+
 @pytest.mark.parametrize(
     ("schema", "expected_scalar_reads"),
     [

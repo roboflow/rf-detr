@@ -525,8 +525,11 @@ class PostProcess(nn.Module):
             (scalar when called on a single detection). Each entry is the log of
             the findability-weighted arithmetic mean trace of the covariance
             matrix. The computation stays in log space for numerical stability
-            with very sharp or very uncertain predictions.
+            with very sharp or very uncertain predictions. Half-precision inputs
+            use float32 to preserve the clamp floor and reduction precision.
         """
+        if active_keypoints.dtype in (torch.float16, torch.bfloat16):
+            active_keypoints = active_keypoints.float()
         log_l11 = active_keypoints[..., 4]
         l21 = active_keypoints[..., 5]
         log_l22 = active_keypoints[..., 6]
