@@ -736,6 +736,41 @@ class TestSegmentationHeadForwardExport:
         assert "Einsum" not in {node.op_type for node in onnx.load(str(out)).graph.node}
 
 
+class TestSegmentationHeadFinalLayerOnly:
+    """``forward(final_layer_only=True)`` must return exactly the last layer ``forward()`` returns, and nothing else.
+
+    Eval-mode ``LWDETR`` uses it so ``predict()`` and validation skip the dense einsum for every auxiliary decoder
+    layer; the kept mask must not change by a single bit.
+    """
+
+    @pytest.mark.parametrize(
+        ("num_blocks", "num_layers", "bottleneck_ratio"),
+        [
+            pytest.param(3, 3, 1, id="one_block_per_layer"),
+            pytest.param(3, 3, 2, id="projected_channels"),
+            pytest.param(3, 2, 1, id="fewer_layers_than_blocks"),
+            pytest.param(2, 3, 1, id="fewer_blocks_than_layers"),
+            pytest.param(1, 1, 1, id="single_layer"),
+        ],
+    )
+    def test_final_layer_only_matches_last_layer_bit_exactly(
+        self, num_blocks: int, num_layers: int, bottleneck_ratio: int
+    ) -> None:
+        """The single returned mask equals the last element of the all-layer output, bit for bit."""
+        torch.manual_seed(0)
+        head = SegmentationHead(in_dim=8, num_blocks=num_blocks, bottleneck_ratio=bottleneck_ratio, downsample_ratio=2)
+        spatial_features = torch.randn(2, 8, 5, 5)
+        query_features = list(torch.randn(num_layers, 2, 3, 8))
+        image_size = (20, 20)
+
+        with torch.no_grad():
+            all_layers = head.forward(spatial_features, query_features, image_size)
+            final_only = head.forward(spatial_features, query_features, image_size, final_layer_only=True)
+
+        assert (len(all_layers), len(final_only)) == (min(num_blocks, num_layers), 1)
+        assert torch.equal(final_only[0], all_layers[-1]), "final_layer_only changed the last layer's mask logits"
+
+
 class TestPointSampleNearestRouting:
     """``mode="nearest"`` must use the backend-agnostic gather path, not ``F.grid_sample``.
 
