@@ -17,10 +17,15 @@ signature.  ``link_arguments`` eliminates the duplication so the user specifies 
 receives the same values automatically at parse time.
 """
 
-from pytorch_lightning.cli import LightningArgumentParser, LightningCLI
+from typing import Any
 
+from jsonargparse import Namespace
+from pytorch_lightning.cli import ArgsType, LightningArgumentParser, LightningCLI
+
+from rfdetr.config import TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.training.param_groups import _PARAM_GROUP_SETTINGS
 
 _PARSER_KWARGS = {
     "prog": "rfdetr",
@@ -36,6 +41,47 @@ class RFDETRCli(LightningCLI):
 
     Auto-generated subcommands: ``fit``, ``validate``, ``test``, ``predict``.
     """
+
+    def parse_arguments(self, parser: LightningArgumentParser, args: ArgsType) -> None:
+        """Parse arguments while retaining which optimizer settings the caller supplied.
+
+        Args:
+            parser: The CLI parser.
+            args: Command arguments or a config mapping; ``None`` reads the command line.
+        """
+        super().parse_arguments(parser, args)
+        # The normal parse expands defaults, so value equality cannot identify an explicit default.
+        sparse = (
+            parser.parse_object(args, defaults=False)
+            if isinstance(args, (dict, Namespace))
+            else parser.parse_args(args, defaults=False)
+        )
+        if sparse.get("subcommand"):
+            sparse = sparse[sparse.subcommand]
+        supplied = sparse.get("model.train_config", {})
+        supplied = supplied.get("init_args", supplied)
+        self._explicit_optimizer_settings: dict[str, Any] = {
+            name: supplied[name] for name in _PARAM_GROUP_SETTINGS if name in supplied
+        }
+
+    def before_instantiate_classes(self) -> None:
+        """Restore caller optimizer values after Lightning merges checkpoint hyperparameters."""
+        config = self.config[self.subcommand] if self.subcommand else self.config
+        # Lightning's checkpoint merge happens after parse_arguments and can replace explicit values.
+        for component in ("model", "data"):
+            train_config = config.get(f"{component}.train_config")
+            if train_config is not None:
+                train_config = train_config.get("init_args", train_config)
+                for name, value in self._explicit_optimizer_settings.items():
+                    train_config[name] = value
+
+    def after_instantiate_classes(self) -> None:
+        """Keep optimizer intent on the actual model and datamodule configs used for resume."""
+        for component in (self.model, self.datamodule):
+            train_config = getattr(component, "train_config", None)
+            if isinstance(train_config, TrainConfig):
+                train_config.model_fields_set.difference_update(_PARAM_GROUP_SETTINGS)
+                train_config.model_fields_set.update(self._explicit_optimizer_settings)
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
         """Register argument links that share configs between module and datamodule.
