@@ -273,6 +273,26 @@ class SegmentationHead(nn.Module):
         skip_blocks: bool = False,
         final_layer_only: bool = False,
     ) -> list[Tensor]:
+        """Compute mask logits for the paired decoder query layers.
+
+        Spatial features are resized to the image dimensions integer-divided by ``downsample_ratio``. Unless
+        ``skip_blocks`` is set, each paired query layer uses the next spatial block; blocks before the selected final
+        layer still run when ``final_layer_only`` is set, but their mask projections and logits are skipped.
+
+        Args:
+            spatial_features: Backbone spatial feature map.
+            query_features: Query features, one entry per decoder layer.
+            image_size: Height and width used to size the output masks.
+            skip_blocks: Skip the spatial blocks and compute a mask from the unblocked features. This path requires
+                exactly one query layer.
+            final_layer_only: Return only the mask for the last paired block and query layer.
+
+        Returns:
+            A list of mask-logit tensors shaped ``(B, N, H, W)``, where ``H`` and ``W`` are the image dimensions
+            integer-divided by ``downsample_ratio``. With blocks enabled, the list contains one tensor per paired block
+            and query layer, or one tensor when ``final_layer_only`` is set and at least one pair exists; it is empty
+            when there are no pairs. With ``skip_blocks=True``, it contains exactly one tensor.
+        """
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
         # output: (B, N, H*r, W*r) for each decoder layer, or for the last one only when final_layer_only is set
