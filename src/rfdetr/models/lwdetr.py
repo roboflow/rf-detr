@@ -458,7 +458,13 @@ class LWDETR(nn.Module):
             class_boost = class_boost[..., :detection_num_classes]
         return class_boost
 
-    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None) -> dict[str, Any]:
+    def forward(
+        self,
+        samples: NestedTensor,
+        targets: list[dict[str, Tensor]] | None = None,
+        *,
+        all_layer_masks: bool = False,
+    ) -> dict[str, Any]:
         """The forward expects a NestedTensor, which consists of:
 
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -473,6 +479,20 @@ class LWDETR(nn.Module):
                            information on how to retrieve the unnormalized bounding box.
            - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                             dictionaries containing the two above keys for each decoder layer.
+
+        Segmentation models also return "pred_masks". In training mode the auxiliary layers and "enc_outputs" carry
+        "pred_masks" too, for the loss; in eval mode they do so only when ``all_layer_masks`` is set, because
+        nothing but the criterion reads them and each is a dense ``(B, Q)`` mask map at the segmentation head's
+        resolution, a quarter of the input size by default.
+
+        Args:
+            samples: Batched images, a ``NestedTensor`` or a list or tensor of images.
+            targets: Unused; kept for call compatibility.
+            all_layer_masks: In eval mode, also compute the segmentation masks of the auxiliary decoder layers and
+                of the encoder proposals, as a loss on eval-mode outputs needs. Training mode always computes them.
+
+        Returns:
+            The prediction dict described above.
         """
         if isinstance(samples, (list, Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
@@ -496,6 +516,8 @@ class LWDETR(nn.Module):
 
         if self.segmentation_head is not None:
             seg_head_fwd = self.segmentation_head.sparse_forward if self.training else self.segmentation_head.forward
+        # Only SetCriterion reads the auxiliary-layer and encoder-proposal masks.
+        aux_masks = self.training or all_layer_masks
 
         cross_attn_srcs = None
         if cross_attn_features is not None:
@@ -567,7 +589,13 @@ class LWDETR(nn.Module):
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
 
             if self.segmentation_head is not None:
-                outputs_masks = seg_head_fwd(features[0].tensors, hs, cast(tuple[int, int], samples.tensors.shape[-2:]))
+                image_size = cast(tuple[int, int], samples.tensors.shape[-2:])
+                if aux_masks:
+                    outputs_masks = seg_head_fwd(features[0].tensors, hs, image_size)
+                else:
+                    outputs_masks = self.segmentation_head.forward(
+                        features[0].tensors, hs, image_size, final_layer_only=True
+                    )
 
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
             if self.segmentation_head is not None:
@@ -578,7 +606,7 @@ class LWDETR(nn.Module):
                 out["aux_outputs"] = self._set_aux_loss(
                     outputs_class,
                     outputs_coord,
-                    outputs_masks if self.segmentation_head is not None else None,
+                    outputs_masks if self.segmentation_head is not None and aux_masks else None,
                     outputs_keypoints,
                 )
 
@@ -607,7 +635,8 @@ class LWDETR(nn.Module):
                 )
                 cls_enc = cls_enc + self._aggregate_keypoint_class_logits(keypoints_enc)
 
-            if self.segmentation_head is not None:
+            # Without decoder layers the encoder proposals are the predictions, so their masks are always needed.
+            if self.segmentation_head is not None and (aux_masks or hs is None):
                 masks_enc = seg_head_fwd(
                     features[0].tensors,
                     [
@@ -619,7 +648,7 @@ class LWDETR(nn.Module):
 
             if hs is not None:
                 out["enc_outputs"] = {"pred_logits": cls_enc, "pred_boxes": ref_enc}
-                if self.segmentation_head is not None:
+                if self.segmentation_head is not None and aux_masks:
                     out["enc_outputs"]["pred_masks"] = masks_enc
                 if keypoints_enc is not None:
                     out["enc_outputs"]["pred_keypoints"] = keypoints_enc

@@ -1480,6 +1480,26 @@ class RFDETRModelModule(LightningModule):
                 return ema_inner.model
         return self.model
 
+    def _eval_forward(self, model: Any, samples: Any, *, for_loss: bool) -> Any:
+        """Forward an eval batch, asking a segmentation model for every layer's masks only when a loss follows.
+
+        In eval mode ``LWDETR`` computes the segmentation masks of the last decoder layer alone, which is all the
+        postprocessor reads. The criterion also reads the auxiliary-layer and encoder-proposal masks, so a loss on
+        eval outputs passes ``all_layer_masks=True`` to a model with a segmentation head. Any other model, such as a
+        detection ``LWDETR`` or a stand-in whose forward takes the images alone, is called exactly as before.
+
+        Args:
+            model: The model to forward through: the base model, its ``torch.compile`` wrapper or the EMA model.
+            samples: The batched images.
+            for_loss: Whether the criterion runs on the returned outputs.
+
+        Returns:
+            The model outputs.
+        """
+        if for_loss and getattr(model, "segmentation_head", None) is not None:
+            return model(samples, all_layer_masks=True)
+        return model(samples)
+
     def validation_step(self, batch: tuple[Any, Any], batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
 
@@ -1498,8 +1518,9 @@ class RFDETRModelModule(LightningModule):
             # Same reason as in training_step: with eval_base_model=True or use_ema=False the
             # compiled model runs here and records its own eval-mode graph.
             torch.compiler.cudagraph_mark_step_begin()  # type: ignore[no-untyped-call]
-        outputs = self._resolve_eval_model()(samples)
-        if self._should_compute_val_loss:
+        compute_loss = self._should_compute_val_loss
+        outputs = self._eval_forward(self._resolve_eval_model(), samples, for_loss=compute_loss)
+        if compute_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
@@ -1906,8 +1927,9 @@ class RFDETRModelModule(LightningModule):
             Dict with ``results`` (postprocessed predictions) and ``targets``.
         """
         samples, targets = batch
-        outputs = self.model(samples)
-        if self.train_config.compute_test_loss:
+        compute_loss = self.train_config.compute_test_loss
+        outputs = self._eval_forward(self.model, samples, for_loss=compute_loss)
+        if compute_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
