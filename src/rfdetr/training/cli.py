@@ -20,6 +20,7 @@ receives the same values automatically at parse time. The trainer comes from
 
 import sys
 import warnings
+from collections.abc import Sequence
 from typing import Any
 
 from pytorch_lightning import LightningModule, Trainer
@@ -74,6 +75,82 @@ def _changed_arguments(parsed: Any, defaults: Any) -> list[str]:
     return [name for name, value in vars(parsed).items() if name in default_values and value != default_values[name]]
 
 
+def _config_argument_value(
+    args: Sequence[Any], index: int, argument: str, attached_short_value: str | None
+) -> tuple[str | None, int]:
+    """Read a config option's value and return the next argument index.
+
+    Args:
+        args: The command-line arguments.
+        index: The config option's index.
+        argument: The config option, possibly containing its value.
+        attached_short_value: The value attached to a short option, if present.
+
+    Returns:
+        The value, or ``None`` when missing, and the next argument index.
+    """
+    if attached_short_value is not None:
+        return attached_short_value, index + 1
+    if "=" in argument:
+        return argument.partition("=")[2], index + 1
+    if index + 1 < len(args):
+        return str(args[index + 1]), index + 2
+    return None, index + 1
+
+
+def _load_argument_config(action: Any, source_parser: LightningArgumentParser, config_value: str) -> Any:
+    """Load a trainer group or full config using its source parser's context.
+
+    Args:
+        action: The trainer or config option's parser action.
+        source_parser: The parser owning the action.
+        config_value: The config path or inline content.
+
+    Returns:
+        The parsed trainer group or full config namespace.
+    """
+    from jsonargparse import Namespace
+    from jsonargparse._common import parser_context
+
+    with parser_context(parent_parser=source_parser):
+        if action.dest == "trainer":
+            return action.check_type(config_value, source_parser)
+        config = Namespace()  # type: ignore[no-untyped-call]
+        action.apply_config(source_parser, config, action.dest, config_value)
+    return config
+
+
+def _trainer_override_markers(
+    source_parser: LightningArgumentParser,
+    args: Sequence[Any],
+    index: int,
+    argument: str,
+    has_value: bool,
+) -> tuple[set[str] | None, int]:
+    """Parse an explicit trainer override marker option and advance past its value.
+
+    Args:
+        source_parser: The parser owning the marker option.
+        args: The command-line arguments.
+        index: The marker option's index.
+        argument: The marker option, possibly containing its value.
+        has_value: Whether the value is attached to the option.
+
+    Returns:
+        The marker names, or ``None`` when the value is missing, and the next argument index.
+    """
+    if has_value:
+        marker_args = [argument]
+    elif index + 1 < len(args):
+        marker_args = [argument.partition("=")[0], str(args[index + 1])]
+    else:
+        return None, index + 1
+    marker_config = source_parser.parse_args(marker_args, defaults=False, _skip_validation=True)
+    marker_value = marker_config.get("rfdetr_cli_trainer_overrides", [])
+    marker_names = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
+    return marker_names, index + (1 if has_value else 2)
+
+
 def _effective_trainer_overrides(
     parser: LightningArgumentParser,
     args: ArgsType,
@@ -94,8 +171,6 @@ def _effective_trainer_overrides(
     if not isinstance(args, (list, tuple)):
         return set(), set()
 
-    from jsonargparse import Namespace
-    from jsonargparse._common import parser_context
     from jsonargparse._subcommands import find_parent_action
 
     flagged: set[str] = set()
@@ -161,48 +236,20 @@ def _effective_trainer_overrides(
             continue
 
         source_parser = active_parser
-        if action.dest == "trainer":
-            if has_value:
-                config_value = attached_short_value if attached_short_value is not None else argument.partition("=")[2]
-                assert config_value is not None
-            elif index + 1 < len(args):
-                config_value = str(args[index + 1])
-            else:
-                index += 1
+        if action.dest in {"trainer", "config"}:
+            config_value, index = _config_argument_value(args, index, argument, attached_short_value)
+            if config_value is None:
                 continue
-            with parser_context(parent_parser=source_parser):
-                config = action.check_type(config_value, source_parser)
-            group_config = True
-            index += 1 if has_value else 2
-        elif action.dest == "config":
-            if has_value:
-                config_value = attached_short_value if attached_short_value is not None else argument.partition("=")[2]
-                assert config_value is not None
-            elif index + 1 < len(args):
-                config_value = str(args[index + 1])
-            else:
-                index += 1
-                continue
-            config = Namespace()  # type: ignore[no-untyped-call]
-            with parser_context(parent_parser=source_parser):
-                action.apply_config(source_parser, config, action.dest, config_value)
-            index += 1 if has_value else 2
+            config = _load_argument_config(action, source_parser, config_value)
+            group_config = action.dest == "trainer"
         elif action.dest == "rfdetr_cli_trainer_overrides":
-            if has_value:
-                marker_args = [argument]
-            elif index + 1 < len(args):
-                marker_args = [option, str(args[index + 1])]
-            else:
-                index += 1
+            marker_names, index = _trainer_override_markers(source_parser, args, index, argument, has_value)
+            if marker_names is None:
                 continue
-            marker_config = source_parser.parse_args(marker_args, defaults=False, _skip_validation=True)
-            marker_value = marker_config.get("rfdetr_cli_trainer_overrides", [])
-            marker_names = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
             if option.endswith("+"):
                 saved.update(marker_names)
             else:
                 saved = marker_names
-            index += 1 if has_value else 2
             continue
         else:
             index += 1
@@ -214,13 +261,12 @@ def _effective_trainer_overrides(
         else:
             config = config.get(subcommand, config) if subcommand else config
             trainer = config.get("trainer")
-            config_values = (
-                vars(trainer)
-                if hasattr(trainer, "__dict__")
-                else trainer.keys()
-                if hasattr(trainer, "keys")
-                else trainer or {}
-            )
+            if hasattr(trainer, "__dict__"):
+                config_values = vars(trainer)
+            elif hasattr(trainer, "keys"):
+                config_values = trainer.keys()
+            else:
+                config_values = trainer or {}
             marker_value = config.get("rfdetr_cli_trainer_overrides", [])
             markers = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
             marker_config = config
