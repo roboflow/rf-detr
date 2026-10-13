@@ -20,8 +20,19 @@ Check each relevant axis; mark an axis out of scope only when the diff gives a c
 - **Performance and resources:** Could this cause material regressions in runtime, memory, or resource cleanup?
 - **Tests and documentation:** Do tests cover the changed behavior and likely regressions? Are user-facing behavior or configuration changes documented?
 
+## Review summary
+
+Start the response with exactly one recommendation:
+
+- 🟢 **Approve** — ready to merge.
+- 🟡 **Minor Suggestions** — optional improvements; no blocking issue.
+- 🟠 **Request Changes** — a concrete issue must be fixed before merge.
+- 🔴 **Block** — a critical issue or major rework is required.
+
+Then summarize review completeness and applicable risks, followed by code, testing, and documentation quality scores from 1 (poor or missing) to 5 (excellent or comprehensive), and an overall risk score from 1 (negligible) to 5 (critical). Give a concise reason for each score; assess the evidence in the change and its test coverage, not just the presence of files or test names.
+
 ## Findings
 
-Report only actionable issues supported by the changed code and its context. For each finding, identify the file and line, use High, Medium, or Low severity, and explain the failure condition and its concrete impact. Prefer one finding per distinct issue; do not report style preferences, speculative risks, or issues outside the change.
+Report only actionable issues supported by the changed code and its context. Separate must-fix findings from optional suggestions. For each finding, identify the affected file and line, use High, Medium, or Low severity, and explain the failure condition and concrete impact. Put findings in inline comments where supported; otherwise give a precise file and line reference. Prefer one finding per distinct issue; do not report style preferences, speculative risks, or issues outside the change.
 
-Conclude with a brief coverage spot-list of the axes checked and any material limitation. If no actionable issues are found, say so plainly; do not invent findings to fill the list. Do not modify code or propose that a change is verified unless the available evidence supports it.
+Use a respectful, specific, pragmatic tone. Conclude with a brief coverage spot-list of the axes checked and any material limitation. If no actionable issues are found, say so plainly; do not invent findings to fill the list. Do not modify code or propose that a change is verified unless the available evidence supports it.
