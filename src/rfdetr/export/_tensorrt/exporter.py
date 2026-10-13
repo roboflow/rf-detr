@@ -121,8 +121,8 @@ _IS_FP16_CASTER_AVAILABLE = all(is_installed(name) for name in ("onnx", "onnxcon
 _STRONG_TYPING_MAJOR = 11
 
 #: Oldest TensorRT major an INT8 engine is built on. INT8 engines are strongly typed builds of an explicitly quantized
-#: graph; 10.16 and 11.3 are the only releases this was measured on (issue #1024). Earlier majors are refused rather
-#: than assumed to work; the 10.x releases before 10.16 are admitted but untested.
+#: graph; 10.16, 11.3 and 11.4 are the only releases this was measured on (issue #1024). Earlier majors are refused
+#: rather than assumed to work; the 10.x releases before 10.16 are admitted but untested.
 _INT8_MIN_TENSORRT_MAJOR = 10
 
 #: The oldest measured TensorRT release: an INT8 build on a 10.x release before ``(10, 16)`` is warned about rather
@@ -747,8 +747,8 @@ class TensorRTConfig(ExportConfig):
         quantization: ``None`` builds an FP16 or FP32 engine as ``fp16`` says. ``"int8"`` builds an engine that runs
             most of the backbone encoder and decoder in INT8 and the rest in FP16, from a graph quantized with ranges
             calibrated on *calibration_data* (placement rules in :mod:`rfdetr.export._tensorrt.quantize`). It needs
-            ``fp16``, a static batch, a full detector (no ``backbone_only``, no segmentation or keypoint head) and
-            TensorRT 10 or newer.
+            ``fp16``, a static batch, a full model (no ``backbone_only``) and TensorRT 10 or newer. The mask head and
+            the keypoint head stay FP16; the keypoint decoder's cross-attention and feed-forward layers are INT8.
         calibration_data: Representative images for ``quantization="int8"``: a directory of images, a ``.npy`` file
             or an array shaped ``(N, C, H, W)`` already normalized as :meth:`~rfdetr.detr.RFDETR.predict` does.
             Required with ``"int8"``, refused without it.
@@ -931,7 +931,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             (config.calibration_data is None, "needs calibration_data: a directory of representative images"),
             (not config.fp16, "builds on the FP16 graph, so it cannot be combined with fp16=False"),
             (config.dynamic_batch, "is measured for a static batch only; drop dynamic_batch"),
-            (config.backbone_only, "applies to the full detector, not a backbone_only export"),
+            (config.backbone_only, "applies to the full model, not a backbone_only export"),
         )
         for refused, reason in refusals:
             if refused:
@@ -1022,9 +1022,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     def _warn_if_int8_is_unmeasured(self) -> None:
         """Warn when an INT8 build leaves the TensorRT releases and settings its accuracy and speed were measured with.
 
-        Those are TensorRT 10.16 and 11.3, with neither ``version_compatible`` nor ``hardware_compatibility``. Outside
-        them the engine still builds and runs, and the failures the measurements turned up built cleanly too, so the
-        request is honoured with a warning rather than refused.
+        Those are TensorRT 10.16, 11.3 and 11.4, with neither ``version_compatible`` nor ``hardware_compatibility``.
+        Outside them the engine still builds and runs, and the failures the measurements turned up built cleanly too, so
+        the request is honoured with a warning rather than refused.
         """
         try:
             import tensorrt as trt_module
@@ -1048,8 +1048,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             reasons.append(f"trt_hardware_compatibility={self.config.hardware_compatibility!r}")
         if reasons:
             logger.warning(
-                "TensorRT quantization='int8' was measured on TensorRT 10.16 and 11.3 without trt_version_compatible "
-                f"or trt_hardware_compatibility; this build uses {' and '.join(reasons)}. The engine may build and "
+                "TensorRT quantization='int8' was measured on TensorRT 10.16, 11.3 and 11.4 without "
+                f"trt_version_compatible or trt_hardware_compatibility; this build uses {' and '.join(reasons)}. The "
+                "engine may build and "
                 "still lose accuracy or speed: compare its COCO AP and latency with the FP16 engine before relying on "
                 "it."
             )
@@ -1162,7 +1163,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 configuration was checked: :meth:`check_environment` refuses it before the forward pass when
                 ``Exporter.__call__`` runs it, but a direct call of ``_convert`` meets it only in :meth:`_build`, after
                 the ONNX export.
-            NotImplementedError: If ``quantization="int8"`` is asked of a segmentation or keypoint model.
+            NotImplementedError: If ``quantization="int8"`` is asked of a graph whose outputs are not a detection,
+                segmentation or keypoint model's.
             FileExistsError: If ``metadata`` is set and the description's path holds something this exporter did not
                 write, before the engine is built.
             OSError: If ``metadata`` is set and the description cannot be written; the engine has been built by then.
@@ -1176,16 +1178,16 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             # Exporter.__call__ has already run check_environment (host and calibration path); a caller of _convert
             # itself would otherwise learn of a missing onnxruntime only from _build, after the ONNX export.
             self._require_int8_host()
-            if tuple(graph.output_names) != _INT8_OUTPUT_NAMES:
+            if tuple(graph.output_names) not in _INT8_OUTPUT_NAMES:
                 raise NotImplementedError(
-                    f"TensorRT quantization='int8' is measured for detection models only; this model also outputs "
-                    f"{list(graph.output_names)[2:]}. Export it with quantization=None."
+                    f"TensorRT quantization='int8' is measured for detection, segmentation and keypoint models only; "
+                    f"this model outputs {list(graph.output_names)}. Export it with quantization=None."
                 )
         # A cache location that cannot be written would only be found out after the engine is built.
         self._prepare_timing_cache()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
-        # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
+        # custom output_name does not silently produce an engine indistinguishable from a full-model one.
         output_name = onnx_path.stem if graph.backbone_only and self.config.output_name else self.config.output_name
         if self.config.metadata:
             self._refuse_to_replace_a_foreign_file(str(onnx_path), output_name)
@@ -1331,8 +1333,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 placed around; or if the
                 calibration data is missing, unusable, holds a NaN or infinite value, or gives a range that does not
                 fit FP16.
-            NotImplementedError: If ``quantization="int8"`` is asked of a graph whose outputs are not exactly a
-                detector's ``dets`` and ``labels`` (a segmentation, keypoint or backbone-only export).
+            NotImplementedError: If ``quantization="int8"`` is asked of a graph whose outputs are not a detection,
+                segmentation or keypoint model's (a backbone-only export).
             OSError: If ``timing_cache`` cannot be written.
 
         Examples:

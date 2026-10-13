@@ -247,6 +247,8 @@ trainer.fit(module, datamodule, ckpt_path="output/last.ckpt")
 trainer.fit(module, datamodule, ckpt_path="output/checkpoint.pth")
 ```
 
+When the checkpoint carries optimizer state, `on_load_checkpoint` orders the learning-rate and weight-decay settings (`lr`, `lr_encoder`, `lr_vit_layer_decay`, `lr_component_decay`, `weight_decay`) as `model.train(resume=...)` does: a value the module's `TrainConfig` sets explicitly wins, and one it leaves out takes the value recorded in the checkpoint. Explicit values win even when they equal defaults. A `TrainConfig` built from a complete Python or JSON mapping treats every supplied key as explicit; omit optimizer keys you want to inherit from the checkpoint. LightningCLI tracks the keys supplied in arguments or configuration files before adding defaults, and preserves those choices when merging checkpoint hyperparameters. The optimizer's moments and the schedule's progress carry over. A `configure_optimizers` of your own records nothing to compare with, so the resumed optimizer then keeps its saved learning rates and weight decay, and warns when one of these settings is set.
+
 > **Note:** When `checkpoint_interval=1`, no `last.ckpt` is written. Use `checkpoint_{epoch}.ckpt` (e.g. `output/checkpoint_epoch=4.ckpt`) to resume instead.
 
 If you need to persist a converted checkpoint on disk (for example to inspect it, share it, or use it outside of PTL), convert it explicitly before passing it to `trainer.fit`:
@@ -355,37 +357,27 @@ Maintain an effective batch size of 16 regardless of GPU count:
 
 ## Custom callbacks
 
-`build_trainer` builds the default callback stack. To add your own callbacks alongside the built-in ones, pass them via `trainer_kwargs`:
+`build_trainer` builds the default callback stack. To add your own callbacks alongside the built-in ones, pass them as `extra_callbacks`:
 
 ```python
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelSummary
 from rfdetr.training import build_trainer
 
-extra_callbacks = [
-    LearningRateMonitor(logging_interval="step"),
-    ModelSummary(max_depth=3),
-]
-
 trainer = build_trainer(
     train_config,
     model_config,
-    callbacks=extra_callbacks,  # replaces the default callback list entirely
+    extra_callbacks=[
+        LearningRateMonitor(logging_interval="step"),
+        ModelSummary(max_depth=3),
+    ],
 )
 ```
 
-!!! warning "Replacing vs. extending callbacks"
+They reach the `Trainer` together with the built-in callbacks, so Lightning checks them all at once: a second progress bar raises, and `ModelSummary` takes the place of the default summary.
 
-    Passing `callbacks=` to `build_trainer` via `trainer_kwargs` **replaces** the entire default callback list built inside `build_trainer` (EMA, COCO eval, best-model checkpointing, etc.). To extend rather than replace, build the extra callbacks separately and merge them after calling `build_trainer`:
+!!! warning "Replacing the callbacks"
 
-    ```python
-    trainer = build_trainer(train_config, model_config)
-    trainer.callbacks.extend(
-        [
-            LearningRateMonitor(logging_interval="step"),
-        ]
-    )
-    trainer.fit(module, datamodule)
-    ```
+    Passing `callbacks=` to `build_trainer` via `trainer_kwargs` **replaces** the entire default callback list built inside `build_trainer` (EMA, COCO eval, best-model checkpointing, etc.).
 
 ### Built-in callbacks
 

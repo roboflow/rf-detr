@@ -220,6 +220,7 @@ jobs:
             --durations=20
 
       - name: Upload coverage to Codecov
+        continue-on-error: true
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -433,9 +434,9 @@ jobs:
           python-version: "3.13"
           activate-environment: true
 
-      - name: 🚀 Install Packages (train extra, for the roboflow SDK)
+      - name: 🚀 Install Packages (train and cli extras, for the roboflow SDK)
         timeout-minutes: 5
-        run: uv pip install -e ".[train]" --group tests
+        run: uv pip install -e ".[train,cli]" --group tests
 
       - name: 🔑 Verify required secrets are present
         run: |
