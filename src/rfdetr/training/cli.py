@@ -151,6 +151,88 @@ def _trainer_override_markers(
     return marker_names, index + (1 if has_value else 2)
 
 
+def _option_action(active_parser: LightningArgumentParser, argument: str) -> Any | None:
+    """Find an option action, including abbreviations and attached short values.
+
+    Args:
+        active_parser: The parser whose options to search.
+        argument: The command-line option, possibly containing a value.
+
+    Returns:
+        The matching action, or ``None`` if no action is found.
+    """
+    from jsonargparse._subcommands import find_parent_action
+
+    option = argument.partition("=")[0]
+    lookup_option = option.removesuffix("+")
+    actions = active_parser._option_string_actions
+    action = actions.get(lookup_option)
+    if action is not None:
+        return action
+    if lookup_option.startswith("--"):
+        matches = {candidate for name, candidate in actions.items() if name.startswith(lookup_option)}
+        if len(matches) == 1:
+            return matches.pop()
+        return find_parent_action(active_parser, lookup_option[2:])
+    if lookup_option.startswith("-") and len(lookup_option) > 2:
+        return actions.get(lookup_option[:2])
+    return None
+
+
+def _subcommand_index(parser: LightningArgumentParser, args: Sequence[Any], subcommand: str | None) -> int:
+    """Find the subcommand position without mistaking an option value for it.
+
+    Args:
+        parser: The root parser used before the subcommand.
+        args: The command-line arguments.
+        subcommand: The active subcommand, if any.
+
+    Returns:
+        The subcommand index, or the argument count if absent.
+    """
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if isinstance(argument, str) and argument == subcommand:
+            return index
+        if isinstance(argument, str) and argument.startswith("-") and "=" not in argument:
+            action = _option_action(parser, argument)
+            has_attached_short_value = not argument.startswith("--") and len(argument) > 2
+            if action is not None and action.nargs != 0 and not has_attached_short_value and index + 1 < len(args):
+                index += 2
+                continue
+        index += 1
+    return len(args)
+
+
+def _config_trainer_overrides(
+    config: Any, subcommand: str | None, group_config: bool
+) -> tuple[set[str], set[str], bool]:
+    """Read trainer keys and saved override markers from a loaded config.
+
+    Args:
+        config: The parsed trainer group or full config namespace.
+        subcommand: The active subcommand, if any.
+        group_config: Whether the config contains only the trainer group.
+
+    Returns:
+        Trainer keys, saved marker names, and whether the markers replace earlier names.
+    """
+    if group_config:
+        return set(vars(config)), set(), False
+    config = config.get(subcommand, config) if subcommand else config
+    trainer = config.get("trainer")
+    if hasattr(trainer, "__dict__"):
+        config_values = vars(trainer)
+    elif hasattr(trainer, "keys"):
+        config_values = trainer.keys()
+    else:
+        config_values = trainer or {}
+    marker_value = config.get("rfdetr_cli_trainer_overrides", [])
+    markers = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
+    return set(config_values), markers, "rfdetr_cli_trainer_overrides" in vars(config)
+
+
 def _effective_trainer_overrides(
     parser: LightningArgumentParser,
     args: ArgsType,
@@ -171,52 +253,20 @@ def _effective_trainer_overrides(
     if not isinstance(args, (list, tuple)):
         return set(), set()
 
-    from jsonargparse._subcommands import find_parent_action
-
     flagged: set[str] = set()
     saved: set[str] = set()
     config_parser = subcommand_parser or parser
 
-    def option_action(active_parser: LightningArgumentParser, argument: str) -> Any | None:
-        option = argument.partition("=")[0]
-        lookup_option = option.removesuffix("+")
-        actions = active_parser._option_string_actions
-        action = actions.get(lookup_option)
-        if action is not None:
-            return action
-        if lookup_option.startswith("--"):
-            matches = {candidate for name, candidate in actions.items() if name.startswith(lookup_option)}
-            if len(matches) == 1:
-                return matches.pop()
-            return find_parent_action(active_parser, lookup_option[2:])
-        if lookup_option.startswith("-") and len(lookup_option) > 2:
-            return actions.get(lookup_option[:2])
-        return None
-
-    subcommand_index = len(args)
-    index = 0
-    while index < len(args):
-        argument = args[index]
-        if isinstance(argument, str) and argument == subcommand:
-            subcommand_index = index
-            break
-        if isinstance(argument, str) and argument.startswith("-") and "=" not in argument:
-            action = option_action(parser, argument)
-            has_attached_short_value = not argument.startswith("--") and len(argument) > 2
-            if action is not None and action.nargs != 0 and not has_attached_short_value and index + 1 < len(args):
-                index += 2
-                continue
-        index += 1
+    subcommand_index = _subcommand_index(parser, args, subcommand)
 
     index = 0
     while index < len(args):
-        argument_index = index
         argument = args[index]
         if not isinstance(argument, str):
             index += 1
             continue
-        active_parser = parser if argument_index < subcommand_index else config_parser
-        action = option_action(active_parser, argument)
+        active_parser = parser if index < subcommand_index else config_parser
+        action = _option_action(active_parser, argument)
         if action is None:
             index += 1
             continue
@@ -227,7 +277,6 @@ def _effective_trainer_overrides(
             argument[2:] if option.startswith("-") and not option.startswith("--") and len(option) > 2 else None
         )
         has_value = has_value or attached_short_value is not None
-        group_config = False
         if action.dest.startswith("trainer."):
             name = action.dest.removeprefix("trainer.").split(".", 1)[0].rstrip("+")
             flagged.add(name)
@@ -235,15 +284,14 @@ def _effective_trainer_overrides(
             index += 1 if has_value else 2
             continue
 
-        source_parser = active_parser
         if action.dest in {"trainer", "config"}:
             config_value, index = _config_argument_value(args, index, argument, attached_short_value)
             if config_value is None:
                 continue
-            config = _load_argument_config(action, source_parser, config_value)
+            config = _load_argument_config(action, active_parser, config_value)
             group_config = action.dest == "trainer"
         elif action.dest == "rfdetr_cli_trainer_overrides":
-            marker_names, index = _trainer_override_markers(source_parser, args, index, argument, has_value)
+            marker_names, index = _trainer_override_markers(active_parser, args, index, argument, has_value)
             if marker_names is None:
                 continue
             if option.endswith("+"):
@@ -255,25 +303,10 @@ def _effective_trainer_overrides(
             index += 1
             continue
 
-        if group_config:
-            config_values = vars(config)
-            markers: set[str] = set()
-        else:
-            config = config.get(subcommand, config) if subcommand else config
-            trainer = config.get("trainer")
-            if hasattr(trainer, "__dict__"):
-                config_values = vars(trainer)
-            elif hasattr(trainer, "keys"):
-                config_values = trainer.keys()
-            else:
-                config_values = trainer or {}
-            marker_value = config.get("rfdetr_cli_trainer_overrides", [])
-            markers = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
-            marker_config = config
-        for name in config_values:
-            flagged.discard(name)
-            saved.discard(name)
-        if not group_config and "rfdetr_cli_trainer_overrides" in vars(marker_config):
+        config_values, markers, replace_markers = _config_trainer_overrides(config, subcommand, group_config)
+        flagged.difference_update(config_values)
+        saved.difference_update(config_values)
+        if replace_markers:
             saved = markers
         else:
             saved.update(markers)
