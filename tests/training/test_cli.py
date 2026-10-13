@@ -12,6 +12,8 @@ YAML roundtrip) live in T4-7.
 
 import csv
 import json
+import os
+import subprocess
 import sys
 import warnings
 from collections import Counter
@@ -341,6 +343,42 @@ class TestRFDETRCliArgumentLinking:
 class TestRFDETRCliTrainer:
     """The CLI trains with ``build_trainer``'s stack, as ``RFDETR.train()`` does; ``--trainer.*`` overrides it."""
 
+    def test_training_package_imports_without_the_optional_cli_extra(self, tmp_path: Path) -> None:
+        """Importing the training package works without jsonargparse, while CLI use keeps its install guidance."""
+        script = [
+            "import builtins",
+            "import lightning_utilities.core.imports as imports",
+            "class MissingRequirement:",
+            "    def __bool__(self): return False",
+            "imports.RequirementCache = lambda *args, **kwargs: MissingRequirement()",
+            "original_import = builtins.__import__",
+            "def block_jsonargparse(name, globals=None, locals=None, fromlist=(), level=0):",
+            "    if name == 'jsonargparse' or name.startswith('jsonargparse.'): raise ModuleNotFoundError(name)",
+            "    return original_import(name, globals, locals, fromlist, level)",
+            "builtins.__import__ = block_jsonargparse",
+            "import torchmetrics.detection",
+            "torchmetrics.detection.MeanAveragePrecision = type('MeanAveragePrecision', (), {})",
+            "import rfdetr.training",
+            "from rfdetr.training.cli import RFDETRCli",
+            "from rfdetr.training.module_data import RFDETRDataModule",
+            "from rfdetr.training.module_model import RFDETRModelModule",
+            "try:",
+            "    RFDETRCli(RFDETRModelModule, RFDETRDataModule, run=False)",
+            "except ModuleNotFoundError as error:",
+            "    assert 'rfdetr[cli]' in str(error)",
+            "else:",
+            "    raise AssertionError('CLI setup should report the missing optional dependency')",
+        ]
+        (tmp_path / "check_import.py").write_text("\n".join(script) + "\n")
+        source_path = Path(__file__).resolve().parents[2] / "src"
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(tmp_path), str(source_path)))}
+
+        result = subprocess.run(
+            [sys.executable, str(tmp_path / "check_import.py")], capture_output=True, text=True, env=env, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
+
     def test_fit_takes_epochs_accumulation_and_clipping_from_train_config(self, tmp_path: Path) -> None:
         """``train_config`` drives the loop instead of Lightning's defaults, such as ``max_epochs=1000``."""
         cli = _cli(
@@ -394,6 +432,238 @@ class TestRFDETRCliTrainer:
 
         assert (rerun.trainer.max_epochs, rerun.trainer.accumulate_grad_batches) == (100, 2)
 
+    def test_rerun_from_saved_config_keeps_explicit_default_trainer_override(self, tmp_path: Path) -> None:
+        """A saved default-equal trainer override remains explicit on a config replay."""
+        first = _cli(
+            tmp_path,
+            "--model.train_config.init_args.grad_accum_steps=2",
+            "--trainer.accumulate_grad_batches=1",
+        )
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+
+        rerun = _cli(tmp_path, "--config", str(tmp_path / "config.yaml"))
+
+        assert (rerun.trainer.max_epochs, rerun.trainer.accumulate_grad_batches) == (100, 1)
+
+        override = _cli(tmp_path, "--config", str(tmp_path / "config.yaml"), "--trainer.accumulate_grad_batches=2")
+
+        assert override.trainer.accumulate_grad_batches == 2
+
+    def test_config_after_trainer_flag_cancels_overwritten_flag(self, tmp_path: Path) -> None:
+        """A later config file cancels an earlier trainer flag, including a default-valued config entry."""
+        first = _cli(tmp_path)
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+
+        rerun = _cli(tmp_path, "--trainer.max_epochs=3", "--config", str(tmp_path / "config.yaml"))
+
+        assert rerun.trainer.max_epochs == 100
+
+    def test_config_abbreviation_after_trainer_flag_cancels_it(self, tmp_path: Path) -> None:
+        """An accepted config option abbreviation cancels an earlier trainer flag."""
+        first = _cli(tmp_path)
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+
+        rerun = _cli(tmp_path, "--trainer.max_epochs=3", "--conf", str(tmp_path / "config.yaml"))
+
+        assert rerun.trainer.max_epochs == 100
+
+    def test_trainer_flag_after_config_file_remains_effective(self, tmp_path: Path) -> None:
+        """A trainer flag after a config file overrides the config value."""
+        first = _cli(tmp_path)
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+
+        with pytest.warns(UserWarning, match=r"train_config\.epochs=100"):
+            rerun = _cli(tmp_path, "--config", str(tmp_path / "config.yaml"), "--trainer.max_epochs=3")
+
+        assert rerun.trainer.max_epochs == 3
+
+    def test_inline_config_after_trainer_flag_cancels_overwritten_flag(self, tmp_path: Path) -> None:
+        """A later inline config cancels an earlier trainer flag."""
+        cli = _cli(tmp_path, "--trainer.max_epochs=3", "--config", "trainer:\n  max_epochs: null")
+
+        assert cli.trainer.max_epochs == 100
+
+    def test_inline_config_url_value_is_not_treated_as_a_path(self, tmp_path: Path) -> None:
+        """Inline config values containing URL schemes stay on jsonargparse's inline parser path."""
+        cli = _cli(
+            tmp_path,
+            "--trainer.max_epochs=3",
+            "--config",
+            "trainer:\n  max_epochs: 7\n  default_root_dir: s3://bucket/run",
+        )
+
+        assert cli.trainer.max_epochs == 7
+
+    def test_stale_saved_trainer_override_marker_is_ignored(self, tmp_path: Path) -> None:
+        """Saved override markers that no longer name trainer fields do not break trainer construction."""
+        cli = _cli(tmp_path, "--config", "rfdetr_cli_trainer_overrides: [removed_trainer_option]")
+
+        assert cli.trainer.max_epochs == 100
+
+    def test_abbreviated_trainer_flag_is_tracked_by_canonical_name(self, tmp_path: Path) -> None:
+        """An accepted abbreviated trainer flag resolves to its canonical trainer field."""
+        cli = _cli(tmp_path, "--trainer.max_ep=3")
+
+        assert cli.trainer.max_epochs == 3
+
+    def test_nested_trainer_option_is_tracked_by_parent_action(self, tmp_path: Path) -> None:
+        """Nested class options retain the trainer group name in explicit override tracking."""
+        cli = _cli(
+            tmp_path,
+            "--trainer.logger.class_path=pytorch_lightning.loggers.CSVLogger",
+            f"--trainer.logger.init_args.save_dir={tmp_path}",
+        )
+
+        assert "logger" in cli._flagged_trainer_arguments
+
+    def test_attached_short_config_after_trainer_flag_cancels_it(self, tmp_path: Path) -> None:
+        """An attached short config option is processed as a later config source."""
+        first = _cli(tmp_path)
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+
+        rerun = _cli(tmp_path, "--trainer.max_epochs=3", f"-c{tmp_path / 'config.yaml'}")
+
+        assert rerun.trainer.max_epochs == 100
+
+    def test_attached_short_config_path_with_equals_cancels_trainer_flag(self, tmp_path: Path) -> None:
+        """Equals signs inside an attached short config path remain part of the path."""
+        first = _cli(tmp_path)
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+        config_dir = tmp_path / "runs=lr=0.1"
+        config_dir.mkdir()
+        config_path = config_dir / "config.yaml"
+        config_path.write_text((tmp_path / "config.yaml").read_text())
+
+        rerun = _cli(tmp_path, "--trainer.max_epochs=3", f"-c{config_path}")
+
+        assert rerun.trainer.max_epochs == 100
+
+    def test_saved_override_marker_append_preserves_previous_names(self, tmp_path: Path) -> None:
+        """Appending to the internal marker list preserves names loaded from a config."""
+        marker_config = tmp_path / "markers.yaml"
+        marker_config.write_text("rfdetr_cli_trainer_overrides: [max_epochs]\n")
+
+        cli = _cli(
+            tmp_path,
+            "--config",
+            str(marker_config),
+            "--rfdetr_cli_trainer_overrides+=accumulate_grad_batches",
+        )
+
+        assert cli._saved_trainer_overrides == {"max_epochs", "accumulate_grad_batches"}
+
+    def test_saved_config_without_internal_marker_still_replays(self, tmp_path: Path) -> None:
+        """A full saved config without the marker still lets train_config replace default trainer values."""
+        first = _cli(
+            tmp_path,
+            "--model.train_config.init_args.grad_accum_steps=2",
+            "--trainer.accumulate_grad_batches=1",
+        )
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text())
+        saved.pop("rfdetr_cli_trainer_overrides")
+        (tmp_path / "config.yaml").write_text(yaml.safe_dump(saved))
+
+        cli = _cli(tmp_path, "--config", str(tmp_path / "config.yaml"))
+
+        assert cli.trainer.accumulate_grad_batches == 2
+        assert cli._saved_trainer_overrides == set()
+
+    def test_later_empty_saved_override_marker_clears_earlier_marker(self, tmp_path: Path) -> None:
+        """An explicit empty marker list replaces an earlier saved override list."""
+        first = _cli(
+            tmp_path,
+            "--model.train_config.init_args.grad_accum_steps=2",
+            "--trainer.accumulate_grad_batches=1",
+        )
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+        clear_marker = tmp_path / "clear-marker.yaml"
+        clear_marker.write_text("rfdetr_cli_trainer_overrides: []\n")
+
+        rerun = _cli(tmp_path, "--config", str(tmp_path / "config.yaml"), "--config", str(clear_marker))
+
+        assert rerun._saved_trainer_overrides == set()
+
+    def test_abbreviated_config_option_cancels_prior_trainer_flag(self, tmp_path: Path) -> None:
+        """An accepted config abbreviation is tracked as a later config source."""
+        first = _cli(tmp_path)
+        save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(first.trainer, first.model, stage="fit")
+
+        cli = _cli(tmp_path, "--trainer.max_epochs=3", "--con", str(tmp_path / "config.yaml"))
+
+        assert cli.trainer.max_epochs == 100
+
+    def test_saved_trainer_override_marker_is_sorted(self, tmp_path: Path) -> None:
+        """Saved trainer override markers use deterministic sorted order."""
+        cli = _cli(tmp_path, "--trainer.max_epochs=3", "--trainer.accumulate_grad_batches=2")
+        save_config = next(callback for callback in cli.trainer.callbacks if isinstance(callback, SaveConfigCallback))
+        save_config.setup(cli.trainer, cli.model, stage="fit")
+
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text())
+
+        assert saved["rfdetr_cli_trainer_overrides"] == ["accumulate_grad_batches", "max_epochs"]
+
+    def test_root_config_value_matching_subcommand_uses_root_parser(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A root config value equal to the subcommand is not mistaken for the command position."""
+        config = yaml.safe_load(_NANO_CONFIG.read_text())
+        config.setdefault("trainer", {})["max_epochs"] = 7
+        config_path = tmp_path / "fit"
+        config_path.write_text(yaml.safe_dump({"fit": config}))
+        monkeypatch.chdir(tmp_path)
+        args = [
+            "--config",
+            "fit",
+            "fit",
+            "--model.model_config.init_args.pretrain_weights",
+            "null",
+            "--model.train_config.init_args.dataset_dir",
+            str(tmp_path),
+            "--model.train_config.init_args.output_dir",
+            str(tmp_path),
+            "--trainer.max_epochs=3",
+        ]
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(_fake_criterion(), _fake_postprocess()),
+            ),
+            pytest.warns(UserWarning, match=r"train_config\.epochs=100"),
+        ):
+            cli = _NoRunCli(RFDETRModelModule, RFDETRDataModule, args=args, run=True)
+
+        assert cli.trainer.max_epochs == 3
+
+    def test_trainer_group_file_after_flag_overrides_it(self, tmp_path: Path) -> None:
+        """A later flat trainer file cancels an earlier trainer flag."""
+        trainer_file = tmp_path / "trainer.yaml"
+        trainer_file.write_text("max_epochs: 7\n")
+
+        cli = _cli(tmp_path, "--trainer.max_epochs=3", "--trainer", str(trainer_file))
+
+        assert cli.trainer.max_epochs == 7
+
+    def test_equals_trainer_group_file_after_flag_overrides_it(self, tmp_path: Path) -> None:
+        """A later equals-form trainer file cancels an earlier trainer flag."""
+        trainer_file = tmp_path / "trainer.yaml"
+        trainer_file.write_text("max_epochs: 7\n")
+
+        cli = _cli(tmp_path, "--trainer.max_epochs=3", f"--trainer={trainer_file}")
+
+        assert cli.trainer.max_epochs == 7
+
     def test_trainer_group_file_overrides_train_config(self, tmp_path: Path) -> None:
         """``--trainer trainer.yaml``, the group config option ``--help`` lists, applies its non-default values."""
         trainer_file = tmp_path / "trainer.yaml"
@@ -401,6 +671,12 @@ class TestRFDETRCliTrainer:
         cli = _cli(tmp_path, "--trainer", str(trainer_file))
 
         assert cli.trainer.accumulate_grad_batches == 3
+
+    def test_trainer_group_inline_yaml_overrides_train_config(self, tmp_path: Path) -> None:
+        """Inline YAML passed to ``--trainer`` uses the same value parsing as jsonargparse."""
+        cli = _cli(tmp_path, "--trainer", "max_epochs: 7\ndefault_root_dir: s3://bucket/run")
+
+        assert cli.trainer.max_epochs == 7
 
     @pytest.mark.parametrize("run_length_flag", ["--trainer.max_epochs=3", "--trainer.max_steps=200"])
     def test_run_length_flag_warns_that_the_schedules_follow_epochs(self, tmp_path: Path, run_length_flag: str) -> None:

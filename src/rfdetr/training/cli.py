@@ -74,31 +74,164 @@ def _changed_arguments(parsed: Any, defaults: Any) -> list[str]:
     return [name for name, value in vars(parsed).items() if name in default_values and value != default_values[name]]
 
 
-def _command_line_trainer_arguments(args: ArgsType) -> set[str]:
-    """Return the names of the trainer arguments that ``--trainer.*`` flags set on a command line.
+def _effective_trainer_overrides(
+    parser: LightningArgumentParser,
+    args: ArgsType,
+    subcommand: str | None,
+    subcommand_parser: LightningArgumentParser | None,
+) -> tuple[set[str], set[str]]:
+    """Return trainer flags and saved override markers that survive argument order.
 
     Args:
-        args: The command line, without the program name. A dict or ``Namespace``, which ``LightningCLI`` also takes,
-            has no flags and names none.
+        parser: The configured CLI parser.
+        args: The parsed arguments, or ``None`` to use ``sys.argv``.
+        subcommand: The active LightningCLI subcommand.
+        subcommand_parser: The parser for the active subcommand, if one is selected.
 
     Returns:
-        The trainer argument names.
-
-    Examples:
-        >>> args = ["fit", "--trainer.max_epochs", "3", "--trainer.callbacks+=Timer", "--trainer.logger.init_args.x=1"]
-        >>> sorted(_command_line_trainer_arguments(args))
-        ['callbacks', 'logger', 'max_epochs']
-        >>> _command_line_trainer_arguments({"trainer": {"max_epochs": 3}})
-        set()
+        Trainer argument names set on the command line and saved explicit override names loaded from config files.
     """
     if not isinstance(args, (list, tuple)):
-        return set()
-    prefix = "--trainer."
-    return {
-        arg.removeprefix(prefix).split("=", 1)[0].split(".", 1)[0].rstrip("+")
-        for arg in args
-        if isinstance(arg, str) and arg.startswith(prefix)
-    }
+        return set(), set()
+
+    from jsonargparse import Namespace
+    from jsonargparse._common import parser_context
+    from jsonargparse._subcommands import find_parent_action
+
+    flagged: set[str] = set()
+    saved: set[str] = set()
+    config_parser = subcommand_parser or parser
+
+    def option_action(active_parser: LightningArgumentParser, argument: str) -> Any | None:
+        option = argument.partition("=")[0]
+        lookup_option = option.removesuffix("+")
+        actions = active_parser._option_string_actions
+        action = actions.get(lookup_option)
+        if action is not None:
+            return action
+        if lookup_option.startswith("--"):
+            matches = {candidate for name, candidate in actions.items() if name.startswith(lookup_option)}
+            if len(matches) == 1:
+                return matches.pop()
+            return find_parent_action(active_parser, lookup_option[2:])
+        if lookup_option.startswith("-") and len(lookup_option) > 2:
+            return actions.get(lookup_option[:2])
+        return None
+
+    subcommand_index = len(args)
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if isinstance(argument, str) and argument == subcommand:
+            subcommand_index = index
+            break
+        if isinstance(argument, str) and argument.startswith("-") and "=" not in argument:
+            action = option_action(parser, argument)
+            has_attached_short_value = not argument.startswith("--") and len(argument) > 2
+            if action is not None and action.nargs != 0 and not has_attached_short_value and index + 1 < len(args):
+                index += 2
+                continue
+        index += 1
+
+    index = 0
+    while index < len(args):
+        argument_index = index
+        argument = args[index]
+        if not isinstance(argument, str):
+            index += 1
+            continue
+        active_parser = parser if argument_index < subcommand_index else config_parser
+        action = option_action(active_parser, argument)
+        if action is None:
+            index += 1
+            continue
+
+        option = argument.partition("=")[0]
+        has_value = "=" in argument
+        attached_short_value = (
+            argument[2:] if option.startswith("-") and not option.startswith("--") and len(option) > 2 else None
+        )
+        has_value = has_value or attached_short_value is not None
+        group_config = False
+        if action.dest.startswith("trainer."):
+            name = action.dest.removeprefix("trainer.").split(".", 1)[0].rstrip("+")
+            flagged.add(name)
+            saved.discard(name)
+            index += 1 if has_value else 2
+            continue
+
+        source_parser = active_parser
+        if action.dest == "trainer":
+            if has_value:
+                config_value = attached_short_value if attached_short_value is not None else argument.partition("=")[2]
+                assert config_value is not None
+            elif index + 1 < len(args):
+                config_value = str(args[index + 1])
+            else:
+                index += 1
+                continue
+            with parser_context(parent_parser=source_parser):
+                config = action.check_type(config_value, source_parser)
+            group_config = True
+            index += 1 if has_value else 2
+        elif action.dest == "config":
+            if has_value:
+                config_value = attached_short_value if attached_short_value is not None else argument.partition("=")[2]
+                assert config_value is not None
+            elif index + 1 < len(args):
+                config_value = str(args[index + 1])
+            else:
+                index += 1
+                continue
+            config = Namespace()  # type: ignore[no-untyped-call]
+            with parser_context(parent_parser=source_parser):
+                action.apply_config(source_parser, config, action.dest, config_value)
+            index += 1 if has_value else 2
+        elif action.dest == "rfdetr_cli_trainer_overrides":
+            if has_value:
+                marker_args = [argument]
+            elif index + 1 < len(args):
+                marker_args = [option, str(args[index + 1])]
+            else:
+                index += 1
+                continue
+            marker_config = source_parser.parse_args(marker_args, defaults=False, _skip_validation=True)
+            marker_value = marker_config.get("rfdetr_cli_trainer_overrides", [])
+            marker_names = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
+            if option.endswith("+"):
+                saved.update(marker_names)
+            else:
+                saved = marker_names
+            index += 1 if has_value else 2
+            continue
+        else:
+            index += 1
+            continue
+
+        if group_config:
+            config_values = vars(config)
+            markers: set[str] = set()
+        else:
+            config = config.get(subcommand, config) if subcommand else config
+            trainer = config.get("trainer")
+            config_values = (
+                vars(trainer)
+                if hasattr(trainer, "__dict__")
+                else trainer.keys()
+                if hasattr(trainer, "keys")
+                else trainer or {}
+            )
+            marker_value = config.get("rfdetr_cli_trainer_overrides", [])
+            markers = set(marker_value) if isinstance(marker_value, (list, tuple)) else set()
+            marker_config = config
+        for name in config_values:
+            flagged.discard(name)
+            saved.discard(name)
+        if not group_config and "rfdetr_cli_trainer_overrides" in vars(marker_config):
+            saved = markers
+        else:
+            saved.update(markers)
+    return flagged, saved
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -172,6 +305,15 @@ class RFDETRCli(LightningCLI):
         """
         parser.link_arguments("model.model_config", "data.model_config", apply_on="parse")
         parser.link_arguments("model.train_config", "data.train_config", apply_on="parse")
+        parser.add_argument(
+            "--rfdetr_cli_trainer_overrides",
+            type=list[str],
+            default=[],
+            help=(
+                "Internal state saved to preserve explicit trainer overrides; older RF-DETR CLIs may reject configs "
+                "written by this release. Do not set manually."
+            ),
+        )
 
     def parse_arguments(self, parser: LightningArgumentParser, args: ArgsType) -> None:
         """Parse arguments while retaining trainer overrides and explicit optimizer settings.
@@ -180,11 +322,21 @@ class RFDETRCli(LightningCLI):
             parser: The parser.
             args: The command line, or ``None`` for ``sys.argv``, or a dict or ``Namespace`` of arguments.
         """
-        self._flagged_trainer_arguments = _command_line_trainer_arguments(sys.argv[1:] if args is None else args)
-        super().parse_arguments(parser, args)
-        # Defaults erase whether an optimizer value was explicitly supplied, which matters when resuming.
         from jsonargparse import Namespace
 
+        effective_args = sys.argv[1:] if args is None else args
+        super().parse_arguments(parser, args)
+        subcommand = self.config.get("subcommand")
+        self._flagged_trainer_arguments, self._saved_trainer_overrides = _effective_trainer_overrides(
+            parser,
+            effective_args,
+            subcommand,
+            self._subcommand_parsers.get(subcommand) if subcommand else None,
+        )
+        if not isinstance(effective_args, (list, tuple)):
+            config = self.config.get(str(subcommand), self.config) if subcommand else self.config
+            self._saved_trainer_overrides = set(config.get("rfdetr_cli_trainer_overrides", []))
+        # Defaults erase whether an optimizer value was explicitly supplied, which matters when resuming.
         sparse = (
             parser.parse_object(args, defaults=False)
             if isinstance(args, (dict, Namespace))
@@ -248,8 +400,15 @@ class RFDETRCli(LightningCLI):
         defaults = parser.get_defaults(skip_validation=True).get("trainer")
         instantiated = self._get(self.config_init, "trainer")
         changed = set(_changed_arguments(parsed, defaults)) | set(self.trainer_defaults)
-        changed |= getattr(self, "_flagged_trainer_arguments", set()) & set(vars(parsed))
+        explicit_overrides = set(getattr(self, "_saved_trainer_overrides", set())) | set(
+            getattr(self, "_flagged_trainer_arguments", set())
+        )
+        explicit_overrides.intersection_update(vars(instantiated))
+        changed |= set(explicit_overrides)
         overrides = {name: instantiated[name] for name in changed} | kwargs
+
+        config = self.config[str(self.subcommand)] if self.subcommand else self.config
+        config["rfdetr_cli_trainer_overrides"] = sorted(explicit_overrides)
 
         callbacks = _as_list(overrides.pop("callbacks", None))
         callbacks += [self._get(self.config_init, key) for key in parser.callback_keys]
