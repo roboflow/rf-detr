@@ -22,9 +22,15 @@ from torch import nn
 
 from rfdetr.models.math import MLP
 from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals
+from tests._markers import onnx_only
 
 if TYPE_CHECKING:
     import onnx
+
+
+__doctest_requires__ = {
+    ("find_single_input_concat_nodes", "find_zero_dim_float_concat_nodes"): ["onnx"],
+}
 
 _D_MODEL = 16
 _NUM_CLASSES = 3
@@ -120,7 +126,8 @@ def two_stage_onnx(tmp_path_factory: pytest.TempPathFactory) -> onnx.ModelProto:
         Pytest fixture functions cannot be called directly outside fixture injection.
         >>> two_stage_onnx(tmp_path_factory)  # doctest: +SKIP
     """
-    onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+    import onnx
+
     out = tmp_path_factory.mktemp("onnx_two_stage") / "transformer.onnx"
     torch.onnx.export(
         _build_two_stage_wrapper(num_queries=6),
@@ -186,6 +193,7 @@ def find_zero_dim_float_concat_nodes(graph: onnx.GraphProto) -> list[str]:
     ]
 
 
+@onnx_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestTwoStageExportGraph:

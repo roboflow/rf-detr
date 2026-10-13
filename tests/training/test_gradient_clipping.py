@@ -34,6 +34,7 @@ from pytorch_lightning.plugins.precision import MixedPrecision
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from tests._markers import requires_torch_xla
 
 from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
@@ -411,6 +412,7 @@ def test_zero_clip_max_norm_disables_clipping_on_manual_path(tmp_path: Path) -> 
 
 
 @pytest.mark.xla
+@requires_torch_xla
 def test_xla_reduces_gradients_before_manual_clipping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The XLA precision closure must reduce a local gradient before RF-DETR clips it.
 
@@ -420,7 +422,6 @@ def test_xla_reduces_gradients_before_manual_clipping(tmp_path: Path, monkeypatc
     to ``0.1``; clipping first and then reducing would leave ``0.025``. This proves the Lightning-plugin-to-RF-DETR
     hook ordering, not the PJRT collective's numerical implementation.
     """
-    pytest.importorskip("torch_xla")
     import torch_xla.core.xla_model as xm
     from pytorch_lightning.plugins.precision import XLAPrecision
 

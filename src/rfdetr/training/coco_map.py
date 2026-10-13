@@ -10,10 +10,11 @@ Purpose:
     reruns. The adapter derives compact per-class AP and AR vectors from the aggregate evaluator arrays produced by one
     global evaluation for each requested IoU type.
 Scope:
-    Own CPU-backed metric updates, validation of the private TorchMetrics state/backend contract, explicit fixed-order
-    distributed state merging, update-state inspection, prediction-score hoisting during COCO-format construction, and
-    compact one-pass computation. Lightning lifecycle, EMA voting, logging, checkpoint metrics, F1, keypoint
-    evaluation, and terminal rendering remain callback concerns.
+    Own metric updates (CPU state; masks are run-length encoded on CUDA when they arrive there, on the CPU otherwise),
+    validation of the private TorchMetrics state/backend contract, explicit fixed-order distributed state merging,
+    update-state inspection, prediction-score hoisting during COCO-format construction, and compact one-pass
+    computation. Lightning lifecycle, EMA voting, logging, checkpoint metrics, F1, keypoint evaluation, and terminal
+    rendering remain callback concerns.
 Usage:
     Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with one of the
     backends registered in ``_BACKENDS`` (``hotcoco`` by default, ``faster_coco_eval``, ``ufcoco`` or ``vernier``) and
@@ -29,7 +30,8 @@ Outputs:
 Failure:
     Reject extended summaries, alternative backends, micro averaging, implicit distributed synchronization, and any
     installed TorchMetrics private layout that differs from the verified contract. These failures are intentional and
-    actionable; there is no silent slow fallback.
+    actionable; there is no silent slow fallback. The one fallback, ``hotcoco_streaming`` evaluating in one batch
+    when streaming cannot apply, is logged and produces the same metrics.
 Used by:
     ``rfdetr.training.callbacks.coco_eval.COCOEvalCallback`` for train, validation/test, and EMA COCO accumulators.
 """
@@ -37,9 +39,12 @@ Used by:
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
+import importlib.metadata
 import inspect
 import io
+import operator
 import os
 import warnings
 from collections.abc import Callable, Iterator
@@ -50,7 +55,13 @@ import torch
 import torchmetrics
 from torch import Tensor
 from torchmetrics.detection import MeanAveragePrecision
-from torchmetrics.detection.helpers import CocoBackend
+from torchmetrics.detection.helpers import (
+    CocoBackend,
+    _fix_empty_tensors,
+    _input_validator,
+    _warning_on_too_many_detections,
+)
+from torchvision.ops import box_convert
 
 from rfdetr.config import CocoEvalBackend
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
@@ -58,7 +69,6 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-_METRIC_INPUT_FIELDS = frozenset({"boxes", "scores", "labels", "masks", "iscrowd", "area"})
 _MAP_STATE_ATTRS = (
     "detection_box",
     "detection_scores",
@@ -169,46 +179,80 @@ def _hotcoco() -> Any:
 
 @contextlib.contextmanager
 def _silenced_backend_diagnostics() -> Iterator[None]:
-    """Silence the configuration diagnostics hotcoco reports while an evaluation runs.
+    """Silence hotcoco's intentional ``max_dets`` warning and summary output.
 
-    hotcoco reports every evaluator parameter that differs from the COCO defaults, plus a summary table. RF-DETR
-    overrides ``maxDets`` on every evaluation and hands over thresholds torchmetrics stores in float32, which
-    hotcoco reads as off-reference by ~2.4e-8, so those messages describe intended configuration and would
-    otherwise repeat each validation epoch and each IoU type.
+    RF-DETR overrides ``maxDets`` on every evaluation, so hotcoco's warning about that setting describes intentional
+    configuration and would otherwise repeat each validation epoch and each IoU type. Since hotcoco 1.2.1, the
+    float32 threshold grids no longer produce warnings. The summary table goes through :data:`sys.stdout`, so ordinary
+    Python-level redirection catches it.
 
-    Each message fires once, as a :class:`UserWarning`, and ``summarize()``'s table goes through
-    :data:`sys.stdout`, so ordinary Python-level redirection catches both. Every ``UserWarning`` raised inside
-    the window is dropped rather than an enumerated set of messages: hotcoco has four of them today, one firing
-    only on empty state, and matching on text would silently stop working when a release rewords one. Nothing
-    but the three backend calls runs inside the window, so no other source can be caught by it, and genuine
-    failures still surface as exceptions.
+    Only the known ``max_dets`` :class:`UserWarning` is filtered. Any other warning raised inside the window remains
+    visible, and genuine failures still surface as exceptions.
 
-    TODO: narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference. Two of the
-    four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32
-    round-trip — and a third fires on empty state after ``evaluate()`` did run. Once an upstream release stops
-    reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
+    The filter matches the text of that message, not a warning category, so if a hotcoco release rewords it the warning
+    returns on every validation epoch. ``test_hotcoco_suppresses_only_the_max_dets_warning`` and
+    ``test_hotcoco_evaluation_raises_no_warnings`` are the canaries for such a rewording.
 
     Yields:
         Nothing; standard output and the warning filter are restored on exit.
     """
     with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-        warnings.simplefilter("ignore", UserWarning)
+        warnings.filterwarnings("ignore", message=r"^hotcoco: max_dets differ from expected", category=UserWarning)
         yield
 
 
 class _RfdetrCocoBackend(CocoBackend):
     """Typed capability-flag defaults every RF-DETR COCO backend shares.
 
-    :meth:`OnePassCocoMeanAveragePrecision._validate_private_contract` and its constructor read three capability
-    flags off the active backend -- :attr:`requires_bbox`, :attr:`unused_backend_methods`,
-    :attr:`uses_coco_evaluator` -- and previously did so through ``getattr(backend, name, default)`` at each call
-    site, repeating the same default three times with no typed declaration anywhere a backend could see. Declaring
-    them here as typed class attributes gives every backend the same shared default and one place to override it.
+    :meth:`OnePassCocoMeanAveragePrecision._validate_private_contract` and its constructor read capability flags
+    off the active backend -- :attr:`requires_bbox`, :attr:`unused_backend_methods`, :attr:`uses_coco_evaluator`
+    and :attr:`streams` (whether ``update()`` matches each batch as it arrives) -- and previously did so through
+    ``getattr(backend, name, default)`` at each call site, repeating the same default at every read with no typed
+    declaration anywhere a backend could see. Declaring each flag here as a typed class attribute gives every
+    backend the same shared default and one place to override it; a new flag belongs here too.
     """
 
     requires_bbox: bool = False
     unused_backend_methods: tuple[str, ...] = ()
     uses_coco_evaluator: bool = True
+    #: Whether :meth:`open_stream` is implemented, so the metric matches each batch in ``update()``.
+    streams: bool = False
+
+    def open_stream(
+        self,
+        categories: list[dict[str, Any]],
+        iou_type: str,
+        *,
+        iou_thresholds: list[float],
+        rec_thresholds: list[float],
+        max_detection_thresholds: list[int],
+    ) -> Any:
+        """Return an evaluator that matches each batch as it arrives, for a backend that sets :attr:`streams`.
+
+        Subclass hook. The metric relies on nothing but this duck-typed contract, so a backend that streams through
+        another package needs no change to the metric:
+
+        - ``update(images, gt_anns, dt_anns)`` matches one batch: ``images`` and ``gt_anns`` in ``COCO(dict)`` form,
+          ``dt_anns`` in a form ``loadRes`` accepts -- the ``(N, 7)`` detection array for ``bbox``, one dict per
+          detection carrying only its ``segmentation`` for ``segm``.
+        - ``finalize()`` returns a COCO evaluator, already evaluated, that supports ``accumulate()`` and
+          ``summarize()`` and then exposes ``stats`` and an ``eval`` dict whose ``precision``/``recall`` arrays index
+          their category axis by category id, since ``categories`` holds every id from 0 up.
+
+        Args:
+            categories: Every category the stream may see, as COCO category records.
+            iou_type: The IoU type the evaluator runs.
+            iou_thresholds: IoU thresholds, the grid ``compute()`` evaluates the batch path on.
+            rec_thresholds: Recall thresholds of that grid.
+            max_detection_thresholds: Maximum-detection thresholds of that grid.
+
+        Returns:
+            A fresh streaming evaluator.
+
+        Raises:
+            NotImplementedError: If the backend does not stream.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not stream; only a backend with streams=True does")
 
 
 class _PackageCocoBackend(_RfdetrCocoBackend):
@@ -254,16 +298,109 @@ class _PackageCocoBackend(_RfdetrCocoBackend):
 
 
 class _HotCocoBackend(_PackageCocoBackend):
-    """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``."""
+    """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``.
+
+    The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an older
+    venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()`` after a
+    whole validation epoch. The constructor refuses such an install up front instead. It checks the symbols the adapter
+    calls rather than parsing a version string, which also refuses an older release for the single-IoU box runs that
+    would not have reached the missing symbol: one actionable error at construction beats a run that works or fails
+    depending on the IoU types.
+    """
 
     # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter always
     # assembles the COCO-format dictionaries itself on that path. Guarding a call a backend does not make would
     # block its users over an upstream rename that cannot affect them.
     unused_backend_methods = ("_get_coco_datasets",)
+    #: hotcoco attributes, dotted from the package, that this backend calls and whose absence means the installed
+    #: release predates the ``rfdetr[train]`` floor.
+    required_symbols: tuple[str, ...] = ("COCO.update_anns", "COCO.from_arrays")
+
+    def __init__(self) -> None:
+        """Import hotcoco and refuse an installed release that lacks a symbol this backend calls.
+
+        Raises:
+            ImportError: If hotcoco is not installed, or if the installed release is too old to provide every
+                entry of :attr:`required_symbols`.
+        """
+        super().__init__()
+        package = self._package()
+        missing = []
+        for symbol in self.required_symbols:
+            try:
+                operator.attrgetter(symbol)(package)
+            except AttributeError:
+                missing.append(f"hotcoco.{symbol}")
+        if missing:
+            # Read from the distribution, not the module: hotcoco 1.1 exposes no `__version__`.
+            try:
+                installed = importlib.metadata.version("hotcoco")
+            except importlib.metadata.PackageNotFoundError:
+                installed = "(unknown version)"
+            raise ImportError(
+                f"the installed hotcoco {installed} is too old for RF-DETR's COCO evaluation: it lacks "
+                f"{', '.join(missing)}. Upgrade it with: pip install -U 'rfdetr[train]'"
+            )
 
     def _package(self) -> Any:
         """Import and return ``hotcoco``."""
         return _hotcoco()
+
+
+class _HotCocoStreamingBackend(_HotCocoBackend):
+    """Hotcoco backend that matches each batch in ``update()`` through ``hotcoco.StreamingEval``.
+
+    Matching moves from the end of the epoch into the batches: ``compute()`` only accumulates and summarizes, which
+    shortens the epoch-end tail, at the cost of more total CPU time inside ``update()``. It does not lower memory:
+    the TorchMetrics state the fallback and DDP merge need is kept as well. Streaming is best effort.
+    Whenever it cannot apply, :class:`OnePassCocoMeanAveragePrecision` evaluates the stored state in one batch
+    exactly as the ``hotcoco`` backend does, so the reported metrics never depend on which path ran.
+    """
+
+    streams = True
+    required_symbols = (*_HotCocoBackend.required_symbols, "StreamingEval")
+
+    def open_stream(
+        self,
+        categories: list[dict[str, Any]],
+        iou_type: str,
+        *,
+        iou_thresholds: list[float],
+        rec_thresholds: list[float],
+        max_detection_thresholds: list[int],
+    ) -> Any:
+        """Return a ``hotcoco.StreamingEval`` frozen to the grid ``compute()`` sets on the batch path.
+
+        Args:
+            categories: Every category the stream may see, as COCO category records.
+            iou_type: The IoU type the evaluator runs.
+            iou_thresholds: IoU thresholds of the evaluation grid.
+            rec_thresholds: Recall thresholds of the evaluation grid.
+            max_detection_thresholds: Maximum-detection thresholds of the evaluation grid.
+
+        Returns:
+            A fresh ``StreamingEval``; it fills the empty ``cat_ids`` of its ``Params`` from ``categories``.
+        """
+        package = self._package()
+        params = package.Params(iou_type=iou_type)
+        params.iou_thrs = np.asarray(iou_thresholds, dtype=np.float64)
+        params.rec_thrs = np.asarray(rec_thresholds, dtype=np.float64)
+        params.max_dets = max_detection_thresholds
+        return package.StreamingEval(categories, iou_type=iou_type, params=params)
+
+
+#: Key :meth:`OnePassCocoMeanAveragePrecision.__getstate__` sets when it drops an open stream, read back on restore.
+_STREAM_DROPPED_ON_COPY = "_stream_dropped_on_copy"
+
+
+@functools.lru_cache(maxsize=None)
+def _warn_streaming_fallback(reason: str) -> None:
+    """Log once per process that ``hotcoco_streaming`` evaluates in one batch instead, and why.
+
+    Args:
+        reason: Why streaming does not apply; also the deduplication key.
+    """
+    logger.warning("eval_backend='hotcoco_streaming' evaluates in one batch at epoch end instead: %s.", reason)
 
 
 def _ufcoco() -> Any:
@@ -294,6 +431,7 @@ def _ufcoco_evaluator_type() -> type:
     """
     evaluator_type = cast(type, _ufcoco().COCOeval)
 
+    # Keep `_collect` inherited: ufcoco's columnar route requires `type(self)._collect is COCOeval._collect`.
     class _UfcocoCocoEval(evaluator_type):  # type: ignore[misc,valid-type]
         def summarize(self) -> None:
             """Summarize results and report aggregate AP at the configured detection limit."""
@@ -305,37 +443,15 @@ def _ufcoco_evaluator_type() -> type:
     return _UfcocoCocoEval
 
 
-class _UfcocoMaskTools:
-    """Ufcoco's RLE utilities, accepting the boolean masks TorchMetrics hands over.
-
-    TorchMetrics encodes each stored mask as ``np.asfortranarray(mask)`` of the boolean array it keeps, which faster-
-    coco-eval and hotcoco accept. ufcoco's ``encode`` holds pycocotools' ``uint8`` contract and rejects a boolean
-    array, so it is converted here, one mask at a time; the Fortran-ordered ``uint8`` copy is the array the encoder
-    would have been given by pycocotools' own callers. Every other utility -- ``area``, which TorchMetrics calls to size
-    annotations -- is the module's own, reached through :meth:`__getattr__`.
-    """
-
-    def encode(self, mask: np.ndarray[Any, Any]) -> Any:
-        """Encode one binary mask as RLE, converting a boolean array to ``uint8`` first."""
-        if mask.dtype == np.bool_:
-            mask = np.asfortranarray(mask, dtype=np.uint8)
-        return _ufcoco().mask.encode(mask)
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward every other RLE utility, such as ``area``, to ultrafast-pycocotools' ``mask`` module."""
-        return getattr(_ufcoco().mask, name)
-
-
-_UFCOCO_MASK_TOOLS = _UfcocoMaskTools()
-
-
 class _UfcocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``ultrafast-pycocotools`` instead of ``faster-coco-eval``.
 
     Unlike hotcoco, ufcoco keeps pycocotools' Python-side ``COCO`` object -- ``dataset`` assignment followed by
     ``createIndex()``, annotations read back as the same dictionaries -- so the adapter routes it through the paths it
-    takes for faster-coco-eval; the only adaptations are the two places where ufcoco follows pycocotools more literally
-    than the other backends do, :func:`_ufcoco_evaluator_type` and :class:`_UfcocoMaskTools`.
+    takes for faster-coco-eval, with one exception shared with hotcoco: box-only evaluation loads detections through
+    ``loadRes`` from one array (see ``OnePassCocoMeanAveragePrecision._loads_detections_from_array``) instead of
+    building the prediction dataset. Beyond that, the only adaptation is where ufcoco follows pycocotools more
+    literally than the other backends do, :func:`_ufcoco_evaluator_type`.
     """
 
     def _package(self) -> Any:
@@ -346,11 +462,6 @@ class _UfcocoBackend(_PackageCocoBackend):
     def cocoeval(self) -> object:
         """Return ufcoco's COCO evaluator type, summarizing at the configured detection limit."""
         return _ufcoco_evaluator_type()
-
-    @property
-    def mask_utils(self) -> object:
-        """Return ufcoco's RLE mask utilities, accepting boolean masks."""
-        return _UFCOCO_MASK_TOOLS
 
 
 class _FasterCocoEvalBackend(_RfdetrCocoBackend):
@@ -408,13 +519,198 @@ class _VernierBackend(_RfdetrCocoBackend):
 #: Registry of every COCO evaluation backend the adapter accepts: `TrainConfig.eval_backend` value -> class of the
 #: backend object the metric evaluates with. Adding a backend is one entry here plus its `CocoEvalBackend` member in
 #: `rfdetr.config`; the constructor never branches on the name. `pycocotools` is excluded deliberately: it is an order
-#: of magnitude slower and RF-DETR never installs it. All four ship with `rfdetr[train]`.
+#: of magnitude slower and RF-DETR never installs it. All of them ship with `rfdetr[train]`.
 _BACKENDS: dict[CocoEvalBackend, Callable[[], _RfdetrCocoBackend]] = {
     "faster_coco_eval": _FasterCocoEvalBackend,
     "hotcoco": _HotCocoBackend,
+    "hotcoco_streaming": _HotCocoStreamingBackend,
     "ufcoco": _UfcocoBackend,
     "vernier": _VernierBackend,
 }
+
+
+def _rle_dicts(masks: list[Any]) -> list[dict[str, Any]]:
+    """Return stored per-image ``(size, counts)`` masks as one flat list of COCO RLE dictionaries, in state order.
+
+    Args:
+        masks: Per-image tuples of ``(size, counts)`` pairs, as TorchMetrics stores ``detection_mask`` and
+            ``groundtruth_mask``.
+
+    Returns:
+        One RLE dictionary for each stored mask.
+
+    Examples:
+        >>> _rle_dicts([(((2, 3), b"06"),), ()])
+        [{'size': (2, 3), 'counts': b'06'}]
+    """
+    return [{"size": size, "counts": counts} for image in masks for size, counts in image]
+
+
+#: Mask pixels encoded at once; a mask larger than this is encoded on its own. Each chunk of masks is encoded and copied
+#: to the host before the next starts, so this bounds the encoder's device memory: two bool temporaries of this size
+#: plus about 80 bytes per run. Predicted masks are upsampled from the mask head, so even random logits change on only
+#: about one pixel in nine (about 350 MiB per chunk at 640x480); masks of real objects need about 35 MiB.
+_RLE_CHUNK_PIXELS = 1 << 25
+
+
+def _mask_run_lengths(masks: Tensor) -> tuple[Tensor, Tensor]:
+    """Return the COCO run lengths of every mask in a stack, computed on the stack's device.
+
+    COCO RLE reads a mask column by column and alternates background and foreground runs, starting with background: a
+    mask whose first pixel is foreground starts with a run of length zero, and a mask with no pixels is one empty run.
+
+    Args:
+        masks: ``(K, H, W)`` masks with ``K >= 1``; any non-zero value is foreground.
+
+    Returns:
+        The ``int64`` run lengths of all masks concatenated in mask order, and the number of runs of each mask.
+
+    Examples:
+        >>> masks = torch.tensor([[[0, 1], [0, 1]], [[1, 1], [1, 1]]], dtype=torch.bool)
+        >>> counts, runs = _mask_run_lengths(masks)
+        >>> counts.tolist(), runs.tolist()
+        ([2, 2, 0, 4], [2, 2])
+    """
+    num_masks, height, width = masks.shape
+    pixels = height * width
+    device = masks.device
+    if pixels == 0:
+        empty = torch.zeros(num_masks, dtype=torch.int64, device=device)
+        return empty, empty + 1
+    masks = masks if masks.dtype == torch.bool else masks != 0
+    # COCO RLE reads a mask column by column, so a run starts at every pixel that differs from the one above it or, at
+    # the top of a column, from the bottom of the column before. Pixel -1 counts as background, so a mask whose first
+    # pixel is set starts a run at 0 and its leading background run is empty. The change map keeps the masks' own
+    # row-major layout: a column-major copy of the masks would be a strided copy slower than the whole scan.
+    change = torch.empty((num_masks, height, width), dtype=torch.bool, device=device)
+    torch.ne(masks[:, 1:], masks[:, :-1], out=change[:, 1:])
+    torch.ne(masks[:, 0, 1:], masks[:, -1, :-1], out=change[:, 0, 1:])
+    change[:, 0, 0] = masks[:, 0, 0]
+    found = change.view(-1).nonzero().squeeze(1)
+    # Reorder the run starts from row-major to column-major positions. The starts stay grouped by mask, so `rows` holds.
+    rows = found // pixels
+    base = rows * pixels
+    within = found - base
+    starts = (base + within % width * height + within // width).sort().values - base
+    starts_per_mask = torch.bincount(rows, minlength=num_masks)
+    # The run before each start reaches back to the previous start of the same mask, or to the mask's first pixel.
+    previous = torch.zeros_like(starts)
+    previous[1:] = starts[:-1]
+    first_of_mask = torch.ones_like(rows, dtype=torch.bool)
+    first_of_mask[1:] = rows[1:] != rows[:-1]
+    previous.masked_fill_(first_of_mask, 0)
+    # Index one past each mask's last start, which is that start's index in `starts` shifted by the leading zero.
+    last = torch.cumsum(starts_per_mask, 0)
+    last_start = torch.where(starts_per_mask > 0, torch.cat([starts.new_zeros(1), starts])[last], 0)
+    counts = torch.empty(starts.numel() + num_masks, dtype=torch.int64, device=device)
+    # Mask r's runs follow every earlier mask's: its i-th start (counted over all masks) lands at i + r, and its final
+    # run at last[r] + r.
+    counts[torch.arange(starts.numel(), device=device) + rows] = starts - previous
+    counts[last + torch.arange(num_masks, device=device)] = pixels - last_start
+    return counts, starts_per_mask + 1
+
+
+def _compress_run_lengths(counts: Tensor, runs: Tensor, max_count: int) -> tuple[Tensor, Tensor]:
+    """Write run lengths as COCO compressed RLE strings, as pycocotools' ``rleToString`` does.
+
+    Every count after a mask's third is replaced by its difference from the count two before it. Each value is written
+    least significant 5-bit group first, one character ``48 + group`` per group, with 32 added to every character but
+    the last; the top bit of the last group is the sign.
+
+    Args:
+        counts: Run lengths of every mask concatenated in mask order, as :func:`_mask_run_lengths` returns them.
+        runs: Number of runs of each mask.
+        max_count: An upper bound on every count, such as the masks' pixel count. It sets how many 5-bit groups each
+            value is split into.
+
+    Returns:
+        The ``uint8`` characters of all masks concatenated in mask order, and the index one past each mask's last
+        character.
+
+    Examples:
+        >>> chars, ends = _compress_run_lengths(torch.tensor([2, 2, 0, 4]), torch.tensor([2, 2]), max_count=4)
+        >>> bytes(chars.tolist()), ends.tolist()
+        (b'2204', [2, 4])
+    """
+    device = counts.device
+    total = counts.numel()
+    mask_ends = torch.cumsum(runs, 0)
+    mask_index = torch.repeat_interleave(torch.arange(runs.numel(), device=device), runs, output_size=total)
+    position = torch.arange(total, device=device) - (mask_ends - runs)[mask_index]
+    two_back = torch.zeros_like(counts)
+    two_back[2:] = counts[:-2]
+    value = torch.where(position > 2, counts - two_back, counts)
+    # |value| <= max_count, so this many groups always reach the sign bit.
+    groups = (max_count.bit_length() + 5) // 5
+    chars = torch.empty((total, groups), dtype=torch.uint8, device=device)
+    written = torch.empty((total, groups), dtype=torch.bool, device=device)
+    pending = torch.ones(total, dtype=torch.bool, device=device)
+    for group in range(groups):
+        low = value & 0x1F
+        value = value >> 5
+        # Another group follows unless what is left is the sign extension of this group's top bit.
+        more = torch.where((low & 0x10) != 0, value != -1, value != 0)
+        chars[:, group] = low + 48 + more * 32
+        written[:, group] = pending
+        pending = pending & more
+    return chars[written], torch.cumsum(written.sum(1), 0)[mask_ends - 1]
+
+
+def _encode_masks(masks: Tensor) -> tuple[tuple[tuple[int, int], bytes], ...]:
+    """Run-length encode one image's masks into the ``(size, counts)`` pairs TorchMetrics stores for it.
+
+    TorchMetrics copies each mask to host memory and has the backend's ``mask.encode`` scan it there. This computes the
+    same compressed COCO RLE on CUDA when the masks are there, so only the RLE characters reach the host; masks on any
+    other device are encoded on the CPU. At most ``_RLE_CHUNK_PIXELS`` pixels of masks, or one larger mask, are encoded
+    at once.
+
+    Args:
+        masks: ``(K, H, W)`` masks of one image; any non-zero value is foreground.
+
+    Returns:
+        One ``((H, W), counts)`` pair per mask, ``counts`` being the bytes every supported backend's ``mask.encode``
+        returns for that mask; ``()`` when there are no masks.
+
+    Raises:
+        ValueError: If ``masks`` holds masks but is not three-dimensional.
+
+    Examples:
+        >>> _encode_masks(torch.tensor([[[0, 1], [0, 1]]], dtype=torch.bool))
+        (((2, 2), b'22'),)
+    """
+    if masks.shape[0] == 0:
+        return ()
+    if masks.ndim != 3:
+        raise ValueError(f"masks must have shape (K, H, W), got {tuple(masks.shape)}")
+    masks = masks.detach()
+    if masks.device.type != "cuda":
+        masks = masks.cpu()
+    size = (int(masks.shape[1]), int(masks.shape[2]))
+    pixels = size[0] * size[1]
+    per_chunk = max(1, _RLE_CHUNK_PIXELS // max(pixels, 1))
+    # Completed chunks become host bytes immediately, so device outputs do not accumulate across chunks.
+    encoded: list[tuple[tuple[int, int], bytes]] = []
+    for first in range(0, masks.shape[0], per_chunk):
+        chars, ends = _compress_run_lengths(*_mask_run_lengths(masks[first : first + per_chunk]), max_count=pixels)
+        data = chars.cpu().numpy().tobytes()
+        bounds = [0, *ends.tolist()]
+        encoded.extend((size, data[start:end]) for start, end in zip(bounds, bounds[1:]))
+        # Release this chunk's device outputs before allocating the next chunk's run-length scratch.
+        del chars, ends
+    return tuple(encoded)
+
+
+@dataclasses.dataclass(frozen=True)
+class _PredictionAreaColumns:
+    """Per-IoU-type ``area`` columns of a hotcoco prediction set loaded from the detection array.
+
+    Entry ``i`` of each column belongs to annotation ID ``i + 1``: ``load_res`` numbers array rows from 1 in order.
+
+    Attributes:
+        by_iou_type: One float64 area column for each evaluated IoU type, keyed by that type.
+    """
+
+    by_iou_type: dict[str, np.ndarray[Any, Any]]
 
 
 class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
@@ -435,8 +731,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         extended_summary: Must remain ``False`` so large evaluator arrays do not escape computation.
         average: Must remain ``"macro"`` because RF-DETR logs class-level metrics.
         backend: COCO evaluation backend. ``"vernier"`` is the default; ``"faster_coco_eval"`` selects the previous
-            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"hotcoco"`` selects hotcoco. All four ship
-            with ``rfdetr[train]`` and return identical metrics.
+            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"hotcoco"`` selects hotcoco.
+            ``"hotcoco_streaming"`` is hotcoco with matching done batch by batch in :meth:`update`. All of them
+            ship with ``rfdetr[train]`` and return identical metrics.
+        num_classes: The model's class count; predicted and target labels lie in ``[0, num_classes]``. Only
+            ``"hotcoco_streaming"`` reads it, because ``StreamingEval`` needs every category before the first
+            batch. ``None`` makes that backend evaluate in one batch at epoch end. Its epoch-end accumulate and
+            summarize therefore scale with this declared count, not with the classes a run actually observes.
         kwargs: TorchMetrics configuration. ``sync_on_compute`` defaults to and must remain ``False`` because the
             callback invokes :meth:`merge_distributed_state` explicitly at rank-symmetric sites.
 
@@ -456,6 +757,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         extended_summary: bool = False,
         average: Literal["macro", "micro"] = "macro",
         backend: CocoEvalBackend = "hotcoco",
+        num_classes: int | None = None,
         **kwargs: Any,
     ) -> None:
         if extended_summary:
@@ -489,6 +791,18 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         if self._coco_backend.requires_bbox and "bbox" not in self.iou_type:
             raise ValueError(f"backend={backend!r} requires 'bbox' among the IoU types; it needs a box per annotation")
         self._validate_private_contract()
+        # `StreamingEval` takes every category at construction, so the model's whole label range is declared up
+        # front: `[0, num_classes]`, background included. Categories nothing ever hits stay at -1 and drop out of
+        # every mean, exactly as the batch path's observed-class `catIds` would leave them.
+        self._stream_categories: list[dict[str, Any]] | None = None
+        if self._coco_backend.streams:
+            if num_classes is None:
+                _warn_streaming_fallback("the model's num_classes is unknown")
+            else:
+                self._stream_categories = [{"id": index, "name": str(index)} for index in range(num_classes + 1)]
+        self._streams: dict[str, Any] | None = None
+        self._streamed_images = 0
+        self._stream_stopped = False
 
     @property
     def has_updates(self) -> bool:
@@ -501,21 +815,243 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         return True
 
     def update(self, preds: list[dict[str, Tensor]], target: list[dict[str, Tensor]]) -> None:
-        """Validate inputs and store detached CPU copies of fields consumed by TorchMetrics.
+        """Validate inputs and store the fields TorchMetrics consumes, as CPU state.
+
+        This mirrors TorchMetrics' own ``update`` with two differences. Every stored tensor is a detached CPU copy, and
+        :func:`_encode_masks` run-length encodes the masks, on CUDA when they are there, where TorchMetrics copies each
+        mask to host memory and encodes it pixel by pixel. The stored mask bytes are the same.
 
         Args:
             preds: Per-image predictions in TorchMetrics detection format.
             target: Per-image ground-truth annotations in TorchMetrics detection format.
         """
-        cpu_preds = [
-            {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
-            for item in preds
-        ]
-        cpu_target = [
-            {name: value.detach().cpu() for name, value in item.items() if name in _METRIC_INPUT_FIELDS}
-            for item in target
-        ]
-        super().update(cpu_preds, cpu_target)
+        _input_validator(preds, target, iou_type=self.iou_type)
+        for item in preds:
+            boxes, masks = self._stored_geometry(item, warn=self.warn_on_many_detections)
+            if boxes is not None:
+                self.detection_box.append(boxes)
+            if masks is not None:
+                # TorchMetrics annotates its mask states as tensors but stores these tuples, and ignores the same error.
+                self.detection_mask.append(masks)  # type: ignore[arg-type]
+            self.detection_labels.append(item["labels"].detach().cpu())
+            self.detection_scores.append(item["scores"].detach().cpu())
+        for item in target:
+            boxes, masks = self._stored_geometry(item)
+            if boxes is not None:
+                self.groundtruth_box.append(boxes)
+            if masks is not None:
+                self.groundtruth_mask.append(masks)  # type: ignore[arg-type]
+            labels = item["labels"].detach().cpu()
+            self.groundtruth_labels.append(labels)
+            self.groundtruth_crowds.append(
+                item["iscrowd"].detach().cpu() if "iscrowd" in item else torch.zeros_like(labels)
+            )
+            self.groundtruth_area.append(item["area"].detach().cpu() if "area" in item else torch.zeros_like(labels))
+        if self._stream_categories is not None and not self._stream_stopped and target:
+            self._stream_batch(len(target))
+
+    def _stored_geometry(
+        self, item: dict[str, Tensor], warn: bool = False
+    ) -> tuple[Tensor | None, tuple[tuple[tuple[int, int], bytes], ...] | None]:
+        """Return one image's boxes and masks as TorchMetrics stores them, with the masks encoded where they are.
+
+        Args:
+            item: One image's predictions or ground truth.
+            warn: Whether to warn, as TorchMetrics does, when the image has more detections than the largest
+                maximum-detection threshold.
+
+        Returns:
+            The CPU ``xywh`` boxes when ``bbox`` is evaluated and the ``(size, counts)`` masks when ``segm`` is; each is
+            ``None`` otherwise.
+        """
+        boxes: Tensor | None = None
+        masks: tuple[tuple[tuple[int, int], bytes], ...] | None = None
+        if "bbox" in self.iou_type:
+            boxes = _fix_empty_tensors(item["boxes"].detach().cpu())
+            if boxes.numel() > 0:
+                boxes = box_convert(boxes, in_fmt=self.box_format, out_fmt="xywh")
+        if "segm" in self.iou_type:
+            masks = _encode_masks(item["masks"])
+        limit = self.max_detection_thresholds[-1]
+        if warn and any(value is not None and len(value) > limit for value in (boxes, masks)):
+            _warning_on_too_many_detections(limit)
+        return boxes, masks
+
+    def reset(self) -> None:
+        """Reset the stored state and start a fresh stream for the next epoch."""
+        super().reset()
+        self._streams = None
+        self._streamed_images = 0
+        self._stream_stopped = False
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the picklable state, without the open streaming evaluators.
+
+        Returns:
+            The metric state. A stream in progress is dropped, and the copy's ``compute()`` then evaluates the stored
+            state in one batch; every image streamed so far is still in that state. The state carries a marker so
+            :meth:`__setstate__` logs the fallback on the copy, the object that takes it -- this object keeps its
+            stream.
+        """
+        state = super().__getstate__()
+        if state.get("_streams") is not None:
+            # TODO(hotcoco): keep the stream instead. hotcoco 1.2 pickles `StreamingEval` (proposal 2 landed), and a
+            # copy that keeps streaming reports the same metrics; the drop stays only while the documented
+            # copy-falls-back contract and its tests are unchanged.
+            state["_streams"] = None
+            state["_stream_stopped"] = True
+            state[_STREAM_DROPPED_ON_COPY] = True
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a pickled or copied metric, logging when its open stream was dropped on the way.
+
+        Args:
+            state: The state :meth:`__getstate__` returned.
+        """
+        stream_dropped = state.pop(_STREAM_DROPPED_ON_COPY, False)
+        super().__setstate__(state)
+        if stream_dropped:
+            _warn_streaming_fallback("the metric was copied or unpickled mid-epoch, which drops its open stream")
+
+    def _stop_streaming(self, reason: str) -> None:
+        """Abandon this epoch's stream; ``compute()`` then evaluates the stored state in one batch.
+
+        Args:
+            reason: Why streaming does not apply, logged once per process.
+        """
+        _warn_streaming_fallback(reason)
+        self._streams = None
+        self._stream_stopped = True
+
+    def _stream_batch(self, num_images: int) -> None:
+        """Match the batch just stored by :meth:`update` on each IoU type's ``StreamingEval``.
+
+        Args:
+            num_images: How many images the batch added to the end of the stored state.
+        """
+        if is_dist_avail_and_initialized() and get_world_size() > 1:
+            # TODO(hotcoco): stream under DDP once `StreamingEval` can merge state across processes (rfdetr hotcoco
+            # proposal 3). Each rank sees only its shard, and the merged state exists only after
+            # `merge_distributed_state()` at epoch end.
+            self._stop_streaming("StreamingEval cannot merge state across distributed ranks")
+            return
+        categories = cast(list[dict[str, Any]], self._stream_categories)
+        # Restate the batch path's dtype check for both streamed sides. hotcoco 1.2.1 rejects only a fractional id, so
+        # a whole-valued float detection label would reach `compute()` as an `IndexError` or pass silently, and an
+        # out-of-range float ground-truth label would fall back to batch evaluation instead of raising. The start
+        # index keeps a reported sample number global, as on the batch path.
+        first_image = len(self.groundtruth_labels) - num_images
+        self._validate_detection_labels(self.detection_labels[-num_images:], start=first_image)
+        self._validate_detection_labels(self.groundtruth_labels[-num_images:], start=first_image)
+        labels = torch.cat([*self.detection_labels[-num_images:], *self.groundtruth_labels[-num_images:]])
+        if labels.numel() and (int(labels.min()) < 0 or int(labels.max()) >= len(categories)):
+            # hotcoco rejects an undeclared category with `KeyError`, but a negative id in the detection array
+            # with `ValueError`. One range check ahead of `update()` keeps both ends of the label range on the same
+            # fallback without catching a genuine input error. A NaN score is not caught here: `load_res()` raises
+            # `RuntimeError` for it.
+            self._stop_streaming(f"a label falls outside the declared categories [0, {len(categories) - 1}]")
+            return
+        if self._streams is None:
+            # TorchMetrics declares the attribute as its own `CocoBackend`; the registry only builds RF-DETR ones.
+            backend = cast(_RfdetrCocoBackend, self._coco_backend)
+            self._streams = {
+                iou_type: backend.open_stream(
+                    categories,
+                    iou_type,
+                    iou_thresholds=self.iou_thresholds,
+                    rec_thresholds=self.rec_thresholds,
+                    max_detection_thresholds=self.max_detection_thresholds,
+                )
+                for iou_type in self.iou_type
+            }
+        images, ground_truth, detections = self._stream_records(num_images)
+        # Not wrapped in `_quiet_evaluation()`: `update()` prints and warns nothing, and swapping the process-wide
+        # stdout on every validation step would swallow whatever a progress bar wrote meanwhile.
+        for iou_type, stream in self._streams.items():
+            stream.update(images, ground_truth, detections[iou_type])
+        self._streamed_images += num_images
+
+    def _stream_records(self, num_images: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+        """Return the last ``num_images`` stored images as ``StreamingEval.update`` inputs.
+
+        TorchMetrics' ``_get_coco_format`` builds the ground truth, so its ``area`` follows the same rule as the
+        batch path. Image ids continue from earlier batches, matching the state-order ids the batch path assigns.
+
+        Args:
+            num_images: How many images at the end of the stored state to convert.
+
+        Returns:
+            The image records, the ground-truth annotations, and the detections for each IoU type.
+        """
+        offset = self._streamed_images
+        target = self._coco_backend._get_coco_format(
+            labels=self.groundtruth_labels[-num_images:],
+            boxes=self.groundtruth_box[-num_images:] if self.groundtruth_box else None,
+            masks=self.groundtruth_mask[-num_images:] if self.groundtruth_mask else None,
+            crowds=self.groundtruth_crowds[-num_images:],
+            area=self.groundtruth_area[-num_images:],
+            iou_type=self.iou_type,
+            all_labels=[],
+            average=self.average,
+        )
+        for image in target["images"]:
+            image["id"] += offset
+        for annotation in target["annotations"]:
+            annotation["image_id"] += offset
+        return target["images"], target["annotations"], self._stream_detections(num_images, offset)
+
+    def _stream_detections(self, num_images: int, offset: int) -> dict[str, Any]:
+        """Return the last ``num_images`` stored images' detections as raw results, one list per IoU type.
+
+        Built from the stored state directly rather than through ``_get_coco_format``, which converts each
+        detection's score separately and dominated streaming's cost. ``StreamingEval`` derives each detection's area
+        from the geometry it is given, so each IoU type gets the form that yields the area the batch path switches
+        to:
+
+        - ``bbox``: the ``(N, 7)`` array ``[image_id, x, y, width, height, score, category_id]`` that
+          ``StreamingEval.update`` takes since hotcoco 1.2, one row per detection, box area, no Python dict per
+          detection. Boxes are already COCO ``xywh``, as TorchMetrics stores them.
+        - ``segm``: one dict per detection carrying only its ``segmentation``, so its area is the mask's. The array
+          with ``segmentation=`` would give every row its box area, moving masks between the area buckets.
+
+        Within an image, detections keep state order, the tie order the batch path ranks equal scores in.
+
+        Args:
+            num_images: How many images at the end of the stored state to convert.
+            offset: The id of the first of those images.
+
+        Returns:
+            Detections in the shape ``load_res`` accepts, keyed by IoU type.
+
+        Raises:
+            ValueError: If an image's scores are not a one-dimensional floating-point tensor.
+        """
+        scores = self.detection_scores[-num_images:]
+        self._validate_detection_scores(scores)
+        labels = self.detection_labels[-num_images:]
+        detections: dict[str, Any] = {}
+        if "bbox" in self.iou_type:
+            # `_fix_empty_tensors` stores an image without boxes as `(1, 0)`; reshaping restores `(0, 4)`.
+            boxes = [image.reshape(-1, 4) for image in self.detection_box[-num_images:]]
+            image_ids = torch.repeat_interleave(
+                torch.arange(offset, offset + num_images), torch.tensor([len(image) for image in boxes])
+            )
+            columns = (image_ids, torch.cat(boxes), torch.cat(scores), torch.cat(labels))
+            detections["bbox"] = torch.column_stack([column.double() for column in columns]).numpy()
+        if "segm" in self.iou_type:
+            masks = self.detection_mask[-num_images:]
+            detections["segm"] = [
+                {
+                    "image_id": offset + index,
+                    "category_id": label,
+                    "segmentation": {"size": size, "counts": counts},
+                    "score": score,
+                }
+                for index, (image_labels, image_scores) in enumerate(zip(labels, scores))
+                for label, score, (size, counts) in zip(image_labels.tolist(), image_scores.tolist(), masks[index])
+            ]
+        return detections
 
     def merge_distributed_state(self) -> None:
         """Merge all TorchMetrics list states across ranks using a fixed collective order.
@@ -547,6 +1083,18 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         logger.debug("Computing one-pass COCO metrics for %d classes and IoU types %s.", len(classes), self.iou_type)
         if isinstance(self._coco_backend, _VernierBackend):
             return {**self._vernier_results(classes), "classes": torch.tensor(classes, dtype=torch.int32)}
+        # A stream is used only if it saw every stored image: one opened after a mid-epoch unpickle, or one the
+        # state outgrew in `merge_distributed_state()`, falls through to the batch path with the full state. So does
+        # a state with no detection or no ground truth at all: the batch path owns the `-1` sentinels for an empty
+        # side, and TorchMetrics drops every prediction image of a segm state without masks, which a stream would
+        # still finalize against its ground truth. Evaluating an empty side in one batch costs next to nothing.
+        if (
+            self._streams is not None
+            and self._streamed_images == len(self.groundtruth_labels)
+            and any(labels.numel() for labels in self.detection_labels)
+            and any(labels.numel() for labels in self.groundtruth_labels)
+        ):
+            return {**self._streaming_results(classes), "classes": torch.tensor(classes, dtype=torch.int32)}
         coco_preds, coco_target, prediction_dataset = self._coco_datasets(classes)
 
         result: dict[str, Tensor] = {}
@@ -588,6 +1136,44 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             result.update(self._reduce_per_class(getattr(coco_eval, "eval", None), prefix, classes))
 
         result["classes"] = torch.tensor(classes, dtype=torch.int32)
+        return result
+
+    def _streaming_results(self, classes: list[int]) -> dict[str, Tensor]:
+        """Finalize each IoU type's ``StreamingEval`` and reduce it, keyed for TorchMetrics.
+
+        ``finalize()`` consumes the evaluators, so the stream is closed until :meth:`reset`; a repeated
+        ``compute()`` before then takes the batch path over the same stored state.
+
+        Args:
+            classes: Sorted class IDs observed in predictions or targets.
+
+        Returns:
+            TorchMetrics-compatible aggregate metrics and per-class AP/AR vectors, without ``classes``.
+        """
+        streams = cast(dict[str, Any], self._streams)
+        self._streams = None
+        self._stream_stopped = True
+        result: dict[str, Tensor] = {}
+        for iou_type, stream in streams.items():
+            prefix = "" if len(self.iou_type) == 1 else f"{iou_type}_"
+            coco_eval = stream.finalize()
+            with self._quiet_evaluation():
+                coco_eval.accumulate()
+                coco_eval.summarize()
+            result.update(
+                self._coco_backend._coco_stats_to_tensor_dict(
+                    coco_eval.stats, prefix=prefix, max_detection_thresholds=self.max_detection_thresholds
+                )
+            )
+            evaluation = getattr(coco_eval, "eval", None)
+            if self.class_metrics and isinstance(evaluation, dict) and {"precision", "recall"} <= evaluation.keys():
+                # The category axis spans every declared category, whose index is its id; keep the observed ones,
+                # the axis the batch path's `catIds` produces.
+                evaluation = {
+                    "precision": np.asarray(evaluation["precision"])[:, :, classes],
+                    "recall": np.asarray(evaluation["recall"])[:, classes],
+                }
+            result.update(self._reduce_per_class(evaluation, prefix, classes))
         return result
 
     def _vernier_results(self, classes: list[int]) -> dict[str, Tensor]:
@@ -692,7 +1278,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             ]
         return detection_columns, target_columns
 
-    def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any, dict[str, Any] | None]:
+    def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any, dict[str, Any] | _PredictionAreaColumns | None]:
         """Return the COCO prediction and target datasets, hoisting prediction scores out of the annotation loop.
 
         TorchMetrics' ``_get_coco_format`` hoists boxes and labels to Python lists once per image but reads scores
@@ -712,15 +1298,16 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         Returns:
             The prediction and target datasets in the order ``_get_coco_datasets`` returns them, followed by the
-            COCO-format dictionary the prediction dataset was built from, or ``None`` when it was loaded from a
-            detection array instead. That dictionary is returned rather than read back from the dataset because
-            hotcoco's ``dataset`` getter is a copy, so the ``area_bbox``/``area_segm`` switch a multi-IoU-type
-            evaluation performs would be discarded (hotcoco 0.5 also dropped those non-COCO keys outright; 1.0.0
-            preserves them, but a copy is still a copy); ``None`` is safe because the array path is taken only for
-            single-IoU-type evaluation, where no area switching happens.
+            source of the per-IoU-type prediction areas a multi-IoU-type evaluation switches between: the
+            COCO-format dictionary the prediction dataset was built from (its ``area_bbox``/``area_segm`` values;
+            reading them back from hotcoco's ``dataset`` getter would copy the whole prediction set), or
+            :class:`_PredictionAreaColumns` when hotcoco loaded a multi-IoU-type set from the detection array.
+            ``None`` when the predictions were loaded from the array for a single IoU type, where no area switching
+            happens.
 
         Raises:
-            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors, or, on the
+                detection-array path, if a non-empty image's detection labels are not an integer tensor.
             RuntimeError: If upstream stops emitting one annotation for each stored detection score.
         """
         backend = self._coco_backend
@@ -747,6 +1334,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             )
             return coco_preds, coco_target, cast(dict[str, Any], coco_preds.dataset)
 
+        # Built before the target: a float detection label is also a category ID there, which hotcoco's `COCO`
+        # constructor rejects with a `TypeError` before the array's own label check would have run.
+        detections = self._detection_results_array() if self._loads_detections_from_array(detection_boxes) else None
+        if detections is not None and isinstance(backend, _HotCocoBackend):
+            return self._hotcoco_datasets_from_arrays(detections, classes)
         # `_get_coco_datasets` passes this same list of Python ints (helpers.py:216) even though the parameter is
         # annotated `list[Tensor]`; the values only ever become COCO category IDs.
         all_labels = cast(list[Tensor], classes)
@@ -761,8 +1353,12 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             average=self.average,
         )
         coco_target = self._build_coco(target_dataset)
-        if self._loads_detections_from_array(detection_boxes):
-            return coco_target.loadRes(self._detection_results_array()), coco_target, None
+        if detections is not None:
+            # ufcoco's `loadRes` prints pycocotools' progress lines; hotcoco's is silent, so the redirect is harmless
+            # there.
+            with contextlib.redirect_stdout(io.StringIO()):
+                coco_preds = coco_target.loadRes(detections)
+            return coco_preds, coco_target, None
 
         prediction_dataset = backend._get_coco_format(
             labels=self.detection_labels,
@@ -774,22 +1370,110 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             average=self.average,
         )
         if detection_boxes is not None:
-            self._assign_detection_scores(prediction_dataset["annotations"])
-        # A multi-IoU-type evaluation on hotcoco rebuilds the prediction dataset for its first IoU type before
-        # reading it, so building one here too would index the whole prediction set an extra time per epoch and
-        # throw it away. `compute()` only touches the returned object after that rebuild.
-        rebuilt_per_iou_type = len(self.iou_type) > 1 and isinstance(backend, _HotCocoBackend)
-        coco_preds = None if rebuilt_per_iou_type else self._build_coco(prediction_dataset)
-        return coco_preds, coco_target, prediction_dataset
+            self._assign_detection_scores(prediction_dataset["annotations"], self.detection_scores)
+        return self._build_coco(prediction_dataset), coco_target, prediction_dataset
+
+    def _hotcoco_datasets_from_arrays(
+        self, detections: np.ndarray[Any, Any], classes: list[int]
+    ) -> tuple[Any, Any, _PredictionAreaColumns | None]:
+        """Return hotcoco's prediction and target datasets built from the stored columns, with no dict per annotation.
+
+        The target comes from ``COCO.from_arrays`` (see :meth:`_hotcoco_target_from_arrays`) and the predictions from
+        ``load_res`` over the detection array, with the stored masks handed over as ``segmentation=`` when ``segm``
+        is evaluated. ``load_res`` keeps each row's box rather than deriving one from its mask and numbers the rows
+        ``1..N`` in order, as pycocotools does; it sets every prediction ``area`` to the box area, which a
+        multi-IoU-type evaluation then switches per IoU type through :meth:`_prediction_dataset_for_iou_type`.
+
+        Args:
+            detections: The detection array from :meth:`_detection_results_array`.
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            The prediction dataset, the target dataset, and, for a multi-IoU-type evaluation, the per-IoU-type
+            prediction areas; ``None`` for a single IoU type, which keeps the box area ``load_res`` set.
+
+        Raises:
+            ValueError: If a non-empty image's target labels are a floating-point or complex tensor.
+        """
+        coco_target = self._hotcoco_target_from_arrays(classes)
+        detection_rles = _rle_dicts(self.detection_mask) if "segm" in self.iou_type else None
+        coco_preds = coco_target.load_res(detections, segmentation=detection_rles)
+        if len(self.iou_type) == 1:
+            return coco_preds, coco_target, None
+        # The box area is the product of the array's width and height columns, the same float64 product
+        # TorchMetrics' `area_bbox` computes from the converted Python floats.
+        area_columns = {"bbox": detections[:, 3] * detections[:, 4], "segm": self._mask_areas(detection_rles or [])}
+        return coco_preds, coco_target, _PredictionAreaColumns(area_columns)
+
+    def _hotcoco_target_from_arrays(self, classes: list[int]) -> Any:
+        """Return the hotcoco ground-truth dataset built from the stored target columns by ``COCO.from_arrays``.
+
+        Reproduces what TorchMetrics' ``_get_coco_format`` writes for each target annotation
+        (``helpers.py:504-571``): annotation IDs ``1..N`` in state order (``from_arrays``' default), the stored
+        ``iscrowd``, and the stored ``area`` where it is positive, otherwise the mask area when ``segm`` is evaluated
+        and the box area when not. Target areas are never switched per IoU type, so a box evaluation that runs
+        beside ``segm`` also reads the mask-area fallback, as upstream's does. Each image takes its height and width
+        from its first mask when ``segm`` is evaluated, and every stored image is listed: with boxes present,
+        upstream drops none.
+
+        Args:
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            The indexed hotcoco target dataset.
+
+        Raises:
+            ValueError: If a non-empty image's target labels are a floating-point or complex tensor, which upstream
+                rejects per annotation and ``from_arrays`` would reject with a ``TypeError``.
+        """
+        self._validate_detection_labels(self.groundtruth_labels)
+        boxes = torch.cat([image.reshape(-1, 4) for image in self.groundtruth_box]).double().numpy()
+        rles = _rle_dicts(self.groundtruth_mask) if "segm" in self.iou_type else None
+        fallback_area = self._mask_areas(rles) if rles is not None else boxes[:, 2] * boxes[:, 3]
+        stored_area = torch.cat(self.groundtruth_area).double().numpy()
+        images: list[dict[str, Any]] = [{"id": image_id} for image_id in range(len(self.groundtruth_labels))]
+        if rles is not None:
+            for image, masks in zip(images, self.groundtruth_mask):
+                if len(masks) > 0:
+                    image["height"], image["width"] = masks[0][0]
+        annotations_per_image = torch.tensor([len(labels) for labels in self.groundtruth_labels])
+        coco_type = cast(Any, self._coco_backend.coco)
+        return coco_type.from_arrays(
+            images,
+            [{"id": class_id, "name": str(class_id)} for class_id in classes],
+            torch.repeat_interleave(torch.arange(len(images)), annotations_per_image).numpy(),
+            # Validated above, so only an empty floating-point tensor can have promoted the concatenation.
+            torch.cat(self.groundtruth_labels).to(torch.int64).numpy(),
+            boxes,
+            area=np.where(stored_area > 0, stored_area, fallback_area),
+            iscrowd=torch.cat(self.groundtruth_crowds).to(torch.int64).numpy(),
+            segmentation=rles,
+        )
+
+    def _mask_areas(self, rles: list[dict[str, Any]]) -> np.ndarray[Any, Any]:
+        """Return the pixel area of each RLE mask as float64, through the backend's own mask utilities.
+
+        Args:
+            rles: COCO RLE dictionaries.
+
+        Returns:
+            One area for each mask, in order.
+        """
+        mask_utils = cast(Any, self._coco_backend.mask_utils)
+        return np.asarray(mask_utils.area(rles), dtype=np.float64) if rles else np.zeros(0)
 
     def _loads_detections_from_array(self, detection_boxes: list[Tensor] | None) -> bool:
         """Return whether predictions can be loaded from a detection array instead of built as annotation dicts.
 
         Building the prediction dataset is the dominant cost of ``compute()`` once the evaluator is fast: at COCO
         validation scale TorchMetrics materializes one Python dict per detection, over a million of them, which
-        takes longer than hotcoco needs to evaluate them. ``loadRes`` accepts the same detections as one array and
-        parses it in Rust. faster-coco-eval is excluded because its own ``loadRes`` is slower than the dict path it
-        would replace, and mask evaluation is excluded because an array carries no segmentation.
+        takes longer than hotcoco or ufcoco needs to evaluate them. ``loadRes`` accepts the same detections as one
+        array and parses it in Rust. hotcoco takes every IoU type this way, with masks handed over beside the array
+        (``load_res(array, segmentation=...)``); a mask-only state has no boxes to fill the array and keeps the dict
+        path. ufcoco keeps the array rows in columns through evaluation even under the adapter's ``COCOeval``
+        subclass from ultrafast-pycocotools 0.1.13, the floor ``rfdetr[train]`` pins, but its ``loadRes`` takes no
+        masks, so it is box-only. faster-coco-eval is excluded because its own ``loadRes`` is slower than the dict
+        path it would replace.
 
         Args:
             detection_boxes: Stored detection boxes, or ``None`` when the state holds none.
@@ -797,11 +1481,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         Returns:
             Whether the detection-array path applies.
         """
-        return (
-            isinstance(self._coco_backend, _HotCocoBackend)
-            and detection_boxes is not None
-            and tuple(self.iou_type) == ("bbox",)
-        )
+        if detection_boxes is None:
+            return False
+        if isinstance(self._coco_backend, _HotCocoBackend):
+            return True
+        return isinstance(self._coco_backend, _UfcocoBackend) and tuple(self.iou_type) == ("bbox",)
 
     def _detection_results_array(self) -> np.ndarray[Any, Any]:
         """Return stored detections as the array COCO's ``loadRes`` accepts, which is also vernier's ``(N, 7)``.
@@ -818,9 +1502,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             One row for each stored detection.
 
         Raises:
-            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors, or if a non-empty
+                image's detection labels are not an integer tensor.
         """
-        self._validate_detection_scores()
+        self._validate_detection_scores(self.detection_scores)
+        self._validate_detection_labels(self.detection_labels)
         # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
         # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
         # another image, and whose `len()` would otherwise miscount that image as holding one detection instead
@@ -838,17 +1524,21 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         )
         return torch.cat(columns, dim=1).numpy()
 
-    def _validate_detection_scores(self) -> None:
+    @staticmethod
+    def _validate_detection_scores(scores: list[Tensor]) -> None:
         """Restate the per-annotation score checks TorchMetrics performs during conversion.
 
         Upstream validates that scores are a tensor but not that each is a one-dimensional floating-point one; that
-        check only happens while converting one annotation at a time. Both of RF-DETR's paths convert whole images
-        or the whole state at once, so the check has to be made here instead.
+        check only happens while converting one annotation at a time. RF-DETR's paths convert whole images, a
+        streamed batch, or the whole state at once, so the check has to be made here instead.
+
+        Args:
+            scores: Per-image detection scores, as stored in ``detection_scores``.
 
         Raises:
             ValueError: If an image's scores are not a one-dimensional floating-point tensor.
         """
-        for image_id, image_scores in enumerate(self.detection_scores):
+        for image_id, image_scores in enumerate(scores):
             if image_scores.ndim != 1:
                 raise ValueError(
                     f"Invalid input score of sample {image_id} "
@@ -857,6 +1547,31 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             if not torch.is_floating_point(image_scores):
                 raise ValueError(
                     f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
+                )
+
+    @staticmethod
+    def _validate_detection_labels(labels: list[Tensor], start: int = 0) -> None:
+        """Restate TorchMetrics' per-annotation label check for the array paths, batch and streamed alike.
+
+        Upstream rejects any detection or target label that is not a Python ``int`` once converted, one annotation
+        at a time -- a whole-valued ``3.0`` included. The array paths never make that conversion: the detection
+        array's category column is float64 whatever the stored dtype was, and hotcoco's ``from_arrays`` rejects a
+        float category column with a ``TypeError``, so the check is restated here on the stored tensor's dtype, which
+        every element shares. Integer and boolean tensors pass, as their elements do upstream; an empty tensor
+        passes whatever its dtype, because upstream has no element to check.
+
+        Args:
+            labels: Per-image labels, as stored in ``detection_labels`` or ``groundtruth_labels``.
+            start: Index of the first image of ``labels`` within the stored state, so a streamed batch reports the same
+                sample number as the batch path.
+
+        Raises:
+            ValueError: If a non-empty image's labels are a floating-point or complex tensor.
+        """
+        for image_id, image_labels in enumerate(labels, start=start):
+            if image_labels.numel() > 0 and (torch.is_floating_point(image_labels) or torch.is_complex(image_labels)):
+                raise ValueError(
+                    f"Invalid input class of sample {image_id} (expected integer labels, got {image_labels.dtype})"
                 )
 
     def _build_coco(self, dataset: dict[str, Any]) -> Any:
@@ -879,39 +1594,51 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         return coco_factory(dataset)
 
     def _prediction_dataset_for_iou_type(
-        self, coco_preds: Any, prediction_dataset: dict[str, Any] | None, iou_type: str
+        self, coco_preds: Any, prediction_dataset: dict[str, Any] | _PredictionAreaColumns | None, iou_type: str
     ) -> Any:
         """Point prediction annotation areas at one IoU type of a multi-type evaluation.
 
         Args:
             coco_preds: The prediction COCO dataset built by :meth:`_coco_datasets`.
-            prediction_dataset: The COCO-format dictionary ``coco_preds`` was built from. Never ``None`` here: the
-                array path that returns ``None`` is restricted to single-IoU-type evaluation, which never reaches
-                this method.
+            prediction_dataset: What :meth:`_coco_datasets` returned beside ``coco_preds``: the COCO-format
+                dictionary it was built from, or the per-IoU-type area columns of a hotcoco set loaded from the
+                detection array. Never ``None`` here: ``None`` comes only from a single-IoU-type array load, which
+                never reaches this method.
             iou_type: The IoU type whose per-annotation area should become the active ``area``.
 
         Returns:
             The prediction dataset to evaluate for this IoU type.
 
         Raises:
-            RuntimeError: If a multi-IoU-type evaluation reached the array-built prediction dataset.
+            RuntimeError: If a multi-IoU-type evaluation reached a prediction dataset loaded from the detection array
+                with no area columns, which only the box-only ufcoco path builds.
         """
+        if isinstance(prediction_dataset, _PredictionAreaColumns):
+            areas = prediction_dataset.by_iou_type[iou_type]
+            # Its evaluator keeps the annotations it was built with, so this must run before `compute()` constructs
+            # the evaluator for this IoU type.
+            coco_preds.update_anns(ids=np.arange(1, areas.size + 1), area=areas)
+            return coco_preds
         if prediction_dataset is None:
             raise RuntimeError(
                 "OnePassCocoMeanAveragePrecision cannot switch annotation areas on an array-built prediction "
-                "dataset; the detection-array path must stay restricted to single-IoU-type evaluation."
+                "dataset without area columns; only hotcoco loads multi-IoU-type predictions from an array."
             )
-        for annotation in prediction_dataset["annotations"]:
-            annotation["area"] = annotation[f"area_{iou_type}"]
-        if not isinstance(self._coco_backend, _HotCocoBackend):
-            # faster-coco-eval indexes the assigned dictionary itself, so the areas just written are already live.
+        annotations = prediction_dataset["annotations"]
+        if isinstance(self._coco_backend, _HotCocoBackend):
+            # hotcoco copies the dictionary into its own index at construction, so writing `area` into it would be
+            # invisible there; the column form of `update_anns` edits that index in place, with no dict per
+            # annotation. Its evaluator keeps the annotations it was built with, so this must run before `compute()`
+            # constructs the evaluator for this IoU type.
+            coco_preds.update_anns(
+                ids=[annotation["id"] for annotation in annotations],
+                area=[annotation[f"area_{iou_type}"] for annotation in annotations],
+            )
             return coco_preds
-        # hotcoco copies the dictionary into its own index at construction, so the areas just written are invisible
-        # to the existing dataset and the evaluator has to be handed a rebuilt one.
-        # TODO: drop the rebuild once hotcoco offers a supported way to edit an annotation field in place -- an
-        # explicit mutator, or a live `dataset` view. 1.0.0 preserves custom keys across the round-trip but
-        # still hands back a copy. The area-bucket regression test is what would prove the rebuild safe to drop.
-        return self._build_coco(prediction_dataset)
+        # faster-coco-eval indexes the assigned dictionary itself, so the areas written here are live there at once.
+        for annotation in annotations:
+            annotation["area"] = annotation[f"area_{iou_type}"]
+        return coco_preds
 
     def _quiet_evaluation(self) -> contextlib.AbstractContextManager[Any]:
         """Return the standard-output suppression the active backend needs while evaluating.
@@ -923,19 +1650,20 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             return _silenced_backend_diagnostics()
         return contextlib.redirect_stdout(io.StringIO())
 
-    def _assign_detection_scores(self, annotations: list[dict[str, Any]]) -> None:
+    def _assign_detection_scores(self, annotations: list[dict[str, Any]], scores: list[Tensor]) -> None:
         """Attach stored detection scores to prediction annotations, converting one image of scores at a time.
 
         Args:
             annotations: Prediction annotations built by TorchMetrics with ``scores=None``, in state order.
+            scores: The per-image detection scores those annotations were built from.
 
         Raises:
             ValueError: If an image's scores are not one-dimensional floating-point tensors, which upstream rejects
                 per annotation.
             RuntimeError: If the annotation count no longer matches the stored score count.
         """
-        self._validate_detection_scores()
-        flat_scores = [score for image_scores in self.detection_scores for score in image_scores.cpu().tolist()]
+        self._validate_detection_scores(scores)
+        flat_scores = [score for image_scores in scores for score in image_scores.cpu().tolist()]
         if len(flat_scores) != len(annotations):
             # TorchMetrics validates one score for each prediction box and label at update time
             # (`_input_validator`, helpers.py:95-102), so a mismatch here means its annotation loop changed shape.

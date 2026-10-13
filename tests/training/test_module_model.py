@@ -31,10 +31,15 @@ from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.box_ops import pairwise_box_l1_cost
+from rfdetr.utilities.imports import _IS_PYTORCH_OPTIMIZER_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
 
 from .helpers import _fake_postprocess as _helpers_fake_postprocess
 from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+
+pytorch_optimizer_only = pytest.mark.skipif(
+    not _IS_PYTORCH_OPTIMIZER_INSTALLED, reason="pytorch_optimizer not installed"
+)
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -1614,6 +1619,90 @@ class TestTrainingStep:
         assert progress_loss_calls[0].kwargs.get("on_epoch") is False
 
     @pytest.mark.parametrize(
+        ("progress_name", "scale"),
+        [("loss", 2.0), ("loss_cls", 1.0)],
+    )
+    def test_progress_loss_is_epoch_running_mean_weighted_by_batch_size(
+        self, tmp_path: Path, progress_name: str, scale: float
+    ) -> None:
+        """The live progress value is the sample-weighted mean of the epoch so far, not the latest batch."""
+        module, _, _, _, fake_criterion = self._run_step(tmp_path, weight_dict={"loss_ce": 2.0})
+        first_samples, first_targets = _make_batch(batch_size=1)
+        second_samples, second_targets = _make_batch(batch_size=3)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((first_samples, first_targets), batch_idx=0)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(4.0)}
+        module.training_step((second_samples, second_targets), batch_idx=1)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == progress_name]
+        assert progress_calls[-1].args[1].item() == pytest.approx(scale * (1.0 * 1 + 4.0 * 3) / 4)
+
+    def test_progress_terms_stay_per_batch_when_train_log_on_step(self, tmp_path: Path) -> None:
+        """With train_log_on_step=True every progress term keeps its per-batch value, as train/loss_step does."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path, train_log_on_step=True)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((samples, targets), batch_idx=0)
+        second_value = torch.tensor(3.0)
+        fake_criterion.return_value = {"loss_ce": second_value}
+        module.training_step((samples, targets), batch_idx=1)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1] is second_value
+
+    @pytest.mark.parametrize("train_log_on_step", [False, True])
+    def test_progress_terms_are_progress_bar_only(self, tmp_path: Path, train_log_on_step: bool) -> None:
+        """Every progress term goes to the progress bar only, per step, with the same flags in both modes."""
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].kwargs == {
+            "prog_bar": True,
+            "logger": False,
+            "on_step": True,
+            "on_epoch": False,
+            "batch_size": 2,
+        }
+
+    @pytest.mark.parametrize("progress_name", ["loss", "loss_cls"])
+    def test_progress_loss_running_mean_restarts_each_epoch(self, tmp_path: Path, progress_name: str) -> None:
+        """The running mean restarts at each epoch, so the first step of a new epoch reports its own loss."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((samples, targets), batch_idx=0)
+        module.on_train_epoch_start()
+        fake_criterion.return_value = {"loss_ce": torch.tensor(3.0)}
+        module.log.reset_mock()
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == progress_name]
+        assert progress_calls[-1].args[1].item() == pytest.approx(3.0)
+
+    def test_progress_loss_running_mean_is_detached_from_autograd(self, tmp_path: Path) -> None:
+        """The running sums must not keep the autograd graph of every step alive until the epoch ends."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0, requires_grad=True)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1].requires_grad is False
+
+    def test_progress_loss_running_mean_accumulates_in_float32(self, tmp_path: Path) -> None:
+        """A half-precision loss term is summed in float32, so the bar does not drift over a long epoch."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0, dtype=torch.bfloat16)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1].dtype is torch.float32
+
+    @pytest.mark.parametrize(
         "train_log_on_step",
         [
             pytest.param(False, id="epoch-only"),
@@ -1639,11 +1728,14 @@ class TestTrainingStep:
             pytest.param(True, 0, id="on-step-skips-live-loss"),
         ],
     )
-    def test_live_loss_key_gated_on_train_log_on_step(self, tmp_path, train_log_on_step, expected_live_loss_calls):
+    def test_live_loss_key_gated_on_train_log_on_step(
+        self, tmp_path: Path, train_log_on_step: bool, expected_live_loss_calls: int
+    ) -> None:
         """Redundant live ``loss`` progress key is emitted only when train_log_on_step is False.
 
-        With train_log_on_step=True the ``train/loss`` call forks into a live ``train/loss_step`` progress entry, so the
-        separate ``loss`` scalar becomes redundant and is skipped.
+        With train_log_on_step=True the ``train/loss`` call forks into a per-batch ``train/loss_step`` progress entry,
+        which already shows the aggregate, so the running-mean ``loss`` scalar is skipped to keep the bar's keys as
+        before.
         """
         module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
 
@@ -2888,10 +2980,10 @@ class TestConfigureOptimizers:
         ):
             module.configure_optimizers()
 
+    @pytorch_optimizer_only
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_real_import_path_optimizer_smoke(self, mock_get_param_dict, tmp_path):
         """A real pytorch-optimizer optimizer can be built via its import path when installed."""
-        pytest.importorskip("pytorch_optimizer")
         module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
         mock_get_param_dict.return_value = param_dicts
 
@@ -3253,6 +3345,56 @@ class TestConfigureOptimizers:
         assert config["monitor"] == "val/loss"
         assert config["interval"] == "epoch"
         assert module._should_compute_val_loss is True
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_reduce_on_plateau_records_each_group_initial_lr(
+        self, mock_get_param_dict: MagicMock, tmp_path: Path
+    ) -> None:
+        """A resumed run rescales its reduced lr from this base when ``lr`` changes (#1613); every other scheduler sets
+        it."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="train/loss",
+        )
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.param_groups[0]["initial_lr"] == module.train_config.lr
+
+    @pytest.mark.parametrize(
+        ("train_overrides", "expected_base"),
+        [
+            pytest.param({"warmup_epochs": 1.0}, 1e-4, id="managed-warmup"),
+            pytest.param(
+                {
+                    "warmup_epochs": 0.0,
+                    "lr_scheduler": "torch.optim.lr_scheduler.OneCycleLR",
+                    "lr_scheduler_kwargs": {"max_lr": 1e-3, "total_steps": 100},
+                },
+                1e-3 / 25,
+                id="one-cycle",
+            ),
+        ],
+    )
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_records_each_group_base_as_its_scheduler_set_it(
+        self,
+        mock_get_param_dict: MagicMock,
+        train_overrides: dict[str, Any],
+        expected_base: float,
+        tmp_path: Path,
+    ) -> None:
+        """A resumed run compares this base with the restored one (#1613): not the warmup-scaled current lr, and for a
+        scheduler that sets its own rates (OneCycleLR starts at ``max_lr / 25``) not ``lr``."""
+        module, param_dicts = self._setup_module(tmp_path, **train_overrides)
+        mock_get_param_dict.return_value = param_dicts
+
+        module.configure_optimizers()
+
+        assert module._configured_param_group_settings[0][0] == pytest.approx(expected_base)
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_callable_plateau_scheduler_rejects_disabled_val_loss(self, mock_get_param_dict, tmp_path):
@@ -3708,6 +3850,156 @@ class TestCudaGraphLifecycle:
         assert module._cuda_graph_runner is None
 
 
+def _module_with_restored_optimizer(
+    tmp_path: Path, configured: list[tuple[float, float | None]], *, restarts: bool
+) -> tuple[RFDETRModelModule, torch.optim.Optimizer]:
+    """Build a module whose optimizer holds one group restored from an older ``ReduceLROnPlateau`` checkpoint.
+
+    The group trained at 0.1 and was reduced to 0.025, and records no ``initial_lr``. The module is marked as resuming
+    with an explicit setting, as ``on_load_checkpoint`` leaves it.
+
+    Args:
+        tmp_path: Directory for the module's config.
+        configured: What ``configure_optimizers`` recorded; empty when a subclass replaced it.
+        restarts: Whether a learning-rate setting changed, so groups without a base restart.
+
+    Returns:
+        The module and its restored optimizer.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     module, optimizer = _module_with_restored_optimizer(Path(directory), [(0.1, 0.0)], restarts=True)
+        >>> optimizer.param_groups[0]["lr"], module._reapplied_param_group_settings
+        (0.025, ['lr'])
+    """
+    module, *_ = _build_module(tmp_path=tmp_path)
+    optimizer = torch.optim.AdamW([nn.Parameter(torch.zeros(1))], lr=0.025, weight_decay=0.0)
+    module.optimizers = MagicMock(return_value=optimizer)
+    module._current_lr_scheduler = MagicMock(return_value=None)
+    module._configured_param_group_settings = configured
+    module._reapplied_param_group_settings = ["lr"]
+    module._restarts_groups_without_base = restarts
+    return module, optimizer
+
+
+class TestReapplyConfiguredParamGroupSettings:
+    """``on_train_start`` puts the configured settings back over a resumed checkpoint's optimizer state (#1613)."""
+
+    @pytest.fixture(autouse=True)
+    def fed_by(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        """Stand in for the model-dependent mask: every explicit setting feeds every group.
+
+        Examples:
+            >>> fed_by  # doctest: +SKIP
+            A pytest fixture; it needs monkeypatch.
+        """
+        mock = MagicMock(side_effect=lambda names, configured, *_: configured)
+        monkeypatch.setattr("rfdetr.training.module_model._configured_settings_fed_by", mock)
+        return mock
+
+    def test_masks_the_configured_settings_by_the_explicit_ones(self, tmp_path: Path, fed_by: MagicMock) -> None:
+        """A group no explicit setting feeds keeps what the checkpoint's optimizer holds, stale ``args`` or not."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module._reapplied_param_group_settings = ["weight_decay"]
+        fed_by.side_effect = lambda names, configured, *_: [(None, weight_decay) for _, weight_decay in configured]
+
+        module._reapply_configured_param_group_settings()
+
+        assert fed_by.call_args.args[0] == ["weight_decay"]
+        assert optimizer.param_groups[0]["lr"] == 0.025
+
+    @pytest.mark.parametrize(("restarts", "expected_lr"), [(True, 0.1), (False, 0.025)])
+    def test_group_without_a_base_restarts_only_for_a_learning_rate_change(
+        self, tmp_path: Path, restarts: bool, expected_lr: float
+    ) -> None:
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=restarts)
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == expected_lr
+
+    def test_settings_that_feed_no_group_leave_the_optimizer_alone_and_warn(
+        self,
+        tmp_path: Path,
+        fed_by: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Parameters the model does not own (FSDP, DeepSpeed) match no group; the resume must not pass silently."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        fed_by.side_effect = lambda names, configured, *_: [(None, None)] * len(configured)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.WARNING, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
+        assert "No parameter group of the resumed optimizer is fed by lr" in caplog.text
+
+    def test_weight_decay_alone_is_put_back(self, tmp_path: Path, fed_by: MagicMock) -> None:
+        """A resume that passes only ``weight_decay`` feeds no learning rate, but its weight decay still applies."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.05)], restarts=False)
+        module._reapplied_param_group_settings = ["weight_decay"]
+        fed_by.side_effect = lambda names, configured, *_: [(None, weight_decay) for _, weight_decay in configured]
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["weight_decay"] == 0.05
+
+    def test_on_train_start_reapplies_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A second ``fit`` of the module carries no resumed state to put back."""
+        module, _ = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module._reapply_configured_param_group_settings = MagicMock()
+        module._configure_cuda_graph_runner = MagicMock()
+        monkeypatch.setattr(RFDETRModelModule, "_use_fused_optimizer", False)
+
+        module.on_train_start()
+        module.on_train_start()
+
+        assert module._reapply_configured_param_group_settings.call_count == 1
+
+    def test_logs_how_many_groups_changed(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A resume hit by #1613 recorded the new ``lr`` already, so only this line reports the change."""
+        module, _ = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.INFO, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert "Gave the learning rate and weight decay set for this run to 1 resumed parameter group(s)" in caplog.text
+
+    def test_replaced_configure_optimizers_keeps_the_restored_optimizer(self, tmp_path: Path) -> None:
+        """A subclass's own ``configure_optimizers`` records no settings, so there is nothing to compare with."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [], restarts=True)
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
+
+    def test_replaced_configure_optimizers_is_reported(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module, _ = _module_with_restored_optimizer(tmp_path, [], restarts=True)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.WARNING, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert "configure_optimizers was replaced" in caplog.text
+
+    def test_several_optimizers_from_a_replaced_configure_optimizers_are_left_alone(self, tmp_path: Path) -> None:
+        """Lightning returns a list when ``configure_optimizers`` built more than one optimizer."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module.optimizers = MagicMock(return_value=[optimizer, optimizer])
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
+
+
 class TestFusedOptimizerResumeStateNormalization:
     """Tests for resume-time fused AdamW state normalization."""
 
@@ -3715,13 +4007,14 @@ class TestFusedOptimizerResumeStateNormalization:
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
     def test_on_train_start_normalizes_restored_fused_optimizer_state(
         self,
-        mock_cuda_available,
-        mock_bf16_supported,
+        mock_cuda_available: MagicMock,
+        mock_bf16_supported: MagicMock,
     ) -> None:
         """Resumed fused AdamW state tensors must match the live parameter layout before the first step."""
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
         module.train_config = SimpleNamespace(optimizer="adamw")
+        module._reapplied_param_group_settings = []
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -3753,13 +4046,14 @@ class TestFusedOptimizerResumeStateNormalization:
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
     def test_on_train_start_unwraps_optimizer_wrapper(
         self,
-        mock_cuda_available,
-        mock_bf16_supported,
+        mock_cuda_available: MagicMock,
+        mock_bf16_supported: MagicMock,
     ) -> None:
         """Lightning-style optimizer wrappers must still be normalized on resume."""
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
         module.train_config = SimpleNamespace(optimizer="adamw")
+        module._reapplied_param_group_settings = []
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -3791,13 +4085,14 @@ class TestFusedOptimizerResumeStateNormalization:
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
     def test_on_train_start_leaves_empty_optimizer_state_untouched(
         self,
-        mock_cuda_available,
-        mock_bf16_supported,
+        mock_cuda_available: MagicMock,
+        mock_bf16_supported: MagicMock,
     ) -> None:
         """Fresh fused-optimizer runs with no restored state should remain a no-op."""
         module = RFDETRModelModule.__new__(RFDETRModelModule)
         module.model_config = SimpleNamespace(fused_optimizer=True)
         module.train_config = SimpleNamespace(optimizer="adamw")
+        module._reapplied_param_group_settings = []
         trainer = MagicMock()
         trainer.precision = "bf16-mixed"
         trainer.is_global_zero = True
@@ -3965,6 +4260,27 @@ class TestOnLoadCheckpoint:
     """
 
     _PE_KEY = "model.backbone.0.encoder.encoder.embeddings.position_embeddings"
+
+    @pytest.mark.parametrize(
+        ("optimizer_states", "expected_lr_encoder"),
+        [
+            pytest.param([{"state": {}, "param_groups": []}], 0.123, id="full-checkpoint"),
+            pytest.param([], TrainConfig.model_fields["lr_encoder"].default, id="lightweight-checkpoint"),
+        ],
+    )
+    def test_resolves_resumed_settings_without_a_trainer(
+        self, optimizer_states: list[dict[str, Any]], expected_lr_encoder: float, tmp_path: Path
+    ) -> None:
+        """``load_from_checkpoint`` calls the hook before any trainer exists.
+
+        Only a checkpoint carrying optimizer state supplies the settings left out (#1613); a lightweight one restarts
+        the optimizer from the config.
+        """
+        module, *_ = _build_module(train_config=TrainConfig(dataset_dir=str(tmp_path)), tmp_path=tmp_path)
+
+        module.on_load_checkpoint({"optimizer_states": optimizer_states, "args": {"lr_encoder": 0.123}})
+
+        assert module.train_config.lr_encoder == expected_lr_encoder
 
     def _make_ptl_checkpoint(self, pe_size_src: int, _pe_size_tgt: int, dim: int = 16) -> dict:
         """Build a minimal PTL checkpoint with mismatched PE shape.

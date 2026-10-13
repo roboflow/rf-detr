@@ -8,9 +8,11 @@
 import warnings
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -32,6 +34,13 @@ from rfdetr.training.trainer import (
     _ForceLastEpochValidationCallback,
     _requests_multiple_devices,
     _xla_resolves_to_single_device,
+)
+from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED, _IS_TRANSFORMER_ENGINE_INSTALLED
+from tests._markers import requires_torch_xla
+
+hotcoco_only = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed")
+transformer_engine_only = pytest.mark.skipif(
+    not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires the 'cuda' extra (transformer-engine)"
 )
 
 
@@ -165,12 +174,73 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
 
-    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco", "vernier"])
+    @pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming", "faster_coco_eval", "ufcoco", "vernier"])
     def test_coco_eval_uses_eval_backend(self, tmp_path: Path, backend: str) -> None:
         """COCOEvalCallback receives every eval_backend value TrainConfig accepts."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend=backend), _mc())
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._eval_backend == backend
+
+    @hotcoco_only
+    def test_streaming_backend_receives_the_model_class_count(self, tmp_path: Path) -> None:
+        """``hotcoco_streaming`` gets ``num_classes`` from the model config, so it streams rather than falling back.
+
+        ``StreamingEval`` needs every category before the first batch; without the class count the metric would evaluate
+        in one batch on every run and the backend would never stream in production.
+        """
+        model_config = _mc()
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), model_config)
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
+
+        assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
+
+    @hotcoco_only
+    def test_streaming_backend_receives_the_model_class_count_on_the_ema_metric(self, tmp_path: Path) -> None:
+        """The EMA metric streams too: dropping its ``num_classes`` would silently make it evaluate in one batch."""
+        model_config = _mc()
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, eval_backend="hotcoco_streaming"), model_config)
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
+
+        coco_cb._prepare_ema_metric(trainer)
+
+        assert len(coco_cb.map_metric_ema._stream_categories) == model_config.num_classes + 1
+
+    @pytest.mark.parametrize(
+        ("num_classes", "expected"),
+        [
+            pytest.param(np.int64(3), 3, id="numpy-int64"),
+            pytest.param(np.int32(3), 3, id="numpy-int32"),
+            (0, 0),
+            (True, None),
+            pytest.param(np.bool_(True), None, id="numpy-bool"),
+            (3.0, None),
+            pytest.param(torch.tensor(3), None, id="zero-dim-tensor"),
+            ("3", None),
+            (None, None),
+        ],
+    )
+    def test_class_count_coercion(self, tmp_path: Path, num_classes: Any, expected: int | None) -> None:
+        """An integer-like class count reaches the metric as an ``int``; a ``bool`` or non-integer becomes ``None``."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=SimpleNamespace(num_classes=num_classes)), stage="fit")
+
+        assert coco_cb._num_classes == expected
+        assert type(coco_cb._num_classes) is type(expected)
+
+    @hotcoco_only
+    def test_numpy_class_count_keeps_the_streaming_backend_streaming(self, tmp_path: Path) -> None:
+        """A NumPy class count still declares every category to the streaming metric, instead of disabling streaming."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=SimpleNamespace(num_classes=np.int64(3))), stage="fit")
+
+        assert len(coco_cb.map_metric._stream_categories) == 4
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
@@ -743,6 +813,7 @@ class TestBuildTrainerPrecision:
         assert captured_trainer_kwargs["precision"] == "32-true"
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
         """Resolves plan Sec 1.3 caveat #1: PTL's 'tpu' accelerator needs real TPU chips, not just torch_xla+PJRT.
 
@@ -753,7 +824,6 @@ class TestBuildTrainerPrecision:
         not launchable under the T1 (CPU-PJRT) CI lane -- only the device-gated unit tests (Tasks 1.1/1.3/1.6/1.7/1.8,
         which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.accelerators import XLAAccelerator
 
         if XLAAccelerator.is_available():
@@ -1195,6 +1265,7 @@ class TestBuildTrainerFP8Smoke:
     """
 
     @pytest.mark.gpu
+    @transformer_engine_only
     @pytest.mark.skipif(
         not _cuda_supports_fp8(),
         reason="FP8 requires a Transformer Engine-supported GPU (Ada, Hopper, or newer; compute capability >= 8.9)",
@@ -1206,8 +1277,6 @@ class TestBuildTrainerFP8Smoke:
         ``transformer_engine.pytorch`` extension being unimportable, unbuilt, or incompatible with the installed
         CUDA/PyTorch stack only fails here, on real hardware, never in the CPU-only unit tests above.
         """
-        pytest.importorskip("transformer_engine.pytorch", reason="requires the 'cuda' extra (transformer-engine)")
-
         from rfdetr.training.module_data import RFDETRDataModule
         from rfdetr.training.module_model import RFDETRModelModule
 
@@ -2431,11 +2500,11 @@ class TestAcceleratorResolvesToXLA:
 class TestMultiDeviceXLAStrategy:
     """`XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`.
 
-    The first four tests are marked ``xla`` and guarded with ``importorskip`` because they exercise ``build_trainer``'s
-    real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is touched, so the CPU-
-    PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the ``accelerator="auto"`` case,
-    ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so they run on every lane without
-    needing real ``torch_xla``.
+    The first four tests are marked ``xla`` and guarded with ``requires_torch_xla`` because they exercise
+    ``build_trainer``'s real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is
+    touched, so the CPU-PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the
+    ``accelerator="auto"`` case, ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so
+    they run on every lane without needing real ``torch_xla``.
 
     RF-DETR's generic ``strategy="auto"`` distributed branch creates ``DDPStrategy`` before Lightning can resolve an XLA
     accelerator. The guard therefore selects ``"xla"`` only when multiple local XLA devices are requested; one-device-
@@ -2446,26 +2515,25 @@ class TestMultiDeviceXLAStrategy:
     """
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_multiple_xla_devices_select_the_xla_strategy(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
         """Without this, asking for more than one chip fails with `found DDPStrategy`."""
-        pytest.importorskip("torch_xla")
-
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4)
 
         assert captured_trainer_kwargs["strategy"] == "xla"
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_single_xla_device_keeps_auto(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """One chip already resolves to SingleDeviceXLAStrategy, so nothing should be overridden."""
-        pytest.importorskip("torch_xla")
-
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
 
         assert captured_trainer_kwargs["strategy"] == "auto"
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_an_explicit_strategy_is_never_overridden(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """A caller who names a strategy owns that choice, even on multi-device XLA.
 
@@ -2474,7 +2542,6 @@ class TestMultiDeviceXLAStrategy:
         above), which always turns it into a ``DDPStrategy`` object -- on XLA and off it alike. Asserting the literal
         string ``"ddp"`` here would be wrong regardless of this PR.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4, strategy="ddp")
@@ -2484,6 +2551,7 @@ class TestMultiDeviceXLAStrategy:
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     @pytest.mark.xla
+    @requires_torch_xla
     def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
@@ -2494,7 +2562,6 @@ class TestMultiDeviceXLAStrategy:
         deliberately excluded from the fix and keeps hitting the pre-existing `DDPStrategy`/`XLAAccelerator` mismatch
         rather than running unverified.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
         build_trainer(_kp_tc(tmp_path, use_ema=False), _mc(use_grouppose_keypoints=True), accelerator="tpu", devices=4)
@@ -2507,7 +2574,7 @@ class TestMultiDeviceXLAStrategy:
         A caller who leaves ``accelerator`` unset passes literal ``"auto"`` here. Without
         ``_accelerator_resolves_to_xla``, RF-DETR's generic distributed branch would create ``DDPStrategy`` before
         Lightning resolves that value to XLA, causing the `XLAAccelerator`/`DDPStrategy` mismatch. Not marked
-        ``xla``/``importorskip``:
+        ``xla``/``requires_torch_xla``:
         follows ``TestBuildTrainerPrecision.test_xla_accelerator_uses_xla_precision_plugin_not_precision_string``'s
         pattern of patching ``XLAPrecision`` and (here) ``XLAAccelerator.is_available`` directly, so this runs on
         every CI lane rather than only the CPU-PJRT one.

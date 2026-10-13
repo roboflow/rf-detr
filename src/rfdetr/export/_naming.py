@@ -9,9 +9,9 @@ Three of the five export backends (ONNX, CoreML, ExecuTorch) resolve their outpu
 :func:`resolve_export_stem`, choosing between a user-supplied full override (``output_name``), a model variant
 identifier (``variant_name``), and a generic default, with consistent path-traversal sanitization. The other two differ:
 TFLite takes no ``output_name`` at all (it inherits its stem from the already-resolved ONNX filename), and TensorRT
-delegates only the ``output_name`` sanitize step here while still building its own engine path and ``_fp16``/``_fp32``
-precision suffix. Centralizing the precedence + sanitization keeps the backends that share it consistent instead of each
-re-implementing it.
+delegates only the ``output_name`` sanitize step here while still building its own engine path and
+``_fp16``/``_fp32``/``_int8`` precision suffix. Centralizing the precedence + sanitization keeps the backends that share
+it consistent instead of each re-implementing it.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def append_backbone_marker(export_name: str, *, backbone_only: bool, named: bool
     ``-backbone`` marks a distinct model graph, not a precision or backend detail, so every backend appends it after
     whatever detail suffix it already added. It is appended whenever a name was supplied — custom or variant-derived —
     but never onto the bare ``backbone_model`` default, which already spells it out. Without the marker a backbone
-    export silently overwrites a full-detector export of the same name.
+    export silently overwrites a full-model export of the same name.
 
     Args:
         export_name: The artifact name resolved so far, including any precision or backend suffix.

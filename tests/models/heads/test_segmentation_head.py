@@ -19,6 +19,7 @@ from torch import nn
 
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead, point_sample
 from rfdetr.utilities.tensors import _nearest_grid_sample
+from tests._markers import onnx_only
 
 
 @pytest.fixture(autouse=True)
@@ -713,10 +714,12 @@ class TestSegmentationHeadForwardExport:
         assert actual.shape == (2, 3, 5, 7)
         torch.testing.assert_close(actual, expected)
 
+    @onnx_only
     @pytest.mark.integration
     @pytest.mark.e2e_onnx
     def test_onnx_graph_has_no_einsum(self, tmp_path: Path) -> None:
-        onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+        import onnx
+
         head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=2, downsample_ratio=1).eval()
         head.export()
         out = tmp_path / "segmentation_head.onnx"

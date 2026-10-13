@@ -12,6 +12,9 @@ _INSTALL_MSG = (
     " Install it with `pip install rfdetr[plus]` (or `pip install rfdetr_plus` if supported)."
 )
 
+#: Model classes only ``rfdetr_plus`` provides; ``rfdetr``, ``rfdetr.platform.models`` and ``rfdetr.detr`` read it.
+_PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge", "RFDETRAtto", "RFDETRFemto", "RFDETRPico"})
+
 _IS_RFDETR_PLUS_AVAILABLE = is_installed("rfdetr_plus")
 if not _IS_RFDETR_PLUS_AVAILABLE:
     warnings.warn(

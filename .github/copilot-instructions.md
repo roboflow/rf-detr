@@ -22,8 +22,11 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **Package Manager:** This project uses `uv` for all dependency management.
 
 ```bash
-# Development setup
-uv sync --all-groups
+# Create the environment
+uv venv
+
+# Install the dependencies used by the CPU test job (add ,coreml on macOS).
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Run tests (always before committing)
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
@@ -34,7 +37,7 @@ uv build
 
 > [!IMPORTANT]
 >
-> Run `uv sync` after pulling changes to update dependencies.
+> Re-run the install command above after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
 
@@ -73,6 +76,7 @@ pre-commit run --all-files
 - Features: Write comprehensive tests → Implement → Refactor
 - Use test classes and `@pytest.mark.parametrize` for organization
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
+- No `pytest.importorskip`, and no `pytest.skip()` for missing optional dependencies: gate optional-dependency tests with a named `skipif` decorator (flag from `rfdetr.export.imports` / `rfdetr.utilities.imports`; add a new flag there and never re-probe with `find_spec` in a test file) and import the package locally inside the test. Reserve `pytest.skip()` for conditions discoverable only at runtime. Details: [CONTRIBUTING.md](CONTRIBUTING.md#test-organization).
 
 **Testing Requirements:**
 

@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 
 import rfdetr.models.backbone.dinov2 as dinov2_module
+import rfdetr.models.lwdetr as lwdetr_module
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.models import build_model
@@ -138,6 +139,57 @@ def test_update_drop_path_handles_missing_layers(model_with_drop_path: LWDETR, m
 
     # Should not raise an error, just return early
     model.update_drop_path(0.1, 12)
+
+
+class TestUpdateDropPathMissingLayersWarning:
+    """``update_drop_path`` warns, once, when a positive rate cannot be applied for lack of encoder layers."""
+
+    @staticmethod
+    def _unrecognised_layout_model() -> SimpleNamespace:
+        """Stand-in for an LWDETR whose encoder layer layout is not recognised.
+
+        Examples:
+            >>> TestUpdateDropPathMissingLayersWarning._unrecognised_layout_model()._drop_path_layers_warned
+            False
+        """
+        return SimpleNamespace(_get_backbone_encoder_layers=lambda: None, _drop_path_layers_warned=False)
+
+    @staticmethod
+    def _capture_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Collect messages passed to the module logger's ``warning`` (the rf-detr logger does not propagate)."""
+        messages: list[str] = []
+        monkeypatch.setattr(lwdetr_module.logger, "warning", lambda msg, *args, **kwargs: messages.append(msg % args))
+        return messages
+
+    def test_positive_rate_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A positive drop-path rate with no recognised layers logs a warning naming the skipped schedule."""
+        model = self._unrecognised_layout_model()
+        messages = self._capture_warnings(monkeypatch)
+
+        LWDETR.update_drop_path(model, 0.1, 12)  # type: ignore[arg-type]
+
+        assert len(messages) == 1
+        assert "drop_path_rate=0.1" in messages[0]
+        assert "skipped" in messages[0]
+
+    def test_warns_only_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The per-step schedule callback calls ``update_drop_path`` repeatedly, so the warning is not repeated."""
+        model = self._unrecognised_layout_model()
+        messages = self._capture_warnings(monkeypatch)
+
+        LWDETR.update_drop_path(model, 0.1, 12)  # type: ignore[arg-type]
+        LWDETR.update_drop_path(model, 0.1, 12)  # type: ignore[arg-type]
+
+        assert len(messages) == 1
+
+    def test_zero_rate_does_not_warn(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A zero rate has nothing to apply, so a missing layer layout is not worth a warning."""
+        model = self._unrecognised_layout_model()
+        messages = self._capture_warnings(monkeypatch)
+
+        LWDETR.update_drop_path(model, 0.0, 12)  # type: ignore[arg-type]
+
+        assert messages == []
 
 
 def test_update_drop_path_partial_layers(model_with_drop_path: LWDETR) -> None:

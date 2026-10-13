@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -25,16 +24,16 @@ from rfdetr.training import build_trainer
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.utilities.imports import _IS_TRANSFORMER_ENGINE_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
 
-_TRANSFORMER_ENGINE_INSTALLED = importlib.util.find_spec("transformer_engine") is not None
 _FP8_CUDA_AVAILABLE = torch.cuda.is_available() and torch.cuda.get_device_capability(0) >= (8, 9)
 
 _skip_without_fp8_cuda = pytest.mark.skipif(
     not _FP8_CUDA_AVAILABLE, reason="requires FP8-capable CUDA hardware (compute capability >= 8.9)"
 )
 _skip_without_transformer_engine = pytest.mark.skipif(
-    not _TRANSFORMER_ENGINE_INSTALLED, reason="requires transformer-engine"
+    not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires transformer-engine"
 )
 
 
@@ -194,7 +193,7 @@ class TestTransformerEngineCaptureBoundary:
         }
 
     @pytest.mark.skipif(
-        _TRANSFORMER_ENGINE_INSTALLED,
+        _IS_TRANSFORMER_ENGINE_INSTALLED,
         reason="transformer_engine is installed in this environment; cannot exercise the absent-package path",
     )
     def test_runner_fp8_without_transformer_engine_raises_module_not_found_error(self) -> None:

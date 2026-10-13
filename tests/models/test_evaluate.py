@@ -328,10 +328,14 @@ class TestEvaluateTrainerBoundary:
     """Evaluate() drives build_trainer and maps its results at the trainer boundary."""
 
     def test_device_index_forwarded_and_eval_mode(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """Device='cuda:1' maps to accelerator='gpu'/devices=[1] and the trainer is built in eval mode."""
+        """Device='cuda:1' maps to accelerator='gpu'/devices=[1] and the trainer is built in eval mode.
+
+        The rebuilt module also skips upstream encoder weights: ``evaluate()`` transplants every weight into it, so a
+        fetch would be wasted I/O.
+        """
         trainer = _mock_trainer()
         with (
-            patch("rfdetr.training.RFDETRModelModule"),
+            patch("rfdetr.training.RFDETRModelModule") as mock_module,
             patch("rfdetr.training.RFDETRDataModule"),
             patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build,
         ):
@@ -340,6 +344,7 @@ class TestEvaluateTrainerBoundary:
             )
         _, build_kwargs = mock_build.call_args
         assert build_kwargs == {"include_training_callbacks": False, "accelerator": "gpu", "devices": [1]}
+        assert mock_module.call_args.kwargs["load_encoder_weights"] is False
 
     def test_empty_results_returns_empty_dict(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
         """When the trainer yields no metrics, evaluate() returns an empty dict."""

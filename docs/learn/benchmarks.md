@@ -33,6 +33,9 @@ Accuracy and latency are always measured using the same model artifact and the s
 
 | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | :----------: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: |
+|  RF-DETR-A   |         49.4         |          30.5           |          78.2           |            48.3            |     1.0      |    7.4     |  380x380   |
+|  RF-DETR-F   |         55.9         |          37.8           |          82.5           |            53.8            |     1.4      |    7.9     |  384x384   |
+|  RF-DETR-P   |         60.2         |          41.6           |          84.1           |            56.0            |     1.7      |    8.4     |  560x560   |
 |  RF-DETR-N   |         67.6         |          48.4           |          85.0           |            57.7            |     2.3      |    30.5    |  384x384   |
 |  RF-DETR-S   |         72.1         |          53.0           |          86.7           |            60.2            |     3.5      |    32.1    |  512x512   |
 |  RF-DETR-M   |         73.6         |          54.7           |          87.4           |            61.2            |     4.4      |    33.7    |  576x576   |

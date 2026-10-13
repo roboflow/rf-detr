@@ -1,14 +1,14 @@
 ---
-description: RF-DETR is a real-time transformer for object detection, instance segmentation, and keypoint detection (preview) by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0.
+description: RF-DETR is a real-time transformer for object detection, instance segmentation, and keypoint detection (preview) by Roboflow. DINOv2 backbone (PE-Core-T for Atto, Femto and Pico), SOTA on COCO (60.1 AP50:95). Apache 2.0.
 hide:
   - navigation
 ---
 
 # RF-DETR: Real-Time SOTA Object Detection, Instance Segmentation, and Keypoint Detection
 
-RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR achieves state-of-the-art accuracy–latency trade-offs: RF-DETR-L reaches 56.5 AP50:95 on COCO at 6.8 ms (NVIDIA T4, TensorRT FP16), and RF-DETR-2XL achieves 60.1 AP50:95 — the first real-time model to exceed 60 AP on COCO. Accepted at [ICLR 2026](https://arxiv.org/abs/2511.09554).
+RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) developed by Roboflow. Built on a DINOv2 vision transformer backbone (a PE-Core-T backbone for Atto, Femto and Pico), RF-DETR achieves state-of-the-art accuracy–latency trade-offs: RF-DETR-L reaches 56.5 AP50:95 on COCO at 6.8 ms (NVIDIA T4, TensorRT FP16), and RF-DETR-2XL achieves 60.1 AP50:95 — the first real-time model to exceed 60 AP on COCO. Accepted at [ICLR 2026](https://arxiv.org/abs/2511.09554).
 
-RF-DETR uses a DINOv2 vision transformer backbone and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. Core models (Nano through Large) and all code are released under the Apache 2.0 license; XL and 2XLarge detection models require `rfdetr[plus]` and are provided under PML 1.0.
+RF-DETR uses a DINOv2 vision transformer backbone (PE-Core-T for Atto, Femto and Pico) and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. Core models (Nano through Large) and all code are released under the Apache 2.0 license; Atto, Femto, Pico, XL and 2XLarge detection models require `rfdetr[plus]` and are provided under PML 1.0.
 
 Developed by Isaac Robinson, Peter Robicheaux, Matvei Popov, Deva Ramanan (CMU), and Neehar Peri (CMU) at [Roboflow](https://roboflow.com). If you use RF-DETR in your research, please cite:
 
@@ -130,6 +130,9 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | ------------ | -------------------- | ----------------------- | ----------------------- | -------------------------- | ------------ | ---------- | ---------- |
+| RF-DETR-A    | 49.4                 | 30.5                    | 78.2                    | 48.3                       | 1.0          | 7.4        | 380×380    |
+| RF-DETR-F    | 55.9                 | 37.8                    | 82.5                    | 53.8                       | 1.4          | 7.9        | 384×384    |
+| RF-DETR-P    | 60.2                 | 41.6                    | 84.1                    | 56.0                       | 1.7          | 8.4        | 560×560    |
 | RF-DETR-N    | 67.6                 | 48.4                    | 85.0                    | 57.7                       | 2.3          | 30.5       | 384×384    |
 | RF-DETR-S    | 72.1                 | 53.0                    | 86.7                    | 60.2                       | 3.5          | 32.1       | 512×512    |
 | RF-DETR-M    | 73.6                 | 54.7                    | 87.4                    | 61.2                       | 4.4          | 33.7       | 576×576    |
@@ -162,7 +165,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 ## Frequently Asked Questions
 
-**What is RF-DETR?** RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.
+**What is RF-DETR?** RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone (PE-Core-T for Atto, Femto and Pico) and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.
 
 **How does RF-DETR compare to YOLOv11?** RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLOv11x (50.9 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.
 
@@ -176,7 +179,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 **Does RF-DETR support keypoint detection?** RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achieving 71.8 AP50:95 at 9.7 ms on NVIDIA T4. It is available in the `rfdetr` package as `RFDETRKeypointPreview`. See [Run Keypoint Models](learn/run/keypoints.md) for usage.
 
-**Is RF-DETR open source?** Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the `rfdetr[plus]` package (PML 1.0 license).
+**Is RF-DETR open source?** Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. Atto, Femto, Pico, XLarge and 2XLarge models require the `rfdetr[plus]` package (PML 1.0 license).
 
 **How do I fine-tune RF-DETR on a custom dataset?** Instantiate a model and call `model.train(...)` with your dataset directory in COCO JSON or YOLO format. Example: `model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)`. The model downloads pretrained weights automatically and saves best checkpoints automatically (use `resume=` to continue from one).
 

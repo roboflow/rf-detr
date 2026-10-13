@@ -183,6 +183,8 @@ class LWDETR(nn.Module):
             )
         # Flag to ensure the zero-pad warning in ``_aggregate_keypoint_class_logits`` is emitted at most once.
         self._kp_zero_pad_warned = False
+        # Flag to ensure the missing-encoder-layers warning in ``update_drop_path`` is emitted at most once.
+        self._drop_path_layers_warned = False
         self.keypoint_embed: MLP | None
         if self.use_grouppose_keypoints:
             self.keypoint_embed = MLP(
@@ -782,9 +784,21 @@ class LWDETR(nn.Module):
         Args:
             drop_path_rate: Maximum drop path rate (applied to last layer).
             vit_encoder_num_layers: Number of encoder layers to update.
+
+        Note:
+            When the encoder exposes no recognised layer layout (see ``_get_backbone_encoder_layers``) the schedule
+            cannot be applied; a positive ``drop_path_rate`` then logs a warning, once per model instance.
         """
         layers = self._get_backbone_encoder_layers()
         if layers is None:
+            if drop_path_rate > 0 and not self._drop_path_layers_warned:
+                logger.warning(
+                    "drop_path_rate=%s was requested but the backbone encoder exposes no recognised layer layout "
+                    "(expected `blocks`, `trunk.blocks` or the HuggingFace DINOv2 `encoder.encoder.layer`); the "
+                    "drop-path schedule is skipped. This warning is emitted once per model instance.",
+                    drop_path_rate,
+                )
+                self._drop_path_layers_warned = True
             return
         n = min(vit_encoder_num_layers, len(layers))
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n)]

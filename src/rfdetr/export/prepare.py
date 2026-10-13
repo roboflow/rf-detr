@@ -72,6 +72,18 @@ class ExportModelConfig(Protocol):
         """Whether the model predicts keypoints."""
 
 
+class _ExportShapeAware(Protocol):
+    """A non-DINOv2 encoder that bakes its position embeddings for a fixed export shape.
+
+    Encoders plugged in through :func:`rfdetr.models.backbone.register_backbone` implement this when their forward
+    would otherwise resample position embeddings at a shape other than their native one (see
+    :meth:`rfdetr.models.backbone.backbone.Backbone._build_encoder`).
+    """
+
+    def set_export_shape(self, shape: tuple[int, int]) -> None:
+        """Freeze position embeddings to *shape* before tracing."""
+
+
 @dataclass(frozen=True, slots=True)
 class ExportGraph:
     """A model prepared for export, together with the graph metadata every backend needs.
@@ -324,7 +336,8 @@ def prepare_export_graph(
 ) -> ExportGraph:
     """Prepare *model* for tracing and describe the graph a backend is about to write.
 
-    Runs, in order: freeze every DINOv2 backbone's position embeddings to *shape*; build the example input;
+    Runs, in order: freeze every DINOv2 backbone's position embeddings to *shape* (and call ``set_export_shape(shape)``
+    on any other module defining it); build the example input;
     wrap the backbone when *backbone_only* is set; resolve names and dynamic axes; run one forward pass to
     surface a broken graph here; move everything to CPU, where every backend traces.
 
@@ -358,6 +371,10 @@ def prepare_export_graph(
         if isinstance(backbone_module, DinoV2):
             backbone_module.shape = shape
             backbone_module.export()
+        elif callable(getattr(type(backbone_module), "set_export_shape", None)):
+            # Encoders plugged in through ``rfdetr.models.backbone.register_backbone`` opt in to the same freeze. The
+            # lookup is on the type so wrappers that forward attributes (PEFT/LoRA) do not freeze the encoder again.
+            cast(_ExportShapeAware, backbone_module).set_export_shape(shape)
 
     # Resolve the device once, up front: everything below — the example input, the model, the sanity pass — has to
     # land on the same one, and a CUDA request on a machine without CUDA has to degrade here rather than surface as

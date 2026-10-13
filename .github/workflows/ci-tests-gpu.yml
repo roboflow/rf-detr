@@ -54,7 +54,7 @@ jobs:
         # Use uv pip install (not uv sync) to avoid universal lock resolution failing on
         # extras that require Python>=3.12 (e.g. tflite/onnx2tf) when project supports >=3.10.
         # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
-        run: uv pip install -e ".[onnx,plus,train,augment,visual,data]" --group tests
+        run: uv pip install -e ".[onnx,plus,train,augment,visual,data,cli]" --group tests
 
       - name: 🔑 Compute model weights cache key
         id: weights-key

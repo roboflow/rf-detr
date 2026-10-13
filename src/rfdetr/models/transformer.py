@@ -311,9 +311,12 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     """Sine/cosine positional embedding of box coordinates, ``dim`` values per coordinate.
 
     CUDA eager execution takes :func:`_sineembed_interleaved`. Every other case (CPU, MPS, XLA, ``torch.compile`` and
-    tracing) runs the plain ops, values and gradients unchanged: compiled and traced graphs keep them (Inductor fuses
-    them itself and the exporters expect no custom autograd function), and the interleaved write is a CUDA rewrite,
-    not one to run unmeasured elsewhere.
+    tracing) runs the plain ops: compiled and traced graphs keep them (Inductor fuses them itself and the exporters
+    expect no custom autograd function), and the interleaved write is a CUDA rewrite, not one to run unmeasured
+    elsewhere. The plain ops build the frequency table in at least float32 and round it once to the positions' dtype.
+    float16, float32 and float64 keep the values and gradients they always had. In bfloat16, 10 of the 128 frequencies
+    at the default ``dim`` are float32 values rounded once rather than values computed in bfloat16, which moves the
+    outputs and coordinate gradients that use them slightly.
 
     Args:
         pos_tensor: Coordinates of shape ``(bs, n_query, 2)`` or ``(bs, n_query, 4)`` in ``[0, 1]``.
@@ -333,8 +336,12 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
-    dim_t = torch.arange(dim, dtype=pos_tensor.dtype, device=pos_tensor.device)
-    dim_t = 10000 ** (2 * (dim_t // 2) / dim)
+    # Computed in at least float32, as PositionEmbeddingSine does, then cast once to the positions' dtype. torch
+    # 2.14 lowers a half-precision ``dim_t // 2`` to ``libdevice.isinf`` on a float16 or bfloat16 operand, which
+    # Triton cannot compile (pytorch/pytorch#197002), so ``inference(dtype="float16",
+    # compile_backend="inductor")`` failed. float32 and float64 positions compute in their own dtype as before.
+    dim_t = torch.arange(dim, dtype=torch.promote_types(pos_tensor.dtype, torch.float32), device=pos_tensor.device)
+    dim_t = (10000 ** (2 * (dim_t // 2) / dim)).to(pos_tensor.dtype)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
     pos_x = x_embed[:, :, None] / dim_t
@@ -355,6 +362,31 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     else:
         raise ValueError(f"Unknown pos_tensor shape(-1):{pos_tensor.size(-1)}")
     return pos if out_dtype is None else pos.to(out_dtype)
+
+
+def select_top_rows(scores: Tensor, k: int) -> Callable[[Tensor], Tensor]:
+    """Rank ``(batch, tokens)`` scores and return a function that picks the ``k`` best rows of a token tensor.
+
+    The per-group two-stage query selection loop calls this through ``Transformer.select_top_rows``, so an exporter can
+    replace the ranking with one its target runs natively (see :mod:`rfdetr.export._neural_engine`). That loop runs in
+    eval and export, and in training whenever the batched ``Transformer._two_stage_group_selection`` path is not taken;
+    the batched path calls ``torch.topk`` itself and never reaches this hook.
+
+    Args:
+        scores: One score per token.
+        k: Number of rows to keep, best first.
+
+    Returns:
+        A function from a ``(batch, tokens, C)`` tensor to its ``(batch, k, C)`` selected rows.
+
+    Examples:
+        >>> rows = torch.arange(4.0).reshape(1, 4, 1)
+        >>> select_top_rows(torch.tensor([[0.1, 0.9, 0.5, 0.3]]), 2)(rows).flatten().tolist()
+        [1.0, 2.0]
+    """
+    indices = torch.topk(scores, k, dim=1)[1]
+    # Tensor.expand keeps the index a broadcast view (stride 0) instead of materialising it per channel.
+    return lambda rows: torch.gather(rows, 1, indices.unsqueeze(-1).expand(-1, -1, rows.shape[-1]))
 
 
 def gen_encoder_output_proposals(
@@ -594,6 +626,10 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.dec_layers = num_decoder_layers
         self.group_detr = group_detr
+        # Query selection of the per-group two-stage loop: eval, export, and training when the batched
+        # _two_stage_group_selection path (which calls torch.topk directly) is not taken. An exporter can swap it on
+        # its copy of the model.
+        self.select_top_rows: Callable[[Tensor, int], Callable[[Tensor], Tensor]] = select_top_rows
         self.num_feature_levels = num_feature_levels
         self.bbox_reparam = bbox_reparam
 
@@ -993,9 +1029,7 @@ class Transformer(nn.Module):
 
                     enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
                     topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
-                    topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[
-                        1
-                    ]  # bs, nq
+                    select_rows = self.select_top_rows(enc_outputs_class_unselected_gidx.max(-1)[0], topk)
 
                     # get memory tgt. LayerNorm acts per token, so gathering the pre-norm rows and normalizing
                     # only the selected ones is mathematically the same as gathering the normalized rows. It
@@ -1007,22 +1041,14 @@ class Transformer(nn.Module):
                     # norm must gather after.
                     # _two_stage_group_selection still gathers post-norm: it runs only while training, and export
                     # always takes this loop, so no exported graph reaches the ANE through that path.
-                    tgt_undetach_gidx = self.enc_output_norm[g_idx](
-                        torch.gather(
-                            output_memory_prenorm_gidx,
-                            1,
-                            topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model),
-                        )
-                    )
+                    tgt_undetach_gidx = self.enc_output_norm[g_idx](select_rows(output_memory_prenorm_gidx))
                     # Ranking needs every position's class score, but the box MLP is a pointwise (no
                     # cross-token mixing) transform of a single token's features -- gather the selected
                     # tokens first and run the MLP only on those, instead of on every encoder position and
                     # discarding all but ``topk`` of the results. This is equivalent only while
                     # ``enc_out_bbox_embed`` remains token-pointwise; a future stateful or cross-token head
                     # must move the MLP back before this gather.
-                    output_proposals_gidx = torch.gather(
-                        output_proposals, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, 4)
-                    )
+                    output_proposals_gidx = select_rows(output_proposals)
                     if self.bbox_reparam:
                         enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx)
                         enc_outputs_coord_cxcy_gidx = (

@@ -46,6 +46,24 @@ def float32_matmul_precision(request: pytest.FixtureRequest) -> Iterator[str]:
 
 
 @pytest.fixture
+def mkldnn_disabled() -> Iterator[None]:
+    """Keep CPU GEMMs on ATen's own kernels for one test, then restore oneDNN.
+
+    On part of the ``windows-latest`` fleet oneDNN's bf16 GEMM (taken above ``m*n*k > 16**3``) raises an illegal
+    instruction (``0xc000001d``) that kills the pytest worker. Production never runs the tested op on CPU, so these
+    tests only need ATen's result.
+
+    Examples:
+        Skipped because a pytest fixture has no standalone call:
+
+        >>> mkldnn_disabled  # doctest: +SKIP
+        <pytest_fixture(<function mkldnn_disabled at 0x...>)>
+    """
+    with torch.backends.mkldnn.flags(enabled=False):
+        yield
+
+
+@pytest.fixture
 def highest_float32_matmul_precision() -> Iterator[None]:
     """Pin float32 matmuls to true fp32 for one test, then restore the previous precision.
 
