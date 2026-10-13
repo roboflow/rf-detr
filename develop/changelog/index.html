@@ -2968,6 +2968,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>The live loss values on the progress bar (<code>loss</code>, <code>loss_cls</code>, <code>loss_box</code>, <code>loss_giou</code>, and the mask and keypoint terms) show the mean of every step since the epoch started, weighted by batch size, instead of the latest batch. Each rank computes its own mean. The mean restarts each epoch. The mean applies to the default <code>train_log_on_step=False</code>; with <code>train_log_on_step=True</code> every progress term stays per batch, as before. The logged <code>train/</code> metrics and the logger output are unchanged, but <code>trainer.callback_metrics</code> now holds the mean for these keys, so a scheduler or callback that monitors one of them (for example <code>lr_scheduler_monitor</code> set to <code>loss</code>) sees the mean, not the latest batch. (<a href="https://github.com/roboflow/rf-detr/issues/1620">#1620</a>)</p>
+</li>
+<li>
 <p><code>format="coreml"</code> now validates <code>notes</code> before the forward pass, as the other formats that embed it do. A value JSON cannot encode used to export with a warning that <code>notes</code> was dropped; it now raises <code>ValueError</code> (<code>NaN</code>/<code>Infinity</code>, a circular reference) or <code>TypeError</code> (a non-JSON object such as a <code>pathlib.Path</code>). (<a href="https://github.com/roboflow/rf-detr/issues/1024">#1024</a>)</p>
 </li>
 <li>
