@@ -73,6 +73,8 @@ jobs:
 
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🧪 Run the Test
         # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in

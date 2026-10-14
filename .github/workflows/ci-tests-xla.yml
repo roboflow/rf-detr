@@ -23,8 +23,6 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/ci-tests-xla.yml"
-      - ".github/actions/cache-model-weights/**"
-      - ".github/scripts/model_cache_key.py"
 
 permissions:
   contents: read
@@ -100,6 +98,8 @@ jobs:
 
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🧪 Run the XLA-marked Tests
         run: |

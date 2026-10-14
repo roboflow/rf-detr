@@ -1,49 +1,59 @@
 name: Shared model weights cache
-description: Restore compatible cross-OS model weights; the post-smoke develop publisher saves fresh archives.
+description: Restore compatible cross-OS model weights; the independent develop publisher saves fresh archives.
 inputs:
   save:
-    description: Save fresh smoke-tested weights in the dedicated develop-push publisher only.
+    description: Save freshly downloaded weights instead of restoring.
     default: "false"
 runs:
   using: composite
   steps:
-    - name: Configure model cache directories and key
-      shell: bash
-      id: key
-      env:
-        MODEL_CACHE_SAVE: ${{ inputs.save }}
+    - name: Configure model cache directories
       run: |
-        echo "RF_HOME=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        echo "RF_HOME=$GITHUB_WORKSPACE/.roboflow" >> "$GITHUB_ENV"
         echo "HF_HOME=$GITHUB_WORKSPACE/.huggingface" >> "$GITHUB_ENV"
         echo "HF_HUB_CACHE=$GITHUB_WORKSPACE/.huggingface/hub" >> "$GITHUB_ENV"
-        python .github/scripts/model_cache_key.py
+      shell: bash
+
+    - name: Compute model cache key
+      id: key
+      env:
+        MODEL_CACHE_SAVE: ${{ inputs.save == 'true' }}
+      run: |
+        set -euo pipefail
+        fingerprint=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py HEAD:pyproject.toml | git hash-object --stdin)
+        key="rfdetr-model-weights-$fingerprint-"
+        if [ "$MODEL_CACHE_SAVE" = "true" ]; then
+          key="$key$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        fi
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+      shell: bash
 
     - name: Download the test backbone for the fresh master archive
-      if: inputs.save == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.job == 'cache-model-weights'
-      shell: python
+      if: inputs.save == 'true'
       run: |
         from huggingface_hub import snapshot_download
 
         snapshot_download("facebook/dinov2-with-registers-base", ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"])
+      shell: python
 
-    - name: Save fresh master archive after all smoke jobs passed
-      if: inputs.save == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.job == 'cache-model-weights'
+    - name: Save fresh master archive
+      if: inputs.save == 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
-          rf-detr-*.pth
-          rf-detr-*.pt
+          .roboflow/rf-detr-*.pth
+          .roboflow/rf-detr-*.pt
           .huggingface/hub
         key: ${{ steps.key.outputs.key }}
         enableCrossOsArchive: true
 
     - name: Restore latest compatible master archive without saving
-      if: ${{ !(inputs.save == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.job == 'cache-model-weights') }}
+      if: inputs.save != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
-          rf-detr-*.pth
-          rf-detr-*.pt
+          .roboflow/rf-detr-*.pth
+          .roboflow/rf-detr-*.pt
           .huggingface/hub
         key: ${{ steps.key.outputs.key }}
         enableCrossOsArchive: true

@@ -55,6 +55,8 @@ jobs:
 
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🧪 Run the Test
         run: |

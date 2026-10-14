@@ -15,17 +15,14 @@ env:
   UV_TORCH_BACKEND: "cpu"
 
 jobs:
-  # Publishing waits for every try-all-models matrix leg to pass, so this must be a separate job.
-  # It reuses the designated smoke leg's fresh weights; the model initialization/inference loop runs in smoke only.
   cache-model-weights:
-    name: Publish fresh smoke-tested model weights cache
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    needs: try-all-models
+    name: Download fresh model weights
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    concurrency:
-      group: model-weights-cache-writer
-      cancel-in-progress: false
+    env:
+      RF_HOME: ${{ github.workspace }}/.roboflow
+      HF_HOME: ${{ github.workspace }}/.huggingface
+      HF_HUB_CACHE: ${{ github.workspace }}/.huggingface/hub
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -36,23 +33,16 @@ jobs:
           version: "0.9.26"
           python-version: "3.13"
           activate-environment: true
+          enable-cache: false
 
-      - name: 📥 Download fresh weights from the designated smoke leg
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: smoke-model-weights
-          path: .
+      - name: 🚀 Install Packages (plus extras)
+        run: uv pip install -e ".[plus]"
 
-      - name: 🚀 Install cache dependencies matching the smoke job
-        shell: bash
-        run: |
-          plus=$(cat model-weights.plus-version)
-          uv pip install -e ".[plus]" "rfdetr_plus==$plus"
-
-      - name: 🔎 Verify the transferred smoke weights
-        run: sha256sum --check model-weights.sha256
+      - name: 📥 Download fresh weights by instantiating every model
+        run: python .github/scripts/download_model_weights.py
 
       - name: 💾 Save fresh shared model weights
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
         uses: ./.github/actions/cache-model-weights
         with:
           save: "true"
@@ -68,9 +58,6 @@ jobs:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.13"]
     timeout-minutes: 15
-    env:
-      # Every matrix leg downloads fresh weights. One successful leg hands them to a publisher gated on the whole matrix.
-      RF_HOME: ${{ github.workspace }}
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -81,7 +68,6 @@ jobs:
           version: "0.9.26"
           python-version: ${{ matrix.python-version }}
           activate-environment: true
-          enable-cache: false
 
       - name: 🚀 Install Packages (plus extras)
         timeout-minutes: 5
@@ -91,26 +77,8 @@ jobs:
       - name: 🔎 Smoke-test model instantiation, downloads, and inference
         run: python tests/run_smoke_all_models.py
 
-      - name: 🔎 Record fresh smoke weights for transfer
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-        shell: bash
-        run: |
-          sha256sum rf-detr-*.pth rf-detr-*.pt > model-weights.sha256
-          python -c "from importlib.metadata import version; print(version('rfdetr_plus'))" > model-weights.plus-version
-
-      - name: 📤 Upload fresh weights for the post-matrix publisher
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: smoke-model-weights
-          path: |
-            rf-detr-*.pth
-            rf-detr-*.pt
-            model-weights.sha256
-            model-weights.plus-version
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 1
+      - name: Minimize uv cache
+        run: uv cache prune --ci
 
   export-parity:
     # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx, which previously
@@ -262,6 +230,8 @@ jobs:
       # tag it by format/os/python so Codecov keeps each row's contribution distinct.
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
         run: |
@@ -412,6 +382,8 @@ jobs:
 
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🧪 Run TensorRT end-to-end parity tests
         # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
@@ -505,6 +477,8 @@ jobs:
 
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🔎 Deploy a real model and poll for trained status
         env:

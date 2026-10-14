@@ -101,9 +101,6 @@ jobs:
           uv pip install -r "tests/legacy/frozen_dependencies/req-$MATRIX_VERSION.txt" \
             --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: 📦 Restore shared model weights
-        uses: ./.github/actions/cache-model-weights
-
       - name: 🏗️ Generate checkpoint
         env:
           MATRIX_VERSION: ${{ matrix.version }}
@@ -164,9 +161,6 @@ jobs:
 
       - name: 🗂️ List downloaded checkpoints
         run: ls -lh tests/legacy/checkpoints/
-
-      - name: 📦 Restore shared model weights
-        uses: ./.github/actions/cache-model-weights
 
       - name: 🧪 Run checkpoint compatibility tests
         run: |
