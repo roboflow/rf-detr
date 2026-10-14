@@ -371,7 +371,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 **Concurrency:** PRs cancel in-progress runs on new pushes
 
-**Pretrained weights cache:** Jobs that build pretrained models set `RF_HOME` to `${{ github.workspace }}/.rfdetr-weights`. `try-all-models` never restores cached weights, so every matrix leg tests downloading them from the live URLs and checking their MD5. Only its ubuntu / Python 3.13 leg writes the cross-OS Actions cache, after a successful smoke test and only on push to `develop`. The full key is the git blob hash of `src/rfdetr/assets/model_weights.py` plus the installed `rfdetr_plus` version; the GPU job restores that exact key, while the OpenVINO/LiteRT rows and `ci-legacy-checkpoints.yml` deliberately restore by registry-hash prefix because they need only core weights. Never save the cache from a PR run.
+**Pretrained weights cache:** `try-all-models` never restores or saves caches, including the uv cache, so every matrix leg tests live weight downloads and MD5 validation. Each consuming job owns its exact cache key and saves only after successful tests on pushes to `develop`; never save from a PR run. GPU keys include the weights registry git blob hash and installed `rfdetr_plus` version. OpenVINO/LiteRT keys include the format, Python version and registry hash. Legacy keys include the release, registry hash, checkpoint generator and frozen dependencies; `RF_HOME` points to the workspace so old and new releases share the cached `rf-detr-*.pth` files without symlinks. CPU Hugging Face keys include OS, Python version, backbone selection code and encoder configs. No weights cache uses prefix fallback to an older key.
 
 ## Additional Resources
 

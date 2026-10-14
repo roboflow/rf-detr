@@ -78,8 +78,8 @@ jobs:
       matrix:
         version: ${{ fromJson(needs.get-versions.outputs.matrix) }}
     env:
-      # Same weights directory as try-all-models in ci-integrations.yml, so this job can restore its cache entry.
-      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
+      # Older releases resolve bare weights filenames in the working directory; newer ones honor RF_HOME.
+      RF_HOME: ${{ github.workspace }}
 
     steps:
       - name: 📥 Checkout repository
@@ -90,24 +90,12 @@ jobs:
         run: echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
 
       - name: 📦 Restore cached model weights
-        # Saved by try-all-models in ci-integrations.yml. This job needs only rf-detr-small.pth, whose URL and MD5 are
-        # unchanged across the released versions tested here, so any rfdetr_plus version saved for the current weights
-        # registry will do (prefix match).
+        id: weights-cache
+        # Each release owns its cache; registry, generator and frozen dependency changes invalidate it.
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .rfdetr-weights
-          key: rfdetr-weights-${{ steps.weights-key.outputs.registry }}
-          restore-keys: |
-            rfdetr-weights-${{ steps.weights-key.outputs.registry }}-
-          enableCrossOsArchive: true
-
-      - name: 🔗 Expose cached weights to releases that ignore RF_HOME
-        # Releases before 1.7 resolve a bare weights name such as rf-detr-small.pth against the working directory, not
-        # RF_HOME; link the cached files there so those releases find them too.
-        run: |
-          if [ -d "$RF_HOME" ]; then
-            find "$RF_HOME" -maxdepth 1 -type f -exec ln -s {} . \;
-          fi
+          path: rf-detr-*.pth
+          key: rfdetr-weights-legacy-${{ matrix.version }}-${{ steps.weights-key.outputs.registry }}-${{ hashFiles('tests/legacy/generate_checkpoint.py', 'tests/legacy/frozen_dependencies/*.txt') }}
 
       - name: 🐍 Set up Python + uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -138,6 +126,13 @@ jobs:
           python tests/legacy/generate_checkpoint.py \
             --output "checkpoints/checkpoint_v$MATRIX_VERSION.pth" \
             --use-pretrained
+
+      - name: 💾 Save model weights cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.weights-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: rf-detr-*.pth
+          key: ${{ steps.weights-cache.outputs.cache-primary-key }}
 
       - name: 📤 Upload checkpoint artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -30,7 +30,6 @@ jobs:
     timeout-minutes: 35
     runs-on: Roboflow-GPU-VM-Runner
     env:
-      # Same weights directory as try-all-models in ci-integrations.yml, so this job can restore its cache entry.
       RF_HOME: ${{ github.workspace }}/.rfdetr-weights
     steps:
       - name: 🖥️ Print GPU information
@@ -58,20 +57,19 @@ jobs:
 
       - name: 🔑 Compute model weights cache key
         id: weights-key
-        # Same key as try-all-models in ci-integrations.yml (which saves it on push to develop): the weights registry's
-        # git blob hash plus the installed rfdetr_plus version, which registers the XLarge/2XLarge weights used here.
+        # This job owns its cache. Registry changes and Plus releases both invalidate the weights it uses.
         run: |
           registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)
           plus=$(python -c "from importlib.metadata import version; print(version('rfdetr_plus'))")
-          echo "key=rfdetr-weights-${registry}-plus-${plus}" >> "$GITHUB_OUTPUT"
+          echo "key=rfdetr-weights-gpu-${registry}-plus-${plus}" >> "$GITHUB_OUTPUT"
 
       - name: 📦 Restore cached model weights
+        id: weights-cache
         # The GPU runner gets a fresh VM for every job, so without this every run downloads the weights again.
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .rfdetr-weights
           key: ${{ steps.weights-key.outputs.key }}
-          enableCrossOsArchive: true
 
       - name: 🧪 Run the Test
         run: |
@@ -83,6 +81,13 @@ jobs:
           --cov=rfdetr --cov-report=xml \
           --timeout=600 \
           --durations=20
+
+      - name: 💾 Save model weights cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.weights-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: ${{ steps.weights-cache.outputs.cache-primary-key }}
 
       - name: Upload coverage to Codecov
         continue-on-error: true
