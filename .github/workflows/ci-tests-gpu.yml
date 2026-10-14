@@ -70,6 +70,7 @@ jobs:
         with:
           path: .rfdetr-weights
           key: ${{ steps.weights-key.outputs.key }}
+          enableCrossOsArchive: true
 
       - name: 🧪 Run the Test
         run: |
@@ -88,6 +89,7 @@ jobs:
         with:
           path: .rfdetr-weights
           key: ${{ steps.weights-cache.outputs.cache-primary-key }}
+          enableCrossOsArchive: true
 
       - name: Upload coverage to Codecov
         continue-on-error: true

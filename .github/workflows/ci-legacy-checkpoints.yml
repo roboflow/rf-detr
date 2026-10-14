@@ -87,7 +87,10 @@ jobs:
 
       - name: 🔑 Compute model weights cache key
         id: weights-key
-        run: echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
+          echo "generator=$(git rev-parse HEAD:tests/legacy/generate_checkpoint.py)" >> "$GITHUB_OUTPUT"
+          echo "dependencies=$(git rev-parse HEAD:tests/legacy/frozen_dependencies)" >> "$GITHUB_OUTPUT"
 
       - name: 📦 Restore cached model weights
         id: weights-cache
@@ -95,7 +98,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: rf-detr-*.pth
-          key: rfdetr-weights-legacy-${{ matrix.version }}-${{ steps.weights-key.outputs.registry }}-${{ hashFiles('tests/legacy/generate_checkpoint.py', 'tests/legacy/frozen_dependencies/*.txt') }}
+          key: rfdetr-weights-legacy-${{ matrix.version }}-${{ steps.weights-key.outputs.registry }}-${{ steps.weights-key.outputs.generator }}-${{ steps.weights-key.outputs.dependencies }}
+          enableCrossOsArchive: true
 
       - name: 🐍 Set up Python + uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -133,6 +137,7 @@ jobs:
         with:
           path: rf-detr-*.pth
           key: ${{ steps.weights-cache.outputs.cache-primary-key }}
+          enableCrossOsArchive: true
 
       - name: 📤 Upload checkpoint artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
