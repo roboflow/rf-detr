@@ -9,6 +9,7 @@ import contextlib
 import importlib
 import io
 import json
+import math
 import ntpath
 import operator
 import os
@@ -18,7 +19,7 @@ import tempfile
 import threading
 import warnings
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
@@ -496,6 +497,70 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
         raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
     return patch_size
+
+
+def _per_class_thresholds(threshold: float | Sequence[float], num_classes: int) -> list[float] | None:
+    """Split the ``threshold`` argument of :meth:`RFDETR.predict` into its single-float and per-class forms.
+
+    Args:
+        threshold: A single threshold, or one threshold per entry of ``class_names``.
+        num_classes: ``len(class_names)`` of the model.
+
+    Returns:
+        ``None`` for a single threshold, which ``predict`` applies to every class. Otherwise one float per class, in
+        ``class_names`` order.
+
+    Raises:
+        ValueError: If ``threshold`` is neither a scalar nor one-dimensional, holds a number of entries other than
+            ``num_classes``, or holds a NaN.
+
+    Examples:
+        >>> _per_class_thresholds(0.5, 3) is None
+        True
+        >>> _per_class_thresholds((0.1, 0.2, 0.3), 3)
+        [0.1, 0.2, 0.3]
+    """
+    dimensions = np.ndim(threshold)
+    if dimensions == 0:
+        return None
+    if dimensions != 1:
+        raise ValueError(
+            f"threshold must be a float or a one-dimensional sequence of floats, got {dimensions}-dimensional input."
+        )
+    values = [float(value) for value in cast("Sequence[float]", threshold)]
+    if len(values) != num_classes:
+        raise ValueError(
+            f"threshold has {len(values)} entries but the model has {num_classes} classes; "
+            "pass one threshold per entry of class_names, or a single float."
+        )
+    if any(math.isnan(value) for value in values):
+        # No score is above NaN, so the class would silently lose every detection, and `min` would carry the NaN into
+        # the segmentation pre-filter and empty the whole result. `inf` is the way to say "drop this class".
+        raise ValueError("threshold holds a NaN; use float('inf') to drop a class.")
+    return values
+
+
+def _threshold_by_class_id(class_thresholds: list[float], class_id_to_index: dict[int, int]) -> torch.Tensor:
+    """Lay per-class thresholds out by raw class id, so that a detection's label indexes its own threshold.
+
+    Args:
+        class_thresholds: One threshold per entry of ``class_names``.
+        class_id_to_index: Position in ``class_names`` of every raw class id the model emits.
+
+    Returns:
+        A float64 CPU tensor holding ``inf`` at every id missing from ``class_id_to_index`` (the no-object slot, gaps
+        in the COCO category ids) and in its last entry. No score exceeds ``inf``, so such a detection is dropped.
+        Cast it to the score dtype before moving it to the device (MPS has no float64) and index it with
+        ``labels.clamp(max=table.numel() - 1)`` to send ids beyond the table to that last entry.
+
+    Examples:
+        >>> _threshold_by_class_id([0.25, 0.75], {1: 0, 3: 1}).tolist()
+        [inf, 0.25, inf, 0.75, inf]
+    """
+    table = torch.full((max(class_id_to_index, default=-1) + 2,), float("inf"), dtype=torch.float64)
+    for class_id, index in class_id_to_index.items():
+        table[class_id] = class_thresholds[index]
+    return table
 
 
 #: Guards :data:`_MODULE_MOVE_LOCKS` itself, never a move. Held only long enough to hand out one module's lock, so
@@ -3213,7 +3278,7 @@ class RFDETR:
         | np.ndarray[Any, Any]
         | torch.Tensor
         | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
-        threshold: float = 0.5,
+        threshold: float | Sequence[float] = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
@@ -3232,7 +3297,12 @@ class RFDETR:
                 A single image or a list of images to process. Images can be provided
                 as file paths, PIL Images, NumPy arrays, or torch.Tensors.
             threshold:
-                The minimum confidence score needed to consider a detected bounding box valid.
+                The confidence score a detection must exceed to be kept. A single float applies to every class. A
+                sequence of floats, one per entry of ``class_names`` and in the same order, applies each threshold to
+                the detections of its own class, so that a class the model finds less reliably can be held to a
+                different bar. A sequence leaves out every detection that belongs to no entry of ``class_names``: the
+                no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                unused category IDs of a pretrained COCO model.
             shape:
                 Optional ``(height, width)`` tuple to resize images to before inference. When provided, overrides the
                 model's default inference resolution. The tuple should match the resolution used when exporting the
@@ -3315,7 +3385,8 @@ class RFDETR:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
-                num_windows``, or if ``patch_size`` is not a positive integer.
+                num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is
+                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.
         """
         from supervision import Detections, KeyPoints
 
@@ -3335,6 +3406,8 @@ class RFDETR:
                 )
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
+
+        class_thresholds = _per_class_thresholds(threshold, len(self.class_names))
 
         self._ensure_eval_mode_for_unoptimized_inference()
 
@@ -3588,7 +3661,10 @@ class RFDETR:
                     return_predictions["pred_masks"] = predictions[2]
             predictions = return_predictions
         target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
+        # With one threshold per class, the lowest is the loosest bound: the pre-filter in ``postprocess`` then never
+        # drops a row that the per-class filter below keeps.
+        score_floor = threshold if class_thresholds is None else min(class_thresholds)
+        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=score_floor)
 
         model_class_names = self.class_names
         n = len(model_class_names)
@@ -3611,9 +3687,7 @@ class RFDETR:
         _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
         _is_legacy_bgfirst_keypoint = _is_bg_first_schema(_num_keypoints_per_class)
         if _is_coco_pretrained:
-            _class_id_to_name: dict[int, str] = {
-                coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
-            }
+            _class_id_to_index: dict[int, int] = {coco_id: i for i, coco_id in enumerate(COCO_CLASSES) if i < n}
         elif _is_legacy_bgfirst_keypoint:
             # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
             # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
@@ -3622,26 +3696,43 @@ class RFDETR:
             # string with a one-time warning. Mixed keypoint+detection schemas are not a supported
             # configuration for the shipped models.
             _kp_foreground_slots = [idx for idx, k in enumerate(_num_keypoints_per_class) if k > 0]
-            _class_id_to_name = {slot: model_class_names[i] for i, slot in enumerate(_kp_foreground_slots) if i < n}
+            _class_id_to_index = {slot: i for i, slot in enumerate(_kp_foreground_slots) if i < n}
         else:
-            _class_id_to_name = dict(enumerate(model_class_names))
+            _class_id_to_index = {i: i for i in range(n)}
+        _class_id_to_name = {class_id: model_class_names[i] for class_id, i in _class_id_to_index.items()}
+        # Rounded to the score dtype on the CPU, once: the float form rounds `t` to the score dtype, so `[t] * n` then
+        # compares exactly as `t` does, where a float32 table would compare a float16 score at float32 precision (or a
+        # float64 score at float32 precision). On CUDA the copy is non-blocking, so it adds no stream synchronization;
+        # other accelerators copy synchronously, as the images do.
+        label_thresholds = (
+            None
+            if class_thresholds is None
+            else _threshold_by_class_id(class_thresholds, _class_id_to_index)
+            .to(results[0]["scores"].dtype)
+            .to(self.model.device, non_blocking=self.model.device.type == "cuda")
+        )
         predictions_list: list[Detections | KeyPoints] = []
         for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
             boxes = result["boxes"]
 
-            # INVARIANT: this predicate must stay identical (same operator and threshold) to the
-            # pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`), which is
-            # fed `score_threshold=threshold` above. The seg path drops below-threshold masks before
-            # upsampling on the strength of that match; diverging here (e.g. `>=`, per-class, top-k)
-            # would make it silently drop rows this filter keeps — a behaviour change with no failing test.
+            # INVARIANT: this predicate must keep every row that the pre-filter in
+            # PostProcess._postprocess_masks (`scores_i > score_threshold`) keeps, and use the same
+            # operator: it is fed `score_threshold=score_floor` above, which is `threshold`, or the lowest
+            # per-class threshold. The seg path drops below-threshold masks before upsampling on the strength
+            # of that match; a stricter pre-filter, or a different operator here (e.g. `>=`, top-k), would
+            # make it silently drop rows this filter keeps — a behaviour change with no failing test.
             # Materialized as an index vector (not a bool mask) so the bool-mask advanced-indexing
             # sync below runs once per image instead of once per kept tensor: `t[bool_mask]` re-derives
             # its output size via `nonzero(bool_mask)` on every call (a documented CUDA host-device
             # sync), while `t[int64_index]` is index_select-shaped and needs no further sync. Row order
             # is unaffected — `nonzero` returns ascending indices, identical to bool-mask selection order.
-            keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
+            if label_thresholds is None:
+                keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
+            else:
+                row_thresholds = label_thresholds[labels.clamp(max=label_thresholds.numel() - 1)]
+                keep_idx = (scores > row_thresholds).nonzero(as_tuple=True)[0]
             scores = scores[keep_idx]
             labels = labels[keep_idx]
             boxes = boxes[keep_idx]

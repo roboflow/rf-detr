@@ -47,6 +47,12 @@ class _DummyModel:
         >>> m = _DummyModel(labels=[0, 1])
         >>> len(m._labels)
         2
+        >>> scored = _DummyModel(labels=[0, 1], scores=[0.25, 0.75])
+        >>> scored.postprocess(None, torch.tensor([[4, 4]]))[0]["scores"].tolist()
+        [0.25, 0.75]
+        >>> half = _DummyModel(labels=[0], scores=[0.5], score_dtype=torch.float16)
+        >>> half.postprocess(None, torch.tensor([[4, 4]]))[0]["scores"].dtype
+        torch.float16
     """
 
     def __init__(
@@ -59,6 +65,8 @@ class _DummyModel:
         include_masks: bool = False,
         mask_size: int = 4,
         fill_value: float | None = None,
+        scores: list[float] | None = None,
+        score_dtype: torch.dtype = torch.float32,
     ) -> None:
         """Initialise stub with optional class names, label list, device, mask flag, and keypoint flag.
 
@@ -79,6 +87,10 @@ class _DummyModel:
                 async device-to-host copy, where a stale zero would otherwise be indistinguishable
                 from a genuine one. ``None`` preserves the original fixed values every existing
                 caller already asserts on.
+            scores: Per-detection scores returned by ``postprocess``, one per entry of ``labels``. ``None`` keeps
+                the single fill value for every detection, which is what existing callers rely on.
+            score_dtype: Dtype of the ``scores`` tensor, e.g. ``torch.float16`` for a model run with
+                ``inference(dtype=torch.float16)``. Only applies when ``scores`` is given.
         """
         self.device = torch.device(device)
         self.resolution = 28
@@ -90,6 +102,8 @@ class _DummyModel:
         self._include_masks = include_masks
         self._mask_size = mask_size
         self._fill_value = fill_value
+        self._scores = scores
+        self._score_dtype = score_dtype
         # Captured once, independent of `self.device`: some tests reassign `self.device` after
         # construction to simulate a model "declared" on CUDA while every tensor op stays mocked
         # CPU-side — `postprocess` must keep allocating on the device it was actually built for.
@@ -112,7 +126,9 @@ class _DummyModel:
         results = []
         for _ in range(batch):
             result: dict[str, torch.Tensor] = {
-                "scores": torch.full((n,), score_value, device=device),
+                "scores": torch.tensor(self._scores, device=device, dtype=self._score_dtype)
+                if self._scores is not None
+                else torch.full((n,), score_value, device=device),
                 "labels": torch.tensor(self._labels, device=device),
                 "boxes": torch.tensor([box_value] * n, device=device),
             }
