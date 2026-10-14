@@ -24,7 +24,7 @@ on:
       - "pyproject.toml"
       - ".github/workflows/ci-tests-xla.yml"
       - ".github/actions/cache-model-weights/**"
-      - ".github/scripts/model_weight_cache.py"
+      - ".github/scripts/model_cache_key.py"
 
 permissions:
   contents: read

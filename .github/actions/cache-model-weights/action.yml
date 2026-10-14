@@ -2,22 +2,29 @@ name: Shared model weights cache
 description: Restore compatible cross-OS model weights; the post-smoke develop publisher saves fresh archives.
 inputs:
   save:
-    description: Verify and save a fresh archive in the dedicated develop-push publisher only.
+    description: Save fresh smoke-tested weights in the dedicated develop-push publisher only.
     default: "false"
 runs:
   using: composite
   steps:
-    - name: Compute compatible cache key and configure model directories
+    - name: Configure model cache directories and key
       shell: bash
       id: key
       env:
         MODEL_CACHE_SAVE: ${{ inputs.save }}
-      run: python .github/scripts/model_weight_cache.py configure
+      run: |
+        echo "RF_HOME=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        echo "HF_HOME=$GITHUB_WORKSPACE/.huggingface" >> "$GITHUB_ENV"
+        echo "HF_HUB_CACHE=$GITHUB_WORKSPACE/.huggingface/hub" >> "$GITHUB_ENV"
+        python .github/scripts/model_cache_key.py
 
-    - name: Verify the complete smoke handoff and populate the test backbone
+    - name: Download the test backbone for the fresh master archive
       if: inputs.save == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.job == 'cache-model-weights'
-      shell: bash
-      run: python .github/scripts/model_weight_cache.py verify
+      shell: python
+      run: |
+        from huggingface_hub import snapshot_download
+
+        snapshot_download("facebook/dinov2-with-registers-base", ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"])
 
     - name: Save fresh master archive after all smoke jobs passed
       if: inputs.save == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.job == 'cache-model-weights'

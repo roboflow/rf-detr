@@ -15,6 +15,8 @@ env:
   UV_TORCH_BACKEND: "cpu"
 
 jobs:
+  # Publishing waits for every try-all-models matrix leg to pass, so this must be a separate job.
+  # It reuses the designated smoke leg's fresh weights; the model initialization/inference loop runs in smoke only.
   cache-model-weights:
     name: Publish fresh smoke-tested model weights cache
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
@@ -35,16 +37,22 @@ jobs:
           python-version: "3.13"
           activate-environment: true
 
-      - name: 🚀 Install model validation dependencies
-        run: uv pip install -e ".[plus]"
-
       - name: 📥 Download fresh weights from the designated smoke leg
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: smoke-model-weights
           path: .
 
-      - name: 💾 Validate and save fresh shared model weights
+      - name: 🚀 Install cache dependencies matching the smoke job
+        shell: bash
+        run: |
+          plus=$(cat model-weights.plus-version)
+          uv pip install -e ".[plus]" "rfdetr_plus==$plus"
+
+      - name: 🔎 Verify the transferred smoke weights
+        run: sha256sum --check model-weights.sha256
+
+      - name: 💾 Save fresh shared model weights
         uses: ./.github/actions/cache-model-weights
         with:
           save: "true"
@@ -83,9 +91,12 @@ jobs:
       - name: 🔎 Smoke-test model instantiation, downloads, and inference
         run: python tests/run_smoke_all_models.py
 
-      - name: 🔎 Record the validated smoke-model handoff
+      - name: 🔎 Record fresh smoke weights for transfer
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
-        run: python .github/scripts/model_weight_cache.py manifest
+        shell: bash
+        run: |
+          sha256sum rf-detr-*.pth rf-detr-*.pt > model-weights.sha256
+          python -c "from importlib.metadata import version; print(version('rfdetr_plus'))" > model-weights.plus-version
 
       - name: 📤 Upload fresh weights for the post-matrix publisher
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
@@ -95,8 +106,8 @@ jobs:
           path: |
             rf-detr-*.pth
             rf-detr-*.pt
-            .model-cache-manifest.json
-          include-hidden-files: true
+            model-weights.sha256
+            model-weights.plus-version
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
