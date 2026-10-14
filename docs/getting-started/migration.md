@@ -7,12 +7,38 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10  →  1.11
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10  →  1.11  →  1.12
 ```
 
-You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs and configuration fields emit the warning type stated in their entry until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
 
 ---
+
+## Upgrade 1.11 → 1.12
+
+### Deprecated in v1.12 → Remove in v2.0
+
+!!! note "Major-impact deprecations: raw TensorRT and OpenVINO inference"
+
+    `TRTInference` and `OpenVINOInference` are deprecated in v1.12.0 and will be removed in v2.0.0. These are major-impact deprecations because they replace two public raw-runtime interfaces with the shared image-prediction API. Both legacy classes remain available until v2.0.0 and emit a `FutureWarning` when constructed.
+
+    Use `RFDETRInference` for image inputs and decoded Supervision results. The old TensorRT facade accepts already-preprocessed, normalized NCHW CUDA tensors and returns raw engine output tensors; the old OpenVINO facade accepts an already-preprocessed, normalized, contiguous `float32` NCHW array and returns raw output arrays. `RFDETRInference.predict()` accepts images and returns `supervision.Detections` for detection or segmentation models, or `supervision.KeyPoints` for keypoint models.
+
+    ```python
+    from rfdetr import RFDETRInference
+
+    model = RFDETRInference("output/model.trt")
+    detections = model.predict("image.jpg")
+    ```
+
+    Move the legacy runtime settings into `runtime_options` when constructing `RFDETRInference`:
+
+    | Legacy runtime      | `runtime_options` keys                              |
+    | ------------------- | --------------------------------------------------- |
+    | `TRTInference`      | `cuda_graph`, `engine_host_code_allowed`, `verbose` |
+    | `OpenVINOInference` | `cache_dir`, `inference_precision`, `config`        |
+
+    Pass the runtime choice through `RFDETRInference`'s `device` keyword. TensorRT's former `sync_mode` flag has no `runtime_options` key because the shared TensorRT adapter uses `execute_v2` by default. For example, `OpenVINOInference(model_path, cache_dir=cache)` becomes `RFDETRInference(model_path, runtime_options={"cache_dir": cache})`. The shared API handles preprocessing and postprocessing; use the format-specific session interfaces only when a raw-runtime benchmark or numerical check requires raw tensors.
 
 ## Upgrade 1.10 → 1.11
 

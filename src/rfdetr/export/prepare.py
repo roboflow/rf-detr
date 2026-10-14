@@ -353,6 +353,9 @@ def prepare_export_graph(
         batch_size: Static batch size baked into the graph.
         dynamic_batch: Whether to mark the batch dimension dynamic.
         backbone_only: Export the encoder and feature projectors without the prediction heads.
+        metadata: Inference metadata captured from the exported model, including its task, class names, input
+            preprocessing, and output semantics. When provided, this metadata is attached to the prepared graph for
+            publication beside the final artifact.
 
     Returns:
         The prepared :class:`ExportGraph`.
