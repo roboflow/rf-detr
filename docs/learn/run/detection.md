@@ -111,6 +111,8 @@ detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=thres
 - A sequence drops detections that belong to no entry of `model.class_names`: the no-object slot of a fine-tuned model and the unused category IDs of a pretrained COCO model. A single float keeps them.
 - Segmentation and keypoint models take the same argument. For keypoint models the thresholds apply to `key_points.detection_confidence`.
 
+The [per-class confidence thresholds cookbook](../../../cookbooks/per-class-confidence-thresholds/) shows how to choose the values from held-out images, and measures when a list of thresholds beats a single one and when it does not.
+
 ## Run on video, webcam, or RTSP stream
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.

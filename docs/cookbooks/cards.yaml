@@ -1,4 +1,10 @@
 cards:
+  - href: per-class-confidence-thresholds/
+    name: "Per-Class Confidence Thresholds"
+    labels: [INFERENCE]
+    version: v1.12.0
+    author: lthphuw
+    description: "Pass one confidence threshold per class to predict(), choose the values on held-out COCO val2017 detections, and measure on a test set when they beat a single threshold and when they do not."
   - href: train-coco2017/
     name: "Train RF-DETR Nano on COCO2017"
     labels: [TRAINING, COCO2017, PYTORCH LIGHTNING]
