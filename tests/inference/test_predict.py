@@ -305,9 +305,13 @@ class TestPredictPerClassThreshold:
         with pytest.raises(ValueError, match="one-dimensional"):
             model.predict(_PER_CLASS_IMAGE, threshold=[[0.5, 0.5, 0.5]])
 
-    @pytest.mark.parametrize("label_without_entry", [3, 7])
+    @pytest.mark.parametrize("label_without_entry", [-2, 3, 7])
     def test_detection_without_a_class_entry_is_dropped(self, label_without_entry: int) -> None:
-        """The no-object slot (id 3 here) and an id beyond the table (7) have no threshold, so their rows never pass."""
+        """The no-object slot (id 3 here), an id beyond the table (7) and a negative id have no threshold.
+
+        Such rows never pass. A negative id must not wrap around: ``-2`` would read the second-to-last table entry, the
+        threshold of class ``"c"``.
+        """
         model = _make_scored_model([0, label_without_entry], [0.9, 0.9], class_names=["a", "b", "c"])
 
         detections = model.predict(_PER_CLASS_IMAGE, threshold=[0.1, 0.1, 0.1])

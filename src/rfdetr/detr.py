@@ -551,7 +551,7 @@ def _threshold_by_class_id(class_thresholds: list[float], class_id_to_index: dic
         A float64 CPU tensor holding ``inf`` at every id missing from ``class_id_to_index`` (the no-object slot, gaps
         in the COCO category ids) and in its last entry. No score exceeds ``inf``, so such a detection is dropped.
         Cast it to the score dtype before moving it to the device (MPS has no float64) and index it with
-        ``labels.clamp(max=table.numel() - 1)`` to send ids beyond the table to that last entry.
+        ``labels.clamp(min=-1, max=table.numel() - 1)``: negative and out-of-table ids then read the last entry.
 
     Examples:
         >>> _threshold_by_class_id([0.25, 0.75], {1: 0, 3: 1}).tolist()
@@ -3731,7 +3731,9 @@ class RFDETR:
             if label_thresholds is None:
                 keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
             else:
-                row_thresholds = label_thresholds[labels.clamp(max=label_thresholds.numel() - 1)]
+                # -1 and every id past the table read the trailing inf sentinel. Clamping only the top would let an
+                # id below -1 wrap around in Python indexing and read another class's threshold.
+                row_thresholds = label_thresholds[labels.clamp(min=-1, max=label_thresholds.numel() - 1)]
                 keep_idx = (scores > row_thresholds).nonzero(as_tuple=True)[0]
             scores = scores[keep_idx]
             labels = labels[keep_idx]
