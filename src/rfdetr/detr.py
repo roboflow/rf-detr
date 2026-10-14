@@ -3717,12 +3717,13 @@ class RFDETR:
             labels = result["labels"]
             boxes = result["boxes"]
 
-            # INVARIANT: this predicate must keep every row that the pre-filter in
-            # PostProcess._postprocess_masks (`scores_i > score_threshold`) keeps, and use the same
-            # operator: it is fed `score_threshold=score_floor` above, which is `threshold`, or the lowest
-            # per-class threshold. The seg path drops below-threshold masks before upsampling on the strength
-            # of that match; a stricter pre-filter, or a different operator here (e.g. `>=`, top-k), would
-            # make it silently drop rows this filter keeps — a behaviour change with no failing test.
+            # INVARIANT: the pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`) must keep
+            # every row this predicate may keep, and use the same operator: it is fed `score_threshold=score_floor`
+            # above, which is `threshold`, or the lowest per-class threshold. With per-class thresholds this predicate
+            # can drop rows that the lowest-threshold pre-filter admits, never the reverse, so the pre-filter may be
+            # looser but never stricter. The seg path drops below-threshold masks before upsampling on the strength of
+            # that match; a stricter pre-filter, or a different operator here (e.g. `>=`, top-k), would make it
+            # silently drop rows this filter keeps — a behaviour change with no failing test.
             # Materialized as an index vector (not a bool mask) so the bool-mask advanced-indexing
             # sync below runs once per image instead of once per kept tensor: `t[bool_mask]` re-derives
             # its output size via `nonzero(bool_mask)` on every call (a documented CUDA host-device
