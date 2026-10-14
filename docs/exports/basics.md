@@ -6,6 +6,8 @@ description: Export basics for RF-DETR — install the export extras, run model.
 
 This page covers the everyday export path: install an extra, call `model.export()`, locate the output files, and run inference. For the full parameter reference and less common options, see [Advanced Export](advanced.md). For a comparison of formats and measured performance, see the [Overview](index.md).
 
+For the full guide to loading a live model, checkpoint, or export and predicting images through the shared API, see [Run Inference](../learn/inference.md).
+
 ## Installation
 
 Install the export dependencies you need:

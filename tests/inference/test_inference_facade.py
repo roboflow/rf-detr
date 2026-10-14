@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -15,12 +16,13 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 from supervision import Detections
 
 from rfdetr.detr import RFDETR
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
-from rfdetr.variants import RFDETRNano
+from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 
 
 @pytest.fixture
@@ -82,7 +84,15 @@ class TestLiveModelSource:
         with monkeypatch.context() as property_patch:
             property_patch.setattr("rfdetr.detr._move_model_context_to_device", fail_on_placement)
             assert facade.class_names == ["cat", "dog"]
-            assert facade.runtime_info == {"backend": "pytorch", "device": "cpu"}
+            assert facade.runtime_info == {
+                "backend": "pytorch",
+                "device": "cpu",
+                "task": "detect",
+                "input_shape": (None, 3, None, None),
+                "default_shape": (64, 64),
+                "batch_size": None,
+                "max_batch_size": None,
+            }
 
         expected = native_model.predict(image, threshold=0.0)
         actual = facade.predict(image, threshold=0.0)
@@ -179,6 +189,42 @@ class TestCheckpointSource:
         """Native checkpoint paths do not accept exported inference metadata."""
         with pytest.raises(ValueError, match="metadata"):
             RFDETRInference(tmp_path / "model.pt", metadata={"task": "detect"})
+
+    def test_checkpoint_optimization_recipe_predicts(
+        self,
+        nano_model: RFDETRNano,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The documented owned-checkpoint warning and native optimization recipe run with real weights."""
+        checkpoint = tmp_path / "model.pth"
+        torch.save(
+            {
+                "model": nano_model.model.model.state_dict(),
+                "model_config": nano_model.model_config.model_dump(),
+                "model_name": "RFDETRNano",
+                "args": {"class_names": ["cat", "dog"], "num_classes": 2},
+            },
+            checkpoint,
+        )
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            unoptimized = RFDETRInference(checkpoint, device="cpu").predict(image, threshold=0.0)
+        assert "RFDETR.from_checkpoint(" in caplog.text
+
+        native_model = RFDETR.from_checkpoint(checkpoint, device="cpu")
+        native_model.inference(compile=False)
+        facade = RFDETRInference(native_model)
+        actual = facade.predict(image, threshold=0.0)
+
+        assert isinstance(actual, Detections)
+        assert isinstance(unoptimized, Detections)
+        np.testing.assert_allclose(actual.xyxy, unoptimized.xyxy, rtol=1e-4, atol=1e-6)
+        np.testing.assert_allclose(actual.confidence, unoptimized.confidence, rtol=1e-4, atol=1e-6)
+        assert facade.runtime_info["input_shape"] == (None, 3, 64, 64)
+        assert facade.runtime_info["batch_size"] is None
 
 
 @pytest.fixture
@@ -279,3 +325,116 @@ class TestOptimizedNativeSource:
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=0, rtol=0)
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=0, rtol=0)
         np.testing.assert_array_equal(actual.class_id, expected.class_id)
+
+        assert facade.runtime_info["input_shape"] == (None, 3, 64, 64)
+        assert facade.runtime_info["batch_size"] is None
+
+
+class TestFacadeContracts:
+    """Public facade arguments and inspection work before inference starts."""
+
+    @pytest.mark.parametrize("keyword", ["threhsold", "confidence"])
+    def test_unknown_prediction_keyword_fails_before_placement(
+        self, nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch, keyword: str
+    ) -> None:
+        """A typo must fail before a borrowed model changes device or executes."""
+        facade = RFDETRInference(nano_model)
+        placement = Mock(side_effect=AssertionError("Unknown options must fail before placement."))
+        monkeypatch.setattr("rfdetr.detr._move_model_context_to_device", placement)
+
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            facade.predict(np.zeros((64, 64, 3), dtype=np.uint8), **{keyword: 0.9})
+
+        placement.assert_not_called()
+
+    def test_native_warning_gives_a_callable_optimization_recipe(
+        self, nano_model: RFDETRNano, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The warning names the native instance and checkpoint loading path, not a missing facade method."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        facade = RFDETRInference(nano_model)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            facade.predict(np.zeros((64, 64, 3), dtype=np.uint8))
+
+        assert "native_model.inference(" in caplog.text
+        assert "RFDETR.from_checkpoint(" in caplog.text
+        assert "RFDETRInference(native_model)" in caplog.text
+        assert not hasattr(facade, "inference")
+
+    def test_compiled_constraints_match_the_executable_native_batch(self, nano_model: RFDETRNano) -> None:
+        """A real compiled model reports its fixed batch and spatial dimensions."""
+        facade = RFDETRInference(nano_model)
+        nano_model.inference(batch_size=2)
+
+        assert facade.runtime_info["input_shape"] == (2, 3, 64, 64)
+        assert facade.runtime_info["batch_size"] == 2
+        images = [np.zeros((64, 64, 3), dtype=np.uint8)] * 2
+        predictions = facade.predict(images)
+        assert isinstance(predictions, list)
+        assert len(predictions) == 2
+
+    def test_compiled_facade_batch_hint_targets_the_retained_native_model(self, nano_model: RFDETRNano) -> None:
+        """Following the batch error's native optimization hint restores prediction through the same facade."""
+        facade = RFDETRInference(nano_model)
+        nano_model.inference(batch_size=2)
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+
+        with pytest.raises(ValueError, match=r"native_model.inference\(batch_size="):
+            facade.predict(image)
+
+        nano_model.inference(batch_size=1)
+        result = facade.predict(image)
+        assert isinstance(result, Detections)
+        assert facade.runtime_info["batch_size"] == 1
+
+    def test_optimized_facade_shape_hint_targets_the_retained_native_model(self, nano_model: RFDETRNano) -> None:
+        """Removing native optimization permits the previously refused shape through the borrowed facade."""
+        facade = RFDETRInference(nano_model)
+        nano_model.inference(compile=False)
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+
+        with pytest.raises(ValueError, match=r"native_model.remove_optimized_model\("):
+            facade.predict(image, shape=(128, 128))
+
+        nano_model.remove_optimized_model()
+        result = facade.predict(image, shape=(128, 128))
+        assert isinstance(result, Detections)
+        assert facade.runtime_info["input_shape"] == (None, 3, None, None)
+
+    def test_runtime_information_is_an_independent_copy(self, nano_model: RFDETRNano) -> None:
+        """Mutating inspection values cannot alter subsequent inspection or prediction configuration."""
+        facade = RFDETRInference(nano_model)
+        info = facade.runtime_info
+        info["input_shape"] = (1, 1, 1, 1)
+        info["task"] = "segment"
+
+        assert facade.runtime_info["input_shape"] == (None, 3, None, None)
+        assert facade.runtime_info["task"] == "detect"
+
+    @pytest.mark.parametrize(
+        ("model_type", "task"),
+        [
+            pytest.param(RFDETRSegNano, "segment", id="segmentation"),
+            pytest.param(RFDETRKeypointPreview, "keypoints", id="keypoints"),
+        ],
+    )
+    def test_runtime_information_reports_native_task(self, model_type: type[RFDETR], task: str) -> None:
+        """Inspection identifies actual segmentation and keypoint variants without inference."""
+        native = model_type(pretrain_weights=None, device="cpu", resolution=64, num_queries=4, num_select=4)
+        facade = RFDETRInference(native)
+
+        assert facade.runtime_info["task"] == task
+        assert facade.runtime_info["input_shape"] == (None, 3, None, None)
+
+    def test_native_pathlike_batch_uses_the_shared_image_boundary(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
+        """Both public native entry points accept the Path objects produced by directory traversal."""
+        path = tmp_path / "image.png"
+        image = np.full((64, 64, 3), 127, dtype=np.uint8)
+        Image.fromarray(image).save(path)
+        native_results = nano_model.predict([path])
+        facade_results = RFDETRInference(nano_model).predict((path,))
+
+        assert isinstance(native_results, list)
+        assert isinstance(facade_results, list)
+        np.testing.assert_array_equal(facade_results[0].xyxy, native_results[0].xyxy)
+        np.testing.assert_array_equal(facade_results[0].metadata["source_image"], image)

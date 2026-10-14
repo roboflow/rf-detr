@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import operator
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -344,10 +345,12 @@ def _mps_lacks_antialiased_resize() -> bool:
 def predict(
     context: PredictionContext,
     images: str
+    | os.PathLike[str]
     | Image.Image
     | np.ndarray[Any, Any]
     | torch.Tensor
-    | list[str | Image.Image | np.ndarray[Any, Any] | torch.Tensor],
+    | list[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor]
+    | tuple[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor, ...],
     threshold: float = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,
@@ -360,7 +363,8 @@ def predict(
 
     Args:
         context: Execution and decoding rules for this call.
-        images: An RGB image or a list or tuple of images.
+        images: An image, file path, URL string, or list or tuple of those inputs. PIL and file inputs convert to
+            grayscale for one-channel models and RGB for three-channel models; arrays and tensors supply their channels.
         threshold: Minimum confidence for a result.
         shape: Input height and width.
         patch_size: Backbone patch size for shape validation.
@@ -444,12 +448,16 @@ def predict(
     for img_input in images:
         img: Any = img_input
         decoded_local_file = False
+        if isinstance(img, os.PathLike):
+            img = os.fspath(img)
         if isinstance(img, str):
             if urlparse(img).scheme in ("http", "https"):
                 resp = requests.get(img, timeout=30)
                 resp.raise_for_status()
                 img = io.BytesIO(resp.content)
-            else:
+            elif context.config.num_channels == 3:
+                # The fast decoder is RGB-only. Keep grayscale on Pillow so files and PIL inputs use the same
+                # luminance conversion; a grayscale codec path needs pixel-parity and latency evidence first.
                 decoded = _decode_local_image(img)
                 if decoded is not None:
                     img = decoded
@@ -463,13 +471,11 @@ def predict(
             if include_source_image:
                 source_images.append(img.permute(1, 2, 0).numpy().copy())  # type: ignore[union-attr]
         elif not isinstance(img, torch.Tensor):
-            # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
-            # etc.) to RGB before converting to tensor.  This matches the
-            # standard detector API contract: callers passing a file path or
-            # a PIL image should not have to pre-convert; for tensor inputs
-            # the channel dimension is the caller's responsibility.
-            if isinstance(img, Image.Image) and img.mode != "RGB":
-                img = img.convert("RGB")
+            # PIL owns the one-/three-channel conversion. Other channel counts require an explicit array or tensor.
+            if isinstance(img, Image.Image):
+                mode = "L" if context.config.num_channels == 1 else "RGB"
+                if img.mode != mode:
+                    img = img.convert(mode)
             pil_image = isinstance(img, Image.Image)
             source_array: np.ndarray[Any, Any] | None = None
             if include_source_image:

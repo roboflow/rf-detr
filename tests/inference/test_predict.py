@@ -89,6 +89,34 @@ class TestPredictReturnTypes:
         assert isinstance(batch, list)
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    def test_native_single_channel_images_use_pillow_luminance(self, tmp_path: Path, input_kind: str) -> None:
+        """Native prediction shares grayscale conversion and source metadata with exported prediction."""
+        model = _DummyRFDETR()
+        model.model_config.num_channels = 1
+        model.means = model.means[:1]
+        model.stds = model.stds[:1]
+        image = PIL.Image.new("RGB", (29, 17), (17, 127, 231))
+        path = tmp_path / "image.png"
+        image.save(path)
+        expected = np.array(image.convert("L"))
+
+        result = model.predict(image if input_kind == "pil" else path)
+
+        assert result.metadata["source_image"].shape == (17, 29)
+        assert result.metadata["source_image"].dtype == np.uint8
+        np.testing.assert_array_equal(result.metadata["source_image"], expected)
+
+    def test_native_unknown_keyword_keeps_legacy_behavior(self) -> None:
+        """Strict validation belongs to the new facade; existing native kwargs remain compatible."""
+        model = _DummyRFDETR()
+        image = np.zeros((28, 28, 3), dtype=np.uint8)
+
+        expected = model.predict(image)
+        actual = model.predict(image, legacy_option=True)
+
+        np.testing.assert_array_equal(actual.xyxy, expected.xyxy)
+
 
 class TestPredictScoreThresholdEquivalence:
     """The mask pre-filter perf path must not change ``predict()``'s final output."""

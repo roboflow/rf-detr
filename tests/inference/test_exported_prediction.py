@@ -8,7 +8,10 @@
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
+import torch
+from PIL import Image
 
 from rfdetr import RFDETRInference
 from rfdetr.detr import RFDETR
@@ -36,17 +39,21 @@ _READOUT_SCALE = 0.1
 _LOGIT_OFFSET = 4.0
 
 
-def _channel_readout_graph(path: Path) -> None:
+def _channel_readout_graph(path: Path, channels: int = 3) -> None:
     """Save a two-query ONNX detector whose first query reads the normalized input channel means.
 
     Query 0's box centre x, centre y and width move with the red, green and blue channel means, and its class-0 logit
-    moves with the green mean, so a wrong mean, std or channel order changes the prediction. Query 1 is a constant
+    moves with the green mean, so a wrong mean, std or channel order changes the prediction. With one channel only
+    query 0's centre x reads the grayscale input. Query 1 is a constant
     low-score box. The batch axis is symbolic, so the same graph serves fixed- and dynamic-batch metadata.
 
     Examples:
         >>> import tempfile
         >>> path = Path(tempfile.mkdtemp()) / "detector.onnx"
         >>> _channel_readout_graph(path)
+        >>> path.stat().st_size > 0
+        True
+        >>> _channel_readout_graph(path, channels=1)
         >>> path.stat().st_size > 0
         True
     """
@@ -63,12 +70,16 @@ def _channel_readout_graph(path: Path) -> None:
     # Columns are (query 0, class 0), (query 0, class 1), (query 1, class 0), (query 1, class 1).
     logit_weights = [[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
     logit_bias = [_LOGIT_OFFSET, -4.0, -4.0, -4.0]
+    box_weights = box_weights[:channels]
+    logit_weights = logit_weights[:channels]
     initializers = [
-        helper.make_tensor("box_weights", TensorProto.FLOAT, [3, 8], [value for row in box_weights for value in row]),
+        helper.make_tensor(
+            "box_weights", TensorProto.FLOAT, [channels, 8], [value for row in box_weights for value in row]
+        ),
         helper.make_tensor("box_bias", TensorProto.FLOAT, [8], box_bias),
         helper.make_tensor("box_shape", TensorProto.INT64, [3], [-1, 2, 4]),
         helper.make_tensor(
-            "logit_weights", TensorProto.FLOAT, [3, 4], [value for row in logit_weights for value in row]
+            "logit_weights", TensorProto.FLOAT, [channels, 4], [value for row in logit_weights for value in row]
         ),
         helper.make_tensor("logit_bias", TensorProto.FLOAT, [4], logit_bias),
         helper.make_tensor("logit_shape", TensorProto.INT64, [3], [-1, 2, 2]),
@@ -85,7 +96,7 @@ def _channel_readout_graph(path: Path) -> None:
     graph = helper.make_graph(
         nodes,
         "detector",
-        [helper.make_tensor_value_info("images", TensorProto.FLOAT, ["batch", 3, 32, 48])],
+        [helper.make_tensor_value_info("images", TensorProto.FLOAT, ["batch", channels, 32, 48])],
         [
             helper.make_tensor_value_info("boxes", TensorProto.FLOAT, ["batch", 2, 4]),
             helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["batch", 2, 2]),
@@ -207,6 +218,118 @@ class TestExportedPrediction:
         np.testing.assert_allclose(
             [first.confidence[0], second.confidence[0]], [first_score, second_score], rtol=0, atol=1e-5
         )
+
+    @pytest.mark.parametrize("keyword", ["threhsold", "confidence"])
+    def test_unknown_keyword_cannot_change_threshold_intent(
+        self, exported_detection: tuple[Path, dict[str, object]], keyword: str
+    ) -> None:
+        """Unknown options fail through the same real runtime that honors the declared threshold."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        image = np.zeros((32, 48, 3), dtype=np.uint8)
+        assert len(model.predict(image, threshold=1.0)) == 0
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            model.predict(image, **{keyword: 1.0})
+
+    @pytest.mark.parametrize("image_format", ["PNG", "JPEG"])
+    @pytest.mark.parametrize("input_kind", ["pil", "str", "path", "array", "tensor"])
+    def test_single_channel_input_forms_match(
+        self,
+        exported_detection: tuple[Path, dict[str, object]],
+        tmp_path: Path,
+        image_format: str,
+        input_kind: str,
+    ) -> None:
+        """One real graph consumes the same decoded grayscale pixels across image forms."""
+        path, metadata = exported_detection
+        _channel_readout_graph(path, channels=1)
+        metadata = dict(metadata, input_shape=[1, 1, 32, 48], means=[_MEANS[0]], stds=[_STDS[0]])
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        pixels = (np.arange(40 * 64).reshape(40, 64) % 256).astype(np.uint8)
+        image_path = tmp_path / f"gray.{image_format.lower()}"
+        Image.fromarray(pixels).save(image_path, format=image_format)
+        with Image.open(image_path) as decoded:
+            pil = decoded.convert("L")
+        expected_source = np.array(pil)
+        array = expected_source[:, :, None].copy()
+        expected = model.predict(array)
+        supplied = {
+            "pil": pil,
+            "str": str(image_path),
+            "path": image_path,
+            "array": array,
+            "tensor": torch.from_numpy(array).permute(2, 0, 1).float() / 255,
+        }[input_kind]
+        actual = model.predict(supplied)
+
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, rtol=1e-4, atol=1e-6)
+        np.testing.assert_allclose(actual.confidence, expected.confidence, rtol=1e-4, atol=1e-6)
+        source = actual.metadata["source_image"]
+        assert source.dtype == np.uint8
+        assert source.shape == ((40, 64) if input_kind in {"pil", "str", "path"} else (40, 64, 1))
+        np.testing.assert_array_equal(source.squeeze(), expected_source)
+        assert source.flags.owndata
+        array.fill(0)
+        np.testing.assert_array_equal(source.squeeze(), expected_source)
+
+    def test_rgb_pil_converts_to_the_single_channel_contract(
+        self, exported_detection: tuple[Path, dict[str, object]]
+    ) -> None:
+        """A one-channel artifact selects Pillow luminance conversion for RGB images."""
+        path, metadata = exported_detection
+        _channel_readout_graph(path, channels=1)
+        metadata = dict(metadata, input_shape=[1, 1, 32, 48], means=[_MEANS[0]], stds=[_STDS[0]])
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        image = Image.new("RGB", (64, 40), color=(17, 127, 231))
+        gray = np.array(image.convert("L"))
+
+        actual = model.predict(image)
+        expected = model.predict(gray)
+
+        np.testing.assert_array_equal(actual.xyxy, expected.xyxy)
+        np.testing.assert_array_equal(actual.metadata["source_image"], gray)
+
+    def test_pathlike_tuple_keeps_the_exported_batch_contract(
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path
+    ) -> None:
+        """PathLike tuples preserve ordering and the one-call dynamic batch contract."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=dict(metadata, input_shape=[-1, 3, 32, 48]), device="cpu")
+        first = tmp_path / "first.png"
+        second = tmp_path / "second.png"
+        Image.new("RGB", (64, 40), (17, 127, 231)).save(first)
+        Image.new("RGB", (48, 32), (231, 17, 127)).save(second)
+        actual = model.predict((first, second))
+
+        assert isinstance(actual, list)
+        assert len(actual) == 2
+        assert not np.array_equal(actual[0].xyxy, actual[1].xyxy)
+        np.testing.assert_array_equal(actual[0].metadata["source_image"][0, 0], [17, 127, 231])
+        np.testing.assert_array_equal(actual[1].metadata["source_image"][0, 0], [231, 17, 127])
+
+    @pytest.mark.parametrize("batch", [1, -1])
+    def test_runtime_information_exposes_exported_constraints(
+        self, exported_detection: tuple[Path, dict[str, object]], batch: int
+    ) -> None:
+        """Inspection exposes fixed/dynamic batch and spatial constraints without leaking mutable state."""
+        path, metadata = exported_detection
+        metadata = dict(metadata, input_shape=[batch, 3, 32, 48])
+        if batch == -1:
+            metadata["max_batch_size"] = 4
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        required_batch = None if batch == -1 else batch
+        assert model.runtime_info == {
+            "backend": "onnx",
+            "device": "CPUExecutionProvider",
+            "task": "detect",
+            "input_shape": (required_batch, 3, 32, 48),
+            "default_shape": (32, 48),
+            "batch_size": required_batch,
+            "max_batch_size": 4 if batch == -1 else None,
+        }
+        info = model.runtime_info
+        info["task"] = "segment"
+        assert model.runtime_info["task"] == "detect"
 
     @pytest.mark.parametrize("input_kind", ["pil", "path", "tensor"])
     def test_input_forms_preserve_prediction_and_source(
@@ -393,6 +516,7 @@ class TestExportedPrediction:
         graph.graph.output.append(helper.make_tensor_value_info("task_output", TensorProto.FLOAT, list(values.shape)))
         onnx.save(graph, path)
         model = RFDETRInference(path, metadata=metadata, device="cpu")
+        assert model.runtime_info["task"] == task
         result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8))
         if task == "segment":
             assert isinstance(result, sv.Detections)

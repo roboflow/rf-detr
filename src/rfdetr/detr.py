@@ -2933,8 +2933,9 @@ class RFDETR:
         if not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
-                " For full GPU throughput (e.g. ~8x on T4 via FP16 Tensor Cores),"
-                " call model.inference(dtype=torch.float16).",
+                " Optimize the native RFDETR instance with native_model.inference(...)."
+                " For a checkpoint, load native_model = RFDETR.from_checkpoint(...), optimize it,"
+                " then wrap it with RFDETRInference(native_model).",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
         # self.model.model is only cleared when optimized for inference (guarded by the early return above).
@@ -2981,9 +2982,14 @@ class RFDETR:
                 # this could happen if someone manually changes self.model.resolution after optimizing the model,
                 # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
                 _restore_hint = (
-                    " Create a new RFDETR instance to use a different resolution."
+                    " Reload a native model with RFDETR.from_checkpoint(...) to use a different resolution,"
+                    " then wrap it with RFDETRInference(native_model) if using the facade."
                     if getattr(self, "_optimized_inplace", False)
-                    else " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                    else (
+                        " Call native_model.remove_optimized_model() on the retained native RFDETR instance."
+                        " For a checkpoint-owned facade, reload with RFDETR.from_checkpoint(...)"
+                        " and wrap with RFDETRInference(native_model)."
+                    )
                 )
                 raise ValueError(
                     f"Resolution mismatch. "
@@ -2993,12 +2999,14 @@ class RFDETR:
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
                     _restore_hint = (
-                        " Create a new RFDETR instance to recompile for a different batch size."
+                        " Reload a native model with RFDETR.from_checkpoint(...) to recompile for a different batch,"
+                        " then wrap it with RFDETRInference(native_model) if using the facade."
                         if getattr(self, "_optimized_inplace", False)
                         else (
-                            " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
-                            " Alternatively, you can recompile the optimized model for a different batch size"
-                            " by calling model.inference(batch_size=<new_batch_size>)."
+                            " Call native_model.remove_optimized_model() on the retained native RFDETR instance,"
+                            " or recompile it with native_model.inference(batch_size=<new_batch_size>)."
+                            " For a checkpoint-owned facade, reload with RFDETR.from_checkpoint(...)"
+                            " and wrap with RFDETRInference(native_model)."
                         )
                     )
                     raise ValueError(
@@ -3033,10 +3041,12 @@ class RFDETR:
     def predict(
         self,
         images: str
+        | os.PathLike[str]
         | Image.Image
         | np.ndarray[Any, Any]
         | torch.Tensor
-        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
+        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
@@ -3047,14 +3057,16 @@ class RFDETR:
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
 
-        This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
+        This method accepts a single image or a list or tuple of images in various formats (string or path-like file
+        path, image URL string, PIL Image,
         NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
         already be normalized to values in the [0, 1] range and have the shape (C, H, W).
 
         Args:
             images:
                 A single image or a list of images to process. Images can be provided
-                as file paths, PIL Images, NumPy arrays, or torch.Tensors.
+                as string or path-like file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. PIL and file
+                inputs convert to grayscale for one-channel models and RGB for three-channel models.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:

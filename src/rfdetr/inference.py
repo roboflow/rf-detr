@@ -144,40 +144,71 @@ class RFDETRInference:
 
     @property
     def runtime_info(self) -> dict[str, Any]:
-        """Return the runtime and device policy for the source."""
+        """Return runtime policy and current input constraints without preparing the model.
+
+        ``input_shape`` uses canonical NCHW order with ``None`` for dynamic axes. ``default_shape`` is the default image
+        height and width. ``batch_size`` is an exact requirement; ``max_batch_size`` is an upper bound. Neither is a
+        batching request. The returned dictionary is independent of the source.
+        """
         if self._native_model is not None:
-            return {"backend": "pytorch", "device": str(self._native_model.model.device)}
-        return dict(self._prediction_context().runtime_info)
+            native = self._native_model
+            config = native.model_config
+            batch_size = native._optimized_batch_size if native._optimized_has_been_compiled else None
+            spatial_size = native._optimized_resolution if native._is_optimized_for_inference else None
+            return {
+                "backend": "pytorch",
+                "device": str(native.model.device),
+                "task": "segment"
+                if config.segmentation_head
+                else "keypoints"
+                if config.use_grouppose_keypoints
+                else "detect",
+                "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
+                "default_shape": (native.model.resolution, native.model.resolution),
+                "batch_size": batch_size,
+                "max_batch_size": None,
+            }
+        context = self._prediction_context()
+        return {
+            **context.runtime_info,
+            "input_shape": (context.batch_size, context.config.num_channels, *context.default_shape),
+            "default_shape": context.default_shape,
+            "batch_size": context.batch_size,
+            "max_batch_size": context.max_batch_size,
+        }
 
     @torch.inference_mode()
     def predict(
         self,
         images: str
+        | os.PathLike[str]
         | Image.Image
         | np.ndarray[Any, Any]
         | torch.Tensor
-        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
+        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
         antialias: bool = False,
-        **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Run prediction with the shared native and exported inference pipeline.
 
         Args:
-            images: One image or a batch of images accepted by RF-DETR prediction.
+            images: A file path, URL string, PIL image, HWC NumPy array, CHW tensor, or list or tuple of those inputs.
             threshold: Minimum confidence score for a prediction.
             shape: Optional input height and width.
-            patch_size: Optional patch size used for shape validation.
+            patch_size: Advanced override for shape divisibility validation; it does not change the backbone.
             include_source_image: Include each source image in prediction metadata.
             antialias: Use antialiasing during image resize. Match the checkpoint training resize.
-            **kwargs: Additional options accepted by the shared prediction pipeline.
 
         Returns:
             A Supervision prediction object or a list of prediction objects.
+
+        Raises:
+            TypeError: If an unknown prediction keyword is supplied.
         """
         return predict(
             self._prediction_context(),
@@ -187,7 +218,6 @@ class RFDETRInference:
             patch_size=patch_size,
             include_source_image=include_source_image,
             antialias=antialias,
-            **kwargs,
         )
 
 

@@ -16,6 +16,8 @@ You can apply all changes in one go; working through sections one release at a t
 
 ## Upgrade 1.11 → 1.12
 
+For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.
+
 ### Deprecated in v1.12 → Remove in v2.0
 
 !!! note "Major-impact deprecations: raw TensorRT and OpenVINO inference"
