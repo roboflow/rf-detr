@@ -27,12 +27,9 @@ jobs:
         python-version: ["3.10", "3.13"]
     timeout-minutes: 15
     env:
-      # Pretrained weights go to a directory inside the workspace rather than ~/.roboflow/models: a workspace-relative
-      # cache path is what lets the single cache entry below restore on every OS (enableCrossOsArchive).
+      # Keep this job's pretrained-weight downloads isolated from the shared cache so every leg tests the live URLs.
       RF_HOME: ${{ github.workspace }}/.rfdetr-weights
-      # One leg owns the weights cache. On push to develop it skips the restore, so the real download and MD5 check
-      # keep running against the live URLs, and then saves what it downloaded. Every other run only restores, so PR
-      # runs never write cache entries that would evict each other.
+      # Only this leg writes the shared cache, and only after its live download and MD5 checks pass.
       WEIGHTS_CACHE_WRITER: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' }}
     steps:
       - name: 📥 Checkout the repository
@@ -61,14 +58,6 @@ jobs:
           registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)
           plus=$(python -c "from importlib.metadata import version; print(version('rfdetr_plus'))")
           echo "key=rfdetr-weights-${registry}-plus-${plus}" >> "$GITHUB_OUTPUT"
-
-      - name: 📦 Restore cached model weights
-        if: env.WEIGHTS_CACHE_WRITER != 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .rfdetr-weights
-          key: ${{ steps.weights-key.outputs.key }}
-          enableCrossOsArchive: true
 
       - name: 🔎 Smoke-test model instantiation, downloads, and inference
         run: python tests/run_smoke_all_models.py
