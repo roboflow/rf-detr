@@ -76,7 +76,7 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         shape = (shape[0], shape[2], shape[3], shape[1])
     if len(input_info.shape) != 4:
         raise ValueError(f"ONNX input rank must be 4, got {len(input_info.shape)}.")
-    if any(isinstance(got, int) and want != -1 and got != want for got, want in zip(input_info.shape, shape)):
+    if any(isinstance(got, int) and got != want for got, want in zip(input_info.shape, shape)):
         raise ValueError(f"ONNX input shape {input_info.shape} disagrees with export metadata {shape}.")
     output_names = [item.name for item in session.get_outputs()]
     missing = {key for key in metadata.outputs.values() if isinstance(key, str)} - set(output_names)

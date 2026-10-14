@@ -326,6 +326,21 @@ class TestExportedPrediction:
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         assert not hasattr(model, operation)
 
+    def test_dynamic_metadata_rejects_fixed_graph(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        """Metadata cannot widen a fixed graph to accept batches its runtime rejects."""
+        import onnx
+
+        path, metadata = exported_detection
+        graph = onnx.load(path)
+        batch = graph.graph.input[0].type.tensor_type.shape.dim[0]
+        batch.ClearField("dim_param")
+        batch.dim_value = 1
+        onnx.save(graph, path)
+        metadata = dict(metadata, input_shape=[-1, 3, 32, 48])
+
+        with pytest.raises(ValueError, match="ONNX input shape.*disagrees"):
+            RFDETRInference(path, metadata=metadata, device="cpu")
+
     def test_embedded_metadata(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """A self-describing ONNX artifact needs no caller configuration."""
         import json

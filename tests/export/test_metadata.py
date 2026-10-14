@@ -18,14 +18,59 @@ import pytest
 import torch
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-from rfdetr.export._runtime.metadata import ExportMetadata, metadata_from_model, read_metadata, write_metadata
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export._runtime.metadata import (
+    METADATA_KEY,
+    ExportMetadata,
+    metadata_from_model,
+    read_metadata,
+    write_metadata,
+)
 from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
 from rfdetr.export.prepare import ExportGraph
+from rfdetr.inference import RFDETRInference
 from rfdetr.utilities.class_names import class_id_to_name
-from tests._markers import onnx_only
+from tests._markers import onnx_and_onnxruntime_only, onnx_only
 
 #: Digest of the ``b"model"`` artifact bytes, as a companion records it.
 _MODEL_DIGEST = hashlib.sha256(b"model").hexdigest()
+
+
+class _TinyDetector(torch.nn.Module):
+    """Provide deterministic linear layers for real ONNX export and calibration.
+
+    Examples:
+        >>> model = _TinyDetector()
+        >>> [tuple(output.shape) for output in model(torch.zeros(1, 3, 32, 32))]
+        [(1, 2, 4), (1, 2, 2)]
+    """
+
+    def __init__(self) -> None:
+        """Initialize fixed weights so export does not depend on the random seed.
+
+        Examples:
+            >>> model = _TinyDetector()
+            >>> bool(torch.all(model.hidden.weight == 0.1))
+            True
+        """
+        super().__init__()
+        self.hidden = torch.nn.Linear(3, 8)
+        self.boxes = torch.nn.Linear(8, 8)
+        self.logits = torch.nn.Linear(8, 4)
+        with torch.no_grad():
+            for parameter in self.parameters():
+                parameter.fill_(0.1)
+
+    def forward(self, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return normalized boxes and logits from the spatially averaged image.
+
+        Examples:
+            >>> boxes, logits = _TinyDetector()(torch.zeros(1, 3, 32, 32))
+            >>> tuple(boxes.shape), tuple(logits.shape)
+            ((1, 2, 4), (1, 2, 2))
+        """
+        hidden = self.hidden(images.mean(dim=(2, 3))).relu()
+        return self.boxes(hidden).sigmoid().reshape(-1, 2, 4), self.logits(hidden).reshape(-1, 2, 2)
 
 
 class TestSidecarMetadata:
@@ -462,6 +507,73 @@ class TestMetadataCapture:
 
 class TestFormatMetadata:
     """Verify metadata behavior for format-specific interfaces."""
+
+    @onnx_and_onnxruntime_only
+    @pytest.mark.parametrize("quantization", [None, "fp32", "int8"])
+    @pytest.mark.parametrize("composed", [False, True])
+    def test_onnx_final_artifacts_load_and_predict(
+        self, tmp_path: Path, quantization: str | None, composed: bool
+    ) -> None:
+        """Every final ONNX file, including the INT8 export's FP32 baseline, carries a usable contract."""
+        import onnx  # optional dependency, gated by onnx_and_onnxruntime_only
+
+        metadata = ExportMetadata(
+            format="tensorrt" if composed else "onnx",
+            task="detect",
+            input_shape=(1, 3, 32, 32),
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=2,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+        graph = ExportGraph(
+            model=_TinyDetector().eval(),
+            input_tensors=torch.zeros(1, 3, 32, 32),
+            input_names=("input",),
+            output_names=("dets", "labels"),
+            dynamic_axes=None,
+            shape=(32, 32),
+            backbone_only=False,
+            metadata=metadata,
+        )
+        exporter = OnnxExporter(
+            OnnxConfig(
+                output_dir=tmp_path,
+                variant_name="rfdetr-nano",
+                quantization=quantization,
+                calibration_data=np.full((2, 3, 32, 32), 0.25, dtype=np.float32),
+                verbose=False,
+            )
+        )
+
+        returned = exporter(graph)
+
+        baseline = tmp_path / "rfdetr-nano.onnx"
+        artifacts = [baseline]
+        if quantization == "int8":
+            assert returned == tmp_path / "rfdetr-nano_int8.onnx"
+            artifacts.append(returned)
+            assert any(node.op_type == "QuantizeLinear" for node in onnx.load(returned).graph.node)
+        else:
+            assert returned == baseline
+        assert set(tmp_path.glob("*.onnx")) == set(artifacts)
+        for artifact in artifacts:
+            if composed:
+                assert METADATA_KEY not in {prop.key for prop in onnx.load(artifact).metadata_props}
+                continue
+            assert read_metadata(artifact) == metadata
+            detections = RFDETRInference(artifact, device="cpu").predict(
+                np.full((32, 32, 3), 128, dtype=np.uint8), threshold=0.0
+            )
+            assert len(detections) == 2
+            assert detections.xyxy.shape == (2, 4)
+            assert np.isfinite(detections.xyxy).all()
+            assert np.isfinite(detections.confidence).all()
 
     def test_tflite_export_uses_signature_to_map_reordered_outputs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
