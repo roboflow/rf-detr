@@ -15,6 +15,40 @@ env:
   UV_TORCH_BACKEND: "cpu"
 
 jobs:
+  cache-model-weights:
+    name: Publish fresh smoke-tested model weights cache
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: try-all-models
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: model-weights-cache-writer
+      cancel-in-progress: false
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.13"
+          activate-environment: true
+
+      - name: 🚀 Install model validation dependencies
+        run: uv pip install -e ".[plus]"
+
+      - name: 📥 Download fresh weights from the designated smoke leg
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: smoke-model-weights
+          path: .
+
+      - name: 💾 Validate and save fresh shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "true"
+
   try-all-models:
     runs-on: ${{ matrix.os }}
     concurrency:
@@ -27,8 +61,8 @@ jobs:
         python-version: ["3.10", "3.13"]
     timeout-minutes: 15
     env:
-      # Every matrix leg downloads weights from the live URLs and checks their MD5; never restore or save caches here.
-      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
+      # Every matrix leg downloads fresh weights. One successful leg hands them to a publisher gated on the whole matrix.
+      RF_HOME: ${{ github.workspace }}
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -49,6 +83,24 @@ jobs:
       - name: 🔎 Smoke-test model instantiation, downloads, and inference
         run: python tests/run_smoke_all_models.py
 
+      - name: 🔎 Record the validated smoke-model handoff
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: python .github/scripts/model_weight_cache.py manifest
+
+      - name: 📤 Upload fresh weights for the post-matrix publisher
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smoke-model-weights
+          path: |
+            rf-detr-*.pth
+            rf-detr-*.pt
+            .model-cache-manifest.json
+          include-hidden-files: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
   export-parity:
     # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx, which previously
     # differed only in: os, python-version, an optional extra dependency-group
@@ -68,8 +120,6 @@ jobs:
       group: pytest-${{ matrix.format }}${{ matrix.extra_plus }}-${{ matrix.python-version }}-${{ matrix.os || 'ubuntu-latest' }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 30
-    env:
-      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
     strategy:
       fail-fast: false
       matrix:
@@ -119,22 +169,6 @@ jobs:
           version: "0.9.26"
           python-version: ${{ matrix.python-version }}
           activate-environment: true
-
-      # Only OpenVINO/LiteRT build pretrained models. Each format shares its cache across OS/Python and invalidates it when
-      # the registry changes; no prefix fallback can restore weights from an older registry.
-      - name: 🔑 Compute model weights cache key
-        id: weights-key
-        if: matrix.format == 'openvino' || matrix.format == 'litert'
-        run: echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
-
-      - name: 📦 Restore cached model weights
-        id: weights-cache
-        if: matrix.format == 'openvino' || matrix.format == 'litert'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .rfdetr-weights
-          key: rfdetr-weights-export-${{ matrix.format }}-${{ steps.weights-key.outputs.registry }}
-          enableCrossOsArchive: true
 
       - name: 🚀 Install Packages (${{ matrix.format }}${{ matrix.extra_plus }} extra)
         if: ${{ !matrix.extra_group }}
@@ -215,20 +249,15 @@ jobs:
       # always tests/, selection is always by marker (never a format-specific file list or
       # `.`) — see the job-level comment above for why. Every row collects coverage; flags
       # tag it by format/os/python so Codecov keeps each row's contribution distinct.
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
         run: |
           uv run --no-sync pytest tests/ -m "e2e_${{ matrix.format }}" -n 1 \
             --cov=rfdetr --cov-report=xml \
             --timeout=600 \
             --durations=20
-
-      - name: 💾 Save model weights cache
-        if: (matrix.format == 'openvino' || matrix.format == 'litert') && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.weights-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .rfdetr-weights
-          key: ${{ steps.weights-cache.outputs.cache-primary-key }}
-          enableCrossOsArchive: true
 
       - name: Upload coverage to Codecov
         continue-on-error: true
@@ -370,6 +399,9 @@ jobs:
               env_file.write(f"LD_LIBRARY_PATH={lib_dir}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}\n")
         shell: python
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+
       - name: 🧪 Run TensorRT end-to-end parity tests
         # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
         # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
@@ -459,6 +491,9 @@ jobs:
             echo "::error::Required secrets are not set: ${missing[*]}"
             exit 1
           fi
+
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
 
       - name: 🔎 Deploy a real model and poll for trained status
         env:

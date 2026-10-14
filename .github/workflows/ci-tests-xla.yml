@@ -23,6 +23,8 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/ci-tests-xla.yml"
+      - ".github/actions/cache-model-weights/**"
+      - ".github/scripts/model_weight_cache.py"
 
 permissions:
   contents: read
@@ -95,6 +97,9 @@ jobs:
           device = xm.xla_device()
           print("torch", torch.__version__, "| torch_xla", torch_xla.__version__, "| device", device)
           assert str(device).startswith("xla"), f"expected an xla device, got {device!r}"
+
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
 
       - name: 🧪 Run the XLA-marked Tests
         run: |

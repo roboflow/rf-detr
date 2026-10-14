@@ -51,22 +51,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
-      - name: 🔑 Compute backbone cache key
-        id: weights-key
-        # Git object hashes are independent of checkout line endings, including on Windows.
-        run: |
-          echo "backbone=$(git rev-parse HEAD:src/rfdetr/models/backbone/dinov2.py)" >> "$GITHUB_OUTPUT"
-          echo "configs=$(git rev-parse HEAD:src/rfdetr/models/backbone/dinov2_configs)" >> "$GITHUB_OUTPUT"
-
-      - name: 🤗 Restore Hugging Face hub (DINOv2 backbone weights)
-        id: weights-cache
-        # All OS/Python legs share these model files. Backbone selection/config changes invalidate the cache.
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/huggingface
-          key: hf-hub-cpu-${{ steps.weights-key.outputs.backbone }}-${{ steps.weights-key.outputs.configs }}
-          enableCrossOsArchive: true
-
       - name: 🚀 Install Packages
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip').
@@ -87,6 +71,9 @@ jobs:
         if: runner.os == 'macOS'
         run: echo "EXTRA_MARKERS= and not ddp" >> "$GITHUB_ENV"
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+
       - name: 🧪 Run the Test
         # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in
         # repository maintenance scripts, which `pyproject.toml` alone cannot reach because paths are explicit here.
@@ -98,14 +85,6 @@ jobs:
             --cov=rfdetr --cov-report=xml \
             --timeout=420 \
             --durations=50
-
-      - name: 💾 Save Hugging Face hub cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.weights-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/huggingface
-          key: ${{ steps.weights-cache.outputs.cache-primary-key }}
-          enableCrossOsArchive: true
 
       - name: Upload coverage to Codecov
         continue-on-error: true

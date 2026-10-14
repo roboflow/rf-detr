@@ -77,29 +77,10 @@ jobs:
       fail-fast: false
       matrix:
         version: ${{ fromJson(needs.get-versions.outputs.matrix) }}
-    env:
-      # Older releases resolve bare weights filenames in the working directory; newer ones honor RF_HOME.
-      RF_HOME: ${{ github.workspace }}
 
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: 🔑 Compute model weights cache key
-        id: weights-key
-        run: |
-          echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
-          echo "generator=$(git rev-parse HEAD:tests/legacy/generate_checkpoint.py)" >> "$GITHUB_OUTPUT"
-          echo "dependencies=$(git rev-parse HEAD:tests/legacy/frozen_dependencies)" >> "$GITHUB_OUTPUT"
-
-      - name: 📦 Restore cached model weights
-        id: weights-cache
-        # Each release owns its cache; registry, generator and frozen dependency changes invalidate it.
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: rf-detr-*.pth
-          key: rfdetr-weights-legacy-${{ matrix.version }}-${{ steps.weights-key.outputs.registry }}-${{ steps.weights-key.outputs.generator }}-${{ steps.weights-key.outputs.dependencies }}
-          enableCrossOsArchive: true
 
       - name: 🐍 Set up Python + uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -120,6 +101,9 @@ jobs:
           uv pip install -r "tests/legacy/frozen_dependencies/req-$MATRIX_VERSION.txt" \
             --extra-index-url https://download.pytorch.org/whl/cpu
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+
       - name: 🏗️ Generate checkpoint
         env:
           MATRIX_VERSION: ${{ matrix.version }}
@@ -130,14 +114,6 @@ jobs:
           python tests/legacy/generate_checkpoint.py \
             --output "checkpoints/checkpoint_v$MATRIX_VERSION.pth" \
             --use-pretrained
-
-      - name: 💾 Save model weights cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.weights-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: rf-detr-*.pth
-          key: ${{ steps.weights-cache.outputs.cache-primary-key }}
-          enableCrossOsArchive: true
 
       - name: 📤 Upload checkpoint artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -188,6 +164,9 @@ jobs:
 
       - name: 🗂️ List downloaded checkpoints
         run: ls -lh tests/legacy/checkpoints/
+
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
 
       - name: 🧪 Run checkpoint compatibility tests
         run: |

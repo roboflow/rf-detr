@@ -29,8 +29,6 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 35
     runs-on: Roboflow-GPU-VM-Runner
-    env:
-      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
@@ -55,22 +53,8 @@ jobs:
         # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
         run: uv pip install -e ".[onnx,plus,train,augment,visual,data,cli]" --group tests
 
-      - name: 🔑 Compute model weights cache key
-        id: weights-key
-        # This job owns its cache. Registry changes and Plus releases both invalidate the weights it uses.
-        run: |
-          registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)
-          plus=$(python -c "from importlib.metadata import version; print(version('rfdetr_plus'))")
-          echo "key=rfdetr-weights-gpu-${registry}-plus-${plus}" >> "$GITHUB_OUTPUT"
-
-      - name: 📦 Restore cached model weights
-        id: weights-cache
-        # The GPU runner gets a fresh VM for every job, so without this every run downloads the weights again.
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .rfdetr-weights
-          key: ${{ steps.weights-key.outputs.key }}
-          enableCrossOsArchive: true
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
 
       - name: 🧪 Run the Test
         run: |
@@ -82,14 +66,6 @@ jobs:
           --cov=rfdetr --cov-report=xml \
           --timeout=600 \
           --durations=20
-
-      - name: 💾 Save model weights cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.weights-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .rfdetr-weights
-          key: ${{ steps.weights-cache.outputs.cache-primary-key }}
-          enableCrossOsArchive: true
 
       - name: Upload coverage to Codecov
         continue-on-error: true
