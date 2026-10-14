@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -360,6 +361,7 @@ class TestCoreAIRuntimeAdapter:
         monkeypatch.setitem(sys.modules, "coreai", SimpleNamespace(runtime=runtime_module))
         monkeypatch.setitem(sys.modules, "coreai.runtime", runtime_module)
         monkeypatch.setattr("rfdetr.export._runtime.adapters.platform.system", lambda: "Darwin")
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
         metadata = _metadata(
             format="coreai",
             task="keypoints",
