@@ -109,7 +109,7 @@ APIs described here may have changed or been removed, so use the <a href="https:
           {"@type": "PropertyValue", "propertyID": "arXiv", "value": "2511.09554"}
         ],
         "releaseNotes": "https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md",
-        "description": "RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). ICLR 2026. Apache 2.0.",
+        "description": "RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95 with RF-DETR-2XL). ICLR 2026. Nano\u2013Large detection and all segmentation models are Apache 2.0 and commercially usable.",
         "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, real-time detection transformer, DINOv2, COCO, RF100-VL, ONNX, TensorRT",
         "featureList": [
           "Real-time object detection",
@@ -177,7 +177,7 @@ APIs described here may have changed or been removed, so use the <a href="https:
         "name": "How does RF-DETR compare to YOLOv11?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8\u00a0ms latency on an NVIDIA T4, outperforming YOLOv11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL."
+          "text": "RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8\u00a0ms latency on an NVIDIA T4, outperforming YOLOv11x (50.9 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL. Licensing differs too: YOLO11 is released under AGPL-3.0, so using it in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a commercial license. Deploying on Roboflow includes a commercial YOLO11 license for every user; commercial self-hosting is an Enterprise add-on. RF-DETR Nano\u2013Large detection, every segmentation size and Keypoint are Apache 2.0: commercially usable with no license fee and no obligation to open-source your code."
         }
       },
       {
@@ -214,10 +214,10 @@ APIs described here may have changed or been removed, so use the <a href="https:
       },
       {
         "@type": "Question",
-        "name": "Is RF-DETR open source?",
+        "name": "Is RF-DETR open source, and can I use it commercially?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the rfdetr[plus] package (PML 1.0 license)."
+          "text": "Yes. The rfdetr package, Nano\u2013Large detection, every segmentation size (Nano\u20132XLarge) and Keypoint (Preview) are released under the Apache 2.0 license, so they're commercially usable out of the box: you can ship them in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. The XLarge and 2XLarge detection models ship in the rfdetr[plus] package under the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on."
         }
       },
       {
@@ -241,7 +241,7 @@ APIs described here may have changed or been removed, so use the <a href="https:
         "name": "Which RF-DETR model size should I use?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "RF-DETR-Nano (2.3\u00a0ms, 67.6\u00a0AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8\u00a0ms, 56.5\u00a0AP50:95) offers the best accuracy-latency trade-off for server deployment. RF-DETR-2XLarge (17.2\u00a0ms, 60.1\u00a0AP50:95) maximizes accuracy when latency allows."
+          "text": "RF-DETR-Nano (2.3\u00a0ms, 67.6\u00a0AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8\u00a0ms, 56.5\u00a0AP50:95) offers the best accuracy-latency trade-off for server deployment. RF-DETR-2XLarge (17.2\u00a0ms, 60.1\u00a0AP50:95) maximizes accuracy when latency allows. RF-DETR-2XLarge needs rfdetr[plus] and uses the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on. RF-DETR-Large is the most accurate Apache 2.0 detection size, and every segmentation size, up to Seg-2XLarge, is Apache 2.0."
         }
       }
     ]

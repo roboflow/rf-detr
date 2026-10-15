@@ -2,7 +2,7 @@
 
 > RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) by Roboflow.
 > DINOv2 vision transformer backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
-> Apache 2.0 license for core models (Nano through Large). Python 3.10+.
+> Commercially usable: the rfdetr package, Nano-Large detection, every segmentation size and Keypoint are Apache 2.0 (closed-source and self-hosted OK, no license fee, no need to open-source your code). XLarge and 2XLarge detection use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on. Python 3.10+.
 > Source: https://github.com/roboflow/rf-detr | Paper: https://arxiv.org/abs/2511.09554
 
 ---
@@ -13,11 +13,9 @@ RF-DETR (Roboflow Detection Transformer) is a real-time object detection, instan
 
 RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) when benchmarked on the COCO dataset. RF-DETR-2XL achieves 60.1 AP50:95 at 17.2 ms latency on NVIDIA T4 (TensorRT FP16, batch 1).
 
-**Licensing:**
-- Core models (Nano, Small, Medium, Large) and all code: Apache 2.0
-- XLarge and 2XLarge detection models: PML 1.0 (requires rfdetr[plus])
-- Segmentation models follow the same tier structure
-- Keypoint model (preview): Apache 2.0
+**Licensing (commercial use):**
+- Apache 2.0: the `rfdetr` package (all code), RF-DETR Nano, Small, Medium and Large detection, every RF-DETR-Seg size (Nano through 2XLarge, including Seg-XLarge and Seg-2XLarge), and RF-DETR Keypoint (Preview). Apache 2.0 means commercially usable out of the box: you can ship these models in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code.
+- Roboflow Platform Model License (PML 1.0): RF-DETR XLarge and 2XLarge detection models, installed with `rfdetr[plus]`. Commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
 ---
 
@@ -34,7 +32,7 @@ For uv projects:
 uv add rfdetr
 ```
 
-For XLarge/2XLarge models (PML 1.0):
+For XLarge/2XLarge models (PML 1.0: commercial use included on Roboflow; commercial self-hosting requires the Enterprise add-on):
 ```bash
 pip install "rfdetr[plus]"
 ```
@@ -302,6 +300,8 @@ COCO person keypoints, OKS-based AP50:95. Params are deployment (fused) counts.
 | YOLO26-pose L | 69.2 | 5.9 | 25.9 | AGPL-3.0 |
 | YOLO26-pose X | 71.0 | 9.8 | 57.6 | AGPL-3.0 |
 
+License note: YOLO11-pose and YOLO26-pose are released under AGPL-3.0. In practice, using them in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a commercial license. Deploying on Roboflow includes a commercial license for these models for every user; commercial self-hosting is an Enterprise add-on (details: https://roboflow.com/ultralytics). RF-DETR Keypoint is Apache 2.0, so it's commercially usable out of the box.
+
 ---
 
 ## Frequently Asked Questions
@@ -310,7 +310,7 @@ COCO person keypoints, OKS-based AP50:95. Params are deployment (fused) counts.
 RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.
 
 **How does RF-DETR compare to YOLO11?**
-RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLO11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.
+RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLO11x (50.9 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL. Licensing differs too: YOLO11 is released under AGPL-3.0, so using it in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a commercial license. Deploying on Roboflow includes a commercial YOLO11 license for every user; commercial self-hosting is an Enterprise add-on (details: https://roboflow.com/ultralytics). RF-DETR Nano-Large detection, every segmentation size and Keypoint are Apache 2.0: commercially usable with no license fee and no obligation to open-source your code.
 
 **What GPU is required to train RF-DETR?**
 Training memory depends on the model size, task, input resolution, batch size, augmentations, and available hardware, so there is no universal VRAM threshold. Use a CUDA-capable GPU when possible and start with `batch_size="auto"`; if memory is limited, reduce the physical batch or resolution and validate the resulting run. CPU inference is supported for evaluation.
@@ -324,8 +324,8 @@ Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), an
 **What is the difference between RF-DETR detection and segmentation models?**
 Detection models output bounding boxes. Segmentation models additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.
 
-**Is RF-DETR open source?**
-Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the rfdetr[plus] package (PML 1.0 license).
+**Is RF-DETR open source, and can I use it commercially?**
+Yes. The rfdetr package (all training/inference code), Nano through Large detection, every segmentation size (Nano through 2XLarge) and Keypoint (Preview) are released under the Apache 2.0 license, so they're commercially usable out of the box: you can ship them in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. RF-DETR XLarge and 2XLarge detection models ship in the rfdetr[plus] package under the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
 **How do I fine-tune RF-DETR on a custom dataset?**
 Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size='auto'). The model downloads pretrained weights automatically and resumes from the best checkpoint.
