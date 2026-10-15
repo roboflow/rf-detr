@@ -22,7 +22,8 @@ import os
 import re
 import sys
 import types
-from collections.abc import Callable
+import warnings
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, get_args, get_type_hints
@@ -42,8 +43,10 @@ from rfdetr.export._tensorrt.exporter import (
     TensorRTExporter,
 )
 from rfdetr.export.prepare import ExportGraph
+from tests._markers import requires_cuda
 from tests.export.conftest import (
     _structured_parity_input,
+    assert_prediction_roundtrip,
     eager_reference_tensors,
     max_abs_output_diffs,
 )
@@ -51,6 +54,8 @@ from tests.export.conftest import (
 tensorrt_only = pytest.mark.skipif(
     not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
 )
+
+
 fp16_caster_only = pytest.mark.skipif(not _IS_FP16_CASTER_AVAILABLE, reason="onnx/onnxconverter-common not installed")
 
 if _IS_FP16_CASTER_AVAILABLE:
@@ -514,6 +519,66 @@ def _model_with_a_preexisting_fp16_name() -> "onnx.ModelProto":
         [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, [1, 4])],
     )
     return _opset17_model(graph)
+
+
+class TestTRTInferenceDeprecation:
+    """The legacy TensorRT facade remains usable during its deprecation period."""
+
+    def test_constructor_warns_and_delegates_to_shared_loader(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Construction warns while preserving the caller's arguments and returned runtime state."""
+        calls: list[tuple[str, str, bool, bool]] = []
+        state = types.SimpleNamespace(engine_path="model.trt", device="cuda:1", sync_mode=True, _graph_stream=None)
+        outputs = {"dets": torch.empty((1, 1, 4))}
+
+        def load(path: str, device: str, sync_mode: bool, verbose: bool, **options: object) -> object:
+            """Capture loader arguments and return a ready session stand-in.
+
+            Examples:
+                Requires the enclosing test's captured list and session stand-in.
+                >>> load("model.trt", "cuda:1", True, True)  # doctest: +SKIP
+            """
+            calls.append((path, device, sync_mode, verbose))
+            assert options == {"cuda_graph": False, "engine_host_code_allowed": False}
+            return state
+
+        monkeypatch.setattr(tensorrt_inference, "_load_tensorrt_session", load)
+        monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", lambda session, blob: outputs)
+
+        with pytest.warns(
+            FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v2\.0\.0.*RFDETRInference"
+        ) as recorded:
+            facade = tensorrt_inference.TRTInference("model.trt", "cuda:1", sync_mode=True, verbose=True)
+
+        assert recorded[0].filename.endswith("test_tensorrt_export.py")
+        assert calls == [("model.trt", "cuda:1", True, True)]
+        assert facade._runtime_state is state
+        assert facade.engine_path == "model.trt"
+        assert facade.device == "cuda:1"
+        assert facade({}) is outputs
+
+    def test_resolved_engine_device_remains_read_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The compatibility facade cannot retarget an engine after its CUDA buffers are allocated."""
+        state = types.SimpleNamespace(engine_device=torch.device("cuda:1"))
+        monkeypatch.setattr(tensorrt_inference, "_load_tensorrt_session", lambda *args, **kwargs: state)
+        with pytest.warns(FutureWarning, match="RFDETRInference"):
+            facade = tensorrt_inference.TRTInference("model.trt")
+
+        with pytest.raises(AttributeError):
+            facade.engine_device = torch.device("cuda:0")
+
+        assert facade.engine_device == torch.device("cuda:1")
+
+    def test_shared_run_function_dispatches_without_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The shared runtime entry point executes directly without constructing the deprecated facade."""
+        state = types.SimpleNamespace(sync_mode=True, _graph_stream=None)
+        outputs = {"dets": torch.empty((1, 1, 4))}
+        monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", lambda session, blob: outputs)
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            assert tensorrt_inference._run_tensorrt_session(state, {}) is outputs
+
+        assert not recorded
 
 
 class TestBuildEngineDryRun:
@@ -2722,11 +2787,17 @@ def _distinct_batch(batch: int, resolution: int) -> torch.Tensor:
 
 
 @tensorrt_only
+@requires_cuda
 @pytest.mark.gpu
 @pytest.mark.integration
 @pytest.mark.e2e_tensorrt
 class TestTensorRTEndToEnd:
     """Real ONNX -> TensorRT engine build + runtime parity on GPU (requires ``rfdetr[tensorrt]`` and CUDA)."""
+
+    @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
+    def test_public_export_prediction_matches_native(self, task: str, tmp_path: Path) -> None:
+        """The public facade preserves predictions after a real TensorRT export."""
+        assert_prediction_roundtrip("tensorrt", task, tmp_path)
 
     @pytest.fixture(scope="class")
     def trt_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
@@ -3210,6 +3281,68 @@ class TestTensorRTEndToEnd:
             assert got.shape == reference[name].shape
             diff = float(np.abs(got - reference[name]).max())
             assert diff < 1e-4, f"TRTInference {name} differs from polygraphy on the same engine: {diff}"
+
+    def test_public_prediction_waits_for_non_default_input_stream(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stream-free TensorRT launch reads normalized input only after its torch stream finishes."""
+        from supervision import Detections
+
+        from rfdetr import RFDETRInference
+
+        _, resolution, engine_path = trt_dynamic_engine
+        image = np.random.default_rng(42).integers(0, 256, (resolution, resolution, 3), dtype=np.uint8)
+        model = RFDETRInference(engine_path, device="cuda:0")
+        baseline = model.predict(image, threshold=0.0, include_source_image=False)
+        assert isinstance(baseline, Detections)
+        assert baseline.confidence is not None and baseline.class_id is not None
+        baseline_boxes = baseline.xyxy.copy()
+        baseline_scores = baseline.confidence.copy()
+        baseline_classes = baseline.class_id.copy()
+
+        producer = torch.cuda.Stream(device="cuda:0")
+        warm_image = image.copy()
+        warm_image[0, 0, 0] ^= 1
+        with torch.cuda.stream(producer):
+            model.predict(warm_image, threshold=0.0, include_source_image=False)
+        release = torch.cuda.Stream(device="cuda:0")
+        gate = torch.cuda.Event()
+        run_sync = tensorrt_inference._run_tensorrt_sync
+        engine_input_ready: list[bool] = []
+
+        def monitored_run(
+            self: tensorrt_inference._TensorRTSession, blob: Mapping[str, torch.Tensor]
+        ) -> dict[str, torch.Tensor]:
+            """Record whether input preparation finished before TensorRT executes.
+
+            Examples:
+                Requires a live CUDA TensorRT engine.
+                >>> monitored_run({})  # doctest: +SKIP
+            """
+            engine_input_ready.append(producer.query())
+            return run_sync(self, blob)
+
+        monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", monitored_run)
+        with torch.cuda.stream(release):
+            torch.cuda._sleep(1_000_000_000)
+            gate.record()
+        with torch.cuda.stream(producer):
+            producer.wait_event(gate)
+            assert not producer.query(), "The producer stream must still be waiting before prediction."
+            actual = model.predict(image, threshold=0.0, include_source_image=False)
+
+        assert engine_input_ready == [True]
+
+        assert isinstance(actual, Detections)
+        assert actual.confidence is not None and actual.class_id is not None
+        np.testing.assert_array_equal(actual.class_id, baseline_classes)
+        np.testing.assert_allclose(actual.xyxy, baseline_boxes, atol=1e-4, rtol=0)
+        np.testing.assert_allclose(actual.confidence, baseline_scores, atol=1e-6, rtol=0)
+
+        later = model.predict(image, threshold=0.0, include_source_image=False)
+        assert isinstance(later, Detections)
+        np.testing.assert_allclose(later.xyxy, baseline_boxes, atol=1e-4, rtol=0)
+        np.testing.assert_array_equal(baseline.xyxy, baseline_boxes)
 
     def test_trt_inference_helper_refuses_a_batch_beyond_the_profile(
         self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]

@@ -90,6 +90,7 @@ from numpy.typing import NDArray
 
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -99,6 +100,9 @@ logger = get_logger()
 
 # Supported quantization modes.
 _VALID_QUANTIZATIONS: set[str | None] = {None, "fp32", "fp16", "int8"}
+
+#: Known artifact suffixes stripped when locating sibling TFLite precision variants.
+_ARTIFACT_SUFFIXES: tuple[str, ...] = ("_fp32", "_fp16", "_dynamic_range_quant")
 
 # Number of random calibration samples generated when none are provided.
 _DEFAULT_CALIB_SAMPLES: int = 20
@@ -167,7 +171,12 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
 
     def v(name: str, dtype: Any = np.float32, shape: list[int] | None = None) -> Any:
         uid[0] += 1
-        return gs.Variable(f"{pfx}_{uid[0]}_{name}", dtype=dtype, shape=shape)
+        variable_name = f"{pfx}_{uid[0]}_{name}"
+        return (
+            gs.Variable(variable_name, dtype=dtype)
+            if shape is None
+            else gs.Variable(variable_name, dtype=dtype, shape=shape)
+        )
 
     def c(val: Any, dtype: Any = np.float32, name: str = "") -> Any:
         uid[0] += 1
@@ -1096,8 +1105,91 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         # to the RF-DETR-wide "fp32"/"fp16" token before either return path below, so both
         # files carry the same vocabulary as the other export backends.
         _rename_precision_outputs(output_dir, model_stem)
+        primary = self._resolve_primary_output(output_dir, model_stem)
+        return primary
 
-        return self._resolve_primary_output(output_dir, model_stem)
+    def _metadata_artifacts(self, path: Path) -> tuple[Path, ...]:
+        """Find sibling precision artifacts from the primary artifact's filename.
+
+        Args:
+            path: Primary TFLite artifact returned by conversion.
+
+        Returns:
+            Existing FP32 and FP16 siblings followed by the primary, without duplicates.
+            An unrecognized filename suffix returns only the primary.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     primary = Path(directory) / "model_fp32.tflite"
+            ...     sibling = primary.with_name("model_fp16.tflite")
+            ...     primary.touch()
+            ...     sibling.touch()
+            ...     exporter = TFLiteExporter(TFLiteConfig(output_dir=directory))
+            ...     exporter._metadata_artifacts(primary) == (primary, sibling)
+            True
+        """
+        for suffix in _ARTIFACT_SUFFIXES:
+            if path.stem.endswith(suffix):
+                stem = path.stem.removesuffix(suffix)
+                break
+        else:
+            return (path,)
+
+        siblings = tuple(
+            candidate
+            for candidate in (
+                path.with_name(f"{stem}_fp32.tflite"),
+                path.with_name(f"{stem}_fp16.tflite"),
+            )
+            if candidate.is_file()
+        )
+        return tuple(dict.fromkeys((*siblings, path)))
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Read the final TFLite signature before assigning semantic outputs."""
+        from rfdetr.export._tflite.inference import _create_interpreter
+
+        interpreter = _create_interpreter(path)
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        if len(input_details) != 1:
+            raise ValueError(f"TFLite export has {len(input_details)} inputs; inference expects one")
+        names = [str(output.get("name", "")) for output in output_details]
+        signatures = interpreter.get_signature_list() if hasattr(interpreter, "get_signature_list") else {}
+        signature_outputs: dict[str, int] = {}
+        if len(signatures) == 1:
+            signature_name = next(iter(signatures))
+            runner = interpreter.get_signature_runner(signature_name)
+            if hasattr(runner, "get_output_details"):
+                positions = {int(output["index"]): index for index, output in enumerate(output_details)}
+                signature_outputs = {
+                    name: positions[int(details["index"])]
+                    for name, details in runner.get_output_details().items()
+                    if int(details["index"]) in positions
+                }
+        outputs: dict[str, int] = {}
+        for semantic in metadata.outputs:
+            source = cast(str, metadata.outputs[semantic])
+            matches = [index for name, index in signature_outputs.items() if source in name]
+            if not matches:
+                matches = [index for index, name in enumerate(names) if source in name]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Cannot identify TFLite {semantic} output in {names}. "
+                    "The converter removed its semantic name; pass explicit metadata after inspecting the graph."
+                )
+            outputs[semantic] = matches[0]
+        if len(set(outputs.values())) != len(outputs):
+            raise ValueError(f"TFLite output names do not identify distinct tensors: {names}")
+        return metadata.model_copy(
+            update={
+                "input_name": 0,
+                "input_layout": "NHWC",
+                "input_dtype": input_details[0]["dtype"].__name__,
+                "outputs": outputs,
+            }
+        )
 
     def _validate_onnx_source(self, onnx_path: Path) -> None:
         """Reject a missing source model.
@@ -1221,6 +1313,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                     "input_onnx_file_path": str(onnx_path),
                     "output_folder_path": str(output_dir),
                     "output_signaturedefs": True,
+                    "copy_onnx_input_output_names_to_tflite": True,
                     "non_verbose": not self.config.verbose,
                     "verbosity": verbosity,
                     # Replace Erf / GeLU with TFLite-native pseudo-operators so the

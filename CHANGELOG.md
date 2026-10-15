@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Public `rfdetr.RFDETRInference` provides shared image prediction from a live `RFDETR` model, native checkpoint or supported full export, with common preprocessing and decoded Supervision detections or keypoints.
+
+- Exported artifacts carry versioned inference metadata: embedded in ONNX files and written as `<artifact-name>.rfdetr.json` sidecars for other formats. `RFDETRInference` uses it to validate the artifact interface and recover prediction semantics; sidecars include an artifact digest to detect stale metadata.
+
 - Keypoint training accepts Kornia augmentation on CUDA. The default backend remains `cpu`; users can select `kornia`/`gpu` explicitly, or select `auto` to use Kornia when available. Image geometry, boxes, padding masks and keypoints share each augmentation draw; keypoint visibility, dropped instances and paired-joint flips stay synchronized. ([#1606](https://github.com/roboflow/rf-detr/pull/1606))
 
 - `TrainConfig.eval_backend="hotcoco_streaming"` matches each validation batch with hotcoco's `StreamingEval` as it arrives, so the end-of-epoch COCO evaluation only accumulates and summarizes. Metrics are bit-identical to `eval_backend="hotcoco"`. On an Apple M-series CPU with synthetic data, the end-of-epoch step dropped from 0.238 s to 0.025 s for 600,000 box detections and from 0.178 s to 0.005 s for a bbox+segm run of 20,000 detections. Total CPU time is higher for box-only runs (1.05 s vs 0.29 s) and about equal for bbox+segm (0.66 s vs 0.71 s), because matching moves into the validation step. Streaming applies to single-process runs whose labels fall within `[0, num_classes]`; under DDP, or after the metric is pickled mid-epoch, it evaluates in one batch as `"hotcoco"` does and logs why.
@@ -112,6 +116,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Segmentation validation and test runs encode masks to COCO RLE on the GPU. The COCO metric used TorchMetrics' update, which copies every predicted and ground-truth mask to host memory at full image resolution and encodes it there one mask at a time; on 2000x2000 px images that was 92% of a `model.evaluate()` run. The metric now encodes masks on CUDA when they are there and copies only the encoded runs to the host; masks on any other device go through the same code on the CPU. The stored RLE bytes are identical, so every metric is unchanged on every `eval_backend`. With `RFDETRSegMedium` on one RTX 4090, validating 500 COCO val2017 images takes 8.8 s instead of 59.1 s at their own size, and 24.7 s instead of 508.5 s upscaled 3x to about 1920x1440. ([#1615](https://github.com/roboflow/rf-detr/pull/1615))
 
 - Segmentation models in eval mode compute masks for the last decoder layer only, unless a loss is computed. `LWDETR` built a dense mask map, at a quarter of the input resolution by default, for every decoder layer and for the encoder proposals, although postprocessing reads the last layer alone and only the criterion reads the rest. `predict()`, validation without a loss (the default `compute_val_loss="auto"` when nothing monitors `val/loss`), `evaluate(split="val")` and `evaluate(compute_test_loss=False)` now skip those masks. A validation or test step that computes a loss calls the model with the new keyword `all_layer_masks=True` and gets every layer's masks as before; see the matching entry under Breaking Changes. The last layer's masks are bit-identical, so predictions and metrics do not change. With `RFDETRSeg2XLarge` on one RTX 4090, a `predict()` call on 8 images peaks at 1583 MiB of CUDA memory instead of 3612 MiB, and validating 500 COCO val2017 images at batch size 4 peaks at 1085 MiB instead of 2031 MiB. ([#1628](https://github.com/roboflow/rf-detr/pull/1628))
+
+### Deprecated
+
+- Passing unknown keyword arguments to `RFDETR.predict()` is deprecated since v1.12.0: they are ignored with a `FutureWarning` and will raise `TypeError` in v2.0.0.
+- `rfdetr.export.inference.TRTInference` and `OpenVINOInference` are deprecated in v1.12.0 and scheduled for removal in v2.0.0. Both remain available and emit a `FutureWarning` when constructed. Use `RFDETRInference(...).predict(image)` for image inputs and decoded results, passing legacy runtime settings through `runtime_options`; see the [migration guide](docs/getting-started/migration.md).
 
 ### Removed
 

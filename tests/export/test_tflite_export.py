@@ -284,6 +284,52 @@ class TestTFLiteCalibrationDataWarning:
         assert mock_prepare_calib.call_args[0][1] is None  # second positional arg
 
 
+class TestTFLiteMetadataArtifacts:
+    """Select metadata artifacts from filenames without running TensorFlow."""
+
+    @pytest.mark.parametrize("precision", ["fp32", "fp16"])
+    def test_precision_primary_with_sibling(self, tmp_path: Path, precision: str) -> None:
+        """Include both precision files once, in FP32 then FP16 order."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+        fp32 = tmp_path / "model_fp32.tflite"
+        fp16 = tmp_path / "model_fp16.tflite"
+        fp32.touch()
+        fp16.touch()
+
+        assert exporter._metadata_artifacts(tmp_path / f"model_{precision}.tflite") == (fp32, fp16)
+
+    def test_dynamic_range_primary_with_siblings(self, tmp_path: Path) -> None:
+        """Append the dynamic-range primary after its FP32 and FP16 siblings."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
+        fp32 = tmp_path / "model_fp32.tflite"
+        fp16 = tmp_path / "model_fp16.tflite"
+        primary = tmp_path / "model_dynamic_range_quant.tflite"
+        fp32.touch()
+        fp16.touch()
+        primary.touch()
+
+        assert exporter._metadata_artifacts(primary) == (fp32, fp16, primary)
+
+    def test_unknown_token_primary(self, tmp_path: Path) -> None:
+        """Keep an unknown fallback token intact even when precision files exist."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+        primary = tmp_path / "model_custom.tflite"
+        primary.touch()
+        (tmp_path / "model_fp32.tflite").touch()
+        (tmp_path / "model_fp16.tflite").touch()
+
+        assert exporter._metadata_artifacts(primary) == (primary,)
+
+    def test_missing_sibling_and_directory_are_excluded(self, tmp_path: Path) -> None:
+        """Ignore absent precision files and directories with artifact names."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
+        primary = tmp_path / "model_dynamic_range_quant.tflite"
+        primary.touch()
+        (tmp_path / "model_fp16.tflite").mkdir()
+
+        assert exporter._metadata_artifacts(primary) == (primary,)
+
+
 @onnx2tf_available
 class TestExportTfliteConverter:
     """Tests for ``TFLiteExporter.convert_onnx()``."""
@@ -611,6 +657,10 @@ class TestExportFormatParameter:
         import contextlib
 
         self._mock_stack = contextlib.ExitStack()
+        self._mock_stack.enter_context(mock.patch("rfdetr.export.base.write_metadata"))
+        self._mock_stack.enter_context(
+            mock.patch("rfdetr.export._tflite.exporter.TFLiteExporter._metadata_for_artifact")
+        )
 
         # Mock export_onnx to return a fake ONNX file path
         self._mock_export_onnx = self._mock_stack.enter_context(
@@ -649,10 +699,21 @@ class TestExportFormatParameter:
         obj.model.resolution = 560
         obj.model.device = "cpu"
         obj.model.model.to.return_value = obj.model.model
+        obj.model.args = None
+        obj.model.class_names = ["object"]
+        obj.model.postprocess.num_select = 100
+        obj.model.postprocess.trace_alpha = 0.2
+        obj.model.postprocess.upsample_masks_to_image_size = True
+        obj.means = [0.485, 0.456, 0.406]
+        obj.stds = [0.229, 0.224, 0.225]
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = False
+        obj.model_config.use_grouppose_keypoints = False
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
+        obj.model_config.num_channels = 3
+        obj.model_config.num_classes = 1
+        obj.model_config.num_keypoints_per_class = []
         return obj
 
     def _exported_config(self) -> Any:
