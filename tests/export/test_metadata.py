@@ -29,6 +29,7 @@ from rfdetr.export._runtime.metadata import (
     write_metadata,
 )
 from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
+from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
 from rfdetr.export.prepare import ExportGraph, resolve_output_names
 from rfdetr.inference import RFDETRInference
 from rfdetr.utilities.class_names import class_id_to_name
@@ -120,6 +121,7 @@ class TestGraphOutputOrder:
 class TestWriteExportMetadata:
     """Verify public metadata publication for artifacts exported earlier."""
 
+    @pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
     def test_openvino_positional_sidecar(self, tmp_path: Path, metadata_source: RFDETR) -> None:
         """Apply the real exporter mapping and bind metadata to XML and weights."""
         artifact = tmp_path / "model.xml"
