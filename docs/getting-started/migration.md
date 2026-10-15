@@ -42,6 +42,10 @@ For new image-prediction integrations, use the shared [`RFDETRInference`](../lea
 
     Pass the runtime choice through `RFDETRInference`'s `device` keyword. TensorRT's former `sync_mode` flag has no `runtime_options` key because the shared TensorRT adapter uses `execute_v2` by default. For example, `OpenVINOInference(model_path, cache_dir=cache)` becomes `RFDETRInference(model_path, runtime_options={"cache_dir": cache})`. The shared API handles preprocessing and postprocessing; use the format-specific session interfaces only when a raw-runtime benchmark or numerical check requires raw tensors.
 
+!!! note "Deprecated: unknown keyword arguments to `RFDETR.predict()`"
+
+    `RFDETR.predict()` used to accept and silently ignore any extra keyword argument. Since v1.12.0 it still ignores them but emits a `FutureWarning` that names them; in v2.0.0 they will raise `TypeError`, as `RFDETRInference.predict()` already does. Remove the extra keywords from your calls.
+
 ## Upgrade 1.10 → 1.11
 
 ### Breaking changes
