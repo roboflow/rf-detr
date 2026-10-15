@@ -560,9 +560,6 @@ overrides = [
     "rfdetr_plus", "rfdetr_plus.*",
     "webdataset", "webdataset.*",
   ], ignore_missing_imports = true },
-  # Plus 1.1 is supported but predates the PE exports guarded by ImportError in platform/models.py.
-  # Treat this optional model boundary consistently across supported installed and absent versions.
-  { module = ["rfdetr_plus.models"], ignore_missing_imports = true, follow_imports = "skip" },
   # IPython ships without inline type hints or a stub package: on CI (not installed) mypy needs
   # ignore_missing_imports; in a full dev venv (installed via the docs/notebook extras) the module
   # resolves but its symbols are untyped, so follow_imports = "skip" treats it as Any either way
