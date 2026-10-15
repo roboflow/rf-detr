@@ -499,7 +499,9 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-def _per_class_thresholds(threshold: float | Sequence[float], num_classes: int) -> list[float] | None:
+def _per_class_thresholds(
+    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor, num_classes: int
+) -> list[float] | None:
     """Split the ``threshold`` argument of :meth:`RFDETR.predict` into its single-float and per-class forms.
 
     Args:
@@ -511,7 +513,8 @@ def _per_class_thresholds(threshold: float | Sequence[float], num_classes: int) 
         ``class_names`` order.
 
     Raises:
-        ValueError: If ``threshold`` is neither a scalar nor one-dimensional, holds a number of entries other than
+        TypeError: If ``threshold`` is a scalar that is not a number, such as a ``dict`` keyed by class name.
+        ValueError: If ``threshold`` is a sequence that is not one-dimensional, holds a number of entries other than
             ``num_classes``, or holds a NaN.
 
     Examples:
@@ -522,6 +525,13 @@ def _per_class_thresholds(threshold: float | Sequence[float], num_classes: int) 
     """
     dimensions = np.ndim(threshold)
     if dimensions == 0:
+        # A dict, a string, a set or a 0-d array also has no dimensions. Left alone it would reach the keep-filter and
+        # fail there with a bare "'>' not supported between 'Tensor' and 'dict'", after the model ran. The accepted
+        # types are the scalars that `scores > threshold` takes.
+        if not isinstance(threshold, (int, float, np.integer, np.floating, np.bool_, torch.Tensor)):
+            raise TypeError(
+                f"threshold must be a float or a one-dimensional sequence of floats, got {type(threshold).__name__}."
+            )
         return None
     if dimensions != 1:
         raise ValueError(
@@ -3278,7 +3288,7 @@ class RFDETR:
         | np.ndarray[Any, Any]
         | torch.Tensor
         | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
-        threshold: float | Sequence[float] = 0.5,
+        threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
@@ -3382,6 +3392,8 @@ class RFDETR:
             have their conversion and transfer queued before an earlier validation failure raises.
 
         Raises:
+            TypeError: If ``threshold`` is neither a number nor a sequence of numbers, such as a ``dict`` keyed by
+                class name.
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *

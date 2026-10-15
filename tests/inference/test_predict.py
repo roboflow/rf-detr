@@ -305,6 +305,67 @@ class TestPredictPerClassThreshold:
         with pytest.raises(ValueError, match="one-dimensional"):
             model.predict(_PER_CLASS_IMAGE, threshold=[[0.5, 0.5, 0.5]])
 
+    @pytest.mark.parametrize(
+        "threshold",
+        [
+            pytest.param({"a": 0.5}, id="dict-by-class-name"),
+            "0.5",
+            pytest.param({0.5}, id="set"),
+            pytest.param(np.array(0.5), id="0-d-ndarray"),
+        ],
+    )
+    def test_threshold_that_is_neither_a_number_nor_a_sequence_raises_before_inference(self, threshold: object) -> None:
+        """A dict keyed by class name is the natural wrong guess, and it must not fail inside the keep-filter."""
+        model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
+        batches: list[torch.Tensor] = []
+
+        with model.model.model.register_forward_pre_hook(_record_model_inputs(batches)):
+            with pytest.raises(TypeError, match="float or a one-dimensional sequence of floats"):
+                model.predict(_PER_CLASS_IMAGE, threshold=threshold)  # type: ignore[arg-type]
+
+        assert batches == []
+
+    @pytest.mark.parametrize(
+        ("threshold", "expected_class_ids"),
+        [
+            pytest.param(0, [0, 1, 2, 0, 1, 2], id="int"),
+            pytest.param(np.float32(0.55), [0, 1, 2, 0], id="np-float32"),
+            pytest.param(torch.tensor(0.55), [0, 1, 2, 0], id="0-d-tensor"),
+        ],
+    )
+    def test_numeric_scalar_threshold_still_takes_the_float_form(
+        self, threshold: Any, expected_class_ids: list[int]
+    ) -> None:
+        """The type guard must let through every scalar that ``scores > threshold`` accepts."""
+        model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
+
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=threshold)
+
+        assert detections.class_id.tolist() == expected_class_ids
+
+    def test_segmentation_masks_follow_the_per_class_filter(self) -> None:
+        """With the real ``PostProcess``, a list keeps the rows and masks of a low-threshold run that clear their class.
+
+        The lowest entry is the mask pre-filter's cut-off, so a pre-filter fed any other entry would drop rows of the
+        classes with a lower threshold before the per-class filter sees them.
+        """
+        model = RFDETRSegNano(pretrain_weights=None)
+        low = model.predict(_PER_CLASS_IMAGE, threshold=0.0)
+        index_by_name = {name: index for index, name in enumerate(model.class_names)}
+        indexes = np.array([index_by_name.get(name, -1) for name in low.data["class_name"]])
+        # Spread over the scores the untrained model produces, so some classes keep their rows and others lose them.
+        lowest, highest = np.quantile(low.confidence, [0.1, 0.9])
+        thresholds = np.random.default_rng(0).uniform(lowest, highest, len(model.class_names)).astype(np.float32)
+
+        kept = model.predict(_PER_CLASS_IMAGE, threshold=thresholds)
+
+        expected = low[(indexes >= 0) & (low.confidence > thresholds[indexes])]
+        assert 0 < len(kept) < len(low)
+        np.testing.assert_array_equal(kept.confidence, expected.confidence)
+        np.testing.assert_array_equal(kept.class_id, expected.class_id)
+        np.testing.assert_array_equal(kept.xyxy, expected.xyxy)
+        np.testing.assert_array_equal(kept.mask, expected.mask)
+
     @pytest.mark.parametrize("label_without_entry", [-2, 3, 7])
     def test_detection_without_a_class_entry_is_dropped(self, label_without_entry: int) -> None:
         """The no-object slot (id 3 here), an id beyond the table (7) and a negative id have no threshold.

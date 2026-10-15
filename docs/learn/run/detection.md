@@ -106,7 +106,7 @@ thresholds[model.class_names.index("traffic light")] = 0.6
 detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=thresholds)
 ```
 
-- The sequence must hold exactly `len(model.class_names)` entries, otherwise `predict()` raises a `ValueError` before it runs the model. It raises the same error for a NaN entry; use `float("inf")` to drop a class. A list, tuple, NumPy array or tensor works.
+- The sequence must hold exactly `len(model.class_names)` entries, otherwise `predict()` raises a `ValueError` before it runs the model. It raises the same error for a NaN entry; use `float("inf")` to drop a class. A list, tuple, [NumPy](https://pypi.org/project/numpy/) array or tensor works, and a `dict` keyed by class name is refused with a `TypeError`.
 - The comparison is strict, like the single-float form, so `[t] * len(model.class_names)` keeps exactly the detections of the listed classes that `t` keeps.
 - A sequence drops detections that belong to no entry of `model.class_names`: the no-object slot of a fine-tuned model and the unused category IDs of a pretrained COCO model. A single float keeps them.
 - Segmentation and keypoint models take the same argument. For keypoint models the thresholds apply to `key_points.detection_confidence`.
