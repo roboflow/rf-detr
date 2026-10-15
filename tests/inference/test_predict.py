@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import io
+import math
 import struct
 import warnings
 import zlib
@@ -24,6 +25,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 import rfdetr.detr as detr_module
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
+from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from tests._online import is_online
 
@@ -512,6 +514,44 @@ class TestPredictOptimizedInferenceKeypoints:
         model.predict(img, threshold=0.31)
 
         assert stub.captured_score_threshold == 0.31
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.bfloat16, id="bfloat16"),
+            pytest.param(torch.float32, id="float32"),
+            pytest.param(torch.float64, id="float64"),
+        ],
+    )
+    @pytest.mark.parametrize("num_detections", [1, 2])
+    def test_low_findability_retains_finite_keypoint_detection(self, dtype: torch.dtype, num_detections: int) -> None:
+        """Finite tuple predictions must survive trace fusion and public score filtering."""
+        model, stub = _make_optimized_keypoint_model()
+        model._optimized_dtype = dtype
+        stub.args.num_keypoints_per_class = [2]
+        stub.postprocess = PostProcess(num_select=num_detections, num_keypoints_per_class=[2])
+        keypoints = torch.zeros(1, num_detections, 2, 8, dtype=dtype)
+        keypoints[..., :2] = 0.5
+        keypoints[..., 2] = -20.0
+        stub.inference_model = MagicMock(
+            return_value=(
+                torch.full((1, num_detections, 4), 0.5, dtype=dtype),
+                torch.full((1, num_detections, 1), 4.0, dtype=dtype),
+                keypoints,
+            )
+        )
+        image = PIL.Image.new("RGB", (64, 48))
+
+        result = model.predict(image, threshold=0.3)
+
+        object_probability = 1.0 / (1.0 + math.exp(-4.0))
+        fused_probability = object_probability * 2.0**-stub.postprocess.trace_alpha
+        expected_score = fused_probability / (1.0 + fused_probability)
+        assert isinstance(result, sv.KeyPoints)
+        assert len(result) == num_detections
+        np.testing.assert_allclose(result.detection_confidence, expected_score, rtol=0.005)
+        np.testing.assert_array_equal(result.xy, np.tile([[[32.0, 24.0], [32.0, 24.0]]], (num_detections, 1, 1)))
 
 
 def test_predict_accepts_image_url() -> None:
