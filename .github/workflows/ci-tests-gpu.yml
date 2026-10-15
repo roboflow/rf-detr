@@ -53,6 +53,11 @@ jobs:
         # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
         run: uv pip install -e ".[onnx,plus,train,augment,visual,data,cli]" --group tests
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
+
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest tests/ \
