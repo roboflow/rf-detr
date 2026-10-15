@@ -93,6 +93,8 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 | `inference_model_fp16.tflite`                | FP16 model (always produced)            |
 | `inference_model_dynamic_range_quant.tflite` | INT8 model (when `quantization="int8"`) |
 
+Each TFLite artifact also has an inference metadata sidecar named `<artifact>.rfdetr.json`, for example `inference_model_fp32.tflite.rfdetr.json`. Copy the matching sidecar alongside each model you deploy with `RFDETRInference`; without it, loading fails unless you supply the missing metadata through `metadata=`.
+
 !!! note
 
     Segmentation models produce TFLite files with three outputs: `dets` (bounding boxes), `labels` (class scores), and `masks` (per-instance segmentation masks). Keypoint models produce three outputs too, the third being `keypoints`.
