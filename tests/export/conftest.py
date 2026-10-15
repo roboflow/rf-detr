@@ -195,10 +195,12 @@ def max_abs_output_diffs(
 
 
 def _prediction_model_for_task(task: str) -> RFDETR:
-    """Build a small random model with explicit labels and no downloaded weights.
+    """Build a small random model with varied scores, explicit labels, and no downloaded weights.
 
     Examples:
         >>> _prediction_model_for_task("detect").class_names
+        ['alpha', 'beta']
+        >>> _prediction_model_for_task("keypoints").class_names
         ['alpha', 'beta']
     """
     kwargs: dict[str, Any] = {
@@ -210,12 +212,16 @@ def _prediction_model_for_task(task: str) -> RFDETR:
         "num_classes": 2,
     }
     if task == "keypoints":
-        kwargs["num_keypoints_per_class"] = [3]
+        kwargs["num_keypoints_per_class"] = [3, 3]
         model = RFDETRKeypointPreview(**kwargs)
-        model.model.class_names = ["alpha"]
     else:
         model = (RFDETRSegNano if task == "segment" else RFDETRNano)(**kwargs)
-        model.model.class_names = ["alpha", "beta"]
+    model.model.class_names = ["alpha", "beta"]
+    # Remove the low-probability training prior and amplify input-dependent logit variation
+    # so score tolerances cannot swallow the entire confidence range.
+    with torch.no_grad():
+        model.model.model.class_embed.bias.fill_(-2.0)
+        model.model.model.class_embed.weight.mul_(4.0)
     return model
 
 
@@ -260,6 +266,7 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> 
 
     assert exported.class_names == native.class_names
     assert type(actual) is type(original)
+    assert np.all(original.data["class_name"] != ""), "native predictions need decoded class names"
     normalized_box_atol = {
         "onnx": 1e-3,
         "openvino": 1e-2,
@@ -271,7 +278,7 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> 
         "tensorrt": 2e-2,
     }[format_name]
     score_atol = {
-        "onnx": 1e-3,
+        "onnx": 1e-5,
         "openvino": 2e-2,
         "tflite": 3e-2,
         "litert": 2e-2,
@@ -284,13 +291,19 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> 
         assert isinstance(actual, KeyPoints) and isinstance(original, KeyPoints)
         assert actual.detection_confidence is not None and original.detection_confidence is not None
         assert actual.keypoint_confidence is not None and original.keypoint_confidence is not None
+        assert np.any(original.keypoint_confidence > 0), "native keypoint confidences must not all be zero"
+        assert np.ptp(original.detection_confidence) > 3 * score_atol, "native detection scores need more spread"
+        np.testing.assert_array_equal(actual.class_id, original.class_id)
+        np.testing.assert_array_equal(actual.data["class_name"], original.data["class_name"])
         np.testing.assert_allclose(actual.xy, original.xy, atol=normalized_box_atol * size, rtol=0)
         np.testing.assert_allclose(actual.detection_confidence, original.detection_confidence, atol=score_atol, rtol=0)
         np.testing.assert_allclose(actual.keypoint_confidence, original.keypoint_confidence, atol=score_atol, rtol=0)
     else:
         assert isinstance(actual, Detections) and isinstance(original, Detections)
         assert actual.confidence is not None and original.confidence is not None
+        assert np.ptp(original.confidence) > 3 * score_atol, "native detection scores need more spread"
         np.testing.assert_array_equal(actual.class_id, original.class_id)
+        np.testing.assert_array_equal(actual.data["class_name"], original.data["class_name"])
         np.testing.assert_allclose(actual.xyxy, original.xyxy, atol=normalized_box_atol * size, rtol=0)
         np.testing.assert_allclose(actual.confidence, original.confidence, atol=score_atol, rtol=0)
         if task == "segment":

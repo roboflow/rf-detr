@@ -10,7 +10,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+from supervision import KeyPoints
 
 from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
@@ -25,7 +27,7 @@ from rfdetr.export.imports import (
     _IS_TFLITE_RUNTIME_INSTALLED,
 )
 from tests._markers import onnx_and_onnxruntime_only
-from tests.export.conftest import _prediction_model_for_task, assert_prediction_roundtrip
+from tests.export.conftest import _prediction_image, _prediction_model_for_task, assert_prediction_roundtrip
 
 #: Skip an OpenVINO round trip when the package that both converts and runs the model is absent.
 openvino_runtime_only = pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
@@ -52,6 +54,20 @@ coreai_runtime_only = pytest.mark.skipif(
     not (_IS_COREAI_TORCH_AVAILABLE and _IS_COREAI_INSTALLED) or sys.platform != "darwin",
     reason="Core AI round trips need coreai_torch and the coreai runtime on macOS",
 )
+
+
+class TestPredictionFixture:
+    """Keep native score variation larger than the export comparison tolerances."""
+
+    @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
+    def test_score_spread(self, task: str) -> None:
+        """Every task spans more than three times the largest backend score tolerance."""
+        model = _prediction_model_for_task(task)
+        size = 64 if task == "detect" else 96
+        original = model.predict(_prediction_image(size), threshold=0.0, include_source_image=False)
+        confidence = original.detection_confidence if isinstance(original, KeyPoints) else original.confidence
+        assert confidence is not None
+        assert np.ptp(confidence) > 3 * 3e-2
 
 
 @pytest.mark.integration
