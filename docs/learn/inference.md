@@ -30,13 +30,22 @@ predictor = RFDETRInference(native_model)
 results = predictor.predict("image.jpg")
 ```
 
-For export files, install the runtime extra for the target format and keep any `.rfdetr.json` sidecar beside its artifact. ONNX stores inference metadata in the model; other exported formats use the sidecar. Older exports can receive missing inference semantics through `metadata=` as a JSON path or mapping. Sidecar metadata is checked against the artifact. `notes` do not replace task, classes, output, or preprocessing metadata. See [Export Basics](../exports/basics.md#predict-with-rfdetrinference) and its format guides for runtime installation and options.
+For export files, install the runtime extra for the target format and keep any `.rfdetr.json` sidecar beside its artifact. ONNX stores inference metadata in the model; other exported formats use the sidecar. For older exports, load the source checkpoint and call `model.write_export_metadata(path, format=...)` with the original export settings; without that checkpoint, supply missing inference semantics through `metadata=` as a JSON path or mapping. Sidecar metadata is checked against the artifact. `notes` do not replace task, classes, output, or preprocessing metadata. See [Export Basics](../exports/basics.md#predict-with-rfdetrinference) and its format guides for runtime installation and options.
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall(pretrain_weights="checkpoint.pth")  # The source checkpoint of this export.
+model.write_export_metadata("output/model.xml", format="openvino")
+```
 
 Backbone-only artifacts contain features rather than predictions and cannot be loaded by this image-prediction API. LiteRT does not support full keypoint exports. The constructor accepts a `trust_checkpoint` option for checkpoints containing custom Python objects; enable it only for a checkpoint you trust.
 
 ## Predict images
 
 `predict()` accepts a file path (`str` or `os.PathLike[str]`), an HTTP(S) URL string, a PIL image, a NumPy array, a PyTorch tensor, or a list or tuple of these inputs. A list or tuple is one batch and returns one result per image. The runtime receives that batch in one execution; the API does not split or pad it. Each item must meet the source's channel, shape, and batch constraints.
+
+HTTP(S) URL strings are downloaded with `requests` using a 30-second connect and read timeout, which does not bound the total download time. Redirects are followed, and the whole response body is read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted URLs, download and validate the image yourself and pass the decoded image instead.
 
 PIL images and files are converted to the model's expected channels. For a one-channel model, a single-channel PIL image or file is converted to grayscale (`L`); for three-channel models, non-RGB PIL images are converted to RGB. NumPy arrays retain their supplied layout: use `(H, W)` or `(H, W, 1)` for one channel and `(H, W, 3)` for RGB. Tensor inputs use channel-first `(C, H, W)` and must already have the model's channel count. Floating-point arrays and all tensor inputs must have pixel values in `[0, 1]`; PIL images and `uint8` NumPy arrays use `[0, 255]`. Tensors are image pixels before mean/std normalization, not already-preprocessed runtime batches.
 
@@ -46,6 +55,8 @@ With `include_source_image=True` (the default), predictions retain a writable `u
 import numpy as np
 import supervision as sv
 from PIL import Image
+
+from rfdetr import RFDETRInference
 
 gray_predictor = RFDETRInference("output/grayscale.onnx")  # A one-channel detector.
 with Image.open("gray.png") as image:
@@ -59,7 +70,7 @@ The output is `supervision.Detections` for detection and segmentation, or `super
 
 ## Inspect runtime constraints
 
-`runtime_info` is a fresh dictionary describing the selected backend, device policy, task, and shape/batch constraints. The constructor's `device` defaults to `"auto"`; for checkpoint paths `"auto"` leaves device selection to native checkpoint loading, while an explicit device is forwarded. Export paths accept the device values supported by their runtime. An unsupported device is refused. The device field reports a policy or selected runtime device; vendor runtimes may choose a physical device internally. See the [export format guides](../exports/index.md) for format-specific device values.
+`runtime_info` is a fresh dictionary describing the selected backend, device policy, task, and shape/batch constraints. The constructor's `device` defaults to `"auto"`; for checkpoint paths `"auto"` leaves device selection to native checkpoint loading, while an explicit device is forwarded. Export paths accept the device values supported by their runtime. An unsupported device is refused. The device field reports a policy or selected runtime device; vendor runtimes may choose a physical device internally. See the [Inference API Reference](../reference/inference.md) for format-specific device values.
 
 | Field               | Meaning                                                    |
 | ------------------- | ---------------------------------------------------------- |
@@ -77,10 +88,14 @@ By default, preprocessing resizes to `default_shape`. Pass `shape=(height, width
 ```python
 from pathlib import Path
 
+from rfdetr import RFDETRInference
+
 predictor = RFDETRInference("output/model.onnx")
 print(predictor.class_names)
 print(predictor.runtime_info)
 results = predictor.predict(Path("image.jpg"), threshold=0.4)
 ```
+
+`antialias=None` (the default) uses the artifact metadata's `resize_antialias` for exported sources and `False` for native sources. Pass `antialias=True` or `antialias=False` to override it and match the checkpoint's training resize. New exports record `resize_antialias=False` because training-time resize settings are not stored; for older artifacts without metadata, `metadata=` can supply `resize_antialias=True`.
 
 The public prediction keywords are `threshold`, `shape`, `patch_size`, `include_source_image`, and `antialias`. Unknown keywords raise `TypeError` before model execution. Constructor-only settings are `device`, `metadata`, `trust_checkpoint`, and `runtime_options`; runtime options are export-format-specific and reject unknown keys. See the [runtime options table](../exports/basics.md#predict-with-rfdetrinference) and the [format guides](../exports/index.md).

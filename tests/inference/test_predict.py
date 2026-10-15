@@ -9,6 +9,7 @@ import struct
 import warnings
 import zlib
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -51,6 +52,29 @@ def _record_model_inputs(sink: list[torch.Tensor]) -> Callable[[torch.nn.Module,
         [(1, 3, 2, 2)]
     """
     return lambda _module, args: sink.append(args[0].detach().clone())
+
+
+class TestPredictEmptyInputs:
+    """Empty image containers fail consistently across native and exported prediction."""
+
+    @pytest.mark.parametrize("images", [pytest.param([], id="list"), pytest.param((), id="tuple")])
+    def test_native_rejects_empty_images(self, images: list[Any] | tuple[Any, ...]) -> None:
+        """Native prediction rejects empty containers before stacking tensors."""
+        model = _DummyRFDETR()
+
+        with pytest.raises(ValueError, match="^At least one image is required\\.$"):
+            model.predict(images)
+
+    @pytest.mark.parametrize("images", [pytest.param([], id="list"), pytest.param((), id="tuple")])
+    def test_dynamic_batch_rejects_empty_images(self, images: list[Any] | tuple[Any, ...]) -> None:
+        """Dynamic-batch prediction rejects empty containers without mentioning None."""
+        model = _DummyRFDETR()
+        context = replace(model._prediction_context(), fixed_shape=True, batch_size=None)
+
+        with pytest.raises(ValueError, match="^At least one image is required\\.$") as exc_info:
+            _prediction.predict(context, images)
+
+        assert "None" not in str(exc_info.value)
 
 
 class TestPredictReturnTypes:
@@ -110,14 +134,46 @@ class TestPredictReturnTypes:
         np.testing.assert_array_equal(result.metadata["source_image"], expected)
 
     def test_native_unknown_keyword_keeps_legacy_behavior(self) -> None:
-        """Strict validation belongs to the new facade; existing native kwargs remain compatible."""
+        """Unknown native keywords warn while preserving the prediction result."""
         model = _DummyRFDETR()
         image = np.zeros((28, 28, 3), dtype=np.uint8)
 
         expected = model.predict(image)
-        actual = model.predict(image, legacy_option=True)
+        with pytest.warns(FutureWarning, match="legacy_option"):
+            actual = model.predict(image, legacy_option=True)
 
-        np.testing.assert_array_equal(actual.xyxy, expected.xyxy)
+        assert actual == expected
+
+    def test_native_unknown_keyword_warning_points_to_caller(self) -> None:
+        """The unknown-keyword warning identifies the calling test file."""
+        model = _DummyRFDETR()
+        image = np.zeros((28, 28, 3), dtype=np.uint8)
+
+        with pytest.warns(FutureWarning, match="legacy_option") as recorded:
+            model.predict(image, legacy_option=True)
+
+        assert Path(recorded[0].filename).resolve() == Path(__file__).resolve()
+
+    def test_native_unknown_keyword_warning_lists_sorted_names(self) -> None:
+        """The deprecation warning lists ignored keywords in sorted order and states the removal version."""
+        model = _DummyRFDETR()
+        image = np.zeros((28, 28, 3), dtype=np.uint8)
+
+        with pytest.warns(FutureWarning, match="alpha, zeta") as recorded:
+            model.predict(image, zeta=True, alpha=True)
+
+        assert str(recorded[0].message) == (
+            "Passing unknown keyword arguments to RFDETR.predict is deprecated since v1.12.0: "
+            "alpha, zeta. They are ignored and will raise TypeError in v2.0.0."
+        )
+
+    def test_shared_predict_rejects_unknown_keyword(self) -> None:
+        """The shared predictor rejects unknown keywords before executing inference."""
+        model = _DummyRFDETR()
+        image = np.zeros((28, 28, 3), dtype=np.uint8)
+
+        with pytest.raises(TypeError, match="legacy_option"):
+            _prediction.predict(model._prediction_context(), image, legacy_option=True)
 
 
 class TestPredictScoreThresholdEquivalence:
@@ -2574,6 +2630,21 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "", "COCO gap ID 12 (no such category) must produce empty string"
         unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
         assert unmapped_warnings, "COCO gap ID 12 must trigger an unmapped-class-id warning"
+
+    def test_sparse_localized_mapping_overrides_background_sentinel(self) -> None:
+        """An explicit foreground name wins over the background sentinel in a sparse localized layout."""
+        model = self._make_model_with_class_names(["chat", "brosse à dents"], labels=[90])
+        model.model.args = SimpleNamespace(num_classes=90)
+        context = model._prediction_context()
+        context.class_id_to_name.clear()
+        context.class_id_to_name.update({1: "chat", 90: "brosse à dents"})
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = _prediction.predict(context, img)
+
+        assert detections.data["class_name"][0] == "brosse à dents", (
+            "An explicit class_id_to_name entry must override the background sentinel"
+        )
 
     def test_coco_pretrained_class_id_90_maps_to_toothbrush_not_background(self) -> None:
         """COCO class ID 90 ('toothbrush') must not be mislabelled '__background__' in pretrained branch.

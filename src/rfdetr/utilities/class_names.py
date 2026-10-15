@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.utilities.keypoints import _is_bg_first_schema
 
 if TYPE_CHECKING:
+    from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
 
 
@@ -116,9 +117,37 @@ def prediction_labels(model: RFDETR) -> PredictionLabels:
     """
     names = list(model.class_names)
     args = getattr(model.model, "args", None)
-    num_classes = getattr(args, "num_classes", len(names))
+    num_classes = int(getattr(args, "num_classes", len(names)))
     schema = getattr(args, "num_keypoints_per_class", None)
     if schema is None:
         schema = getattr(getattr(model, "model_config", None), "num_keypoints_per_class", None)
-    keypoint_schema = list(schema or [])
-    return PredictionLabels(names, num_classes, keypoint_schema, class_id_to_name(names, num_classes, keypoint_schema))
+    keypoint_schema = [int(count) for count in (schema or [])]
+    mapping = {int(class_id): name for class_id, name in class_id_to_name(names, num_classes, keypoint_schema).items()}
+    return PredictionLabels(names, num_classes, keypoint_schema, mapping)
+
+
+def _task_of(config: ModelConfig) -> Literal["detect", "segment", "keypoints"]:
+    """Identify the prediction task from the configured model heads.
+
+    Args:
+        config: Model configuration defining the segmentation and keypoint heads.
+
+    Returns:
+        The prediction task, giving segmentation precedence over keypoints.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> _task_of(SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False))
+        'detect'
+        >>> _task_of(SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=True))
+        'keypoints'
+        >>> _task_of(SimpleNamespace(segmentation_head=True, use_grouppose_keypoints=False))
+        'segment'
+        >>> _task_of(SimpleNamespace(segmentation_head=True, use_grouppose_keypoints=True))
+        'segment'
+    """
+    if config.segmentation_head:
+        return "segment"
+    if config.use_grouppose_keypoints:
+        return "keypoints"
+    return "detect"

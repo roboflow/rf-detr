@@ -22,7 +22,7 @@ def load_exported_context(
     path: Path,
     *,
     device: str,
-    metadata: dict[str, Any] | str | os.PathLike[str] | None,
+    metadata: Mapping[str, Any] | str | os.PathLike[str] | None,
     runtime_options: Mapping[str, Any] | None = None,
 ) -> PredictionContext:
     """Load one runtime and the artifact's prediction rules.
@@ -64,4 +64,5 @@ def load_exported_context(
         fixed_shape=True,
         batch_size=None if contract.input_shape[0] == -1 else contract.input_shape[0],
         max_batch_size=contract.max_batch_size,
+        antialias=contract.resize_antialias,
     )

@@ -6,8 +6,8 @@
 """TFLite inference helpers for RF-DETR exported models.
 
 These functions handle interpreter creation, image preprocessing, and decoding of detection and segmentation-mask
-outputs without requiring PyTorch or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``), ``numpy``,
-``supervision``, and ``Pillow`` are needed at inference time.
+outputs using ``tflite-runtime`` (or ``tensorflow``), ``numpy``, ``supervision``, and ``Pillow``, alongside the RF-DETR
+package dependencies.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import contextlib
 import importlib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -24,10 +24,21 @@ from PIL import Image as PILImage
 from supervision import Detections
 
 from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
@@ -94,35 +105,23 @@ def _run_interpreter_raw(
     return details, [interp.get_tensor(item["index"]) for item in details]
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load a TFLite or LiteRT artifact through the shared interpreter; it reads no runtime options."""
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _runtime_options
-
     _runtime_options("TFLite" if metadata.format.lower() == "tflite" else "LiteRT", options, ())
     if device not in {"auto", "cpu"}:
         raise ValueError("TFLite inference supports cpu or auto only.")
 
     session = _create_interpreter(path)
-    (input_info,) = session.get_input_details()
-    if isinstance(metadata.input_name, str) and input_info.get("name") != metadata.input_name:
-        raise ValueError("TFLite input name disagrees with export metadata.")
-    actual_shape = tuple(int(size) for size in input_info["shape"])
-    if len(actual_shape) != 4:
-        raise ValueError(f"TFLite input rank must be 4, got {len(actual_shape)}.")
-    expected_shape = metadata.input_shape
-    if metadata.input_layout == "NHWC":
-        expected_shape = (expected_shape[0], expected_shape[2], expected_shape[3], expected_shape[1])
-    if any(want != -1 and want != got for want, got in zip(expected_shape, actual_shape)):
-        raise ValueError(f"TFLite input shape {actual_shape} disagrees with metadata {expected_shape}.")
-    if np.dtype(input_info["dtype"]) != np.dtype(metadata.input_dtype):
-        raise ValueError("TFLite input dtype disagrees with export metadata.")
-    output_details = session.get_output_details()
-    output_names = {detail.get("name") for detail in output_details}
-    for name in metadata.outputs.values():
-        if isinstance(name, int) and not (0 <= name < len(output_details)):
-            raise ValueError(f"TFLite output index {name} is absent from graph.")
-        if isinstance(name, str) and name not in output_names:
-            raise ValueError(f"TFLite output name {name!r} is absent from graph.")
+    input_info = _single_input("TFLite", session.get_input_details())
+    _check_input_interface(
+        "TFLite",
+        metadata,
+        input_info.get("name", "") if isinstance(metadata.input_name, str) else None,
+        [int(size) for size in input_info["shape"]],
+        input_info["dtype"],
+        dynamic_batch=True,
+    )
+    _check_output_interface("TFLite", metadata, [detail.get("name") for detail in session.get_output_details()])
 
     def execute(batch: Any) -> dict[str, Any] | list[Any]:
         """Run one batch, using metadata to preserve output names when needed."""
@@ -132,7 +131,12 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         return raw
 
     return ExportRuntime(
-        metadata.format.lower(), metadata, session, "cpu", input_info["index"], execute, borrowed_outputs=False
+        metadata.format.lower(),
+        metadata,
+        session=session,
+        device_policy="cpu",
+        execute=execute,
+        borrowed_outputs=False,
     )
 
 

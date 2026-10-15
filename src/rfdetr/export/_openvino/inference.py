@@ -15,15 +15,26 @@ from _thread import LockType
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from deprecate import TargetMode, deprecated
 from numpy.typing import NDArray
 
 from rfdetr.export._openvino.exporter import _check_openvino_available
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
@@ -226,7 +237,7 @@ class OpenVINOInference:
 _OPENVINO_RUNTIME_OPTIONS = ("cache_dir", "config", "inference_precision")
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load an OpenVINO graph through the shared session functions.
 
     Args:
@@ -238,12 +249,10 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
     Returns:
         The loaded runtime.
     """
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _runtime_options
-
     settings = _runtime_options("OpenVINO", options, _OPENVINO_RUNTIME_OPTIONS)
     if settings.get("cache_dir") is not None:
         settings["cache_dir"] = os.fspath(settings["cache_dir"])
-    if device == "auto":
+    if device.lower() == "auto":
         target = "AUTO"
     elif device.lower() in {"cpu", "gpu", "npu"} or re.fullmatch(r"(?:gpu|npu)\.[0-9]+", device.lower()):
         target = device.upper()
@@ -261,30 +270,30 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         ):
             raise RuntimeError(f"OpenVINO device {target} is unavailable. Available devices: {available}.")
 
-    precision = _resolve_precision_hint(settings.pop("inference_precision", _AUTO_PRECISION), target)
-    session = _load_openvino_session(path, device=target, inference_precision=precision, **settings)
+    session = _load_openvino_session(
+        path, device=target, inference_precision=settings.pop("inference_precision", _AUTO_PRECISION), **settings
+    )
     if metadata.input_dtype != "float32" or metadata.input_layout != "NCHW":
         raise ValueError("OpenVINO inference wrapper requires a float32 NCHW input.")
+    _single_input("OpenVINO", session.compiled_model.inputs)
     shape = session.input_layer.partial_shape
-    # Check the rank before indexing: a dynamic rank has no length, and a rank that differs from the metadata would
-    # either index past the graph's last axis or leave its extra axes unchecked.
-    expected_rank = len(metadata.input_shape)
+    # A dynamic rank has no length to compare, so it is refused before the shared check reads the axes.
     if not shape.rank.is_static:
-        raise ValueError(f"OpenVINO input rank must be {expected_rank}, got a dynamic rank.")
-    if len(shape) != expected_rank:
-        raise ValueError(f"OpenVINO input rank must be {expected_rank}, got {len(shape)}.")
-    for axis, want in enumerate(metadata.input_shape):
-        dimension = shape[axis]
-        if dimension.is_static and want != -1 and dimension.get_length() != want:
-            raise ValueError(f"OpenVINO input axis {axis} disagrees with export metadata.")
-    if any(isinstance(key, str) for key in metadata.outputs.values()):
-        raise ValueError("OpenVINO output mappings must use positions.")
-    positions = [index for index in metadata.outputs.values() if isinstance(index, int)]
-    if any(index < 0 or index >= len(session.output_layers) for index in positions):
-        raise ValueError("OpenVINO output position is absent from model.")
+        raise ValueError(f"OpenVINO input rank must be {len(metadata.input_shape)}, got a dynamic rank.")
+    _check_input_interface(
+        "OpenVINO",
+        metadata,
+        None,
+        [shape[axis].get_length() if shape[axis].is_static else None for axis in range(len(shape))],
+        "float32",
+        dynamic_batch=True,
+    )
+    _check_output_interface("OpenVINO", metadata, len(session.output_layers))
 
     def execute(batch: Any) -> tuple[NDArray[Any], ...]:
         """Run the session, which returns owned output arrays."""
         return _infer_openvino(session, _input_array(batch, metadata))
 
-    return ExportRuntime("openvino", metadata, session, target, metadata.input_name, execute, borrowed_outputs=False)
+    return ExportRuntime(
+        "openvino", metadata, session=session, device_policy=target, execute=execute, borrowed_outputs=False
+    )

@@ -14,11 +14,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
+from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple, _runtime_options
 from rfdetr.export._runtime.metadata import ExportMetadata
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 
 def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward") -> Any:
@@ -50,10 +54,8 @@ def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward"
     return Runtime.get().load_program(str(pte_path)).load_method(method_name)
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load an ExecuTorch method with its embedded delegate policy; it reads no runtime options."""
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple, _runtime_options
-
     _runtime_options("ExecuTorch", options, ())
 
     delegate = (metadata.backend or "xnnpack").lower()
@@ -78,4 +80,4 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         """Clone mutable input storage before each ExecuTorch call."""
         return cast(list[Any], session.execute([torch.from_numpy(_input_array(batch, metadata)).clone()]))
 
-    return ExportRuntime("executorch", metadata, session, target, metadata.input_name, execute)
+    return ExportRuntime("executorch", metadata, session=session, device_policy=target, execute=execute)

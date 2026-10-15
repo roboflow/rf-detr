@@ -3,7 +3,17 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Versioned prediction metadata for exported RF-DETR artifacts."""
+"""Versioned prediction metadata for exported RF-DETR artifacts.
+
+TensorRT prediction metadata lives in ``<engine>.trt.rfdetr.json``, including the class mapping in
+``ExportMetadata.class_id_to_name``. The optional ``<engine>.json`` described by :mod:`rfdetr.export._tensorrt.metadata`
+is a separate engine description for consumers that do not import RF-DETR (C++ services, Triton, DeepStream); its schema
+version 1 omits class names and the background class slot.
+
+Both sidecars use SHA-256 to identify the engine. This module hashes the artifact on disk to bind prediction metadata to
+the file being loaded; the TensorRT description hashes the serialized build bytes before writing the engine, so a
+concurrent replacement remains detectable.
+"""
 
 from __future__ import annotations
 
@@ -14,14 +24,14 @@ import json
 import math
 import os
 from collections.abc import Callable, Mapping
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from rfdetr.utilities.class_names import prediction_labels
+from rfdetr.utilities.class_names import _task_of, prediction_labels
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
+from rfdetr.utilities.package import get_version
 
 METADATA_KEY = "rfdetr_inference"
 #: The one metadata schema this reader understands. Any change to the ``ExportMetadata`` fields bumps it.
@@ -52,7 +62,7 @@ class ExportMetadata(BaseModel):
     pixel_scale: float = 1.0 / 255.0
     channel_order: Literal["RGB"] = "RGB"
     resize_interpolation: Literal["bilinear"] = "bilinear"
-    resize_antialias: Literal[False] = False
+    resize_antialias: bool = False
     class_names: list[str]
     class_id_to_name: dict[int, str] = Field(default_factory=dict)
     num_classes: int
@@ -67,7 +77,18 @@ class ExportMetadata(BaseModel):
 
     @model_validator(mode="after")
     def validate_contract(self) -> ExportMetadata:
-        """Reject metadata that cannot describe one safe prediction contract."""
+        """Reject metadata that cannot describe one safe prediction contract.
+
+        Fills ``class_id_to_name`` from ``class_names`` when it is empty and the names cover every class.
+
+        Returns:
+            This metadata, validated.
+
+        Raises:
+            ValueError: If the input shape, normalization, outputs, classes, keypoint counts, or model geometry cannot
+                describe one prediction contract. Pydantic reports it as a ``ValidationError``, a ``ValueError``
+                subclass.
+        """
         batch, channels, height, width = self.input_shape
         if batch == 0 or batch < -1 or min(channels, height, width) <= 0:
             raise ValueError(
@@ -106,6 +127,8 @@ class ExportMetadata(BaseModel):
             raise ValueError("trace_alpha must be finite and non-negative")
         if self.pixel_scale != 1.0 / 255.0:
             raise ValueError("pixel_scale must match native 1/255 preprocessing")
+        if any(count < 0 for count in self.num_keypoints_per_class):
+            raise ValueError("num_keypoints_per_class counts must be non-negative")
         if self.task == "keypoints" and not self.num_keypoints_per_class:
             raise ValueError("num_keypoints_per_class is required for keypoint prediction")
         if self.task == "keypoints" and not any(self.num_keypoints_per_class):
@@ -128,14 +151,28 @@ class ExportMetadata(BaseModel):
 
 
 def positional_metadata(metadata: ExportMetadata) -> ExportMetadata:
-    """Use positional input and output identifiers for tuple-returning runtimes."""
+    """Use positional input and output identifiers for tuple-returning runtimes.
+
+    Outputs follow graph output order because ``metadata_from_model`` builds them from ``resolve_output_names``.
+
+    Args:
+        metadata: Metadata whose input and outputs are keyed by name.
+
+    Returns:
+        A copy with input position ``0`` and each output keyed by its position in ``metadata.outputs``.
+    """
     return metadata.model_copy(
         update={"input_name": 0, "outputs": {name: index for index, name in enumerate(metadata.outputs)}}
     )
 
 
 def _artifact_digest(path: Path) -> str:
-    """Hash a file or bundle, including OpenVINO's companion weights file."""
+    """Hash a file or bundle, including OpenVINO's companion weights file.
+
+    The digest is a staleness check: it tells a companion written for other bytes, such as an artifact rebuilt or
+    replaced since its metadata was written, from the current one. It is not an authenticity or integrity guarantee.
+    It follows symlinks the way the runtimes do, and the runtime opens the artifact by path after the hash is taken.
+    """
     digest = hashlib.sha256()
     files = sorted(file for file in path.rglob("*") if file.is_file()) if path.is_dir() else [path]
     if path.suffix == ".xml":
@@ -168,7 +205,24 @@ def _temporary_sibling(path: Path) -> Path:
 
 
 def write_metadata(path: str | Path, metadata: ExportMetadata) -> Path | None:
-    """Store metadata in ONNX or in a digest-bound adjacent JSON file."""
+    """Store metadata in ONNX or in a digest-bound adjacent JSON file.
+
+    An ``.onnx`` artifact with ``format="onnx"`` gets the metadata embedded under ``METADATA_KEY``; every other
+    artifact gets ``<artifact>.rfdetr.json`` holding the metadata and the artifact's SHA-256. Both are replaced
+    through a temporary sibling, so a failed write leaves the previous file in place.
+
+    Args:
+        path: Exported artifact to describe.
+        metadata: Prediction contract to store.
+
+    Returns:
+        The companion file path, or ``None`` when the metadata was embedded in the ONNX model.
+
+    Raises:
+        FileNotFoundError: If the artifact does not exist.
+        ImportError: If the metadata goes into an ONNX model and ``onnx`` is not installed.
+        OSError: If the artifact cannot be read or the metadata cannot be written.
+    """
     artifact = Path(path)
     if not artifact.exists():
         raise FileNotFoundError(artifact)
@@ -355,48 +409,67 @@ def metadata_from_model(
     backend: str | None = None,
     max_batch_size: int | None = None,
 ) -> ExportMetadata:
-    """Capture prediction semantics from a live RFDETR wrapper before conversion."""
+    """Capture prediction semantics from a live RFDETR wrapper before conversion.
+
+    Args:
+        model: The RFDETR wrapper being exported.
+        format: Export format name, one of ``ExportFormat``.
+        shape: Input height and width.
+        batch_size: Static batch size, recorded unless *dynamic_batch* is set.
+        dynamic_batch: Record the batch axis as ``-1``.
+        backbone_only: Describe a backbone-only export, which has no prediction outputs.
+        backend: Format backend the artifact targets, if the format has one.
+        max_batch_size: Largest batch a dynamic-batch artifact accepts, if it has a limit.
+
+    Returns:
+        The validated prediction contract for the artifact.
+
+    Raises:
+        ValueError: If the model's configuration cannot describe a valid prediction contract
+            (see :meth:`ExportMetadata.validate_contract`).
+    """
+    # Local import avoids the circular import: prepare imports metadata at module scope.
+    from rfdetr.export.prepare import resolve_output_names
+
     config = model.model_config
-    task: ExportTask = (
-        "backbone"
-        if backbone_only
-        else "segment"
-        if config.segmentation_head
-        else "keypoints"
-        if config.use_grouppose_keypoints
-        else "detect"
-    )
+    task: ExportTask = "backbone" if backbone_only else _task_of(config)
     # The same derivation as native prediction, so the artifact maps class IDs to the names predict() returns.
     labels = prediction_labels(model)
-    outputs: dict[str, str | int] = {"pred_boxes": "dets", "pred_logits": "labels"}
-    if task == "segment":
-        outputs["pred_masks"] = "masks"
-    elif task == "keypoints":
-        outputs["pred_keypoints"] = "keypoints"
-    elif task == "backbone":
-        outputs = {}
-    try:
-        producer_version = version("rfdetr")
-    except PackageNotFoundError:
-        producer_version = None
+    outputs: dict[str, str | int] = {}
+    if task != "backbone":
+        semantic_names = {
+            "dets": "pred_boxes",
+            "labels": "pred_logits",
+            "masks": "pred_masks",
+            "keypoints": "pred_keypoints",
+        }
+        outputs = {
+            semantic_names[name]: name for name in resolve_output_names(config, backbone_only=False, backbone=None)
+        }
+    # Checkpoint args may carry NumPy scalars; normalize them without weakening the strict artifact schema.
     return ExportMetadata(
-        producer_version=producer_version,
+        producer_version=get_version(),
         format=cast(ExportFormat, format),
         task=task,
         variant=getattr(model, "size", None),
         backend=backend,
-        input_shape=(-1 if dynamic_batch else batch_size, config.num_channels, *shape),
-        max_batch_size=max_batch_size,
+        input_shape=(
+            -1 if dynamic_batch else int(batch_size),
+            int(config.num_channels),
+            int(shape[0]),
+            int(shape[1]),
+        ),
+        max_batch_size=int(max_batch_size) if max_batch_size is not None else None,
         outputs=outputs,
-        means=list(model.means),
-        stds=list(model.stds),
+        means=[float(mean) for mean in model.means],
+        stds=[float(std) for std in model.stds],
         class_names=labels.class_names,
         class_id_to_name=labels.class_id_to_name,
         num_classes=labels.num_classes,
-        num_select=model.model.postprocess.num_select,
+        num_select=int(model.model.postprocess.num_select),
         num_keypoints_per_class=labels.num_keypoints_per_class,
-        trace_alpha=model.model.postprocess.trace_alpha,
+        trace_alpha=float(model.model.postprocess.trace_alpha),
         upsample_masks_to_image_size=model.model.postprocess.upsample_masks_to_image_size,
-        patch_size=config.patch_size,
-        num_windows=config.num_windows,
+        patch_size=int(config.patch_size),
+        num_windows=int(config.num_windows),
     )

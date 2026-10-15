@@ -43,6 +43,15 @@ def _check_openvino_available() -> None:
         raise ImportError('OpenVINO requires `openvino`. Install it with: pip install "rfdetr[openvino]"') from error
 
 
+def _has_dynamic_batch(path: Path) -> bool:
+    """Read the saved IR to determine whether its statically ranked input accepts a dynamic batch."""
+    _check_openvino_available()
+    import openvino as ov
+
+    shape = ov.Core().read_model(path).input(0).partial_shape
+    return shape.rank.is_static and not shape[0].is_static
+
+
 @dataclass(frozen=True, slots=True)
 class OpenVINOConfig(ExportConfig):
     """Settings for ``format="openvino"``.
@@ -100,6 +109,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     Note:
         Output tensor names in the saved IR are OpenVINO-inferred, not renamed to ``dets``/``labels``/etc. --
         consumers must match outputs by **position**, mirroring the CoreML export's naming limitation.
+        The inference metadata records a dynamic batch axis (``-1``) when the saved IR's batch axis is dynamic, which
+        is what lets ``RFDETRInference`` predict several images in one call.
 
     Examples:
         Requires the optional ``openvino`` dependency and a prepared graph, so this is documentation only
@@ -328,5 +339,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         return str(output_xml)
 
     def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
-        """Use the output positions returned by the OpenVINO wrapper."""
-        return positional_metadata(metadata)
+        """Record positional outputs and the saved IR's dynamic batch without changing spatial preprocessing."""
+        metadata = positional_metadata(metadata)
+        if _has_dynamic_batch(path):
+            metadata = metadata.model_copy(update={"input_shape": (-1, *metadata.input_shape[1:])})
+        return metadata

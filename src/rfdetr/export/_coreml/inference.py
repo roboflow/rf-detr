@@ -9,17 +9,27 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _require_apple,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.metadata import ExportMetadata
 
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load a CoreML model and validate its tensor interface; it reads no runtime options."""
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple, _runtime_options
-
     _runtime_options("CoreML", options, ())
 
     _require_apple("CoreML")
@@ -32,34 +42,28 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         raise ValueError("CoreML accepts auto or cpu. Its GPU and Neural Engine policies also permit CPU execution.")
     session = ct.models.MLModel(str(path), compute_units=units[device])
     spec = session.get_spec()
-    (input_info,) = spec.description.input
-    if metadata.input_name not in {0, input_info.name}:
-        raise ValueError("CoreML input name disagrees with export metadata.")
+    input_info = _single_input("CoreML", spec.description.input)
     feature_type = input_info.type
     if feature_type.WhichOneof("Type") != "multiArrayType":
         raise ValueError("CoreML input must be a multiArrayType.")
     array_type = feature_type.multiArrayType
-    input_shape = tuple(array_type.shape)
-    if len(input_shape) != 4:
-        raise ValueError(f"CoreML input rank must be 4, got {len(input_shape)}.")
-    expected_shape = metadata.input_shape
-    if metadata.input_layout == "NHWC":
-        expected_shape = (expected_shape[0], expected_shape[2], expected_shape[3], expected_shape[1])
-    if input_shape != expected_shape:
-        raise ValueError(f"CoreML input shape {input_shape} disagrees with export metadata {expected_shape}.")
     coreml_dtypes = {65552: "float16", 65568: "float32", 65600: "float64"}
-    if coreml_dtypes.get(array_type.dataType) != metadata.input_dtype:
-        raise ValueError("CoreML input dtype disagrees with export metadata.")
+    # CoreML input shapes are fixed, so a -1 metadata batch is refused rather than read as a wildcard.
+    _check_input_interface(
+        "CoreML",
+        metadata,
+        None if metadata.input_name == 0 else input_info.name,
+        [int(size) for size in array_type.shape],
+        coreml_dtypes.get(array_type.dataType, f"CoreML data type {array_type.dataType}"),
+    )
     names = [item.name for item in spec.description.output]
-    for name in metadata.outputs.values():
-        if isinstance(name, str) and name not in names:
-            raise ValueError(f"CoreML output name {name!r} is absent from model.")
-        if isinstance(name, int) and not (0 <= name < len(names)):
-            raise ValueError(f"CoreML output position {name} is absent from model.")
+    _check_output_interface("CoreML", metadata, names)
 
     def execute(batch: torch.Tensor) -> dict[str, Any]:
         """Return outputs in the model specification's order."""
         prediction = session.predict({input_info.name: _input_array(batch, metadata)})
         return {name: prediction[name] for name in names}
 
-    return ExportRuntime("coreml", metadata, session, device, input_info.name, execute, borrowed_outputs=False)
+    return ExportRuntime(
+        "coreml", metadata, session=session, device_policy=device, execute=execute, borrowed_outputs=False
+    )

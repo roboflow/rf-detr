@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 
-from rfdetr.export._runtime.adapters import ExportRuntime, load_runtime
+from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata
 from tests.export._openvino_shapes import FakePartialShape
 
@@ -48,6 +48,107 @@ def _metadata(**fields: Any) -> ExportMetadata:
     )
 
 
+class TestInputArray:
+    """Check tensor conversion to the artifact's NumPy input interface."""
+
+    @pytest.mark.parametrize(
+        ("input_layout", "axes"),
+        [
+            pytest.param("NCHW", (0, 1, 2, 3), id="channels-first"),
+            pytest.param("NHWC", (0, 2, 3, 1), id="channels-last"),
+        ],
+    )
+    def test_converts_to_artifact_layout(self, input_layout: str, axes: tuple[int, int, int, int]) -> None:
+        """Preserve values when converting a batch to the artifact's layout.
+
+        Distinct channel and spatial values in a rectangular NCHW batch expose an incorrect axis permutation.
+        """
+        metadata = _metadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 2, 4),
+            input_layout=input_layout,
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        )
+        batch = torch.arange(24, dtype=torch.float32).reshape(1, 3, 2, 4)
+        expected = batch.numpy().transpose(axes)
+
+        result = _input_array(batch, metadata)
+
+        assert result.shape == expected.shape
+        assert result.flags.c_contiguous
+        np.testing.assert_array_equal(result, expected)
+
+    @pytest.mark.parametrize("input_dtype", ["int8", "uint8"])
+    def test_rejects_non_floating_artifact_dtype(self, input_dtype: str) -> None:
+        """Refuse integer artifact inputs without quantization parameters.
+
+        A normalized floating batch cannot be converted to a quantized artifact's dtype by a plain cast.
+        """
+        metadata = _metadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 2, 4),
+            input_dtype=input_dtype,
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        )
+        batch = torch.zeros(1, 3, 2, 4)
+
+        with pytest.raises(ValueError, match="needs quantization parameters"):
+            _input_array(batch, metadata)
+
+    def test_rejects_unknown_artifact_dtype(self) -> None:
+        """Report an unsupported artifact dtype as a ValueError.
+
+        Metadata accepts an arbitrary dtype string, so the adapter must wrap NumPy's TypeError for an unknown name.
+        """
+        metadata = _metadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 2, 4),
+            input_dtype="nonesuch",
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        )
+        batch = torch.zeros(1, 3, 2, 4)
+
+        with pytest.raises(ValueError, match="Unsupported export input dtype") as exc_info:
+            _input_array(batch, metadata)
+
+        assert isinstance(exc_info.value.__cause__, TypeError)
+
+    @pytest.mark.parametrize(
+        ("tensor_dtype", "input_dtype"),
+        [
+            pytest.param(torch.float32, "float32", id="float32-to-float32"),
+            pytest.param(torch.float16, "float32", id="float16-to-float32"),
+            pytest.param(torch.bfloat16, "float32", id="bfloat16-to-float32"),
+            pytest.param(torch.bfloat16, "float16", id="bfloat16-to-float16"),
+        ],
+    )
+    def test_casts_to_artifact_dtype(self, tensor_dtype: torch.dtype, input_dtype: str) -> None:
+        """Convert floating tensors to the artifact's dtype, including BF16, which NumPy cannot hold.
+
+        A BF16 tensor passed to ``RFDETRInference.predict`` kept its dtype through preprocessing, so the artifact's
+        floating dtype has to be applied in torch before ``.numpy()``; the values must survive and the array be
+        contiguous.
+        """
+        metadata = _metadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            input_dtype=input_dtype,
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        )
+        batch = torch.linspace(-1.1, 1.1, 3 * 8 * 8, dtype=tensor_dtype).reshape(1, 3, 8, 8)
+        expected = batch.float().numpy().astype(input_dtype)
+
+        result = _input_array(batch, metadata)
+
+        assert result.dtype == np.dtype(input_dtype)
+        assert result.flags.c_contiguous
+        np.testing.assert_array_equal(result, expected)
+
+
 class TestExportRuntimeOutputs:
     """Check output conversion through the runtime contract."""
 
@@ -62,10 +163,9 @@ class TestExportRuntimeOutputs:
         runtime = ExportRuntime(
             "onnx",
             metadata,
-            object(),
-            "CPUExecutionProvider",
-            "input",
-            lambda batch: {"dets": [[[0.0, 0.0, 1.0, 1.0]]], "labels": [[[1.0, 2.0, 3.0]]]},
+            session=object(),
+            device_policy="CPUExecutionProvider",
+            execute=lambda batch: {"dets": [[[0.0, 0.0, 1.0, 1.0]]], "labels": [[[1.0, 2.0, 3.0]]]},
             borrowed_outputs=False,
         )
 
@@ -115,7 +215,9 @@ class TestExportRuntimeOutputs:
         width is not ``num_classes + 1`` would shift the no-object slot onto a real class id.
         """
         metadata = _metadata(format="onnx", task="detect", input_shape=(1, 3, 8, 8), outputs=outputs)
-        runtime = ExportRuntime("onnx", metadata, object(), "CPUExecutionProvider", "input", lambda batch: raw)
+        runtime = ExportRuntime(
+            "onnx", metadata, session=object(), device_policy="CPUExecutionProvider", execute=lambda batch: raw
+        )
 
         with pytest.raises(ValueError, match=match):
             runtime.run(torch.zeros(1, 3, 8, 8))
@@ -391,6 +493,7 @@ class TestOpenVINORuntimeAdapter:
         session = Mock()
         raw_boxes = np.zeros((1, 2, 4), np.float32)
         session.infer.return_value = (raw_boxes, np.zeros((1, 2, 3), np.float32))
+        session.compiled_model.inputs = [object()]
         session.input_layer.partial_shape = FakePartialShape((1, 3, 8, 8))
         session.output_layers = ["dets", "labels"]
         core = Mock(available_devices=["CPU"])

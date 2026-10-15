@@ -37,6 +37,13 @@ class RFDETRInference:
     """Predict with a live native model, checkpoint, or exported artifact.
 
     This facade shares prediction behavior across native models and exported runtimes.
+
+    Examples:
+        Skipped when run as a doctest: requires model weights and an image file.
+
+        >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
+        >>> predictor = RFDETRInference(RFDETRSmall())  # doctest: +SKIP
+        >>> detections = predictor.predict("image.jpg")  # doctest: +SKIP
     """
 
     def __init__(
@@ -44,7 +51,7 @@ class RFDETRInference:
         source: RFDETR | str | os.PathLike[str],
         *,
         device: str | torch.device = "auto",
-        metadata: dict[str, Any] | str | os.PathLike[str] | None = None,
+        metadata: Mapping[str, Any] | str | os.PathLike[str] | None = None,
         trust_checkpoint: bool = False,
         runtime_options: Mapping[str, Any] | None = None,
     ) -> None:
@@ -64,11 +71,19 @@ class RFDETRInference:
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
         | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
 
+        A live model owns its device policy. Omit ``device`` for that source;
+        configure the native model itself to select its device.
+
         Args:
             source: A live RFDETR model or a checkpoint or exported artifact path.
             device: Runtime device, as a string or ``torch.device`` (converted with ``str()``), or ``"auto"`` to
                 inherit the source device.
-            metadata: Optional metadata for an exported artifact.
+            metadata: Missing inference semantics for an older exported artifact, supplied as a JSON file path or
+                JSON-serializable mapping. Accepts a plain metadata object or an ``artifact_sha256`` / ``metadata``
+                envelope whose digest matches the artifact. Required fields describe the format, task, input shape,
+                outputs, normalization, classes and postprocessing; see "Metadata for older exports" in the export
+                basics guide for the complete schema and example. Supplied values must agree with stored metadata;
+                unknown fields and unsupported schema versions are rejected. Invalid for native models or checkpoints.
             trust_checkpoint: Allow loading a checkpoint that contains custom Python objects.
             runtime_options: Settings for an exported artifact's runtime. Each format reads only its own keys and
                 raises ``ValueError`` for any other: TensorRT takes ``cuda_graph``, ``engine_host_code_allowed`` and
@@ -76,11 +91,13 @@ class RFDETRInference:
                 the other formats take none.
 
         Raises:
-            ValueError: If metadata, runtime options or a device conflicts with a native source, or the format's
-                loader refuses a runtime option.
-
-        A live model owns its device policy. Omit ``device`` for that source;
-        configure the native model itself to select its device.
+            FileNotFoundError: If the artifact or metadata file is missing.
+            ImportError: If a required format extra or runtime package is not installed.
+            RuntimeError: If the host or requested device cannot run the runtime.
+            TypeError: If runtime_options is not a mapping.
+            ValueError: If metadata, runtime_options or device conflicts with a native source; metadata is missing,
+                stale or conflicting; the format is unsupported; the artifact is backbone-only; or the loader
+                refuses a device or runtime option.
         """
         # Keep RFDETR imports local because detr imports ModelContext from this module.
         from rfdetr.detr import RFDETR
@@ -116,7 +133,7 @@ class RFDETRInference:
         self,
         native_model: RFDETR,
         device: str,
-        metadata: dict[str, Any] | str | os.PathLike[str] | None,
+        metadata: Mapping[str, Any] | str | os.PathLike[str] | None,
         runtime_options: Mapping[str, Any] | None,
     ) -> None:
         """Store a native model after validating facade-only arguments."""
@@ -151,23 +168,7 @@ class RFDETRInference:
         batching request. The returned dictionary is independent of the source.
         """
         if self._native_model is not None:
-            native = self._native_model
-            config = native.model_config
-            batch_size = native._optimized_batch_size if native._optimized_has_been_compiled else None
-            spatial_size = native._optimized_resolution if native._is_optimized_for_inference else None
-            return {
-                "backend": "pytorch",
-                "device": str(native.model.device),
-                "task": "segment"
-                if config.segmentation_head
-                else "keypoints"
-                if config.use_grouppose_keypoints
-                else "detect",
-                "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
-                "default_shape": (native.model.resolution, native.model.resolution),
-                "batch_size": batch_size,
-                "max_batch_size": None,
-            }
+            return self._native_model._runtime_info()
         context = self._prediction_context()
         return {
             **context.runtime_info,
@@ -192,32 +193,50 @@ class RFDETRInference:
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
-        antialias: bool = False,
+        antialias: bool | None = None,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Run prediction with the shared native and exported inference pipeline.
 
         Args:
             images: A file path, URL string, PIL image, HWC NumPy array, CHW tensor, or list or tuple of those inputs.
+                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
+                which does not bound the total download time. Redirects are followed, and the whole response body is
+                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
+                URLs, download and validate the image yourself and pass the decoded image instead.
             threshold: Minimum confidence score for a prediction.
             shape: Optional input height and width.
             patch_size: Advanced override for shape divisibility validation; it does not change the backbone.
             include_source_image: Include each source image in prediction metadata.
-            antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+            antialias: Use antialiasing during image resize. None uses the artifact metadata's resize_antialias
+                for exported sources and False for native sources. An explicit boolean overrides the default;
+                match the checkpoint training resize.
 
         Returns:
             A Supervision prediction object or a list of prediction objects.
 
         Raises:
             TypeError: If an unknown prediction keyword is supplied.
+            ValueError: If shape or patch_size is invalid, or the source cannot accept the channel count, batch size
+                or input shape.
+
+        Examples:
+            Skipped when run as a doctest: requires model weights and image files.
+
+            >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
+            >>> predictor = RFDETRInference(RFDETRSmall())  # doctest: +SKIP
+            >>> results = predictor.predict(["a.jpg", "b.jpg"], threshold=0.4)  # doctest: +SKIP
+            >>> len(results)  # doctest: +SKIP
+            2
         """
+        context = self._prediction_context()
         return predict(
-            self._prediction_context(),
+            context,
             images,
             threshold=threshold,
             shape=shape,
             patch_size=patch_size,
             include_source_image=include_source_image,
-            antialias=antialias,
+            antialias=context.antialias if antialias is None else antialias,
         )
 
 

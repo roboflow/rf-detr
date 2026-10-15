@@ -25,7 +25,9 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 import torch
+from deprecate.deprecation import deprecation_warning
 from PIL import Image
+from pydantic import ValidationError
 
 from rfdetr import _prediction
 from rfdetr._namespace import _namespace_from_configs
@@ -49,7 +51,7 @@ from rfdetr.inference import ModelContext, _build_model_context
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
-from rfdetr.utilities.class_names import prediction_labels
+from rfdetr.utilities.class_names import _task_of, prediction_labels
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema
@@ -356,11 +358,11 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         # back to CPU by ``export()`` / ``evaluate()`` is detected: the real devices are re-read on every call.
         if all(param.device == target for param in inner.parameters()):
             return
-        # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
-        # move can run while inference mode is active.  Tensors materialised by ``.to()`` under inference mode become
-        # *inference tensors*: they can never require gradients, so a later ``train()`` or auto-batch probe would
-        # silently produce no gradients.  Disable inference mode for the move so deferred device placement is safe
-        # regardless of decorator order.
+        # ``predict()`` is wrapped in ``@torch.inference_mode()`` and calls ``_prediction_context()``, which carries
+        # ``@_ensure_model_on_device``, so the deferred move can run while inference mode is active.  Tensors
+        # materialised by ``.to()`` under inference mode become *inference tensors*: they can never require
+        # gradients, so a later ``train()`` or auto-batch probe would silently produce no gradients.  Disable
+        # inference mode for the move so deferred device placement is safe regardless of decorator order.
         with torch.inference_mode(False):
             model_ctx.model = inner.to(target)
 
@@ -1973,6 +1975,145 @@ class RFDETR:
         """
         return getattr(self, "_optimized_inplace", False)
 
+    @staticmethod
+    def _resolve_export_batch(
+        format: str, batch_size: int, dynamic_batch: bool, max_batch_size: int | None
+    ) -> tuple[str, int, int | None]:
+        """Normalize the format and validate the export's effective batch bounds.
+
+        Args:
+            format: Export format name or alias.
+            batch_size: Requested export batch size.
+            dynamic_batch: Whether the export has a dynamic batch dimension.
+            max_batch_size: TensorRT dynamic-batch profile upper bound; warned about and dropped for other exports.
+
+        Returns:
+            The normalized format, the validated batch size, and the validated maximum batch size or ``None``.
+
+        Raises:
+            ValueError: If the batch size or the TensorRT maximum batch size is not a positive integer.
+
+        Examples:
+            >>> RFDETR._resolve_export_batch("TRT", 2, True, 4)
+            ('tensorrt', 2, 4)
+        """
+        from rfdetr.export.prepare import validate_batch_size
+        from rfdetr.export.registry import normalize_format
+
+        export_batch_size = validate_batch_size(batch_size)
+        export_max_batch_size = None
+        format = normalize_format(format)
+        if max_batch_size is not None and format == "tensorrt" and dynamic_batch:
+            try:
+                export_max_batch_size = validate_batch_size(max_batch_size)
+            except ValueError:
+                raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
+        elif max_batch_size is not None:
+            warnings.warn(
+                f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
+                f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return format, export_batch_size, export_max_batch_size
+
+    def write_export_metadata(
+        self,
+        artifact: str | os.PathLike[str],
+        *,
+        format: str = "onnx",
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        batch_size: int = 1,
+        dynamic_batch: bool = False,
+        max_batch_size: int | None = None,
+        backbone_only: bool = False,
+        backend: str | None = None,
+        soc: str | None = None,
+        **export_settings: Any,
+    ) -> Path | None:
+        """Write inference metadata for an existing artifact from its live source model.
+
+        Load the checkpoint the artifact was exported from and supply the same export settings. This method reads
+        model configuration and prediction semantics without running the model or converting the artifact. Each
+        format's exporter supplies its artifact-specific input and output mapping before metadata is written.
+
+        Args:
+            artifact: Existing exported file or model bundle.
+            format: Export format, with the same names and aliases accepted by :meth:`export`.
+            shape: Exported ``(height, width)``; defaults to the source model's square resolution.
+            patch_size: Backbone patch size; must match the source model when supplied.
+            batch_size: Positive batch size used to export the artifact.
+            dynamic_batch: Whether the artifact was exported with a dynamic batch dimension.
+            max_batch_size: TensorRT dynamic-batch profile upper bound; ignored for other exports.
+            backbone_only: Whether the artifact contains only backbone features.
+            backend: ExecuTorch backend used to export the artifact.
+            soc: Target Qualcomm SoC for the ExecuTorch QNN backend.
+            **export_settings: Format settings forwarded to the exporter's configuration builder, such as
+                ``coreai_precision``. Use the values supplied to :meth:`export`.
+
+        Returns:
+            Adjacent digest-bound metadata path, or ``None`` when metadata is embedded in an ONNX artifact.
+
+        Raises:
+            FileNotFoundError: If the artifact does not exist.
+            ValueError: If the format, batch bounds, shape, patch size, backend, SoC, or format settings are invalid.
+            NotImplementedError: If the requested settings are unsupported by the format.
+            ImportError: If embedding metadata or reading the artifact's interface needs a missing optional package.
+            OSError: If the artifact cannot be read or metadata cannot be written.
+
+        Examples:
+            A real source checkpoint and its exported artifact are required.
+
+            >>> from rfdetr import RFDETRSmall
+            >>> model = RFDETRSmall(pretrain_weights="checkpoint.pth")  # doctest: +SKIP
+            >>> model.write_export_metadata("output/model.xml", format="openvino")  # doctest: +SKIP
+        """
+        from rfdetr.export._backend import _resolve_export_backend
+        from rfdetr.export._runtime.metadata import metadata_from_model, write_metadata
+        from rfdetr.export.base import reject_unsupported_dynamic_batch
+        from rfdetr.export.prepare import validate_export_shape
+        from rfdetr.export.registry import resolve_exporter
+
+        artifact = Path(artifact)
+        if not artifact.exists():
+            raise FileNotFoundError(artifact)
+        format, batch_size, max_batch_size = RFDETR._resolve_export_batch(
+            format, batch_size, dynamic_batch, max_batch_size
+        )
+        backend, soc = _resolve_export_backend(format, backend, soc)
+        reject_unsupported_dynamic_batch(format, dynamic_batch=dynamic_batch)
+        shape = validate_export_shape(
+            shape,
+            patch_size,
+            self.model_config,
+            self.model.resolution,
+            resolve_patch_size=_resolve_patch_size,
+            validate_shape_dims=_validate_shape_dims,
+        )
+        exporter_class = resolve_exporter(format)
+        config = exporter_class.build_config(
+            **export_settings,
+            backbone_only=backbone_only,
+            dynamic_batch=dynamic_batch,
+            batch_size=batch_size,
+            max_batch_size=max_batch_size,
+            backend=backend,
+            soc=soc,
+        )
+        exporter = exporter_class(config)
+        metadata = metadata_from_model(
+            self,
+            format=format,
+            shape=shape,
+            batch_size=batch_size,
+            dynamic_batch=dynamic_batch,
+            backbone_only=backbone_only,
+            backend=backend,
+            max_batch_size=max_batch_size,
+        )
+        return write_metadata(artifact, exporter._metadata_for_artifact(metadata, artifact))
+
     def export(
         self,
         output_dir: str = "output",
@@ -2032,9 +2173,11 @@ class RFDETR:
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
                 Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
-                the converted OpenVINO IR already accepts any batch size. Also
-                unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed input shape;
-                export one file per batch size instead.
+                the converted OpenVINO IR already accepts any batch size.
+                Also refused for ``format="tflite"``: ``onnx2tf`` fails on the dynamic-batch graph (an ``Add``
+                against the dynamic-shaped encoder input reports mismatched dimensions) — export one ``.tflite``
+                per batch size instead. Also unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed
+                input shape; export one file per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's
@@ -2308,28 +2451,23 @@ class RFDETR:
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
             OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
+
+        Examples:
+            Skipped because this example requires pretrained weights and optional ONNX export dependencies.
+
+            >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
+            >>> model = RFDETRSmall()  # doctest: +SKIP
+            >>> model.export(format="onnx", output_dir="output")  # doctest: +SKIP
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
-        from rfdetr.export.prepare import prepare_export_graph, validate_batch_size, validate_export_shape
-        from rfdetr.export.registry import normalize_format, resolve_exporter
+        from rfdetr.export.prepare import prepare_export_graph, validate_export_shape
+        from rfdetr.export.registry import resolve_exporter
 
         # Every format builds its example batch from this, so it is checked before any exporter is imported.
-        export_batch_size = validate_batch_size(batch_size)
-        export_max_batch_size = None
-        format = normalize_format(format)
-        if max_batch_size is not None and format == "tensorrt" and dynamic_batch:
-            try:
-                export_max_batch_size = validate_batch_size(max_batch_size)
-            except ValueError:
-                raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
-        elif max_batch_size is not None:
-            warnings.warn(
-                f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
-                f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
+        format, export_batch_size, export_max_batch_size = RFDETR._resolve_export_batch(
+            format, batch_size, dynamic_batch, max_batch_size
+        )
         for keyword, requested in (
             ("trt_metadata", trt_metadata),
             ("trt_hardware_compatibility", trt_hardware_compatibility is not None),
@@ -2419,6 +2557,26 @@ class RFDETR:
             os.makedirs(output_dir, exist_ok=True)
             from rfdetr.export._runtime.metadata import metadata_from_model
 
+            try:
+                metadata = metadata_from_model(
+                    self,
+                    format=format,
+                    shape=shape,
+                    batch_size=export_batch_size,
+                    dynamic_batch=dynamic_batch,
+                    backbone_only=backbone_only,
+                    backend=backend,
+                    max_batch_size=export_max_batch_size,
+                )
+            except ValidationError as error:
+                logger.warning(
+                    "Could not capture inference metadata: %s. Export will proceed without inference metadata; "
+                    "load the artifact with RFDETRInference(metadata=<json>).",
+                    error,
+                    exc_info=True,
+                )
+                metadata = None
+
             graph = prepare_export_graph(
                 model,
                 self.model_config,
@@ -2428,16 +2586,7 @@ class RFDETR:
                 batch_size=export_batch_size,
                 dynamic_batch=dynamic_batch,
                 backbone_only=backbone_only,
-                metadata=metadata_from_model(
-                    self,
-                    format=format,
-                    shape=shape,
-                    batch_size=export_batch_size,
-                    dynamic_batch=dynamic_batch,
-                    backbone_only=backbone_only,
-                    backend=backend,
-                    max_batch_size=export_max_batch_size,
-                ),
+                metadata=metadata,
             )
             return exporter(graph)
         finally:
@@ -2947,6 +3096,22 @@ class RFDETR:
         if any(module.training for module in model.modules()):
             model.eval()
 
+    def _runtime_info(self) -> dict[str, Any]:
+        """Return native runtime policy and input constraints without preparing the model."""
+        # _prediction_context moves the model to its device; reading runtime_info must not.
+        config = self.model_config
+        batch_size = self._optimized_batch_size if self._optimized_has_been_compiled else None
+        spatial_size = self._optimized_resolution if self._is_optimized_for_inference else None
+        return {
+            "backend": "pytorch",
+            "device": str(self.model.device),
+            "task": _task_of(config),
+            "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
+            "default_shape": (self.model.resolution, self.model.resolution),
+            "batch_size": batch_size,
+            "max_batch_size": None,
+        }
+
     @_ensure_model_on_device
     def _prediction_context(self) -> PredictionContext:
         """Read the live native model's prediction rules for one call."""
@@ -3067,6 +3232,10 @@ class RFDETR:
                 A single image or a list of images to process. Images can be provided
                 as string or path-like file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. PIL and file
                 inputs convert to grayscale for one-channel models and RGB for three-channel models.
+                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
+                which does not bound the total download time. Redirects are followed, and the whole response body is
+                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
+                URLs, download and validate the image yourself and pass the decoded image instead.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:
@@ -3091,12 +3260,14 @@ class RFDETR:
                 installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU
                 augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or
                 antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time
-                therefore decides which setting a default-trained checkpoint expects. Exported models and the
-                ``rfdetr.export`` runtime helpers always resize with ``antialias=False``, so results with
-                ``antialias=True`` will not match them unless the caller pre-resizes the image with antialiasing.
+                therefore decides which setting a default-trained checkpoint expects.
+                ``RFDETRInference`` uses the artifact metadata's ``resize_antialias`` by default for exported
+                models; callers can override it with an explicit ``antialias`` argument. The lower-level
+                ``rfdetr.export`` runtime preprocessing helpers always resize with ``antialias=False``.
                 Defaults to ``False`` to preserve the existing inference behavior.
             **kwargs:
-                Additional keyword arguments.
+                Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since
+                v1.12.0 and will raise TypeError in v2.0.0.
 
         Returns:
             A single or multiple Supervision prediction objects. Detection and segmentation models return
@@ -3152,7 +3323,21 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
+
+        Examples:
+            Skipped because this example requires pretrained weights and a local image file.
+
+            >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
+            >>> model = RFDETRSmall()  # doctest: +SKIP
+            >>> detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP
         """
+        if kwargs:
+            # Account for the torch.inference_mode wrapper so the warning points to the caller.
+            deprecation_warning(
+                "Passing unknown keyword arguments to RFDETR.predict is deprecated since v1.12.0: "
+                f"{', '.join(sorted(kwargs))}. They are ignored and will raise TypeError in v2.0.0.",
+                stacklevel=3,
+            )
         return _prediction.predict(
             self._prediction_context(),
             images,
@@ -3161,7 +3346,6 @@ class RFDETR:
             patch_size,
             include_source_image,
             antialias=antialias,
-            **kwargs,
         )
 
     def deploy_to_roboflow(

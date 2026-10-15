@@ -284,6 +284,52 @@ class TestTFLiteCalibrationDataWarning:
         assert mock_prepare_calib.call_args[0][1] is None  # second positional arg
 
 
+class TestTFLiteMetadataArtifacts:
+    """Select metadata artifacts from filenames without running TensorFlow."""
+
+    @pytest.mark.parametrize("precision", ["fp32", "fp16"])
+    def test_precision_primary_with_sibling(self, tmp_path: Path, precision: str) -> None:
+        """Include both precision files once, in FP32 then FP16 order."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+        fp32 = tmp_path / "model_fp32.tflite"
+        fp16 = tmp_path / "model_fp16.tflite"
+        fp32.touch()
+        fp16.touch()
+
+        assert exporter._metadata_artifacts(tmp_path / f"model_{precision}.tflite") == (fp32, fp16)
+
+    def test_dynamic_range_primary_with_siblings(self, tmp_path: Path) -> None:
+        """Append the dynamic-range primary after its FP32 and FP16 siblings."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
+        fp32 = tmp_path / "model_fp32.tflite"
+        fp16 = tmp_path / "model_fp16.tflite"
+        primary = tmp_path / "model_dynamic_range_quant.tflite"
+        fp32.touch()
+        fp16.touch()
+        primary.touch()
+
+        assert exporter._metadata_artifacts(primary) == (fp32, fp16, primary)
+
+    def test_unknown_token_primary(self, tmp_path: Path) -> None:
+        """Keep an unknown fallback token intact even when precision files exist."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+        primary = tmp_path / "model_custom.tflite"
+        primary.touch()
+        (tmp_path / "model_fp32.tflite").touch()
+        (tmp_path / "model_fp16.tflite").touch()
+
+        assert exporter._metadata_artifacts(primary) == (primary,)
+
+    def test_missing_sibling_and_directory_are_excluded(self, tmp_path: Path) -> None:
+        """Ignore absent precision files and directories with artifact names."""
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
+        primary = tmp_path / "model_dynamic_range_quant.tflite"
+        primary.touch()
+        (tmp_path / "model_fp16.tflite").mkdir()
+
+        assert exporter._metadata_artifacts(primary) == (primary,)
+
+
 @onnx2tf_available
 class TestExportTfliteConverter:
     """Tests for ``TFLiteExporter.convert_onnx()``."""

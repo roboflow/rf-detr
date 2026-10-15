@@ -114,11 +114,13 @@ Filenames are built from the model's variant name (e.g. `rfdetr-medium`, falling
 | `onnx` (int8) | `{variant}_int8.onnx` beside the FP32 `{variant}.onnx` the quantization was derived from                                                                                                                                                                                                                                                     | `_int8`                                                                                                                                          |
 | `openvino`    | `{variant}.xml` + `{variant}.bin` (or `{variant}-backbone.xml`/`.bin` if `backbone_only=True`); with `quantization="int8"`, `{variant}_int8.xml` + `{variant}_int8.bin` (or `{variant}_int8-backbone.xml`/`.bin`); without a variant or `output_name`, `inference_model.xml`/`.bin` (or `backbone_model.xml`/`.bin` if `backbone_only=True`) | `quantization="int8"` (`_int8`), plus `-backbone` when named; `openvino_precision` controls IR weight compression, not the filename              |
 
+Non-ONNX exports also write an inference metadata sidecar named `<artifact>.rfdetr.json`, including the artifact's extension (for example, `rfdetr-small_fp16.trt.rfdetr.json`). Copy it alongside the artifact when deploying with `RFDETRInference`; without it, loading fails unless you supply the missing metadata through `metadata=`. ONNX embeds its inference metadata in the `.onnx` file.
+
 Pass `output_name="my-model"` to override the variant name and write `{output_name}.{ext}` verbatim — this suppresses the detail suffix for every format **except** `tflite` and `onnx` with `quantization="int8"`. Both write several files from one call: `tflite` keeps its `_fp32`/`_fp16`/`_dynamic_range_quant` suffix even with a custom name (`{output_name}_fp32.tflite`, etc.), and ONNX int8 writes the FP32 `{output_name}.onnx` beside the quantized `{output_name}_int8.onnx`, so dropping the suffix would make the two collide. OpenVINO int8 writes a single IR, so a custom `output_name` is taken verbatim and the `_int8` suffix is dropped.
 
 With `backbone_only=True`, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a `-backbone` marker before the extension even when `output_name` is set, for example `my-model-backbone.onnx`. This distinguishes the backbone artifact from the full detector exported with the same name.
 
-With `trt_metadata=True`, `format="tensorrt"` also writes a JSON description next to the engine, named after it: `{variant}_fp16.trt` gets `{variant}_fp16.json`. See [Engine Description File](tensorrt.md#engine-description-file).
+With `trt_metadata=True`, `format="tensorrt"` also writes a JSON description next to the engine, named after it: `{variant}_fp16.trt` gets `{variant}_fp16.json`. This optional engine description is separate from the `{variant}_fp16.trt.rfdetr.json` inference metadata sidecar used by `RFDETRInference`. See [Engine Description File](tensorrt.md#engine-description-file).
 
 ## Predict with RFDETRInference
 
@@ -162,11 +164,111 @@ from rfdetr import RFDETRInference
 model = RFDETRInference("output/rfdetr-medium.xml", runtime_options={"cache_dir": "output/openvino-cache"})
 ```
 
-New exports include versioned inference metadata. ONNX stores it in the model. Other formats use an adjacent `<artifact-name>.rfdetr.json` file. For example, `model.trt` uses `model.trt.rfdetr.json`. Keep this file with the artifact. For an older export, pass a JSON path or mapping through `metadata=`. The metadata must supply missing task, class, output, and preprocessing semantics. The loader rejects missing or conflicting values. User-defined `notes` are separate from inference metadata.
+New exports include versioned inference metadata. ONNX stores it in the model. Other formats use an adjacent `<artifact-name>.rfdetr.json` file. For example, `model.trt` uses `model.trt.rfdetr.json`. Keep this file with the artifact. The file records a SHA-256 hash of the artifact so the loader can refuse a sidecar left over from another export; the hash is a staleness check, not proof that the artifact is authentic. For an older export, load its source checkpoint and call `model.write_export_metadata(path, format=...)` with the original export settings; without the source checkpoint, pass a JSON path or mapping through `metadata=`. The metadata must supply missing task, class, output, and preprocessing semantics. The loader rejects missing or conflicting values. User-defined `notes` are separate from inference metadata.
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall(pretrain_weights="checkpoint.pth")  # The source checkpoint of this export.
+model.write_export_metadata("output/model.xml", format="openvino")
+```
+
+The loader selects the runtime from the metadata format and refuses a file whose extension does not belong to that format. TensorRT engines may carry any extension.
 
 When loading an artifact with a sidecar, the constructor reads and hashes the artifact to check that the metadata still matches it. Reuse the loaded `RFDETRInference` instance across predictions. Intermediate ONNX files created while exporting TensorRT or TFLite are conversion inputs, not final artifacts, and do not receive ONNX metadata. To load one directly, pass the missing semantics through `metadata=`.
 
 The shared API prepares images and decodes results on the native model's device or the runtime adapter's tensor device. TensorRT keeps tensors on CUDA through decoding. The other exported adapters currently use CPU tensors for these stages. Runtime outputs belong to each call, so later calls cannot change earlier results. The format guides retain advanced raw-runtime examples and numerical-reference helpers for low-level access and forward-only benchmarks; `RFDETRInference` is the common prediction path. The benchmarks in the overview measure the per-runtime cookbook pipelines.
+
+### Metadata for older exports
+
+Prefer re-exporting the original model with the current `rfdetr` so the exporter records its inference metadata. If re-exporting is unavailable, pass `metadata=` as a JSON file path or a JSON-serializable mapping. Supply the original model's settings and the artifact's actual input and output identifiers; metadata describes the graph and does not change it. The schema below is defined by `ExportMetadata` in `src/rfdetr/export/_runtime/metadata.py`.
+
+All required fields must be present after merging supplied and stored metadata. Unknown fields and incorrect types are rejected; use JSON numbers and booleans rather than strings containing them.
+
+| Required field | JSON value and meaning                                                                                                                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`       | One of `"onnx"`, `"tensorrt"`, `"openvino"`, `"tflite"`, `"litert"`, `"coreml"`, `"coreai"`, `"executorch"`.                                                                                                           |
+| `task`         | `"detect"`, `"segment"`, `"keypoints"`, or `"backbone"`; `RFDETRInference` rejects backbone-only artifacts.                                                                                                            |
+| `input_shape`  | Four integers in canonical `[batch, channels, height, width]` order, even for NHWC runtimes. Batch is positive or `-1` for dynamic batch; channels and spatial dimensions are positive.                                |
+| `outputs`      | Object mapping semantic names to distinct runtime output names or non-negative positions. Detection needs `pred_boxes` and `pred_logits`; segmentation also needs `pred_masks`, keypoints also needs `pred_keypoints`. |
+| `means`        | Array of finite normalization means, one per input channel.                                                                                                                                                            |
+| `stds`         | Array of finite, positive normalization standard deviations, one per input channel.                                                                                                                                    |
+| `class_names`  | Array of active class names in model order; nonempty for prediction.                                                                                                                                                   |
+| `num_classes`  | Non-negative integer describing the model's class-slot count, not necessarily the number of active class names.                                                                                                        |
+| `num_select`   | Non-negative integer specifying how many predictions the postprocessor selects.                                                                                                                                        |
+| `trace_alpha`  | Finite, non-negative number controlling keypoint uncertainty scoring; required for detection too.                                                                                                                      |
+| `patch_size`   | Positive integer: the original backbone's patch size.                                                                                                                                                                  |
+| `num_windows`  | Positive integer: the original backbone's window configuration.                                                                                                                                                        |
+
+| Optional field                 | Default and meaning                                                                                                                                                                                                                                                           |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`               | `1`; this reader supports only version 1.                                                                                                                                                                                                                                     |
+| `producer_version`             | `null`; producing `rfdetr` version, used in unsupported-schema diagnostics.                                                                                                                                                                                                   |
+| `variant`                      | `null`; model variant label.                                                                                                                                                                                                                                                  |
+| `backend`                      | `null`; export backend label.                                                                                                                                                                                                                                                 |
+| `input_layout`                 | `"NCHW"`; also accepts `"NHWC"`.                                                                                                                                                                                                                                              |
+| `input_dtype`                  | `"float32"`; runtime input dtype string.                                                                                                                                                                                                                                      |
+| `input_name`                   | `"input"`; runtime input name or integer position.                                                                                                                                                                                                                            |
+| `max_batch_size`               | `null`; a positive integer limit, allowed only with dynamic batch (`input_shape[0] == -1`).                                                                                                                                                                                   |
+| `pixel_scale`                  | `1.0 / 255.0` (JSON number `0.00392156862745098`); only this native preprocessing scale is accepted.                                                                                                                                                                          |
+| `channel_order`                | `"RGB"`; only RGB is accepted.                                                                                                                                                                                                                                                |
+| `resize_interpolation`         | `"bilinear"`; only bilinear is accepted.                                                                                                                                                                                                                                      |
+| `resize_antialias`             | `false`; only false is accepted.                                                                                                                                                                                                                                              |
+| `class_id_to_name`             | `{}`; automatically filled with zero-based IDs when `num_classes == len(class_names)`. Otherwise required for prediction, for example for sparse COCO IDs or background-first keypoint slots. JSON object keys are stringified class IDs, such as `{"0": "cat", "1": "dog"}`. |
+| `selection_policy`             | `"all_logits"`; only this policy is accepted.                                                                                                                                                                                                                                 |
+| `box_format`                   | `"cxcywh_normalized"`; only normalized center-x, center-y, width, height is accepted.                                                                                                                                                                                         |
+| `num_keypoints_per_class`      | `[]`; keypoint counts per class slot. Required for keypoint prediction, with at least one active slot.                                                                                                                                                                        |
+| `upsample_masks_to_image_size` | `true`; whether the postprocessor upsamples masks to the source image size.                                                                                                                                                                                                   |
+
+For example, this complete metadata object describes an ONNX detection export of a custom two-class RF-DETR Small model with batch 1, a 512 × 512 input, input named `input`, and outputs named `dets` and `labels`. Save it as `metadata.json`. Replace these illustrative settings with those of your export; in particular, this class list does not describe a pretrained COCO model.
+
+```json
+{
+  "schema_version": 1,
+  "format": "onnx",
+  "task": "detect",
+  "input_shape": [
+    1,
+    3,
+    512,
+    512
+  ],
+  "outputs": {
+    "pred_boxes": "dets",
+    "pred_logits": "labels"
+  },
+  "means": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "stds": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "class_names": [
+    "cat",
+    "dog"
+  ],
+  "num_classes": 2,
+  "num_select": 300,
+  "trace_alpha": 0.2,
+  "patch_size": 16,
+  "num_windows": 2
+}
+```
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx", metadata="metadata.json")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+The JSON file or mapping may instead hold an envelope of the form `{"artifact_sha256": "<artifact digest>", "metadata": { ... }}`, with the complete metadata object under `metadata`. Both keys must be present for an explicit override to be treated as an envelope. For a single-file ONNX artifact, the digest is the SHA-256 hex digest of its bytes. Automatically loaded `<artifact-name>.rfdetr.json` sidecars require this envelope. A digest mismatch is rejected, including when you also pass `metadata=`.
+
+Supplied metadata can fill missing stored fields but cannot replace a stored value with a different value. Embedded ONNX metadata and a sidecar must agree if both exist. Omitting `schema_version` selects version 1; an unsupported version is rejected with an instruction to upgrade `rfdetr`. Do not relabel newer metadata as version 1 to bypass this check. Schema validation is followed by runtime interface checks; a schema-valid object alone does not establish that it matches an artifact.
 
 ## Run Inference with `inference-models`
 

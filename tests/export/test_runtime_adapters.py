@@ -6,6 +6,7 @@
 """Boundary tests for exported inference runtime policies."""
 
 import asyncio
+import re
 import sys
 import threading
 import types
@@ -16,6 +17,7 @@ import numpy as np
 import pytest
 import torch
 
+from rfdetr.export._runtime import adapters
 from rfdetr.export._runtime.adapters import load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.registry import REGISTRY
@@ -114,7 +116,7 @@ class TestRuntimePolicies:
         runtime_module.SpecializationOptions = types.SimpleNamespace(default=lambda: object())
         monkeypatch.setitem(sys.modules, "coreai", types.ModuleType("coreai"))
         monkeypatch.setitem(sys.modules, "coreai.runtime", runtime_module)
-        monkeypatch.setattr("rfdetr.export._runtime.adapters._require_apple", lambda _name: None)
+        monkeypatch.setattr("rfdetr.export._runtime.adapters.platform.system", lambda: "Darwin")
 
         async def caller() -> None:
             """Exercise the synchronous runtime API from an already running loop."""
@@ -157,7 +159,7 @@ class TestRuntimePolicies:
         runtime_module.SpecializationOptions = object
         monkeypatch.setitem(sys.modules, "coreai", types.ModuleType("coreai"))
         monkeypatch.setitem(sys.modules, "coreai.runtime", runtime_module)
-        monkeypatch.setattr("rfdetr.export._runtime.adapters._require_apple", lambda _name: None)
+        monkeypatch.setattr("rfdetr.export._runtime.adapters.platform.system", lambda: "Darwin")
 
         with pytest.raises(ValueError, match="preferred compute unit"):
             load_runtime(artifact, contract, device=device)
@@ -190,6 +192,7 @@ class TestRuntimePolicies:
             def __init__(self, _path: Path, device: str, inference_precision: str | None = None) -> None:
                 self.device = device
                 self.inference_precision = inference_precision
+                self.compiled_model = types.SimpleNamespace(inputs=[object()])
                 self.input_layer = types.SimpleNamespace(partial_shape=FakePartialShape((1, 3, 2, 2)))
                 self.output_layers = [object(), object()]
 
@@ -200,10 +203,27 @@ class TestRuntimePolicies:
 
         gpu_runtime = load_runtime(artifact, contract, device="gpu")
         assert gpu_runtime.session.device == "GPU"
-        assert gpu_runtime.session.inference_precision == "f32"
+        assert gpu_runtime.session.inference_precision == "auto"
         assert load_runtime(artifact, contract, device="gpu.0").session.device == "GPU.0"
         with pytest.raises(RuntimeError, match="GPU.1 is unavailable"):
             load_runtime(artifact, contract, device="gpu.1")
+
+    @pytest.mark.parametrize("device", ["auto", "AUTO", "Auto"])
+    def test_openvino_accepts_auto_in_any_case(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, device: str
+    ) -> None:
+        """Every casing of auto selects the OpenVINO AUTO plugin."""
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+        session_loader = Mock(side_effect=RuntimeError("stop after session load"))
+        monkeypatch.setitem(sys.modules, "openvino", types.ModuleType("openvino"))
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", session_loader)
+
+        with pytest.raises(RuntimeError, match="stop after session load"):
+            load_runtime(artifact, _detect_metadata("openvino"), device=device)
+
+        session_loader.assert_called_once()
+        assert session_loader.call_args.kwargs["device"] == "AUTO"
 
     def test_onnx_rejects_input_rank_mismatch(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """An ONNX graph must declare all four input axes."""
@@ -267,7 +287,9 @@ class TestRuntimePolicies:
             num_windows=1,
         )
         session = types.SimpleNamespace(
-            input_layer=types.SimpleNamespace(partial_shape=partial_shape), output_layers=[object(), object()]
+            compiled_model=types.SimpleNamespace(inputs=[object()]),
+            input_layer=types.SimpleNamespace(partial_shape=partial_shape),
+            output_layers=[object(), object()],
         )
         ov_module = types.ModuleType("openvino")
         ov_module.Core = lambda: types.SimpleNamespace(available_devices=["CPU"])
@@ -276,6 +298,30 @@ class TestRuntimePolicies:
 
         with pytest.raises(ValueError, match="OpenVINO input rank must be 4"):
             load_runtime(artifact, contract, device="cpu")
+
+    def test_tensorrt_rejects_non_cuda_device(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """An unsupported device spelling fails before querying CUDA availability."""
+        artifact = tmp_path / "model.engine"
+        artifact.write_bytes(b"engine")
+        availability = Mock(return_value=False)
+        monkeypatch.setattr(torch.cuda, "is_available", availability)
+
+        with pytest.raises(ValueError, match="auto, cuda, or cuda:N"):
+            load_runtime(artifact, _detect_metadata("tensorrt"), device="cpu")
+
+        availability.assert_not_called()
+
+    @pytest.mark.parametrize("device", ["auto", "cuda", "cuda:1"])
+    def test_tensorrt_requires_available_cuda(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, device: str
+    ) -> None:
+        """Accepted CUDA spellings fail with a runtime error when CUDA is unavailable."""
+        artifact = tmp_path / "model.engine"
+        artifact.write_bytes(b"engine")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        with pytest.raises(RuntimeError, match="TensorRT requires an available CUDA device"):
+            load_runtime(artifact, _detect_metadata("tensorrt"), device=device)
 
     def test_tensorrt_rejects_input_rank_mismatch(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A TensorRT engine must expose a four-axis image binding."""
@@ -399,17 +445,199 @@ def _detect_metadata(format: str) -> ExportMetadata:
     )
 
 
+class TestRuntimeSuffixes:
+    """Artifact suffixes must agree with the metadata before a runtime is imported."""
+
+    @pytest.mark.parametrize(
+        "format,allowed",
+        [
+            pytest.param("onnx", [".onnx"], id="onnx"),
+            pytest.param("tflite", [".tflite"], id="tflite"),
+            pytest.param("litert", [".tflite"], id="litert"),
+            pytest.param("executorch", [".pte"], id="executorch"),
+            pytest.param("coreml", [".mlmodel", ".mlpackage"], id="coreml"),
+            pytest.param("coreai", [".aimodel"], id="coreai"),
+            pytest.param("openvino", [".xml"], id="openvino"),
+        ],
+    )
+    def test_wrong_suffix_is_refused_before_loader_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format: str, allowed: list[str]
+    ) -> None:
+        """A mismatch names the format, sorted suffixes, filename and corrective action before dispatch."""
+        artifact = tmp_path / "model.bin"
+        artifact.write_bytes(b"artifact")
+        resolver = Mock(side_effect=AssertionError("runtime loader must not be resolved"))
+        monkeypatch.setattr("rfdetr.export._runtime.adapters.resolve_runtime_loader", resolver)
+        message = (
+            f"{REGISTRY[format].label} artifacts require one of {allowed}, got {artifact.name!r}. "
+            "Pass the file the exporter wrote or fix the format in the metadata."
+        )
+
+        with pytest.raises(ValueError, match=re.escape(message)):
+            load_runtime(artifact, _detect_metadata(format))
+
+        resolver.assert_not_called()
+
+    def test_tensorrt_arbitrary_suffix_reaches_options_check(self, tmp_path: Path) -> None:
+        """TensorRT engines have no required suffix and still reach their loader's validation."""
+        artifact = tmp_path / "model.arbitrary"
+        artifact.write_bytes(b"engine")
+
+        with pytest.raises(ValueError, match="does not accept 'cache_dirr'"):
+            load_runtime(artifact, _detect_metadata("tensorrt"), options={"cache_dirr": "cache"})
+
+    @pytest.mark.parametrize(
+        "format,filename",
+        [
+            pytest.param("onnx", "model.ONNX", id="onnx"),
+            pytest.param("tflite", "model.TFLITE", id="tflite"),
+            pytest.param("litert", "model.TFLITE", id="litert"),
+            pytest.param("executorch", "model.PTE", id="executorch"),
+            pytest.param("coreml", "model.MLPACKAGE", id="coreml-package"),
+            pytest.param("coreml", "model.MLMODEL", id="coreml-model"),
+            pytest.param("coreai", "model.AIMODEL", id="coreai"),
+            pytest.param("openvino", "model.XML", id="openvino"),
+        ],
+    )
+    def test_uppercase_suffix_reaches_options_check(self, tmp_path: Path, format: str, filename: str) -> None:
+        """Valid suffixes are case insensitive and dispatch to the real format loader."""
+        artifact = tmp_path / filename
+        artifact.write_bytes(b"artifact")
+
+        with pytest.raises(ValueError, match="does not accept 'cache_dirr'"):
+            load_runtime(artifact, _detect_metadata(format), options={"cache_dirr": "cache"})
+
+
+class TestGraphInterfaceChecks:
+    """The shared graph-interface checks every format loader runs before it builds a runtime."""
+
+    def test_onnx_refuses_multi_input_graph(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A second graph input is named in the error instead of failing a tuple unpack.
+
+        The image input is the only one the shared runtime feeds, so a graph with an extra input cannot run; the loader
+        used to unpack the input list and raise a bare "too many values to unpack".
+        """
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"onnx")
+        session = Mock()
+        session.get_providers.return_value = ["CPUExecutionProvider"]
+        session.get_inputs.return_value = [
+            types.SimpleNamespace(name="input", type="tensor(float)", shape=[1, 3, 8, 8]),
+            types.SimpleNamespace(name="extra", type="tensor(float)", shape=[1, 3, 8, 8]),
+        ]
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+        )
+        monkeypatch.setattr("rfdetr.export._onnx.inference._create_onnx_session", lambda *_a, **_kw: session)
+
+        with pytest.raises(ValueError, match=r"ONNX expected one input, got 2\."):
+            load_runtime(artifact, _detect_metadata("onnx"), device="cpu")
+
+    def test_openvino_refuses_multi_input_graph(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """An OpenVINO IR with a second input is refused; the loader used to read only its first input.
+
+        OpenVINO exposes the image input through ``compiled_model.input(0)``, which silently picks the first of several
+        inputs, so the count has to be checked against the compiled model's full input list.
+        """
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+        session = types.SimpleNamespace(
+            compiled_model=types.SimpleNamespace(inputs=[object(), object()]),
+            input_layer=types.SimpleNamespace(partial_shape=FakePartialShape((1, 3, 8, 8))),
+            output_layers=[object(), object()],
+        )
+        monkeypatch.setitem(sys.modules, "openvino", types.ModuleType("openvino"))
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", lambda *_a, **_kw: session)
+        contract = _detect_metadata("openvino").model_copy(update={"outputs": {"pred_boxes": 0, "pred_logits": 1}})
+
+        with pytest.raises(ValueError, match=r"OpenVINO expected one input, got 2\."):
+            load_runtime(artifact, contract)
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            pytest.param((None, 3, 8, 8), id="dynamic-batch-axis"),
+            pytest.param((1, 3, None, None), id="dynamic-spatial-axes"),
+        ],
+    )
+    def test_dynamic_graph_axis_accepts_fixed_metadata(self, shape: tuple[int | None, ...]) -> None:
+        """A graph axis left dynamic accepts the fixed size the metadata records.
+
+        ONNX reports a symbolic dimension as a string, which the loader turns into ``None`` before the check.
+        """
+        assert adapters._check_input_interface("ONNX", _detect_metadata("onnx"), "input", shape, "float32") is None
+
+    def test_metadata_batch_wildcard_accepts_fixed_graph_batch(self) -> None:
+        """A ``-1`` metadata batch accepts any graph batch for a format that opts into ``dynamic_batch``.
+
+        TFLite and TensorRT report a concrete batch for a graph exported with a dynamic batch axis.
+        """
+        contract = _detect_metadata("tflite").model_copy(update={"input_shape": (-1, 3, 8, 8)})
+
+        assert (
+            adapters._check_input_interface("TFLite", contract, None, (1, 3, 8, 8), "float32", dynamic_batch=True)
+            is None
+        )
+
+    def test_metadata_batch_wildcard_refused_for_fixed_shape_format(self) -> None:
+        """A ``-1`` metadata batch is refused where the graph batch must match exactly, as for CoreML.
+
+        A CoreML model has a fixed input shape, so metadata claiming a dynamic batch disagrees with the artifact.
+        """
+        contract = _detect_metadata("coreml").model_copy(update={"input_shape": (-1, 3, 8, 8)})
+
+        with pytest.raises(ValueError, match=r"CoreML input shape \(1, 3, 8, 8\) disagrees"):
+            adapters._check_input_interface("CoreML", contract, None, (1, 3, 8, 8), "float32")
+
+    @pytest.mark.parametrize(
+        "outputs,match",
+        [
+            pytest.param(["dets"], "output name 'labels' is absent", id="name-absent-from-graph"),
+            pytest.param(2, "must use positions", id="name-against-output-count"),
+        ],
+    )
+    def test_output_name_mapping_refused(self, outputs: list[str] | int, match: str) -> None:
+        """A named output mapping is refused when the graph lacks that name or exposes only an output count.
+
+        OpenVINO passes only its output count, so a named mapping there can never be resolved.
+        """
+        with pytest.raises(ValueError, match=match):
+            adapters._check_output_interface("Runtime", _detect_metadata("onnx"), outputs)
+
+    def test_output_position_past_last_output_refused(self) -> None:
+        """A positional output mapping past the graph's last output is refused, also for a format exposing names.
+
+        ONNX and TensorRT used to check named mappings only, so a bad position surfaced at the first prediction.
+        """
+        contract = _detect_metadata("onnx").model_copy(update={"outputs": {"pred_boxes": 0, "pred_logits": 2}})
+
+        with pytest.raises(ValueError, match="output position 2 is absent"):
+            adapters._check_output_interface("ONNX", contract, ["dets", "labels"])
+
+
 class TestRuntimeOptions:
     """Format loaders read only their own runtime options and forward them to the session loader."""
 
-    @pytest.mark.parametrize("format", sorted(REGISTRY))
-    def test_unknown_key_is_refused_before_runtime_import(self, tmp_path: Path, format: str) -> None:
+    @pytest.mark.parametrize(
+        "format,filename",
+        [
+            pytest.param("onnx", "model.onnx", id="onnx"),
+            pytest.param("tflite", "model.tflite", id="tflite"),
+            pytest.param("litert", "model.tflite", id="litert"),
+            pytest.param("tensorrt", "model.engine", id="tensorrt"),
+            pytest.param("executorch", "model.pte", id="executorch"),
+            pytest.param("coreml", "model.mlpackage", id="coreml"),
+            pytest.param("coreai", "model.aimodel", id="coreai"),
+            pytest.param("openvino", "model.xml", id="openvino"),
+        ],
+    )
+    def test_unknown_key_is_refused_before_runtime_import(self, tmp_path: Path, format: str, filename: str) -> None:
         """A misspelled or wrong-format key fails on every host, before the format's runtime package is needed.
 
         No runtime package is faked here, so a loader that imported its runtime, or checked the host, before the options
         would fail with ImportError or RuntimeError instead of naming the key.
         """
-        artifact = tmp_path / "model.bin"
+        artifact = tmp_path / filename
         artifact.write_bytes(b"artifact")
 
         with pytest.raises(ValueError, match="does not accept 'cache_dirr'"):
@@ -468,8 +696,8 @@ class TestRuntimeOptions:
     def test_openvino_forwards_options_to_session(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """The compile cache, precision hint and compile properties reach the shared OpenVINO session loader.
 
-        The export-side precision alias resolves to OpenVINO's own spelling, and a path-like cache directory is passed
-        on as the string OpenVINO's CACHE_DIR property takes.
+        The export-side precision alias is passed through for the session loader to resolve, and a path-like cache
+        directory is passed on as the string OpenVINO's CACHE_DIR property takes.
         """
         artifact = tmp_path / "model.xml"
         artifact.write_text("<model/>", encoding="utf-8")
@@ -488,7 +716,7 @@ class TestRuntimeOptions:
         session_loader.assert_called_once_with(
             artifact,
             device="AUTO",
-            inference_precision="f16",
+            inference_precision="float16",
             cache_dir=str(tmp_path / "cache"),
             config={"INFERENCE_NUM_THREADS": 2},
         )

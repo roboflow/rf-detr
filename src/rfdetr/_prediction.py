@@ -33,7 +33,6 @@ except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
 from rfdetr.models.postprocess import PostProcess
-from rfdetr.utilities.class_names import is_coco_pretrained
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -82,6 +81,7 @@ class PredictionContext:
     fixed_shape: bool = False
     batch_size: int | None = None
     max_batch_size: int | None = None
+    antialias: bool = False
 
 
 def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
@@ -357,7 +357,6 @@ def predict(
     include_source_image: bool = True,
     *,
     antialias: bool = False,
-    **kwargs: Any,
 ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -370,17 +369,19 @@ def predict(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
-        **kwargs: Reserved prediction arguments.
 
     Returns:
         One Supervision result or a list matching the input container.
     """
     from supervision import Detections, KeyPoints
 
+    if isinstance(images, (list, tuple)) and not images:
+        raise ValueError("At least one image is required.")
+
     if context.fixed_shape:
         shape = context.default_shape if shape is None else shape
         batch_size = len(images) if isinstance(images, (list, tuple)) else 1
-        if batch_size <= 0 or (context.batch_size is not None and batch_size != context.batch_size):
+        if context.batch_size is not None and batch_size != context.batch_size:
             raise ValueError(f"Batch size mismatch. Export requires {context.batch_size}, but got {batch_size}.")
         if context.max_batch_size is not None and batch_size > context.max_batch_size:
             raise ValueError(f"Batch size {batch_size} exceeds export maximum {context.max_batch_size}.")
@@ -416,7 +417,7 @@ def predict(
 
     orig_sizes: list[Any] = []
     processed_images: list[Any] = []
-    source_images: list[Any] | None = [] if include_source_image else None
+    source_images: list[Any] = []
     # Tensor range checks stay deferred: `(img > 1).any()` itself is a cheap async kernel launch, but
     # consuming its result in `if ...:` forces Python to call `Tensor.__bool__()`, which blocks
     # the calling thread until the device catches up. For a CUDA tensor passed directly to
@@ -469,7 +470,7 @@ def predict(
         deferred_widen = decoded_local_file
         if decoded_local_file:
             if include_source_image:
-                source_images.append(img.permute(1, 2, 0).numpy().copy())  # type: ignore[union-attr]
+                source_images.append(img.permute(1, 2, 0).numpy().copy())
         elif not isinstance(img, torch.Tensor):
             # PIL owns the one-/three-channel conversion. Other channel counts require an explicit array or tensor.
             if isinstance(img, Image.Image):
@@ -482,7 +483,7 @@ def predict(
                 source_array = np.array(img)
                 if source_array.dtype != np.uint8:
                     source_array = (source_array * 255).clip(0, 255).astype(np.uint8)
-                source_images.append(source_array)  # type: ignore[union-attr]
+                source_images.append(source_array)
             uint8_array = isinstance(img, np.ndarray) and img.dtype == np.uint8
             if isinstance(img, np.ndarray) and any(stride < 0 for stride in img.strides):
                 # ``torch.from_numpy``, used by both conversions below, rejects negative strides, e.g. the
@@ -521,7 +522,7 @@ def predict(
         elif include_source_image and img.dim() == 3:
             # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
             # validation below raises the public shape error instead of an internal RuntimeError.
-            source_images.append(_tensor_to_source_array(img))  # type: ignore[union-attr]
+            source_images.append(_tensor_to_source_array(img))
 
         # img.dim() != 3 is checked alongside the channel count (not just deferred as a message
         # detail) because `h, w = img_tensor.shape[1:]` a few lines down unpacks exactly 2 values --
@@ -608,7 +609,6 @@ def predict(
 
     _class_id_to_name = context.class_id_to_name
     num_logit_slots = context.num_classes
-    _is_coco_pretrained = is_coco_pretrained(context.class_names, num_logit_slots)
     _is_legacy_bgfirst_keypoint = _is_bg_first_schema(context.num_keypoints_per_class)
     predictions_list: list[Detections | KeyPoints] = []
     for i, result in enumerate(results):
@@ -701,17 +701,16 @@ def predict(
             detections.data["keypoint_precision_cholesky"] = keypoint_precision_cpu.numpy()
 
         if include_source_image:
-            detections.metadata["source_image"] = source_images[i]  # type: ignore[index]
+            detections.metadata["source_image"] = source_images[i]
         detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
         # Attach class names so callers can map class_id → name without a
         # separate lookup. Always set data["class_name"] for a consistent interface.
         #
-        # For fine-tuned models, logit index num_logit_slots is the no-object slot —
-        # map it to "__background__" without warning. For COCO-pretrained models,
-        # background is implicit (filtered by threshold); class ID 90 is "toothbrush".
-        # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
-        # string with a one-time warning.
+        # Explicit _class_id_to_name entries take precedence, including at the
+        # background sentinel. Only an unmapped sentinel maps to "__background__"
+        # without warning. Other unmapped IDs produce an empty string with a
+        # one-time warning.
         class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
         # Sentinel for the no-object / background class differs by model type.
         # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
@@ -723,22 +722,14 @@ def predict(
                 "predict() encountered unmapped class_id(s): %s — mapping to empty string",
                 truly_oob[:5],
             )
-        if _is_coco_pretrained:
-            class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
-        else:
-            class_names = [
-                "__background__" if cid == _bg_sentinel else _class_id_to_name.get(cid, "") for cid in class_ids
-            ]
+        class_names = [_class_id_to_name.get(cid, "__background__" if cid == _bg_sentinel else "") for cid in class_ids]
         detections.data["class_name"] = np.array(class_names, dtype=object)
 
         if has_keypoints and keypoints_array is not None:
             keypoint_data = dict(detections.data)
             keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
             if include_source_image:
-                keypoint_data["source_image"] = [
-                    source_images[i]  # type: ignore[index]
-                    for _ in range(len(detections))
-                ]
+                keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
             raw_precision = keypoint_data.get("keypoint_precision_cholesky")
             raw_source_shape = keypoint_data.get("source_shape")
             if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:

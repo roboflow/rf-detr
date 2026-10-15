@@ -5,25 +5,36 @@
 # ------------------------------------------------------------------------
 """ONNX Runtime inference helpers for RF-DETR exported models.
 
-These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or the
-RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
-Loading a ``.onnx`` artifact through ``RFDETRInference`` also reads its embedded inference metadata with the ``onnx``
-package, so that path needs ``rfdetr[onnx]``, which installs both ``onnx`` and ``onnxruntime``.
+These functions handle session creation, image preprocessing, and detection decoding using ``onnxruntime``, ``numpy``,
+``supervision``, and ``Pillow``, alongside the RF-DETR package dependencies. Loading a ``.onnx`` artifact through
+``RFDETRInference`` also reads its embedded inference metadata with the ``onnx`` package, so that path needs
+``rfdetr[onnx]``, which installs both ``onnx`` and ``onnxruntime``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
@@ -33,10 +44,8 @@ def _run_onnx_raw(session: Any, input_name: str, array: Any) -> list[Any]:
     return cast(list[Any], session.run(None, {input_name: array}))
 
 
-def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load an ONNX artifact with explicit provider and interface checks; it reads no runtime options."""
-    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _runtime_options
-
     _runtime_options("ONNX", options, ())
     try:
         import onnxruntime as ort
@@ -64,30 +73,23 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         raise RuntimeError(f"ONNX session did not activate requested provider {provider}.")
     if device != "auto" and provider == "CUDAExecutionProvider" and hasattr(session, "disable_fallback"):
         session.disable_fallback()
-    (input_info,) = session.get_inputs()
-    if input_info.name != metadata.input_name:
-        raise ValueError(f"ONNX input is {input_info.name!r}; metadata says {metadata.input_name!r}.")
-    onnx_dtypes = {"float32": "float", "float16": "float16", "float64": "double"}
-    expected_type = f"tensor({onnx_dtypes.get(metadata.input_dtype, metadata.input_dtype)})"
-    if input_info.type != expected_type:
-        raise ValueError(f"ONNX input dtype {input_info.type!r} disagrees with export metadata.")
-    shape = metadata.input_shape
-    if metadata.input_layout == "NHWC":
-        shape = (shape[0], shape[2], shape[3], shape[1])
-    if len(input_info.shape) != 4:
-        raise ValueError(f"ONNX input rank must be 4, got {len(input_info.shape)}.")
-    if any(isinstance(got, int) and got != want for got, want in zip(input_info.shape, shape)):
-        raise ValueError(f"ONNX input shape {input_info.shape} disagrees with export metadata {shape}.")
+    input_info = _single_input("ONNX", session.get_inputs())
+    # ONNX names element types "tensor(<type>)"; only "float" differs from the NumPy name, where it means float64.
+    element_type = input_info.type.removeprefix("tensor(").removesuffix(")")
+    dtype = "float32" if element_type == "float" else element_type
+    # A symbolic or unnamed ONNX dimension is a str or None; only an int fixes the axis.
+    shape = [size if isinstance(size, int) else None for size in input_info.shape]
+    _check_input_interface("ONNX", metadata, input_info.name, shape, dtype)
     output_names = [item.name for item in session.get_outputs()]
-    missing = {key for key in metadata.outputs.values() if isinstance(key, str)} - set(output_names)
-    if missing:
-        raise ValueError(f"ONNX output names absent from graph: {sorted(missing)}.")
+    _check_output_interface("ONNX", metadata, output_names)
 
     def execute(batch: Any) -> dict[str, Any]:
         """Map one raw ONNX result by graph output name."""
         return dict(zip(output_names, _run_onnx_raw(session, input_info.name, _input_array(batch, metadata))))
 
-    return ExportRuntime("onnx", metadata, session, provider, input_info.name, execute, borrowed_outputs=False)
+    return ExportRuntime(
+        "onnx", metadata, session=session, device_policy=provider, execute=execute, borrowed_outputs=False
+    )
 
 
 def _create_onnx_session(

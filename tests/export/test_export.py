@@ -31,6 +31,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from pydantic import ValidationError
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
@@ -2742,6 +2743,46 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
 class TestExporterMetadataPublication:
     """Metadata errors do not hide converted artifacts or stop later variants."""
 
+    def test_metadata_validation_failure_keeps_export(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Invalid inference metadata warns while the facade still writes the artifact."""
+        with pytest.raises(ValidationError) as caught:
+            ExportMetadata.model_validate({})
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"converted")
+        converter = MagicMock(return_value=artifact)
+        monkeypatch.setattr("rfdetr.export._runtime.metadata.metadata_from_model", MagicMock(side_effect=caught.value))
+        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock())
+        monkeypatch.setattr(OnnxExporter, "_convert", converter)
+        warning = MagicMock()
+        monkeypatch.setattr(_detr_module.logger, "warning", warning)
+
+        result = _detr_module.RFDETR.export(_make_export_model(), output_dir=str(tmp_path), shape=(14, 14))
+
+        assert result == artifact
+        assert artifact.read_bytes() == b"converted"
+        assert converter.call_args.args[0].metadata is None
+        assert not Path(f"{artifact}.rfdetr.json").exists()
+        warning.assert_called_once()
+        message, *arguments = warning.call_args.args
+        rendered = message % tuple(arguments)
+        assert "without inference metadata" in rendered
+        assert "RFDETRInference(metadata=<json>)" in rendered
+        assert str(caught.value) in rendered
+
+    def test_unrelated_metadata_value_error_propagates(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The metadata guard must not hide ValueError bugs unrelated to schema validation."""
+        monkeypatch.setattr(
+            "rfdetr.export._runtime.metadata.metadata_from_model", MagicMock(side_effect=ValueError("metadata bug"))
+        )
+        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock())
+        converter = MagicMock()
+        monkeypatch.setattr(OnnxExporter, "_convert", converter)
+
+        with pytest.raises(ValueError, match="metadata bug"):
+            _detr_module.RFDETR.export(_make_export_model(), output_dir=str(tmp_path), shape=(14, 14))
+
+        converter.assert_not_called()
+
     @staticmethod
     def _metadata() -> ExportMetadata:
         """Build a small TFLite prediction contract for exporter tests.
@@ -2843,6 +2884,54 @@ class TestExporterMetadataPublication:
         assert warning.call_count == 1
         assert artifacts[0] in warning.call_args.args
         assert "metadata=" in warning.call_args.args[0]
+        assert "still needs format-specific output positions or signature names" in warning.call_args.args[0]
+
+    @pytest.mark.parametrize(
+        "outputs",
+        [
+            pytest.param({"pred_boxes": 1, "pred_logits": 0}, id="output-positions"),
+            pytest.param({"pred_boxes": "boxes", "pred_logits": "scores"}, id="signature-names"),
+        ],
+    )
+    def test_write_failure_logged_metadata_loads_from_json_file(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        outputs: dict[str, str | int],
+    ) -> None:
+        """Recover derived artifact metadata from the debug JSON after a write failure.
+
+        A format changes the graph's output identifiers before publication. If writing its sidecar fails, saving the
+        logged JSON to a file must preserve those identifiers when loaded as an explicit metadata override.
+        """
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        derived_metadata = metadata.model_copy(update={"outputs": outputs})
+        exporter = self._exporter(tmp_path)
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"converted")
+        exporter._convert = MagicMock(return_value=artifact)
+        exporter._metadata_for_artifact = MagicMock(return_value=derived_metadata)
+        monkeypatch.setattr(export_base, "write_metadata", MagicMock(side_effect=OSError("sidecar is not writable")))
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            result = exporter(self._graph(metadata))
+        debug_record = next(record for record in caplog.records if "Unpublished inference metadata" in record.msg)
+        metadata_path = tmp_path / "meta.json"
+        metadata_path.write_text(debug_record.args[1], encoding="utf-8")
+        recovered_metadata = read_metadata(artifact, metadata_path)
+
+        assert result == artifact
+        assert not Path(f"{artifact}.rfdetr.json").exists()
+        assert debug_record.levelno == logging.DEBUG
+        assert recovered_metadata == derived_metadata
+        warning_record = next(record for record in caplog.records if record.levelno == logging.WARNING)
+        assert artifact in warning_record.args
+        assert "Save the logged JSON as a .json file" in warning_record.getMessage()
+        assert "metadata=<path to that file>" in warning_record.getMessage()
 
     def test_artifact_selection_failure_logs_traceback_and_metadata(
         self,
@@ -2854,7 +2943,8 @@ class TestExporterMetadataPublication:
 
         The catch stays broad so a finished conversion is never lost, so a bug in a format override such as an
         ``AttributeError`` only surfaces through this warning: the traceback has to be attached, and the metadata that
-        was not published is logged at debug level for the caller to pass as ``metadata=``.
+        was not published is logged at debug level for the caller to save and complete before passing its file path as
+        ``metadata=``.
         """
         import rfdetr.export.base as export_base
 
@@ -2877,6 +2967,7 @@ class TestExporterMetadataPublication:
         assert selection_warnings[0].levelno == logging.WARNING
         assert selection_warnings[0].exc_info[0] is AttributeError
         assert "metadata=" in selection_warnings[0].getMessage()
+        assert "still needs format-specific output positions or signature names" in selection_warnings[0].getMessage()
         assert metadata.model_dump_json() in caplog.text
 
     def test_real_writer_runs_through_exporter_hook(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

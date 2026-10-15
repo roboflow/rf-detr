@@ -90,6 +90,25 @@ class TestNormalizeFormat:
         assert normalize_format(spelling) == spelling
 
 
+class TestExporterEntrySuffixes:
+    """``ExporterEntry.suffixes`` lists the file extensions ``load_runtime`` accepts for a format."""
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_suffixes_are_lowercase_dotted_extensions(self, format: str) -> None:
+        """Every checked suffix is lowercase and starts with a dot, so a lowercased ``Path.suffix`` can match it.
+
+        ``load_runtime`` lowercases the artifact's suffix before the lookup; a mixed-case or dotless entry would
+        silently refuse every artifact of its format.
+        """
+        suffixes = REGISTRY[format].suffixes
+
+        assert all(suffix.startswith(".") and suffix == suffix.lower() for suffix in suffixes)
+
+    def test_tensorrt_suffixes_stay_unchecked(self) -> None:
+        """TensorRT engines carry no single extension (``.trt``, ``.engine``, others), so none is enforced."""
+        assert REGISTRY["tensorrt"].suffixes == frozenset()
+
+
 class TestResolveExporter:
     """``resolve_exporter`` turns a format name into its exporter class, importing nothing else."""
 

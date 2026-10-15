@@ -402,15 +402,17 @@ class Exporter(ABC, Generic[_ConfigT]):
         _switch_to_export_mode(graph.model)
         path = Path(self._convert(graph))
         if graph.metadata is not None and graph.metadata.format == self.format:
-            # Both catches stay broad on purpose: conversion already wrote the artifact, and a metadata failure must
+            # These catches stay broad on purpose: conversion already wrote the artifact, and a metadata failure must
             # not discard it. The traceback is kept so a bug in a format's override still shows where it happened,
-            # and the unpublished metadata goes to the debug log so the caller can pass it as ``metadata=``.
+            # and the unpublished metadata goes to the debug log for recovery through a JSON file.
             try:
                 artifacts = self._metadata_artifacts(path)
             except Exception as error:
                 logger.warning(
                     "Could not select inference metadata artifacts for %s: %s. Re-export with LOG_LEVEL=DEBUG to log "
-                    "the inference metadata as JSON, then load the artifact with RFDETRInference(metadata=<json>).",
+                    "the inference metadata as JSON. The logged metadata still needs format-specific output positions "
+                    "or signature names. Save the logged JSON as a .json file, update those identifiers, and pass "
+                    "metadata=<path to that file> to RFDETRInference.",
                     path,
                     error,
                     exc_info=True,
@@ -419,11 +421,13 @@ class Exporter(ABC, Generic[_ConfigT]):
             else:
                 for artifact in artifacts:
                     try:
-                        write_metadata(artifact, self._metadata_for_artifact(graph.metadata, artifact))
+                        metadata = self._metadata_for_artifact(graph.metadata, artifact)
                     except Exception as error:
                         logger.warning(
-                            "Could not write inference metadata for %s: %s. Re-export with LOG_LEVEL=DEBUG to log the "
-                            "inference metadata as JSON, then load it with RFDETRInference(metadata=<json>).",
+                            "Could not derive inference metadata for %s: %s. Re-export with LOG_LEVEL=DEBUG to log the "
+                            "inference metadata as JSON. The logged metadata still needs format-specific output "
+                            "positions or signature names. Save the logged JSON as a .json file, update those "
+                            "identifiers, and pass metadata=<path to that file> to RFDETRInference.",
                             artifact,
                             error,
                             exc_info=True,
@@ -431,6 +435,19 @@ class Exporter(ABC, Generic[_ConfigT]):
                         logger.debug(
                             "Unpublished inference metadata for %s: %s", artifact, graph.metadata.model_dump_json()
                         )
+                        continue
+                    try:
+                        write_metadata(artifact, metadata)
+                    except Exception as error:
+                        logger.warning(
+                            "Could not write inference metadata for %s: %s. Re-export with LOG_LEVEL=DEBUG to log the "
+                            "inference metadata as JSON. Save the logged JSON as a .json file and pass "
+                            "metadata=<path to that file> to RFDETRInference.",
+                            artifact,
+                            error,
+                            exc_info=True,
+                        )
+                        logger.debug("Unpublished inference metadata for %s: %s", artifact, metadata.model_dump_json())
         logger.info(f"Successfully exported {self.display_name or self.format} model to: {path}")
         return path
 

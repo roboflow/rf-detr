@@ -101,6 +101,9 @@ logger = get_logger()
 # Supported quantization modes.
 _VALID_QUANTIZATIONS: set[str | None] = {None, "fp32", "fp16", "int8"}
 
+#: Known artifact suffixes stripped when locating sibling TFLite precision variants.
+_ARTIFACT_SUFFIXES: tuple[str, ...] = ("_fp32", "_fp16", "_dynamic_range_quant")
+
 # Number of random calibration samples generated when none are provided.
 _DEFAULT_CALIB_SAMPLES: int = 20
 
@@ -961,8 +964,6 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
     experimental_note = "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results."
     pip_extra = "tflite"
 
-    _last_artifacts: tuple[Path, ...] = ()
-
     def _check_capabilities(self) -> None:
         """Refuse an unrecognized quantization mode before the ONNX stage runs, not after it.
 
@@ -1105,20 +1106,45 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         # files carry the same vocabulary as the other export backends.
         _rename_precision_outputs(output_dir, model_stem)
         primary = self._resolve_primary_output(output_dir, model_stem)
-        self._last_artifacts = tuple(
-            path
-            for path in (
-                output_dir / f"{model_stem}_fp32.tflite",
-                output_dir / f"{model_stem}_fp16.tflite",
-                primary,
-            )
-            if path.is_file()
-        )
         return primary
 
     def _metadata_artifacts(self, path: Path) -> tuple[Path, ...]:
-        """Include the precision variants recorded by ``_convert``."""
-        return tuple(dict.fromkeys(self._last_artifacts or (path,)))
+        """Find sibling precision artifacts from the primary artifact's filename.
+
+        Args:
+            path: Primary TFLite artifact returned by conversion.
+
+        Returns:
+            Existing FP32 and FP16 siblings followed by the primary, without duplicates.
+            An unrecognized filename suffix returns only the primary.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     primary = Path(directory) / "model_fp32.tflite"
+            ...     sibling = primary.with_name("model_fp16.tflite")
+            ...     primary.touch()
+            ...     sibling.touch()
+            ...     exporter = TFLiteExporter(TFLiteConfig(output_dir=directory))
+            ...     exporter._metadata_artifacts(primary) == (primary, sibling)
+            True
+        """
+        for suffix in _ARTIFACT_SUFFIXES:
+            if path.stem.endswith(suffix):
+                stem = path.stem.removesuffix(suffix)
+                break
+        else:
+            return (path,)
+
+        siblings = tuple(
+            candidate
+            for candidate in (
+                path.with_name(f"{stem}_fp32.tflite"),
+                path.with_name(f"{stem}_fp16.tflite"),
+            )
+            if candidate.is_file()
+        )
+        return tuple(dict.fromkeys((*siblings, path)))
 
     def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
         """Read the final TFLite signature before assigning semantic outputs."""
@@ -1142,15 +1168,9 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                     for name, details in runner.get_output_details().items()
                     if int(details["index"]) in positions
                 }
-        source_names = {
-            "pred_boxes": "dets",
-            "pred_logits": "labels",
-            "pred_masks": "masks",
-            "pred_keypoints": "keypoints",
-        }
         outputs: dict[str, int] = {}
         for semantic in metadata.outputs:
-            source = source_names[semantic]
+            source = cast(str, metadata.outputs[semantic])
             matches = [index for name, index in signature_outputs.items() if source in name]
             if not matches:
                 matches = [index for index, name in enumerate(names) if source in name]

@@ -18,22 +18,139 @@ import pytest
 import torch
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+from rfdetr.detr import RFDETR
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._runtime.metadata import (
     METADATA_KEY,
     ExportMetadata,
     metadata_from_model,
+    positional_metadata,
     read_metadata,
     write_metadata,
 )
 from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
-from rfdetr.export.prepare import ExportGraph
+from rfdetr.export.prepare import ExportGraph, resolve_output_names
 from rfdetr.inference import RFDETRInference
 from rfdetr.utilities.class_names import class_id_to_name
 from tests._markers import onnx_and_onnxruntime_only, onnx_only
 
 #: Digest of the ``b"model"`` artifact bytes, as a companion records it.
 _MODEL_DIGEST = hashlib.sha256(b"model").hexdigest()
+
+
+@pytest.fixture
+def metadata_source() -> RFDETR:
+    """Provide a live wrapper's metadata state without constructing a backbone.
+
+    Examples:
+        A pytest fixture cannot be called directly.
+
+        >>> model = metadata_source()  # doctest: +SKIP
+        >>> model.class_names  # doctest: +SKIP
+        ['object']
+    """
+    model = object.__new__(RFDETR)
+    model.model_config = SimpleNamespace(
+        segmentation_head=False,
+        use_grouppose_keypoints=False,
+        num_channels=3,
+        num_keypoints_per_class=[],
+        patch_size=16,
+        num_windows=1,
+    )
+    model.model = SimpleNamespace(
+        resolution=32,
+        class_names=["object"],
+        args=SimpleNamespace(num_classes=1, num_keypoints_per_class=[]),
+        postprocess=SimpleNamespace(num_select=2, trace_alpha=0.2, upsample_masks_to_image_size=True),
+    )
+    model.means = [0.485, 0.456, 0.406]
+    model.stds = [0.229, 0.224, 0.225]
+    return model
+
+
+class TestGraphOutputOrder:
+    """Keep named and positional metadata aligned with the graph's output order."""
+
+    @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
+    @pytest.mark.parametrize("reverse_order", [False, True])
+    def test_metadata_follows_resolved_output_order(
+        self, metadata_source: RFDETR, monkeypatch: pytest.MonkeyPatch, task: str, reverse_order: bool
+    ) -> None:
+        """A resolver order change must reach both named and positional metadata."""
+        config = metadata_source.model_config
+        config.segmentation_head = task == "segment"
+        config.use_grouppose_keypoints = task == "keypoints"
+        if task == "keypoints":
+            config.num_keypoints_per_class = [3]
+            metadata_source.model.args.num_keypoints_per_class = [3]
+        graph_names = resolve_output_names(config, backbone_only=False, backbone=None)
+        if reverse_order:
+            graph_names.reverse()
+            # Simulate a future graph order change without duplicating the resolver's task rules.
+            monkeypatch.setattr("rfdetr.export.prepare.resolve_output_names", Mock(return_value=graph_names))
+
+        metadata = metadata_from_model(
+            metadata_source, format="onnx", shape=(32, 32), batch_size=1, dynamic_batch=False
+        )
+
+        assert metadata.task == task
+        assert list(metadata.outputs.values()) == graph_names
+        semantic_names = {
+            "dets": "pred_boxes",
+            "labels": "pred_logits",
+            "masks": "pred_masks",
+            "keypoints": "pred_keypoints",
+        }
+        assert metadata.outputs == {semantic_names[name]: name for name in graph_names}
+        assert positional_metadata(metadata).outputs == {
+            semantic_names[name]: graph_names.index(name) for name in graph_names
+        }
+
+    def test_backbone_metadata_has_no_prediction_outputs(self, metadata_source: RFDETR) -> None:
+        """Backbone metadata does not need a backbone instance to resolve prediction outputs."""
+        metadata = metadata_from_model(
+            metadata_source, format="onnx", shape=(32, 32), batch_size=1, dynamic_batch=False, backbone_only=True
+        )
+
+        assert metadata.task == "backbone"
+        assert metadata.outputs == {}
+
+
+class TestWriteExportMetadata:
+    """Verify public metadata publication for artifacts exported earlier."""
+
+    def test_openvino_positional_sidecar(self, tmp_path: Path, metadata_source: RFDETR) -> None:
+        """Apply the real exporter mapping and bind metadata to XML and weights."""
+        artifact = tmp_path / "model.xml"
+        artifact.write_bytes(b"<model/>")
+        weights = artifact.with_suffix(".bin")
+        weights.write_bytes(b"weights")
+
+        sidecar = metadata_source.write_export_metadata(artifact, format="openvino", batch_size=2)
+
+        assert sidecar == tmp_path / "model.xml.rfdetr.json"
+        metadata = read_metadata(artifact)
+        assert metadata.format == "openvino"
+        assert metadata.outputs == {"pred_boxes": 0, "pred_logits": 1}
+        assert metadata.input_shape == (2, 3, 32, 32)
+        assert metadata.means == metadata_source.means
+        assert metadata.stds == metadata_source.stds
+        assert metadata.num_select == 2
+        assert metadata.trace_alpha == 0.2
+        weights.write_bytes(b"changed weights")
+        with pytest.raises(ValueError, match="digest"):
+            read_metadata(artifact)
+
+    def test_missing_artifact(self, tmp_path: Path, metadata_source: RFDETR) -> None:
+        """Refuse a missing artifact before attempting metadata publication."""
+        artifact = tmp_path / "missing.xml"
+
+        with pytest.raises(FileNotFoundError) as error:
+            metadata_source.write_export_metadata(artifact, format="openvino")
+
+        assert error.value.args == (artifact,)
+        assert not artifact.with_name("missing.xml.rfdetr.json").exists()
 
 
 class _TinyDetector(torch.nn.Module):
@@ -384,8 +501,162 @@ class TestSidecarMetadata:
             read_metadata(artifact)
 
 
+class TestResizeAntialias:
+    """Verify metadata defaults and per-call overrides for exported prediction."""
+
+    def test_resize_antialias_true_validates(self) -> None:
+        """An antialiased resize is a valid artifact preprocessing contract."""
+        metadata = ExportMetadata(
+            format="tflite",
+            task="detect",
+            input_shape=(1, 3, 32, 32),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=2,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+            resize_antialias=True,
+        )
+
+        assert metadata.resize_antialias is True
+
+    @pytest.mark.parametrize("metadata_antialias", [False, True])
+    @pytest.mark.parametrize(
+        "prediction_kwargs",
+        [
+            pytest.param({}, id="omitted"),
+            pytest.param({"antialias": None}, id="none"),
+            pytest.param({"antialias": False}, id="explicit-false"),
+            pytest.param({"antialias": True}, id="explicit-true"),
+        ],
+    )
+    def test_export_prediction_resolves_antialias(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        metadata_antialias: bool,
+        prediction_kwargs: dict[str, bool | None],
+    ) -> None:
+        """Legacy metadata supplies the default, while either explicit boolean wins."""
+        artifact = tmp_path / "legacy.tflite"
+        artifact.write_bytes(b"legacy graph")
+        metadata = {
+            "format": "tflite",
+            "task": "detect",
+            "input_shape": (1, 3, 32, 32),
+            "outputs": {"pred_boxes": 0, "pred_logits": 1},
+            "class_names": ["object"],
+            "num_classes": 1,
+            "means": [0.485, 0.456, 0.406],
+            "stds": [0.229, 0.224, 0.225],
+            "num_select": 2,
+            "trace_alpha": 0.2,
+            "patch_size": 16,
+            "num_windows": 1,
+            "resize_antialias": metadata_antialias,
+        }
+        runtime = SimpleNamespace(device=torch.device("cpu"), run=Mock(), info={"backend": "tflite"})
+        monkeypatch.setattr("rfdetr.export._runtime.context.load_runtime", Mock(return_value=runtime))
+        shared_predict = Mock()
+        monkeypatch.setattr("rfdetr.inference.predict", shared_predict)
+        predictor = RFDETRInference(artifact, metadata=metadata)
+        image = np.zeros((32, 32, 3), dtype=np.uint8)
+
+        result = predictor.predict(image, **prediction_kwargs)
+
+        expected_antialias = prediction_kwargs.get("antialias")
+        if expected_antialias is None:
+            expected_antialias = metadata_antialias
+        shared_predict.assert_called_once_with(
+            predictor._export_context,
+            image,
+            threshold=0.5,
+            shape=None,
+            patch_size=None,
+            include_source_image=True,
+            antialias=expected_antialias,
+        )
+        assert predictor._export_context.antialias is metadata_antialias
+        assert result is shared_predict.return_value
+
+
 class TestMetadataCapture:
     """Verify model metadata capture and label mapping."""
+
+    def test_positional_metadata_maps_names_without_mutating_source(self) -> None:
+        """Copy named metadata into positional input and output identifiers.
+
+        Tuple-returning runtimes use output mapping order, while the source retains its named interface and semantics.
+        """
+        metadata = ExportMetadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            input_name="images",
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=2,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+        original = metadata.model_dump()
+
+        result = positional_metadata(metadata)
+
+        assert result is not metadata
+        assert result.input_name == 0
+        assert result.outputs == {"pred_boxes": 0, "pred_logits": 1}
+        assert result.model_dump() == original | {"input_name": 0, "outputs": {"pred_boxes": 0, "pred_logits": 1}}
+        assert metadata.model_dump() == original
+
+    def test_metadata_from_model_normalizes_numpy_scalars(self) -> None:
+        """Checkpoint NumPy scalars become Python numerics before strict validation."""
+        model = SimpleNamespace(
+            model_config=SimpleNamespace(
+                segmentation_head=False,
+                use_grouppose_keypoints=True,
+                num_channels=np.int64(3),
+                patch_size=np.int64(16),
+                num_windows=np.int64(1),
+            ),
+            model=SimpleNamespace(
+                args=SimpleNamespace(num_classes=np.int64(2), num_keypoints_per_class=[np.int64(0), np.int64(3)]),
+                postprocess=SimpleNamespace(
+                    num_select=np.int64(100), trace_alpha=np.float32(0.2), upsample_masks_to_image_size=True
+                ),
+            ),
+            class_names=["person"],
+            means=[np.float32(0.485), np.float32(0.456), np.float32(0.406)],
+            stds=[np.float32(0.229), np.float32(0.224), np.float32(0.225)],
+        )
+
+        metadata = metadata_from_model(model, format="onnx", shape=(32, 32), batch_size=1, dynamic_batch=False)
+
+        assert (metadata.num_classes, metadata.num_select, metadata.patch_size, metadata.num_windows) == (2, 100, 16, 1)
+        assert metadata.num_keypoints_per_class == [0, 3]
+        assert metadata.class_id_to_name == {1: "person"}
+        assert all(
+            type(value) is int
+            for value in (
+                metadata.num_classes,
+                metadata.num_select,
+                metadata.patch_size,
+                metadata.num_windows,
+                *metadata.input_shape,
+                *metadata.num_keypoints_per_class,
+                *metadata.class_id_to_name,
+            )
+        )
+        assert type(metadata.trace_alpha) is float
+        assert all(type(value) is float for value in metadata.means + metadata.stds)
 
     def test_backbone_metadata_survives_sidecar_round_trip(self, tmp_path: Path) -> None:
         """Backbone-only exports retain their task and empty prediction labels."""
@@ -575,8 +846,15 @@ class TestFormatMetadata:
             assert np.isfinite(detections.xyxy).all()
             assert np.isfinite(detections.confidence).all()
 
+    @pytest.mark.parametrize(
+        ("boxes_name", "logits_name"),
+        [
+            pytest.param("dets", "labels", id="resolved-names"),
+            pytest.param("box_output", "class_output", id="metadata-names"),
+        ],
+    )
     def test_tflite_export_uses_signature_to_map_reordered_outputs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boxes_name: str, logits_name: str
     ) -> None:
         """Signature tensor indices identify boxes when output detail names are generic."""
         artifact = tmp_path / "model_fp32.tflite"
@@ -584,7 +862,7 @@ class TestFormatMetadata:
             format="tflite",
             task="detect",
             input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            outputs={"pred_boxes": boxes_name, "pred_logits": logits_name},
             class_names=["object"],
             num_classes=1,
             means=[0.485, 0.456, 0.406],
@@ -598,7 +876,7 @@ class TestFormatMetadata:
             model=torch.nn.Identity(),
             input_tensors=torch.zeros(1, 3, 448, 448),
             input_names=("input",),
-            output_names=("dets", "labels"),
+            output_names=(boxes_name, logits_name),
             dynamic_axes=None,
             shape=(448, 448),
             backbone_only=False,
@@ -610,10 +888,10 @@ class TestFormatMetadata:
             {"name": "Identity", "index": 12},
             {"name": "Identity_1", "index": 11},
         ]
-        interpreter.get_signature_list.return_value = {"serving_default": {"outputs": ["dets", "labels"]}}
+        interpreter.get_signature_list.return_value = {"serving_default": {"outputs": [boxes_name, logits_name]}}
         interpreter.get_signature_runner.return_value.get_output_details.return_value = {
-            "dets": {"index": 11},
-            "labels": {"index": 12},
+            boxes_name: {"index": 11},
+            logits_name: {"index": 12},
         }
         monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", Mock(return_value=interpreter))
         exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
@@ -756,6 +1034,20 @@ class TestFormatMetadata:
                 },
                 "no active keypoint class",
                 id="keypoints-all-inactive",
+            ),
+            pytest.param(
+                {"num_keypoints_per_class": [-1]},
+                "num_keypoints_per_class counts must be non-negative",
+                id="detect-negative-keypoint-count",
+            ),
+            pytest.param(
+                {
+                    "task": "keypoints",
+                    "outputs": {"pred_boxes": "dets", "pred_logits": "labels", "pred_keypoints": "kp"},
+                    "num_keypoints_per_class": [-1, 17],
+                },
+                "num_keypoints_per_class counts must be non-negative",
+                id="keypoints-mixed-negative-positive-counts",
             ),
             pytest.param({"num_classes": 91}, "class_id_to_name is required", id="sparse-labels-without-map"),
             pytest.param({"schema_version": 2}, "schema_version", id="schema-version"),

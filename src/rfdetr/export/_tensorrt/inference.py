@@ -24,7 +24,7 @@ from collections import OrderedDict, namedtuple
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import torch
@@ -41,10 +41,20 @@ try:
 except ImportError:
     cuda = None
 
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._tensorrt.exporter import Fp16Strategy, fp16_source_graph, resolve_fp16_strategy
 from rfdetr.export.prepare import BATCH_AXIS
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
@@ -997,19 +1007,68 @@ class TRTInference:
         return self._runtime_state.engine_device
 
     def __call__(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        """Run the engine through the shared TensorRT session function."""
+        """Run the engine through the shared TensorRT session function.
+
+        Dispatches to :meth:`run_graph` for ``cuda_graph=True``, :meth:`run_sync` for ``sync_mode=True``, and
+        :meth:`run_async` otherwise.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output. A dynamic output is a view into a buffer the next call overwrites -- copy it
+            before the next call if it needs to outlive that call.
+
+        Raises:
+            ValueError: If an input is refused before launch.
+            RuntimeError: If TensorRT reports the launch failed, or the selected mode cannot run.
+        """
         return _run_tensorrt_session(self._runtime_state, blob)
 
     def run_sync(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        """Run synchronous TensorRT inference for compatibility with existing callers."""
+        """Run synchronous TensorRT inference for compatibility with existing callers.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output, trimmed to the produced batch.
+
+        Raises:
+            ValueError: If an input is refused before launch.
+            RuntimeError: If the runtime was built with ``cuda_graph=True``, or TensorRT reports the launch failed.
+        """
         return _run_tensorrt_sync(self._runtime_state, blob)
 
     def run_async(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        """Run asynchronous TensorRT inference for compatibility with existing callers."""
+        """Run asynchronous TensorRT inference for compatibility with existing callers.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output, trimmed to the produced batch.
+
+        Raises:
+            ValueError: If an input is refused before launch.
+            RuntimeError: If no CUDA stream is available, or TensorRT reports the launch failed.
+        """
         return _run_tensorrt_async(self._runtime_state, blob)
 
     def run_graph(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        """Replay the captured CUDA graph for runtimes built with ``cuda_graph=True``."""
+        """Replay the captured CUDA graph for runtimes built with ``cuda_graph=True``.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output, trimmed to the produced batch.
+
+        Raises:
+            ValueError: If an input is refused before launch.
+            RuntimeError: If the runtime was built without ``cuda_graph=True``, TensorRT refuses a launch, or the
+                launch cannot be captured into a graph.
+        """
         return _run_tensorrt_graph(self._runtime_state, blob)
 
     def synchronize(self) -> None:
@@ -1017,15 +1076,40 @@ class TRTInference:
         _synchronize_tensorrt_session(self._runtime_state)
 
     def speed(self, blob: Mapping[str, Tensor], n: int) -> float:
-        """Measure mean inference time through this facade."""
+        """Measure mean inference time through this facade.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+            n: Number of calls to time.
+
+        Returns:
+            Mean wall-clock seconds per call, including input validation, not engine time alone.
+        """
         return _speed_tensorrt_session(self._runtime_state, blob, n)
 
     def get_dummy_input(self, batch_size: int) -> dict[str, Tensor]:
-        """Build a dummy input matching this engine's input bindings."""
+        """Build a dummy input matching this engine's input bindings.
+
+        Args:
+            batch_size: Batch to build; a static engine accepts only the batch it was built for.
+
+        Returns:
+            One random tensor per engine input, keyed by input name, in that input's dtype and on the engine's device.
+        """
         return _get_tensorrt_dummy_input(self._runtime_state, batch_size)
 
     def load_engine(self, path: str) -> Any:
-        """Deserialize an engine on the session's current CUDA device."""
+        """Deserialize an engine on the session's current CUDA device.
+
+        Args:
+            path: Path to a serialized ``.trt`` engine.
+
+        Returns:
+            The deserialized TensorRT engine.
+
+        Raises:
+            RuntimeError: If TensorRT cannot deserialize the file.
+        """
         return _deserialize_tensorrt_engine(self._runtime_state, path)
 
     def get_input_names(self) -> list[str]:
@@ -1044,7 +1128,19 @@ class TRTInference:
     def get_bindings(
         self, engine: Any, context: Any, device: str | torch.device | None = None
     ) -> OrderedDict[str, Any]:
-        """Allocate TensorRT output bindings for an engine and execution context."""
+        """Allocate TensorRT output bindings for an engine and execution context.
+
+        Args:
+            engine: A deserialized TensorRT engine.
+            context: The execution context whose dynamic inputs get declared at their profile maximum.
+            device: The device output buffers are allocated on. Defaults to the device recorded in the session.
+
+        Returns:
+            One binding per engine tensor, keyed by tensor name, in engine iteration order.
+
+        Raises:
+            ValueError: If a tensor still carries an unresolved dimension after the inputs were declared.
+        """
         return _allocate_tensorrt_bindings(self._runtime_state, engine, context, device)
 
     @staticmethod
@@ -1053,7 +1149,20 @@ class TRTInference:
         _declare_profile_max_inputs(engine, context)
 
     def build_engine(self, onnx_file_path: str, engine_file_path: str, max_batch_size: int = 32) -> Any:
-        """Build a TensorRT engine through the legacy benchmark builder."""
+        """Build a TensorRT engine through the legacy benchmark builder.
+
+        Args:
+            onnx_file_path: Path to the float32 ``.onnx`` model to build from.
+            engine_file_path: Path the serialized engine is written to.
+            max_batch_size: Unused; retained for call-site compatibility.
+
+        Returns:
+            The serialized engine.
+
+        Raises:
+            Fp16CastUnsupportedError: If a strongly typed TensorRT needs the graph cast to fp16 and it cannot be.
+            RuntimeError: If TensorRT cannot parse the ONNX file or build an engine from it.
+        """
         return _build_tensorrt_engine(onnx_file_path, engine_file_path, max_batch_size, trt_logger=self.logger)
 
 
@@ -1097,7 +1206,7 @@ class TimeProfiler(contextlib.ContextDecorator):
 _TENSORRT_RUNTIME_OPTIONS = ("cuda_graph", "engine_host_code_allowed", "verbose")
 
 
-def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> Any:
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load a TensorRT engine while preserving device tensors through execution.
 
     The engine runs with ``execute_v2`` by default, which needs no pycuda stream. ``cuda_graph=True`` captures the
@@ -1114,11 +1223,10 @@ def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str,
         The loaded runtime.
 
     Raises:
-        ValueError: If *options* holds another key or a non-``bool`` value, or the engine disagrees with *metadata*.
+        ValueError: If *device* is unsupported, *options* holds another key or a non-``bool`` value, or the engine
+            disagrees with *metadata*.
         RuntimeError: If no CUDA device is available.
     """
-    from rfdetr.export._runtime.adapters import ExportRuntime, _runtime_options
-
     settings = _runtime_options("TensorRT", options, _TENSORRT_RUNTIME_OPTIONS)
     for key, value in settings.items():
         # A truthy string such as "false" from a config file must not switch a setting on.
@@ -1127,7 +1235,9 @@ def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str,
     cuda_graph = settings.get("cuda_graph", False)
     if device == "auto":
         device = "cuda:0"
-    if not device.startswith("cuda") or not torch.cuda.is_available():
+    if not device.startswith("cuda"):
+        raise ValueError("TensorRT device must be auto, cuda, or cuda:N.")
+    if not torch.cuda.is_available():
         raise RuntimeError("TensorRT requires an available CUDA device.")
 
     session = _load_tensorrt_session(
@@ -1138,22 +1248,14 @@ def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str,
         cuda_graph=cuda_graph,
         engine_host_code_allowed=settings.get("engine_host_code_allowed", False),
     )
-    if len(session.input_names) != 1 or session.input_names[0] != metadata.input_name:
-        raise ValueError("TensorRT input binding disagrees with export metadata.")
-    binding = session.bindings[session.input_names[0]]
-    if len(binding.shape) != 4:
-        raise ValueError(f"TensorRT input rank must be 4, got {len(binding.shape)}.")
-    if np.dtype(binding.dtype) != np.dtype(metadata.input_dtype):
-        raise ValueError("TensorRT input dtype disagrees with export metadata.")
+    input_name = _single_input("TensorRT", session.input_names)
+    binding = session.bindings[input_name]
     if metadata.input_layout != "NCHW":
         raise ValueError("TensorRT inference requires an NCHW input.")
-    if any(got != want for got, want in zip(binding.shape[1:], metadata.input_shape[1:])):
-        raise ValueError("TensorRT input spatial shape disagrees with export metadata.")
-    if metadata.input_shape[0] != -1 and binding.shape[0] != metadata.input_shape[0]:
-        raise ValueError("TensorRT fixed batch size disagrees with export metadata.")
-    missing = {name for name in metadata.outputs.values() if isinstance(name, str)} - set(session.output_names)
-    if missing:
-        raise ValueError(f"TensorRT output names absent from engine: {sorted(missing)}.")
+    _check_input_interface(
+        "TensorRT", metadata, input_name, [int(size) for size in binding.shape], binding.dtype, dynamic_batch=True
+    )
+    _check_output_interface("TensorRT", metadata, session.output_names)
     input_dtype = torch.from_numpy(np.empty(0, dtype=binding.dtype)).dtype
 
     def execute(batch: torch.Tensor) -> dict[str, Tensor]:
@@ -1168,9 +1270,8 @@ def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str,
     return ExportRuntime(
         "tensorrt",
         metadata,
-        session,
-        str(session.engine_device),
-        session.input_names[0],
-        execute,
+        session=session,
+        device_policy=str(session.engine_device),
+        execute=execute,
         device=session.engine_device,
     )
