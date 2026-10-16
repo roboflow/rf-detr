@@ -502,7 +502,7 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pth"
-ignore-words-list = "ane"
+ignore-words-list = "ane,compiletime"
 
 [tool.mypy]
 python_version = "3.10"
