@@ -5,6 +5,12 @@ cards:
     version: v1.10.0
     author: Borda
     description: "Download the full public COCO2017 dataset and train RF-DETR Nano from scratch for 40 epochs end to end on a single CUDA GPU with torch.compile and automatic mixed precision (bf16 when supported, otherwise fp16), with optional FP8 via Transformer Engine."
+  - href: train-coco2017-tpu/
+    name: "Train RF-DETR Nano on COCO2017 with a TPU"
+    labels: [TRAINING, COCO2017, TPU]
+    version: v1.12.0
+    author: Borda
+    description: "Train RF-DETR Nano on the full COCO2017 dataset on a single Cloud TPU chip in Colab with PyTorch/XLA, and learn the three TPU ideas behind the settings: lazy execution, compile-once-per-shape, and native bf16."
   - href: export-cuda/
     name: "RF-DETR on NVIDIA GPUs — Export, Inference & Latency"
     labels: [EXPORT, INFERENCE, DEPLOY, CUDA]

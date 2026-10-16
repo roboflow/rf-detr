@@ -36,7 +36,7 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
     description: One sentence describing what the notebook demonstrates.
 ```
 
-Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`, `CUDA`, `CPU`, `MOBILE`, `APPLE`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
+Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`, `CUDA`, `CPU`, `MOBILE`, `APPLE`, `TPU`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
 For newly added or updated notebooks, write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
 
@@ -60,3 +60,4 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 | `fine-tune_segmentation.ipynb`     | Fine-Tune RF-DETR Instance Segmentation                | v1.8.2  |
 | `pytorch-lightning.ipynb`          | Training with PyTorch Lightning                        | v1.6.0  |
 | `train-coco2017.ipynb`             | Train RF-DETR Nano on COCO2017                         | v1.10.0 |
+| `train-coco2017-tpu.ipynb`         | Train RF-DETR Nano on COCO2017 with a TPU              | v1.12.0 |
