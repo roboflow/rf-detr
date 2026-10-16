@@ -1984,7 +1984,9 @@ class TestPatchEmbeddingAsMatmul:
         actual = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
             None, {"image": image}
         )[0]
-        np.testing.assert_allclose(actual, expected, atol=1e-5)
+        # The convolution and the matrix multiply add up 768 float32 products in a different order: macOS differed
+        # by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is off by whole units.
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-4)
 
     def test_convolution_is_replaced_by_the_matmul_the_plan_quantizes(self) -> None:
         model = _patch_embedding()
