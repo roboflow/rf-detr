@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -318,7 +319,7 @@ def _follow_engine_permissions(descriptor: int, engine_path: str | os.PathLike[s
         ...     os.name == "nt" or stat.S_IMODE(os.stat(temporary).st_mode) == 0o640
         True
     """
-    if os.name == "nt":
+    if sys.platform == "win32":
         return
     try:
         engine = os.stat(engine_path)
