@@ -60,17 +60,21 @@ The benchmark of [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/
 
 !!! note "The Tesla T4 detection rows use another TensorRT version"
 
-    The Tesla T4 detection rows were re-measured on TensorRT 10.16.1.11, with the detection models' patch embedding in INT8 (see the [placement rules](#placement-rules)). Every other row, including the RTX 5070 detection rows, was measured on TensorRT 11.4.0.106. The segmentation and keypoint rows are unchanged on both GPUs. A difference between the Tesla T4 detection rows and the other Tesla T4 rows is not an effect of the patch embedding alone: the TensorRT version differs too.
+    The Tesla T4 detection rows were re-measured on TensorRT 10.16.1.11, with the detection models' patch embedding in INT8 (see the [placement rules](#placement-rules)). Every other row, including the RTX 5070 detection rows and the Tesla T4 segmentation and keypoint rows, was measured on TensorRT 11.4.0.106. A difference between the Tesla T4 detection rows and the other Tesla T4 rows is not an effect of the patch embedding alone: the TensorRT version differs too.
 
-**Summary.** INT8 is faster than FP16 in every row on both GPUs and loses less than 1 AP point on each model's own task. On the Tesla T4 the engines of the segmentation and keypoint models are larger than the FP16 ones at batch 4 and 8.
+!!! note "The RTX 5070 segmentation and keypoint INT8 rows, and the ratios built on them, predate the patch-embedding matrix multiply"
+
+    The segmentation and keypoint INT8 engine now runs the patch embedding as a matrix multiply that stays FP16 (see the [placement rules](#placement-rules)); the FP16 export is unchanged, and the Tesla T4 FP16 rows were re-measured in a later Colab session than the earlier ones. The Tesla T4 segmentation and keypoint rows below were measured with the matrix multiply. Every RTX 5070 segmentation and keypoint INT8 size, latency and accuracy below, and every ratio built on them (the speedups, `INT8 ÷ FP16` and the AP change), was measured before that and was not re-measured; [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables) regenerates them.
+
+**Summary.** INT8 is faster than FP16 in every row on both GPUs and loses less than 1 AP point on each model's own task. The INT8 engine is smaller than the FP16 one in every row on both GPUs.
 
 |                                 | RTX 5070              | Tesla T4              |
 | ------------------------------- | --------------------- | --------------------- |
-| Speedup, plain call             | 1.06× to 1.42×        | 1.02× to 1.30×        |
-| Speedup, CUDA graph             | 1.06× to 1.43×        | 1.05× to 1.31×        |
-| AP change at batch 1            | −0.47 to −0.91 points | −0.37 to −0.98 points |
+| Speedup, plain call             | 1.06× to 1.42×        | 1.04× to 1.30×        |
+| Speedup, CUDA graph             | 1.06× to 1.43×        | 1.08× to 1.31×        |
+| AP change at batch 1            | −0.47 to −0.91 points | −0.35 to −0.97 points |
 | AP change, share of the FP16 AP | 0.9% to 2.0%          | 0.8% to 2.2%          |
-| Engine size, INT8 ÷ FP16        | 0.53× to 0.79×        | 0.64× to 2.19×        |
+| Engine size, INT8 ÷ FP16        | 0.53× to 0.79×        | 0.52× to 0.75×        |
 
 #### How it was measured
 
@@ -80,11 +84,11 @@ The benchmark of [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/
 - **Latency:** GPU time per image (CUDA events), the median of 15 rounds of 200 executions, FP16 and INT8 interleaved. A *plain call* is 200 back-to-back `execute_async_v3` calls with no synchronization in between. A *CUDA graph* replays one captured call 200 times.
 - **Reproduce it:** [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables) runs these exact steps on your GPU. It is written for Colab, takes hours for all nine models, and prints the GPU and the TensorRT version next to its table, because the numbers depend on them. The tables above used TensorRT 11.4.0.106, except the Tesla T4 detection rows (10.16.1.11), so compare the version it prints before you compare numbers.
 
-The RTX 5070 differences are computed from the unrounded values, and the Tesla T4 ones from the values its notebook printed (engine sizes in whole MB), so recomputing them from the rounded cells can differ in the last digit.
+The RTX 5070 differences and the Tesla T4 segmentation and keypoint ones are computed from the unrounded values, and the Tesla T4 detection ones from the values its notebook printed (engine sizes in whole MB), so recomputing them from the rounded cells can differ in the last digit.
 
 #### At a glance
 
-Batch 1, all 5000 `val2017` images. Δ is INT8 minus FP16 in COCO AP points. Speedup is the FP16 latency divided by the INT8 latency, for a plain call. Each task has its own table, because each is scored on a different AP. The Tesla T4 tables have no box AP for the segmentation and keypoint models: that run kept only the AP of each model's own task.
+Batch 1, all 5000 `val2017` images. Δ is INT8 minus FP16 in COCO AP points. Speedup is the FP16 latency divided by the INT8 latency, for a plain call. Each task has its own table, because each is scored on a different AP.
 
 === "RTX 5070"
 
@@ -125,18 +129,18 @@ Batch 1, all 5000 `val2017` images. Δ is INT8 minus FP16 in COCO AP points. Spe
 
     **Segmentation (mask AP)**
 
-    | Model      | Mask AP, FP16 | Mask AP, INT8 | Δ     | Speedup |
-    | ---------- | ------------- | ------------- | ----- | ------- |
-    | Seg Nano   | 40.10         | 39.52         | −0.58 | 1.02×   |
-    | Seg Small  | 42.97         | 42.19         | −0.78 | 1.09×   |
-    | Seg Medium | 44.93         | 43.95         | −0.98 | 1.05×   |
-    | Seg Large  | 46.41         | 46.04         | −0.37 | 1.11×   |
+    | Model      | Mask AP, FP16 | Mask AP, INT8 | Δ     | Box AP, FP16 | Box AP, INT8 | Δ box | Speedup |
+    | ---------- | ------------- | ------------- | ----- | ------------ | ------------ | ----- | ------- |
+    | Seg Nano   | 40.07         | 39.50         | −0.58 | 48.39        | 47.59        | −0.80 | 1.04×   |
+    | Seg Small  | 42.89         | 42.22         | −0.67 | 50.97        | 50.07        | −0.90 | 1.11×   |
+    | Seg Medium | 45.00         | 44.03         | −0.97 | 53.48        | 52.26        | −1.23 | 1.08×   |
+    | Seg Large  | 46.38         | 46.03         | −0.35 | 54.93        | 54.15        | −0.78 | 1.11×   |
 
     **Keypoints (keypoint AP)**
 
-    | Model            | Keypoint AP, FP16 | Keypoint AP, INT8 | Δ     | Speedup |
-    | ---------------- | ----------------- | ----------------- | ----- | ------- |
-    | Keypoint Preview | 71.75             | 71.09             | −0.66 | 1.12×   |
+    | Model            | Keypoint AP, FP16 | Keypoint AP, INT8 | Δ     | Box AP, FP16 | Box AP, INT8 | Δ box | Speedup |
+    | ---------------- | ----------------- | ----------------- | ----- | ------------ | ------------ | ----- | ------- |
+    | Keypoint Preview | 71.72             | 71.11             | −0.61 | 51.51        | 50.95        | −0.56 | 1.11×   |
 
 #### Latency per image
 
@@ -253,26 +257,26 @@ Latency is per image: the time of one call divided by its batch. Speedup is the 
 
     | Model      | Batch | FP16      | INT8      | Speedup |
     | ---------- | ----- | --------- | --------- | ------- |
-    | Seg Nano   | 1     | 5.205 ms  | 5.097 ms  | 1.02×   |
-    | Seg Nano   | 4     | 4.661 ms  | 4.313 ms  | 1.08×   |
-    | Seg Nano   | 8     | 5.049 ms  | 4.461 ms  | 1.13×   |
-    | Seg Small  | 1     | 6.921 ms  | 6.374 ms  | 1.09×   |
-    | Seg Small  | 4     | 6.900 ms  | 5.648 ms  | 1.22×   |
-    | Seg Small  | 8     | 7.202 ms  | 5.955 ms  | 1.21×   |
-    | Seg Medium | 1     | 9.532 ms  | 9.035 ms  | 1.05×   |
-    | Seg Medium | 4     | 9.636 ms  | 8.174 ms  | 1.18×   |
-    | Seg Medium | 8     | 10.113 ms | 8.795 ms  | 1.15×   |
-    | Seg Large  | 1     | 14.112 ms | 12.707 ms | 1.11×   |
-    | Seg Large  | 4     | 14.274 ms | 12.678 ms | 1.13×   |
-    | Seg Large  | 8     | 14.306 ms | 13.131 ms | 1.09×   |
+    | Seg Nano   | 1     | 5.290 ms  | 5.091 ms  | 1.04×   |
+    | Seg Nano   | 4     | 5.029 ms  | 4.440 ms  | 1.13×   |
+    | Seg Nano   | 8     | 5.233 ms  | 4.842 ms  | 1.08×   |
+    | Seg Small  | 1     | 7.150 ms  | 6.442 ms  | 1.11×   |
+    | Seg Small  | 4     | 7.568 ms  | 5.885 ms  | 1.29×   |
+    | Seg Small  | 8     | 7.593 ms  | 6.411 ms  | 1.18×   |
+    | Seg Medium | 1     | 9.883 ms  | 9.190 ms  | 1.08×   |
+    | Seg Medium | 4     | 10.104 ms | 8.733 ms  | 1.16×   |
+    | Seg Medium | 8     | 10.949 ms | 9.582 ms  | 1.14×   |
+    | Seg Large  | 1     | 14.360 ms | 12.981 ms | 1.11×   |
+    | Seg Large  | 4     | 15.147 ms | 13.659 ms | 1.11×   |
+    | Seg Large  | 8     | 15.437 ms | 14.171 ms | 1.09×   |
 
     **Keypoints**
 
     | Model            | Batch | FP16      | INT8      | Speedup |
     | ---------------- | ----- | --------- | --------- | ------- |
-    | Keypoint Preview | 1     | 15.345 ms | 13.708 ms | 1.12×   |
-    | Keypoint Preview | 4     | 16.083 ms | 14.101 ms | 1.14×   |
-    | Keypoint Preview | 8     | 16.737 ms | 14.599 ms | 1.15×   |
+    | Keypoint Preview | 1     | 15.637 ms | 14.112 ms | 1.11×   |
+    | Keypoint Preview | 4     | 17.333 ms | 15.178 ms | 1.14×   |
+    | Keypoint Preview | 8     | 18.077 ms | 16.013 ms | 1.13×   |
 
 === "Tesla T4, CUDA graph"
 
@@ -297,34 +301,32 @@ Latency is per image: the time of one call divided by its batch. Speedup is the 
 
     | Model      | Batch | FP16      | INT8      | Speedup |
     | ---------- | ----- | --------- | --------- | ------- |
-    | Seg Nano   | 1     | 5.239 ms  | 4.987 ms  | 1.05×   |
-    | Seg Nano   | 4     | 4.598 ms  | 4.228 ms  | 1.09×   |
-    | Seg Nano   | 8     | 5.006 ms  | 4.453 ms  | 1.12×   |
-    | Seg Small  | 1     | 6.965 ms  | 6.416 ms  | 1.09×   |
-    | Seg Small  | 4     | 6.914 ms  | 5.563 ms  | 1.24×   |
-    | Seg Small  | 8     | 7.223 ms  | 5.962 ms  | 1.21×   |
-    | Seg Medium | 1     | 9.592 ms  | 8.889 ms  | 1.08×   |
-    | Seg Medium | 4     | 9.601 ms  | 8.083 ms  | 1.19×   |
-    | Seg Medium | 8     | 10.112 ms | 8.822 ms  | 1.15×   |
-    | Seg Large  | 1     | 14.050 ms | 12.703 ms | 1.11×   |
-    | Seg Large  | 4     | 14.262 ms | 12.644 ms | 1.13×   |
-    | Seg Large  | 8     | 14.300 ms | 13.143 ms | 1.09×   |
+    | Seg Nano   | 1     | 5.642 ms  | 5.244 ms  | 1.08×   |
+    | Seg Nano   | 4     | 5.018 ms  | 4.391 ms  | 1.14×   |
+    | Seg Nano   | 8     | 5.219 ms  | 4.833 ms  | 1.08×   |
+    | Seg Small  | 1     | 7.186 ms  | 6.508 ms  | 1.10×   |
+    | Seg Small  | 4     | 7.567 ms  | 5.816 ms  | 1.30×   |
+    | Seg Small  | 8     | 7.596 ms  | 6.396 ms  | 1.19×   |
+    | Seg Medium | 1     | 9.885 ms  | 9.044 ms  | 1.09×   |
+    | Seg Medium | 4     | 10.092 ms | 8.688 ms  | 1.16×   |
+    | Seg Medium | 8     | 10.949 ms | 9.589 ms  | 1.14×   |
+    | Seg Large  | 1     | 14.309 ms | 12.982 ms | 1.10×   |
+    | Seg Large  | 4     | 15.147 ms | 13.611 ms | 1.11×   |
+    | Seg Large  | 8     | 15.399 ms | 14.170 ms | 1.09×   |
 
     **Keypoints**
 
     | Model            | Batch | FP16      | INT8      | Speedup |
     | ---------------- | ----- | --------- | --------- | ------- |
-    | Keypoint Preview | 1     | 15.050 ms | 13.492 ms | 1.12×   |
-    | Keypoint Preview | 4     | 16.066 ms | 14.098 ms | 1.14×   |
-    | Keypoint Preview | 8     | 16.733 ms | 14.594 ms | 1.15×   |
+    | Keypoint Preview | 1     | 15.303 ms | 13.921 ms | 1.10×   |
+    | Keypoint Preview | 4     | 17.325 ms | 15.177 ms | 1.14×   |
+    | Keypoint Preview | 8     | 18.104 ms | 16.013 ms | 1.13×   |
 
-On the RTX 5070, the models whose backbone attention runs in INT8 (detection Nano, Small and Medium, Seg Small and Seg Medium; see the placement rules below) gain 1.18× to 1.40× at batch 1 with a CUDA graph. The ones that keep it in FP16 (detection Large, Seg Nano, Seg Large and Keypoint Preview) gain 1.06× to 1.16×. For detection the gain at batch 8 is 0.03× to 0.07× above the gain at batch 1 (Nano dips at batch 4 and Medium peaks there); for Seg Nano it grows by 0.11×; for Seg Small, Seg Medium, Seg Large and Keypoint Preview it changes by at most 0.03× between batch 1, 4 and 8. On the Tesla T4 that split does not hold: with a CUDA graph at batch 1, Seg Small (1.09×) and Seg Medium (1.08×), which run INT8 attention, gain no more than Seg Large (1.11×) and Keypoint Preview (1.12×), which keep it in FP16. The cause was not measured. On both GPUs the plain call and the CUDA graph give almost the same speedup: they differ by at most 0.05× on the RTX 5070 and on the Tesla T4.
+On the RTX 5070, the models whose backbone attention runs in INT8 (detection Nano, Small and Medium, Seg Small and Seg Medium; see the placement rules below) gain 1.18× to 1.40× at batch 1 with a CUDA graph. The ones that keep it in FP16 (detection Large, Seg Nano, Seg Large and Keypoint Preview) gain 1.06× to 1.16×. For detection the gain at batch 8 is 0.03× to 0.07× above the gain at batch 1 (Nano dips at batch 4 and Medium peaks there); for Seg Nano it grows by 0.11×; for Seg Small, Seg Medium, Seg Large and Keypoint Preview it changes by at most 0.03× between batch 1, 4 and 8. On the Tesla T4 that split does not hold: with a CUDA graph at batch 1, Seg Small (1.10×) and Seg Medium (1.09×), which run INT8 attention, gain about the same as Seg Large (1.10×) and Keypoint Preview (1.10×), which keep it in FP16. The cause was not measured. On both GPUs the plain call and the CUDA graph give almost the same speedup: they differ by at most 0.05× on the RTX 5070 and on the Tesla T4.
 
 #### Engine size
 
-!!! warning "On the Tesla T4 the segmentation and keypoint INT8 engines grow with the batch much faster than the FP16 one"
-
-    On the Tesla T4 the INT8 engine of every segmentation and keypoint model is larger than the FP16 one at batch 4 and 8, 1.42× to 2.19× at batch 8: Seg Large at batch 8 is 193 MB against 94 MB, and Keypoint Preview 248 MB against 113 MB. At batch 1 it is larger for Keypoint Preview (83 MB against 82 MB). Plan the batch you serve when you build, and check the size of each engine before you deploy a large batch. The cause has not been diagnosed. The Tesla T4 detection engines, measured on TensorRT 10.16.1.11, do not grow like this: the INT8 engine is 0.64× to 0.75× of the FP16 one at every batch. In the same session the engines built without the INT8 patch embedding did not grow either (Nano 37.9 MB at batch 1 and at batch 8), so the patch embedding is not shown to be the cause, and the earlier detection rows, which did grow on TensorRT 11.4, were not repeated on 11.4. On the RTX 5070 the INT8 engine is smaller than the FP16 one in every row.
+On the Tesla T4 the segmentation and keypoint INT8 engines no longer grow with the batch. Each stays within 3 MB from batch 1 to batch 8 (Keypoint Preview 60, 59 and 62 MB; Seg Small 44 MB at all three), while the FP16 engine of the same model grows by 7 to 32 MB (Keypoint Preview 81 to 113 MB), so the INT8 engine is 0.52× to 0.74× of the FP16 one. Before the patch embedding became a matrix multiply, the INT8 engines of the same five models on the same GPU and TensorRT version were larger than the FP16 ones at batch 4 and 8, up to 193 MB against 94 MB for Seg Large and 248 MB against 113 MB for Keypoint Preview at batch 8. The growth beyond the FP16 engine's from batch 1 to 8 matched the 3-channel image padded to 32 channels in FP16, `7 × 29 × height × width × 2` bytes, to within 5 MB (arithmetic on the earlier table, not a reading of an engine). The patch embedding was the only change to the export, but the earlier rows came from another Colab session, so the comparison is not a controlled A/B: it makes the patch embedding the likely cause of the growth, not a proven one. The FP16 export is unchanged, yet the FP16 engine sizes differ by up to 3 MB from the earlier table (Seg Nano at batch 1: 69 MB then, 66 MB now), which we attribute to the two sessions. The FP16 engine's growth with the batch was not investigated. The Tesla T4 detection engines, measured on TensorRT 10.16.1.11, are 0.64× to 0.75× of the FP16 one at every batch. On the RTX 5070 the INT8 engine is smaller than the FP16 one in every row.
 
 The size of an engine is not a function of the batch alone. On the RTX 5070 the same model varies by up to 10 MB between batch 1, 4 and 8, and not always in step with the batch, and the size depends on the GPU and the TensorRT version. `INT8 ÷ FP16` is below 1 when the INT8 engine is the smaller one.
 
@@ -362,51 +364,51 @@ The size of an engine is not a function of the batch alone. On the RTX 5070 the 
 
 === "Tesla T4"
 
-    | Model            | Batch | FP16   | INT8   | INT8 ÷ FP16 |
-    | ---------------- | ----- | ------ | ------ | ----------- |
-    | Detection Nano   | 1     | 58 MB  | 37 MB  | 0.64×       |
-    | Detection Nano   | 4     | 57 MB  | 37 MB  | 0.65×       |
-    | Detection Nano   | 8     | 56 MB  | 38 MB  | 0.68×       |
-    | Detection Small  | 1     | 61 MB  | 40 MB  | 0.66×       |
-    | Detection Small  | 4     | 59 MB  | 40 MB  | 0.68×       |
-    | Detection Small  | 8     | 59 MB  | 40 MB  | 0.68×       |
-    | Detection Medium | 1     | 64 MB  | 42 MB  | 0.66×       |
-    | Detection Medium | 4     | 62 MB  | 43 MB  | 0.69×       |
-    | Detection Medium | 8     | 62 MB  | 43 MB  | 0.69×       |
-    | Detection Large  | 1     | 64 MB  | 48 MB  | 0.75×       |
-    | Detection Large  | 4     | 63 MB  | 46 MB  | 0.73×       |
-    | Detection Large  | 8     | 63 MB  | 46 MB  | 0.73×       |
-    | Seg Nano         | 1     | 69 MB  | 56 MB  | 0.81×       |
-    | Seg Nano         | 4     | 70 MB  | 74 MB  | 1.06×       |
-    | Seg Nano         | 8     | 73 MB  | 104 MB | 1.42×       |
-    | Seg Small        | 1     | 67 MB  | 55 MB  | 0.82×       |
-    | Seg Small        | 4     | 71 MB  | 86 MB  | 1.21×       |
-    | Seg Small        | 8     | 79 MB  | 127 MB | 1.61×       |
-    | Seg Medium       | 1     | 71 MB  | 60 MB  | 0.85×       |
-    | Seg Medium       | 4     | 77 MB  | 100 MB | 1.30×       |
-    | Seg Medium       | 8     | 86 MB  | 152 MB | 1.77×       |
-    | Seg Large        | 1     | 73 MB  | 70 MB  | 0.96×       |
-    | Seg Large        | 4     | 82 MB  | 122 MB | 1.49×       |
-    | Seg Large        | 8     | 94 MB  | 193 MB | 2.05×       |
-    | Keypoint Preview | 1     | 82 MB  | 83 MB  | 1.01×       |
-    | Keypoint Preview | 4     | 95 MB  | 152 MB | 1.60×       |
-    | Keypoint Preview | 8     | 113 MB | 248 MB | 2.19×       |
+    | Model            | Batch | FP16   | INT8  | INT8 ÷ FP16 |
+    | ---------------- | ----- | ------ | ----- | ----------- |
+    | Detection Nano   | 1     | 58 MB  | 37 MB | 0.64×       |
+    | Detection Nano   | 4     | 57 MB  | 37 MB | 0.65×       |
+    | Detection Nano   | 8     | 56 MB  | 38 MB | 0.68×       |
+    | Detection Small  | 1     | 61 MB  | 40 MB | 0.66×       |
+    | Detection Small  | 4     | 59 MB  | 40 MB | 0.68×       |
+    | Detection Small  | 8     | 59 MB  | 40 MB | 0.68×       |
+    | Detection Medium | 1     | 64 MB  | 42 MB | 0.66×       |
+    | Detection Medium | 4     | 62 MB  | 43 MB | 0.69×       |
+    | Detection Medium | 8     | 62 MB  | 43 MB | 0.69×       |
+    | Detection Large  | 1     | 64 MB  | 48 MB | 0.75×       |
+    | Detection Large  | 4     | 63 MB  | 46 MB | 0.73×       |
+    | Detection Large  | 8     | 63 MB  | 46 MB | 0.73×       |
+    | Seg Nano         | 1     | 66 MB  | 49 MB | 0.74×       |
+    | Seg Nano         | 4     | 70 MB  | 47 MB | 0.67×       |
+    | Seg Nano         | 8     | 73 MB  | 47 MB | 0.64×       |
+    | Seg Small        | 1     | 67 MB  | 44 MB | 0.65×       |
+    | Seg Small        | 4     | 71 MB  | 44 MB | 0.62×       |
+    | Seg Small        | 8     | 80 MB  | 44 MB | 0.56×       |
+    | Seg Medium       | 1     | 71 MB  | 47 MB | 0.66×       |
+    | Seg Medium       | 4     | 77 MB  | 47 MB | 0.61×       |
+    | Seg Medium       | 8     | 87 MB  | 45 MB | 0.52×       |
+    | Seg Large        | 1     | 72 MB  | 52 MB | 0.72×       |
+    | Seg Large        | 4     | 80 MB  | 50 MB | 0.63×       |
+    | Seg Large        | 8     | 94 MB  | 50 MB | 0.54×       |
+    | Keypoint Preview | 1     | 81 MB  | 60 MB | 0.74×       |
+    | Keypoint Preview | 4     | 95 MB  | 59 MB | 0.63×       |
+    | Keypoint Preview | 8     | 113 MB | 62 MB | 0.55×       |
 
 ### Placement rules
 
 The INT8 placement follows what was measured, not "quantize every matrix multiply":
 
-- **INT8:** the patch embedding of the detection models, every backbone MLP, the windowed backbone blocks' attention with its projections (up to 325 tokens; see below), and the decoder's cross-attention, feed-forward and reference-point layers. Every layer left unquantized stays FP16.
-- **FP16:** the projector, the two-stage proposal head and the detection heads (quantizing them cost accuracy and bought nothing), the mask and keypoint heads (not measured), plus the attention blocks below.
-- **The patch embedding runs in INT8 as a matrix multiply, for the detection models.** TensorRT cannot run the 3-channel patch convolution in INT8 without padding its input to 32 channels and storing the added zero channels in the engine as a constant that grows with the batch, which made the engine larger and the INT8 speedup smaller. So every convolution whose input channels are not a multiple of 32 stays FP16, and the export rewrites the 16-pixel patch embedding of the Nano to Large detection models as a matrix multiply over the 768 values of each patch, which has nothing to pad. It is quantized like the other backbone layers. The segmentation and keypoint models cut 12-pixel patches of 432 values, which is not a multiple of 32, so their patch embedding stays an FP16 convolution, as does any convolution that is not a non-overlapping patch embedding.
-- **Attention is all INT8 or all FP16.** A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, which TensorRT fuses into one INT8 attention kernel: the windowed backbone blocks of detection Nano (145 tokens), Small (257) and Medium (325), and of Seg Small (257) and Seg Medium (325). 325 tokens is the largest window where INT8 attention was measured to pay; on Large's 485-token windows it was no faster and less accurate, so Large keeps them FP16. Windows of 326 to 484 tokens are not measured and stay FP16. The global blocks (580 tokens on Nano) and the decoder self-attention keep projections and attention in FP16 too. A windowed block has `(resolution / patch_size / num_windows)² + 1` tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.
+- **INT8:** the patch embedding of the detection models with 16-pixel patches (Nano to Large), every backbone MLP, the windowed backbone blocks' attention with its projections (up to 325 tokens; see below), and the decoder's cross-attention, feed-forward and reference-point layers. Every layer left unquantized stays FP16.
+- **FP16:** the projector, the two-stage proposal head and the detection heads (quantizing them cost accuracy and bought nothing), the mask head (quantized as a whole it made the engine slower on Seg Nano, Seg Small and Seg Large, and its matrix multiplies alone were no faster) and the keypoint heads (not measured), plus the attention blocks below. Quantizing the projector was no faster on Seg Nano, Seg Small, Seg Large or Keypoint Preview either.
+- **The patch embedding is a matrix multiply; the detection models run it in INT8.** TensorRT cannot run the 3-channel patch convolution in INT8 without padding its input to 32 channels and storing the added zero channels in the engine as a constant that grows with the batch, which made the engine larger and the INT8 speedup smaller (an FP16 convolution can be padded too: the Tesla T4 segmentation and keypoint INT8 engines, whose patch embedding was an FP16 convolution, grew with the batch by about the image padded to 32 channels, inferred from the engine sizes, not read from an engine; with the matrix multiply they no longer grow, see [Engine size](#engine-size)). So every convolution whose input channels are not a multiple of 32 stays FP16, and the export rewrites the patch embedding as a matrix multiply, which has nothing to pad. The Nano to Large detection models cut 16-pixel patches of 768 values, a multiple of 32, and the matrix multiply is quantized like the other backbone layers. The segmentation and keypoint models cut 12-pixel patches of 432 values, which is not a multiple of 32: their matrix multiply stays FP16, because as INT8 it ran no faster than the FP16 one and lowered the accuracy on Seg Small and Keypoint Preview. Any convolution that is not a non-overlapping patch embedding stays an FP16 convolution.
+- **Attention is all INT8 or all FP16.** A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, which TensorRT fuses into one INT8 attention kernel: the windowed backbone blocks of detection Nano (145 tokens), Small (257) and Medium (325), and of Seg Small (257) and Seg Medium (325). 325 tokens is the largest window where INT8 attention was measured to pay; on Large's 485-token windows it was no faster and less accurate, so Large keeps them FP16. On Seg Large's 442-token windows it was a little faster and smaller but cost more accuracy than that is worth, so they stay FP16; on Keypoint Preview's 577 and Seg Nano's 677 tokens, above the fused kernel's 512, it was much slower. Other windows of 326 to 484 tokens are not measured and stay FP16. The global blocks (580 tokens on Nano) and the decoder self-attention keep projections and attention in FP16 too. A windowed block has `(resolution / patch_size / num_windows)² + 1` tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.
 
 ### Requirements and limits
 
-- Detection, segmentation and keypoint models. The mask head and the keypoint embedding stay FP16 (quantizing them was not measured), and so does the keypoint decoder's self-attention between each detection and its keypoints (`kp_inst_self_attn`); the keypoint decoder's cross-attention and feed-forward layers run in INT8.
+- Detection, segmentation and keypoint models. The mask head and the keypoint embedding stay FP16 (the mask head was measured: quantized as a whole it made the engine slower, and its matrix multiplies alone were no faster; the keypoint embedding was not measured), and so does the keypoint decoder's self-attention between each detection and its keypoints (`kp_inst_self_attn`); the keypoint decoder's cross-attention and feed-forward layers run in INT8.
 - The attention rule above applies unchanged. Only `RFDETRSegSmall` (257 tokens per window) and `RFDETRSegMedium` (325) run INT8 attention, in the 9 windowed blocks of their 12 backbone blocks (the other 3 attend globally). `RFDETRSegNano` (one 677-token window per block), `RFDETRSegLarge` (442) and `RFDETRKeypointPreview` (577) keep all attention in FP16, so only their backbone MLPs and the decoder's cross-attention, feed-forward and reference-point layers run in INT8.
 - `RFDETRSegXLarge` and `RFDETRSeg2XLarge` (`rfdetr_plus`) are accepted but were not measured. `backbone_only=True` is refused with `ValueError`.
-- A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. Every table above was measured on TensorRT 11.4 except the Tesla T4 detection rows, which were measured on 10.16.1.11. The detection placement without the patch-embedding matrix multiply was also measured on 10.16 and 11.3; the matrix multiply itself on 11.4 (RTX 5070) and on 10.16 (Tesla T4); the segmentation and keypoint models only on 11.4; the other releases from 10 on are accepted but untested. The batch is fixed when you build the engine.
+- A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. Every table above was measured on TensorRT 11.4 except the Tesla T4 detection rows, which were measured on 10.16.1.11. The detection placement without the patch-embedding matrix multiply was also measured on 10.16 and 11.3; the matrix multiply itself on 11.4 (RTX 5070) and on 10.16 (Tesla T4); the segmentation and keypoint matrix multiply, which stays FP16, on 11.4 on the Tesla T4 for all five models (the tables above) and, as a separate check of whether it should run in INT8, on the RTX 5070 for Seg Nano, Seg Small and Keypoint Preview (whose RTX 5070 rows predate it). Other patch sizes whose flattened patch is not a multiple of 32 values, such as 14 pixels (588 values), take the same FP16 matrix multiply and were not measured either. The segmentation and keypoint models were measured only on 11.4; the other releases from 10 on are accepted but untested. The batch is fixed when you build the engine.
 - Only an RTX 5070 (sm_120) and a Tesla T4 (sm_75) were measured, and only without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`. These settings are accepted with `quantization="int8"`, but engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the speedup relies on.
 - INT8 attention relies on TensorRT's fused INT8 attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121. On other GPUs (for example sm_100, B200) it would run unfused, so measure on your GPU before deploying.
 

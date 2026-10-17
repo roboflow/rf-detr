@@ -10,7 +10,9 @@ carries its own ``QuantizeLinear``/``DequantizeLinear`` pairs. Where those pairs
 faster than FP16 at all, so the placement here is not "quantize every matrix multiply". It follows what was measured
 on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), for the attention token limit on Small to Large (TensorRT
 11.3), for the segmentation and keypoint models on an RTX 5070 with TensorRT 11.4, and for the patch-embedding matrix
-multiply on Nano to Large with TensorRT 11.4 only; issue #1024:
+multiply on Nano to Large, Seg Nano, Seg Small and Keypoint Preview with TensorRT 11.4 (Nano to Large also 10.16 on a
+Tesla T4). The FP16 matrix multiply of the segmentation and keypoint models' patch embedding was also built on a
+Tesla T4 with TensorRT 11.4, for Seg Nano to Seg Large and Keypoint Preview; issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -19,26 +21,31 @@ multiply on Nano to Large with TensorRT 11.4 only; issue #1024:
   multiplies of a block whose attention runs in INT8, below). The output of
   each quantized operation stays in floating point, so TensorRT fuses the bias, LayerScale and residual add into the
   INT8 kernel's epilogue and the quantize step into the preceding LayerNorm or GELU. The projector, the two-stage
-  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing. The mask and
-  keypoint heads sit outside the quantized regions and stay FP16 too; quantizing them was not measured.
-* **No convolution whose input channels TensorRT would pad.** TensorRT ran the INT8 patch embedding on the 3-channel
-  image padded to 32 channels and stored the 29 added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant,
-  read on every run: at batch 8 the engine was about twice as large and INT8 clearly less far ahead of FP16. Only that
-  convolution was measured; any convolution whose input channels are not a multiple of 32 is kept FP16 as a
-  precaution. (The FP16 convolution pads too, to 4 or 8 channels picked per build, so an engine whose patch embedding
-  stays a convolution still stores 1 or 5 zero channels per image.) The 16-pixel patch embedding of the detection
-  models is rewritten instead: :func:`_patch_embedding_as_matmul` turns it into a matrix multiply over ``3 * 16 * 16``
-  values per patch, which has no channels to pad and takes INT8 with the rest of the backbone. The 12-pixel patches of
-  the segmentation and keypoint models are 432 values, not a multiple of 32, and stay a convolution.
+  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing (on Seg Nano,
+  Seg Small, Seg Large and Keypoint Preview the projector was no faster in INT8 either). The mask head stays FP16
+  too: quantized as a whole (Seg Nano, Seg Small, Seg Large) it made the engine slower, and its matrix multiplies alone
+  were no faster. The keypoint heads sit outside the quantized regions and stay FP16; quantizing them was not measured.
+* **The patch embedding is a matrix multiply, quantized only when its patch is a multiple of 32 values.** TensorRT ran
+  the INT8 patch embedding, a ``Conv`` over the 3-channel image, on the image padded to 32 channels and stored the 29
+  added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant, read on every run: at batch 8 the engine was
+  about twice as large and INT8 clearly less far ahead of FP16. Only that convolution was measured; any convolution
+  whose input channels are not a multiple of 32 is kept FP16 as a precaution. An FP16 convolution can pad too: the Tesla
+  T4 segmentation and keypoint INT8 engines, whose patch embedding was an FP16 convolution, grew with the batch by about
+  the image padded to 32 channels (inferred from the engine sizes, not read from an engine).
+  :func:`_patch_embedding_as_matmul` therefore turns every patch embedding into a matrix multiply over ``3 * 16 * 16``
+  values per patch (``3 * 12 * 12`` for the segmentation and keypoint models), which has no channels to pad. The
+  detection models' 768 values take INT8 with the rest of the backbone. The 432 values of the 12-pixel patches are not
+  a multiple of 32: on Seg Small and Keypoint Preview their INT8 matrix multiply ran no faster than the FP16 one
+  and lowered the AP, so it stays FP16.
 * **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
-  that was measured to run faster for it (head size 16, 32 or 64 and at most 325 tokens: the windowed backbone blocks
-  of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both batched matrix
-  multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other block (the
-  windowed blocks of detection Large, Seg Nano, Seg Large and Keypoint Preview, the global backbone blocks, the decoder
-  self-attention and the keypoint decoder's ``kp_inst_self_attn``) keeps its projections and batched multiplies in
-  FP16: quantizing only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the
-  fused FP16 kernel, and a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output
-  into that kernel, which returns wrong values.
+  that was measured to pay for it (faster at a small cost in AP; head size 16, 32 or 64 and at most 325 tokens: the
+  windowed backbone blocks of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both
+  batched matrix multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other
+  block (the windowed blocks of detection Large, Seg Nano, Seg Large and Keypoint Preview, the global backbone blocks,
+  the decoder self-attention and the keypoint decoder's ``kp_inst_self_attn``) keeps its projections and batched
+  multiplies in FP16: quantizing only the projections makes TensorRT emit FP32 projections plus reshape kernels in
+  front of the fused FP16 kernel, and a quantized output projection behind FP16 attention makes TensorRT 11 fuse an
+  INT8 output into that kernel, which returns wrong values.
 * **A GELU never feeds an FP16 consumer from an INT8 multiply.** TensorRT 10.16 and 11.3 return NaN for an INT8
   ``MatMul`` -> bias -> GELU -> FP16 consumer chain, so an MLP's first projection is quantized only when its second one
   is.
@@ -130,8 +137,10 @@ _FUSED_INT8_HEAD_SIZES = frozenset({16, 32, 64})
 
 #: Longest query/key sequence that gets INT8 attention. TensorRT's INT8 fused-attention kernel accepts up to 512; this
 #: is the largest window measured to pay (Medium: a little faster from a CUDA graph, about equal with a plain call, at a
-#: small cost in AP). Large's 485-token windows ran no faster than with FP16 attention and lost more AP; 326-484 is not
-#: measured (RTX 5070, TensorRT 11.3, COCO val2017).
+#: small cost in AP). Large's 485-token windows ran no faster than with FP16 attention and lost more AP. Seg Large's
+#: 442-token windows ran a little faster and lost more AP than the speedup justifies; Keypoint Preview's 577 and Seg
+#: Nano's 677 tokens are above the kernel's 512 and ran much slower. Other lengths from 326 to 484 are not measured (RTX
+#: 5070, TensorRT 11.3 and 11.4, COCO val2017).
 _INT8_ATTENTION_MAX_TOKENS = 325
 
 #: Node-name prefixes of the regions whose weight-bearing operations are quantized: backbone encoder and decoder. They
@@ -156,8 +165,8 @@ _PROJECTION_PASSTHROUGH = frozenset(
 _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
 
 #: TensorRT padded the INT8 patch embedding's input channels to a multiple of this and stored the padding in the engine.
-#: A patch embedding is also rewritten as a matrix multiply only when its flattened patch is a multiple of this, a
-#: precaution that Seg Small's 432-value patches back: as a matrix multiply they ran about 1% faster, with a lower AP.
+#: A patch embedding is quantized as a matrix multiply only when its flattened patch is a multiple of this; one that is
+#: not (the segmentation and keypoint models' 432 values) is a matrix multiply that stays FP16.
 _INT8_CONV_CHANNEL_MULTIPLE = 32
 
 #: Ops that make a path a GELU.
@@ -314,10 +323,9 @@ class _PatchEmbedding(NamedTuple):
 def _patch_kernel(node: Any, initializers: Mapping[str, Any]) -> tuple[int, int, int] | None:
     """Return ``(patch, channels, out_channels)`` when *node*'s kernel cuts non-overlapping patches, else ``None``.
 
-    A patch embedding is an undilated ``Conv`` whose square kernel equals its stride and which has no padding. The
-    flattened patch of ``channels * patch * patch`` values must also be a multiple of
-    :data:`_INT8_CONV_CHANNEL_MULTIPLE`, so that its matrix multiply needs no padding either. Whether the kernel spans
-    every input channel (it does not in a grouped convolution) is for :func:`_patch_image`, which sees the image.
+    A patch embedding is an undilated ``Conv`` whose square kernel equals its stride and which has no padding. Whether
+    the kernel spans every input channel (it does not in a grouped convolution) is for :func:`_patch_image`, which sees
+    the image.
 
     Examples:
         >>> from onnx import helper, numpy_helper
@@ -340,7 +348,7 @@ def _patch_kernel(node: Any, initializers: Mapping[str, Any]) -> tuple[int, int,
         and not any(attributes.get("pads", [0]))
         and attributes.get("auto_pad", b"NOTSET") in (b"NOTSET", "NOTSET")
     )
-    if not plain or (channels * patch * patch) % _INT8_CONV_CHANNEL_MULTIPLE:
+    if not plain:
         return None
     return patch, channels, out_channels
 
@@ -460,31 +468,40 @@ def _drop_unread_initializers(graph: Any, names: Iterable[str]) -> None:
         graph.initializer.remove(initializer)
 
 
-def _patch_embedding_as_matmul(model: Any) -> int:
+def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
     """Rewrite the backbone's patch-embedding ``Conv`` as a ``MatMul`` over flattened patches, in place.
 
-    TensorRT pads a convolution's 3 input channels, and stores the padding in the engine (see
-    :func:`_pads_input_channels`), so the patch embedding is the one backbone layer that has to stay FP16 as a ``Conv``.
-    As a matrix multiply over ``channels * patch * patch`` values per patch (768 for an RGB image and 16-pixel patches)
-    it has nothing to pad and runs in INT8 like the other backbone layers. The two compute the same sum.
+    TensorRT pads a convolution's 3 input channels (to 32 for an INT8 convolution; an FP16 one may pad too, inferred
+    from Tesla T4 engine sizes) and stores the padding in the engine as a constant that grows with the batch (see
+    :func:`_pads_input_channels`). As a matrix multiply over ``channels * patch * patch`` values per patch (768 for an
+    RGB image and 16-pixel patches, 432 for 12-pixel ones) it has no channels to pad, and an INT8 build can quantize it
+    like the other backbone layers. The two compute the same sum.
 
-    Only a ``Conv`` inside the backbone encoder that :func:`_pads_input_channels` would keep FP16 and that
-    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten: RF-DETR's detection models (16-pixel patches),
-    not its segmentation and keypoint models (12-pixel patches, 432 values per patch). The shape inference that finds
-    the image size runs only when such a ``Conv`` exists. A kernel that is also a graph input is left alone, since it
-    can be replaced at run time. The kernel of a replaced ``Conv`` is dropped when nothing else reads it (one reached
-    through an ``Identity`` alias is kept). The rewrite is deterministic for a given name, so applying it to the FP32
-    graph that is planned and calibrated and to the FP16 graph that is quantized yields the same ``MatMul`` name.
+    Only a ``Conv`` inside the backbone encoder that :func:`_pads_input_channels` would flag and that
+    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten, unless its ``<parent>/MatMul`` name is already
+    taken, in which case it is left as it is. The shape inference that finds the image size
+    runs only when such a ``Conv`` exists. A kernel that is also a graph input is left alone, since it can be replaced
+    at run time. The kernel of a replaced ``Conv`` is dropped when nothing else reads it (one reached through an
+    ``Identity`` alias is kept). The rewrite is deterministic for a given name, so applying it to the FP32 graph that is
+    planned and calibrated and to the FP16 graph that is quantized yields the same ``MatMul`` name.
 
     Args:
         model: ``ModelProto`` to rewrite; left untouched when it holds no such layer.
+        multiple_of: At least 1. Rewrite only a patch whose flattened ``channels * patch * patch`` values are a
+            multiple of this. The INT8 plan passes :data:`_INT8_CONV_CHANNEL_MULTIPLE`, so that the patches it quantizes
+            are the ones an INT8 matrix multiply needs no padding for; the default rewrites every patch embedding.
 
     Returns:
         The number of layers rewritten.
+
+    Raises:
+        ValueError: If *multiple_of* is below 1.
     """
     import onnx
     from onnx import numpy_helper
 
+    if multiple_of < 1:
+        raise ValueError(f"multiple_of must be at least 1, got {multiple_of}.")
     graph = model.graph
     initializers = _constant_weights(graph)
     counts = Counter(node.name for node in graph.node)
@@ -499,6 +516,7 @@ def _patch_embedding_as_matmul(model: Any) -> int:
         and _weight_name(node, initializers)
         and _pads_input_channels(node, initializers)
         and (kernel := _patch_kernel(node, initializers))
+        and (kernel[1] * kernel[0] ** 2) % multiple_of == 0
     ]
     if not candidates:
         return 0
@@ -1315,8 +1333,10 @@ def int8_source_graph(
     _refuse_unquantizable_source(source, onnx_path)
     # Lifting the FP32 source too keeps its meaning and makes an unliftable graph fail here, before calibration.
     _lift_opset(source)
-    # Before the plan, so that the patch embedding is planned and calibrated as the matrix multiply it becomes.
-    rewritten = _patch_embedding_as_matmul(source)
+    # Before the plan, so that a patch embedding INT8 can quantize is planned and calibrated as the matrix multiply it
+    # becomes. One whose flattened patch is not a multiple of 32 values stays a convolution here, so it is not
+    # quantized.
+    _patch_embedding_as_matmul(source, multiple_of=_INT8_CONV_CHANNEL_MULTIPLE)
     plan = plan_int8(source)
     # A NaN or infinite weight gets a NaN or infinite FP16 scale that only TensorRT would notice, after calibration.
     weights = _constant_weights(source.graph)
@@ -1354,13 +1374,17 @@ def int8_source_graph(
     with fp16_graph(onnx_path, dynamic_batch=dynamic_batch) as fp16_path:
         model = onnx.load(fp16_path)
     _lift_opset(model)  # as the FP32 source was, before the rewrite adds its nodes
-    if rewritten:
-        _patch_embedding_as_matmul(model)  # the same rewrite, so that the planned node names exist in this graph
+    # Every patch embedding becomes a matrix multiply here: the planned ones need the node names the plan holds, and
+    # none whose MatMul name is free is left as a 3-channel convolution for TensorRT to pad. The planned ones go first,
+    # as in the FP32 source, so that a patch the plan skipped cannot take a planned name when two patches share a
+    # parent; the one that loses the name stays a convolution. A patch the plan skipped stays FP16.
+    _patch_embedding_as_matmul(model, multiple_of=_INT8_CONV_CHANNEL_MULTIPLE)
+    _patch_embedding_as_matmul(model)
     missing = sorted({name for name, _ in plan.activations} - {node.name for node in model.graph.node})
     if missing:
         raise ValueError(
             f"The FP16 copy of '{onnx_path}' lacks {len(missing)} node(s) the INT8 plan quantizes, e.g. {missing[0]!r} "
-            "(the patch embedding is rewritten in both graphs), so the plan cannot be applied to it."
+            "(a planned patch embedding is rewritten in both graphs), so the plan cannot be applied to it."
         )
     insert_qdq(model, plan, ranges)
     stem = os.path.basename(os.path.splitext(onnx_path)[0])
