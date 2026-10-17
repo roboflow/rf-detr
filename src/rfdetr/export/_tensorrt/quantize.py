@@ -11,7 +11,8 @@ faster than FP16 at all, so the placement here is not "quantize every matrix mul
 on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), for the attention token limit on Small to Large (TensorRT
 11.3), for the segmentation and keypoint models on an RTX 5070 with TensorRT 11.4, and for the patch-embedding matrix
 multiply on Nano to Large, Seg Nano, Seg Small and Keypoint Preview with TensorRT 11.4 (Nano to Large also 10.16 on a
-Tesla T4); issue #1024:
+Tesla T4). The FP16 matrix multiply of the segmentation and keypoint models' patch embedding was also built on a
+Tesla T4 with TensorRT 11.4, for Seg Nano to Seg Large and Keypoint Preview; issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -470,14 +471,15 @@ def _drop_unread_initializers(graph: Any, names: Iterable[str]) -> None:
 def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
     """Rewrite the backbone's patch-embedding ``Conv`` as a ``MatMul`` over flattened patches, in place.
 
-    TensorRT pads a convolution's 3 input channels (to 32 for an INT8 convolution; an FP16 one may pad too) and
-    stores the padding in the engine as a constant that grows with the batch (see :func:`_pads_input_channels`). As a
-    matrix multiply over ``channels * patch * patch`` values per patch (768 for an RGB image and 16-pixel patches, 432
-    for 12-pixel ones) it has no channels to pad, and an INT8 build can quantize it like the other backbone layers. The
-    two compute the same sum.
+    TensorRT pads a convolution's 3 input channels (to 32 for an INT8 convolution; an FP16 one may pad too, inferred
+    from Tesla T4 engine sizes) and stores the padding in the engine as a constant that grows with the batch (see
+    :func:`_pads_input_channels`). As a matrix multiply over ``channels * patch * patch`` values per patch (768 for an
+    RGB image and 16-pixel patches, 432 for 12-pixel ones) it has no channels to pad, and an INT8 build can quantize it
+    like the other backbone layers. The two compute the same sum.
 
     Only a ``Conv`` inside the backbone encoder that :func:`_pads_input_channels` would flag and that
-    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten. The shape inference that finds the image size
+    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten, unless its ``<parent>/MatMul`` name is already
+    taken, in which case it is left as it is. The shape inference that finds the image size
     runs only when such a ``Conv`` exists. A kernel that is also a graph input is left alone, since it can be replaced
     at run time. The kernel of a replaced ``Conv`` is dropped when nothing else reads it (one reached through an
     ``Identity`` alias is kept). The rewrite is deterministic for a given name, so applying it to the FP32 graph that is
@@ -1373,7 +1375,10 @@ def int8_source_graph(
         model = onnx.load(fp16_path)
     _lift_opset(model)  # as the FP32 source was, before the rewrite adds its nodes
     # Every patch embedding becomes a matrix multiply here: the planned ones need the node names the plan holds, and
-    # none is left as a 3-channel convolution for TensorRT to pad. A patch the plan skipped stays FP16.
+    # none whose MatMul name is free is left as a 3-channel convolution for TensorRT to pad. The planned ones go first,
+    # as in the FP32 source, so that a patch the plan skipped cannot take a planned name when two patches share a
+    # parent; the one that loses the name stays a convolution. A patch the plan skipped stays FP16.
+    _patch_embedding_as_matmul(model, multiple_of=_INT8_CONV_CHANNEL_MULTIPLE)
     _patch_embedding_as_matmul(model)
     missing = sorted({name for name, _ in plan.activations} - {node.name for node in model.graph.node})
     if missing:

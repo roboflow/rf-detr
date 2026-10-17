@@ -2252,6 +2252,48 @@ class TestPatchEmbeddingInInt8Source:
         assert producers[activation.input[0]].op_type == "QuantizeLinear"
         assert producers[matmul.input[1]].op_type == "DequantizeLinear"
 
+    def test_the_planned_patch_is_the_one_quantized_when_two_share_a_parent(self, tmp_path: Path) -> None:
+        # The 432-value patch (12 pixels) comes first and is skipped by the plan; the 192-value one (8 pixels) is
+        # planned. Both would be named ``patch/MatMul``, so the FP16 copy must rewrite the planned patch first, or the
+        # 432-value one takes the planned name and the plan quantizes the wrong layer. The one that loses the name
+        # stays a convolution.
+        model = _patch_embedding(patch=12, size=24)
+        second = _patch_embedding(patch=8, size=24)
+        for initializer in second.graph.initializer:
+            initializer.name += "_second"
+        conv = second.graph.node[0]
+        conv.name = f"{BACKBONE}patch/Conv_1"
+        conv.input[1:] = [f"{name}_second" for name in conv.input[1:]]
+        conv.output[0] = "features_second"
+        model.graph.initializer.extend(second.graph.initializer)
+        model.graph.node.append(conv)
+        model.graph.node.extend(
+            helper.make_node("Identity", [source], [name], name)
+            for source, name in (("features", "dets"), ("features_second", "labels"))
+        )
+        del model.graph.output[:]
+        model.graph.output.extend(
+            helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in ("dets", "labels")
+        )
+        path = tmp_path / "two_patches.onnx"
+        onnx.save(model, path)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=np.zeros((3, 3, 24, 24), np.float32),
+            max_images=3,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            graph = onnx.load(int8_path).graph
+        producers = {output: node for node in graph.node for output in node.output}
+        weights = {initializer.name: initializer for initializer in graph.initializer}
+        (matmul,) = [node for node in graph.node if node.op_type == "MatMul" and "patch/" in node.name]
+        (conv,) = [node for node in graph.node if node.op_type == "Conv"]
+        quantized_weight = producers[matmul.input[1]]
+        assert quantized_weight.op_type == "DequantizeLinear"
+        assert tuple(weights[quantized_weight.input[0]].dims) == (192, 8)
+        assert tuple(weights[conv.input[1]].dims) == (8, 3, 12, 12)
+
     def test_the_fp16_copy_is_lifted_before_the_patch_embedding_is_rewritten(self, tmp_path: Path) -> None:
         # At opset 13 the rewrite's ``Add`` would be refused by the lift that follows it, after calibration has run.
         model = _with_detector_outputs(_patch_embedding(size=16))
