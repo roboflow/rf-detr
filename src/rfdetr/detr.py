@@ -2496,8 +2496,8 @@ class RFDETR:
                 detail suffix that would otherwise be appended to encode the resolved precision/backend/SoC
                 (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above), and the TensorRT
                 portability suffixes (``_ampere_plus``, ``_same_compute_capability``, ``_version_compatible``).
-                Sanitized against path
-                traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
+                Sanitized against path traversal: only the basename is used, with an export file extension such
+                as ``.onnx`` stripped; other dots, as in ``"my-model-v1.2"``, are kept. Exception: ``format="tflite"``
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
                 ``_dynamic_range_quant`` suffix is unavoidable even with
                 *output_name* set — it becomes the stem
