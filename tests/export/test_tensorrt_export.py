@@ -578,6 +578,16 @@ class TestBuildEngineDryRun:
 
         assert result == "/output/custom-backbone.trt"
 
+    def test_dotted_output_name_keeps_backbone_marker(self) -> None:
+        """A dotted ``output_name`` such as a version number keeps the dot and the ``-backbone`` marker after it."""
+        exporter = TensorRTExporter(TensorRTConfig(output_name="custom-v1.2"))
+
+        result = exporter.build_engine(
+            "/output/custom-v1.2-backbone.onnx", dry_run=True, output_name="custom-v1.2-backbone"
+        )
+
+        assert result == "/output/custom-v1.2-backbone.trt"
+
     def test_output_name_preserves_windows_directory_separators(self) -> None:
         """A Windows-style ``onnx_path`` keeps its backslash directory prefix verbatim (no ``os.sep`` rewrite)."""
         exporter = TensorRTExporter(TensorRTConfig(output_name="my-engine"))
