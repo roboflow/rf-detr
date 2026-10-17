@@ -28,13 +28,14 @@ Tesla T4); issue #1024:
   the INT8 patch embedding, a ``Conv`` over the 3-channel image, on the image padded to 32 channels and stored the 29
   added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant, read on every run: at batch 8 the engine was
   about twice as large and INT8 clearly less far ahead of FP16. Only that convolution was measured; any convolution
-  whose input channels are not a multiple of 32 is kept FP16 as a precaution. The FP16 convolution pads too, to 4 or 8
-  channels picked per build, so a patch embedding that stays a convolution still stores 1 or 5 zero channels per image.
+  whose input channels are not a multiple of 32 is kept FP16 as a precaution. An FP16 convolution can pad too: the Tesla
+  T4 segmentation and keypoint INT8 engines, whose patch embedding was an FP16 convolution, grew with the batch by about
+  the image padded to 32 channels (inferred from the engine sizes, not read from an engine).
   :func:`_patch_embedding_as_matmul` therefore turns every patch embedding into a matrix multiply over ``3 * 16 * 16``
   values per patch (``3 * 12 * 12`` for the segmentation and keypoint models), which has no channels to pad. The
   detection models' 768 values take INT8 with the rest of the backbone. The 432 values of the 12-pixel patches are not
-  a multiple of 32: their INT8 matrix multiply ran no faster than the FP16 one and lowered the AP of two of the
-  three models measured, so it stays FP16.
+  a multiple of 32: on Seg Small and Keypoint Preview their INT8 matrix multiply ran no faster than the FP16 one
+  and lowered the AP, so it stays FP16.
 * **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
   that was measured to pay for it (faster at a small cost in AP; head size 16, 32 or 64 and at most 325 tokens: the
   windowed backbone blocks of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both
@@ -469,7 +470,7 @@ def _drop_unread_initializers(graph: Any, names: Iterable[str]) -> None:
 def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
     """Rewrite the backbone's patch-embedding ``Conv`` as a ``MatMul`` over flattened patches, in place.
 
-    TensorRT pads a convolution's 3 input channels (to 32 for an INT8 convolution, to 4 or 8 for an FP16 one) and
+    TensorRT pads a convolution's 3 input channels (to 32 for an INT8 convolution; an FP16 one may pad too) and
     stores the padding in the engine as a constant that grows with the batch (see :func:`_pads_input_channels`). As a
     matrix multiply over ``channels * patch * patch`` values per patch (768 for an RGB image and 16-pixel patches, 432
     for 12-pixel ones) it has no channels to pad, and an INT8 build can quantize it like the other backbone layers. The
@@ -490,10 +491,15 @@ def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
 
     Returns:
         The number of layers rewritten.
+
+    Raises:
+        ValueError: If *multiple_of* is below 1.
     """
     import onnx
     from onnx import numpy_helper
 
+    if multiple_of < 1:
+        raise ValueError(f"multiple_of must be at least 1, got {multiple_of}.")
     graph = model.graph
     initializers = _constant_weights(graph)
     counts = Counter(node.name for node in graph.node)

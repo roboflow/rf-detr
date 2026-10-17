@@ -1985,8 +1985,9 @@ class TestPatchEmbeddingAsMatmul:
         actual = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
             None, {"image": image}
         )[0]
-        # The convolution and the matrix multiply add up 768 float32 products in a different order: macOS differed
-        # by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is off by whole units.
+        # The convolution and the matrix multiply add up a patch's float32 products (768 in the first case) in a
+        # different order: macOS differed by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is
+        # off by whole units.
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-4)
 
     @pytest.mark.parametrize(
@@ -1999,11 +2000,19 @@ class TestPatchEmbeddingAsMatmul:
             pytest.param(4, 2, 32, 0, id="16-values-of-four-channels"),
         ],
     )
-    def test_multiple_of_keeps_the_patches_it_does_not_divide(
+    def test_multiple_of_rewrites_only_the_patches_it_divides(
         self, channels: int, patch: int, multiple_of: int, rewritten: int
     ) -> None:
         model = _patch_embedding(channels=channels, patch=patch, size=2 * patch)
         assert quantize._patch_embedding_as_matmul(model, multiple_of=multiple_of) == rewritten
+
+    @pytest.mark.parametrize("multiple_of", [0, -32])
+    def test_multiple_of_below_one_is_refused(self, multiple_of: int) -> None:
+        model = _patch_embedding()
+        before = model.SerializeToString()
+        with pytest.raises(ValueError, match="multiple_of"):
+            quantize._patch_embedding_as_matmul(model, multiple_of=multiple_of)
+        assert model.SerializeToString() == before
 
     def test_convolution_is_replaced_by_the_matmul_the_plan_quantizes(self) -> None:
         model = _patch_embedding()
@@ -2258,25 +2267,6 @@ class TestPatchEmbeddingInInt8Source:
         ) as int8_path:
             quantized = onnx.load(int8_path)
         assert quantized.opset_import[0].version == 19
-
-    def test_the_plan_sees_a_multiple_of_32_and_the_fp16_copy_every_patch(
-        self, patch_graph: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The planned graph rewrites only the patches INT8 can quantize; the FP16 copy rewrites them all.
-        rewrite = Mock(wraps=quantize._patch_embedding_as_matmul)
-        monkeypatch.setattr(quantize, "_patch_embedding_as_matmul", rewrite)
-        with quantize.int8_source_graph(
-            str(patch_graph),
-            calibration_data=np.zeros((3, 3, 16, 16), np.float32),
-            max_images=3,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ):
-            pass
-        assert [call.kwargs for call in rewrite.call_args_list] == [
-            {"multiple_of": quantize._INT8_CONV_CHANNEL_MULTIPLE},
-            {},
-        ]
 
     @pytest.mark.parametrize("copy", ["overlapping-patches", "renamed"])
     def test_fp16_copy_without_a_planned_node_is_refused(self, patch_graph: Path, tmp_path: Path, copy: str) -> None:
@@ -3051,8 +3041,8 @@ class TestSegmentationAndKeypointInt8Plan:
     def test_patch_embedding_is_a_float_matmul_in_the_quantized_graph(
         self, kind: str, quantized_graphs: dict[str, Any]
     ) -> None:
-        # 432-value patches are not quantized (as INT8 they ran no faster than as FP16 and lowered the accuracy of
-        # Seg Small and Keypoint Preview), but they are still a MatMul, so TensorRT has no 3-channel image to pad.
+        # 432-value patches are not quantized (as INT8 they ran no faster than as FP16 on Seg Small and Keypoint
+        # Preview and lowered their AP), but they are still a MatMul, so TensorRT has no 3-channel image to pad.
         graph = quantized_graphs[kind].graph
         producers = {output: node for node in graph.node for output in node.output}
         matmuls = [node for node in graph.node if node.name.endswith("patch_embeddings/projection/MatMul")]
