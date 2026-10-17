@@ -1886,7 +1886,7 @@ def _patch_embedding(
     bias: bool = True,
     empty_bias: bool = False,
     prefix: str = BACKBONE,
-    batch: int = 1,
+    batch: int | str = 1,
     height: int | str | None = None,
     width: int | None = None,
     kernel: tuple[int, int] | None = None,
@@ -1902,7 +1902,7 @@ def _patch_embedding(
         bias: Give the ``Conv`` a bias.
         empty_bias: Name the bias input with an empty string, how ONNX spells an omitted optional input.
         prefix: Node-name prefix of the ``Conv``.
-        batch: Batch size of the image.
+        batch: Batch size of the image; a string makes it symbolic.
         height: Overrides the declared image height; a string makes it symbolic.
         width: Overrides the declared image width.
         kernel: ``(rows, columns)`` of a rectangular kernel and stride.
@@ -1964,6 +1964,7 @@ class TestPatchEmbeddingAsMatmul:
         ("batch", "channels", "patch", "height", "width"),
         [
             pytest.param(1, 3, 16, 32, 32, id="rgb-16-pixel-patches"),
+            pytest.param(1, 3, 12, 24, 24, id="rgb-12-pixel-patches"),
             pytest.param(2, 3, 16, 32, 48, id="batch-2-non-square"),
             pytest.param(3, 2, 4, 8, 16, id="batch-3-two-channels-non-square"),
             pytest.param(1, 1, 8, 16, 16, id="grayscale"),
@@ -1987,6 +1988,22 @@ class TestPatchEmbeddingAsMatmul:
         # The convolution and the matrix multiply add up 768 float32 products in a different order: macOS differed
         # by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is off by whole units.
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-4)
+
+    @pytest.mark.parametrize(
+        ("channels", "patch", "multiple_of", "rewritten"),
+        [
+            pytest.param(3, 12, 1, 1, id="432-values-by-default"),
+            pytest.param(3, 12, 32, 0, id="432-values-not-a-multiple-of-32"),
+            pytest.param(3, 16, 32, 1, id="768-values-a-multiple-of-32"),
+            pytest.param(2, 4, 32, 1, id="32-values-of-two-channels"),
+            pytest.param(4, 2, 32, 0, id="16-values-of-four-channels"),
+        ],
+    )
+    def test_multiple_of_keeps_the_patches_it_does_not_divide(
+        self, channels: int, patch: int, multiple_of: int, rewritten: int
+    ) -> None:
+        model = _patch_embedding(channels=channels, patch=patch, size=2 * patch)
+        assert quantize._patch_embedding_as_matmul(model, multiple_of=multiple_of) == rewritten
 
     def test_convolution_is_replaced_by_the_matmul_the_plan_quantizes(self) -> None:
         model = _patch_embedding()
@@ -2108,11 +2125,11 @@ class TestPatchEmbeddingAsMatmul:
             pytest.param({"dilations": [2, 2]}, id="dilated"),
             pytest.param({"auto_pad": "SAME_UPPER"}, id="auto-pad"),
             pytest.param({"kernel": (16, 8)}, id="rectangular-kernel"),
-            pytest.param({"channels": 2, "patch": 2, "size": 8}, id="patch-not-a-multiple-of-32-values"),
             pytest.param({"channels": 32, "patch": 4, "size": 8}, id="channels-TensorRT-does-not-pad"),
             pytest.param({"height": 36}, id="kernel-does-not-tile-the-height"),
             pytest.param({"width": 36}, id="kernel-does-not-tile-the-width"),
             pytest.param({"height": "height"}, id="symbolic-height"),
+            pytest.param({"batch": "batch"}, id="symbolic-batch"),
             pytest.param({"size": 0}, id="empty-image"),
             pytest.param({"prefix": HEAD}, id="outside-the-backbone"),
             pytest.param({"prefix": DECODER}, id="in-the-decoder"),
@@ -2241,6 +2258,25 @@ class TestPatchEmbeddingInInt8Source:
         ) as int8_path:
             quantized = onnx.load(int8_path)
         assert quantized.opset_import[0].version == 19
+
+    def test_the_plan_sees_a_multiple_of_32_and_the_fp16_copy_every_patch(
+        self, patch_graph: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The planned graph rewrites only the patches INT8 can quantize; the FP16 copy rewrites them all.
+        rewrite = Mock(wraps=quantize._patch_embedding_as_matmul)
+        monkeypatch.setattr(quantize, "_patch_embedding_as_matmul", rewrite)
+        with quantize.int8_source_graph(
+            str(patch_graph),
+            calibration_data=np.zeros((3, 3, 16, 16), np.float32),
+            max_images=3,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ):
+            pass
+        assert [call.kwargs for call in rewrite.call_args_list] == [
+            {"multiple_of": quantize._INT8_CONV_CHANNEL_MULTIPLE},
+            {},
+        ]
 
     @pytest.mark.parametrize("copy", ["overlapping-patches", "renamed"])
     def test_fp16_copy_without_a_planned_node_is_refused(self, patch_graph: Path, tmp_path: Path, copy: str) -> None:
@@ -2917,6 +2953,29 @@ class TestSegmentationAndKeypointInt8Plan:
         """
         return {kind: quantize.plan_int8(onnx.load(str(path))) for kind, path in exports.items()}
 
+    @pytest.fixture(scope="class")
+    def quantized_graphs(self, exports: dict[str, Path]) -> dict[str, Any]:
+        """The INT8 source graph of the segmentation and keypoint exports, calibrated on two random images, loaded.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> graph = quantized_graphs(exports)["keypoint"]  # doctest: +SKIP
+        """
+        graphs = {}
+        for kind in ("segmentation", "keypoint"):
+            shape = [dim.dim_value for dim in onnx.load(str(exports[kind])).graph.input[0].type.tensor_type.shape.dim]
+            samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
+            with quantize.int8_source_graph(
+                str(exports[kind]),
+                calibration_data=samples,
+                max_images=2,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
+            ) as int8_path:
+                graphs[kind] = onnx.load(int8_path)
+        return graphs
+
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
     def test_counts(self, kind: str, plans: dict[str, quantize.Int8Plan]) -> None:
         _, weighted, activations = _HEAD_MODELS[kind]
@@ -2951,19 +3010,13 @@ class TestSegmentationAndKeypointInt8Plan:
     @onnxconverter_common_only
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
     def test_int8_source_graph_builds_from_the_real_export(
-        self, kind: str, exports: dict[str, Path], plans: dict[str, quantize.Int8Plan]
+        self,
+        kind: str,
+        exports: dict[str, Path],
+        plans: dict[str, quantize.Int8Plan],
+        quantized_graphs: dict[str, Any],
     ) -> None:
-        model = onnx.load(str(exports[kind]))
-        shape = [dim.dim_value for dim in model.graph.input[0].type.tensor_type.shape.dim]
-        samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(exports[kind]),
-            calibration_data=samples,
-            max_images=2,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ) as int8_path:
-            quantized = onnx.load(int8_path)
+        model, quantized = onnx.load(str(exports[kind])), quantized_graphs[kind]
         onnx.checker.check_model(quantized, full_check=True)
         opsets = {entry.domain: entry.version for entry in quantized.opset_import}
         assert (opsets[""], [o.name for o in quantized.graph.output]) == (19, [o.name for o in model.graph.output])
@@ -2975,12 +3028,40 @@ class TestSegmentationAndKeypointInt8Plan:
     @pytest.mark.parametrize(
         "kind", ["segmentation", "segmentation-small", "segmentation-medium", "segmentation-large", "keypoint"]
     )
-    def test_patch_embedding_stays_a_convolution(self, kind: str, exports: dict[str, Path]) -> None:
-        # 12-pixel patches of an RGB image are 432 values, not a multiple of 32, so they stay a convolution.
+    def test_patch_embedding_becomes_a_matmul(self, kind: str, exports: dict[str, Path]) -> None:
+        # 12-pixel patches of an RGB image are 432 values, not a multiple of 32; the default rewrites them all the same.
+        model = onnx.load(str(exports[kind]))
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        convolutions = [node.name for node in model.graph.node if node.op_type == "Conv"]
+        assert [name for name in convolutions if "patch_embeddings" in name] == []
+
+    @pytest.mark.parametrize(
+        "kind", ["segmentation", "segmentation-small", "segmentation-medium", "segmentation-large", "keypoint"]
+    )
+    def test_a_multiple_of_32_does_not_rewrite_the_432_value_patch(self, kind: str, exports: dict[str, Path]) -> None:
+        # What the INT8 source graph asks for on the graph it plans: nothing is rewritten, so nothing is quantized.
         model = onnx.load(str(exports[kind]))
         before = model.SerializeToString()
-        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert quantize._patch_embedding_as_matmul(model, multiple_of=quantize._INT8_CONV_CHANNEL_MULTIPLE) == 0
         assert model.SerializeToString() == before
+
+    @onnx_and_onnxruntime_only
+    @onnxconverter_common_only
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_patch_embedding_is_a_float_matmul_in_the_quantized_graph(
+        self, kind: str, quantized_graphs: dict[str, Any]
+    ) -> None:
+        # 432-value patches are not quantized (as INT8 they ran no faster than as FP16 and lowered the accuracy of
+        # Seg Small and Keypoint Preview), but they are still a MatMul, so TensorRT has no 3-channel image to pad.
+        graph = quantized_graphs[kind].graph
+        producers = {output: node for node in graph.node for output in node.output}
+        matmuls = [node for node in graph.node if node.name.endswith("patch_embeddings/projection/MatMul")]
+        assert len(matmuls) == 1, "the patch embedding is not a single MatMul"
+        matmul = matmuls[0]
+        weight = {init.name: init for init in graph.initializer}.get(matmul.input[1])
+        assert weight is not None, "the weight is not an initializer: the MatMul is quantized"
+        assert [node.name for node in graph.node if node.op_type == "Conv" and "patch_embeddings" in node.name] == []
+        assert (producers[matmul.input[0]].op_type, weight.data_type) == ("Reshape", onnx.TensorProto.FLOAT16)
 
     def test_keypoint_instance_self_attention_is_left_float(self, plans: dict[str, quantize.Int8Plan]) -> None:
         assert [n for n in plans["keypoint"].weighted if "_self_attn/" in n] == []
