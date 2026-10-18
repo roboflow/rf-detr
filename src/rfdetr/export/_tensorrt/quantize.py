@@ -11,8 +11,8 @@ faster than FP16 at all, so the placement here is not "quantize every matrix mul
 on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), for the attention token limit on Small to Large (TensorRT
 11.3), for the segmentation and keypoint models on an RTX 5070 with TensorRT 11.4, and for the patch-embedding matrix
 multiply on Nano to Large, Seg Nano, Seg Small and Keypoint Preview with TensorRT 11.4 (Nano to Large also 10.16 on a
-Tesla T4). The FP16 matrix multiply of the segmentation and keypoint models' patch embedding was also built on a
-Tesla T4 with TensorRT 11.4, for Seg Nano to Seg Large and Keypoint Preview; issue #1024:
+Tesla T4). The FP16 matrix multiply of the segmentation and keypoint models' patch embedding was built for Seg Nano
+to Seg Large and Keypoint Preview on an RTX 5070 and a Tesla T4 with TensorRT 11.4; issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -24,7 +24,8 @@ Tesla T4 with TensorRT 11.4, for Seg Nano to Seg Large and Keypoint Preview; iss
   proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing (on Seg Nano,
   Seg Small, Seg Large and Keypoint Preview the projector was no faster in INT8 either). The mask head stays FP16
   too: quantized as a whole (Seg Nano, Seg Small, Seg Large) it made the engine slower, and its matrix multiplies alone
-  were no faster. The keypoint heads sit outside the quantized regions and stay FP16; quantizing them was not measured.
+  were no faster. The keypoint heads sit outside the quantized regions and stay FP16: quantizing the keypoint
+  embedding of Keypoint Preview was no faster and lowered its keypoint AP.
 * **The patch embedding is a matrix multiply, quantized only when its patch is a multiple of 32 values.** TensorRT ran
   the INT8 patch embedding, a ``Conv`` over the 3-channel image, on the image padded to 32 channels and stored the 29
   added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant, read on every run: at batch 8 the engine was
