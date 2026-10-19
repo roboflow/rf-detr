@@ -34,11 +34,7 @@ class TestPredictionLabels:
         assert labels == PredictionLabels(["person", "car"], 3, [0, 17, 4], {1: "person", 2: "car"})
 
     def test_missing_args_keep_coco_names_zero_indexed(self) -> None:
-        """Without ``model.args`` there is one logit slot per name, as native predict uses, so COCO stays 0-indexed.
-
-        Export used to fall back to ``config.num_classes`` here instead, which switched on the sparse COCO map and gave
-        the same detection a different ``class_name`` once exported. Both paths now read this one fallback.
-        """
+        """Without ``model.args``, preserve zero-indexed names separately from the configured head size."""
         model = SimpleNamespace(
             class_names=list(COCO_CLASS_NAMES),
             model=SimpleNamespace(),
@@ -47,9 +43,7 @@ class TestPredictionLabels:
 
         labels = prediction_labels(model)
 
-        assert labels == PredictionLabels(
-            list(COCO_CLASS_NAMES), len(COCO_CLASS_NAMES), [], dict(enumerate(COCO_CLASS_NAMES))
-        )
+        assert labels == PredictionLabels(list(COCO_CLASS_NAMES), 90, [], dict(enumerate(COCO_CLASS_NAMES)))
 
     def test_missing_args_take_the_keypoint_schema_from_the_config(self) -> None:
         """Without ``model.args`` a keypoint model keeps the keypoint schema its config built the head with.

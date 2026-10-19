@@ -113,13 +113,14 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
 
     session = _create_interpreter(path)
     input_info = _single_input("TFLite", session.get_input_details())
+    # The signature, not the current allocation, says which axes the graph can resize; -1 marks a dynamic axis.
+    signature = input_info.get("shape_signature", input_info["shape"])
     _check_input_interface(
         "TFLite",
         metadata,
         input_info.get("name", "") if isinstance(metadata.input_name, str) else None,
-        [int(size) for size in input_info["shape"]],
+        [None if int(size) == -1 else int(size) for size in signature],
         input_info["dtype"],
-        dynamic_batch=True,
     )
     _check_output_interface("TFLite", metadata, [detail.get("name") for detail in session.get_output_details()])
 

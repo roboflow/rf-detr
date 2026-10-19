@@ -164,8 +164,11 @@ class _TinyDetector(torch.nn.Module):
         [(1, 2, 4), (1, 2, 2)]
     """
 
-    def __init__(self) -> None:
+    def __init__(self, num_classes: int = 1) -> None:
         """Initialize fixed weights so export does not depend on the random seed.
+
+        Args:
+            num_classes: Foreground class slots, excluding the trailing no-object slot.
 
         Examples:
             >>> model = _TinyDetector()
@@ -175,7 +178,7 @@ class _TinyDetector(torch.nn.Module):
         super().__init__()
         self.hidden = torch.nn.Linear(3, 8)
         self.boxes = torch.nn.Linear(8, 8)
-        self.logits = torch.nn.Linear(8, 4)
+        self.logits = torch.nn.Linear(8, 2 * (num_classes + 1))
         with torch.no_grad():
             for parameter in self.parameters():
                 parameter.fill_(0.1)
@@ -189,7 +192,10 @@ class _TinyDetector(torch.nn.Module):
             ((1, 2, 4), (1, 2, 2))
         """
         hidden = self.hidden(images.mean(dim=(2, 3))).relu()
-        return self.boxes(hidden).sigmoid().reshape(-1, 2, 4), self.logits(hidden).reshape(-1, 2, 2)
+        return (
+            self.boxes(hidden).sigmoid().reshape(-1, 2, 4),
+            self.logits(hidden).reshape(-1, 2, self.logits.out_features // 2),
+        )
 
 
 class TestSidecarMetadata:
@@ -780,6 +786,44 @@ class TestMetadataCapture:
 
 class TestFormatMetadata:
     """Verify metadata behavior for format-specific interfaces."""
+
+    @onnx_and_onnxruntime_only
+    def test_missing_args_export_preserves_head_size_and_zero_indexed_names(
+        self, tmp_path: Path, metadata_source: RFDETR
+    ) -> None:
+        """A 90-class head with 80 COCO names exports and predicts without training arguments."""
+        del metadata_source.model.args
+        metadata_source.model_config.num_classes = 90
+        metadata_source.model.class_names = list(COCO_CLASS_NAMES)
+        detector = _TinyDetector(num_classes=90).eval()
+        with torch.no_grad():
+            detector.logits.weight.zero_()
+            detector.logits.bias.fill_(-10)
+            detector.logits.bias[1] = 10
+            detector.logits.bias[92] = 10
+        metadata = metadata_from_model(
+            metadata_source, format="onnx", shape=(32, 32), batch_size=1, dynamic_batch=False
+        )
+        graph = ExportGraph(
+            model=detector,
+            input_tensors=torch.zeros(1, 3, 32, 32),
+            input_names=("input",),
+            output_names=("dets", "labels"),
+            dynamic_axes=None,
+            shape=(32, 32),
+            backbone_only=False,
+            metadata=metadata,
+        )
+
+        artifact = OnnxExporter(OnnxConfig(output_dir=tmp_path, variant_name="rfdetr-nano", verbose=False))(graph)
+        detections = RFDETRInference(artifact, device="cpu").predict(
+            np.full((32, 32, 3), 128, dtype=np.uint8), threshold=0.5
+        )
+
+        assert read_metadata(artifact).num_classes == 90
+        assert read_metadata(artifact).class_id_to_name == dict(enumerate(COCO_CLASS_NAMES))
+        np.testing.assert_array_equal(detections.class_id, [1, 1])
+        np.testing.assert_array_equal(detections.data["class_name"], ["bicycle", "bicycle"])
 
     @onnx_and_onnxruntime_only
     @pytest.mark.parametrize("quantization", [None, "fp32", "int8"])

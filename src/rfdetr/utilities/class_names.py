@@ -91,9 +91,9 @@ def prediction_labels(model: RFDETR) -> PredictionLabels:
     """Derive the class layout of a live model's predictions from its names and training arguments.
 
     Native prediction and export metadata both read the layout here, so an exported artifact maps class IDs to the
-    same names that ``predict()`` returns. A model context without ``args`` falls back to one logit slot per class
-    name, which keeps class IDs 0-indexed even for COCO names, and to the keypoint schema of ``model_config``, which
-    describes the head that was built.
+    same names that ``predict()`` returns. A model context without ``args`` takes its logit-slot count and keypoint
+    schema from ``model_config``, which describes the head that was built. Its name mapping still uses one slot per
+    name to keep class IDs 0-indexed even for COCO names, independently of the head's class count.
 
     Args:
         model: Live RF-DETR wrapper whose ``class_names``, ``model.args`` and ``model_config`` define the layout.
@@ -117,12 +117,17 @@ def prediction_labels(model: RFDETR) -> PredictionLabels:
     """
     names = list(model.class_names)
     args = getattr(model.model, "args", None)
-    num_classes = int(getattr(args, "num_classes", len(names)))
+    config = getattr(model, "model_config", None)
+    num_classes = int(getattr(args, "num_classes", getattr(config, "num_classes", len(names))))
+    # Missing training args historically mean zero-indexed names, even when the head has extra COCO slots.
+    mapping_num_classes = int(getattr(args, "num_classes", len(names)))
     schema = getattr(args, "num_keypoints_per_class", None)
     if schema is None:
-        schema = getattr(getattr(model, "model_config", None), "num_keypoints_per_class", None)
+        schema = getattr(config, "num_keypoints_per_class", None)
     keypoint_schema = [int(count) for count in (schema or [])]
-    mapping = {int(class_id): name for class_id, name in class_id_to_name(names, num_classes, keypoint_schema).items()}
+    mapping = {
+        int(class_id): name for class_id, name in class_id_to_name(names, mapping_num_classes, keypoint_schema).items()
+    }
     return PredictionLabels(names, num_classes, keypoint_schema, mapping)
 
 

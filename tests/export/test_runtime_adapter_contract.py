@@ -337,6 +337,59 @@ class TestTFLiteRuntimeAdapter:
             runtime.run(torch.zeros(2, 3, 8, 8))
         interpreter.invoke.assert_not_called()
 
+    def test_dynamic_signature_accepts_fixed_batch_metadata(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A graph whose signature leaves the batch dynamic loads fixed batch-2 metadata.
+
+        The interpreter allocates batch 1 by default, so checking the current shape instead of the signature would
+        refuse an artifact that ``_run_interpreter_raw`` can resize to batch 2.
+        """
+        path = tmp_path / "model.tflite"
+        path.write_bytes(b"model")
+        interpreter = Mock()
+        interpreter.get_input_details.return_value = [
+            {"name": "input", "index": 0, "shape": [1, 8, 8, 3], "shape_signature": [-1, 8, 8, 3], "dtype": np.float32}
+        ]
+        interpreter.get_output_details.return_value = [{"name": "dets", "index": 1}, {"name": "labels", "index": 2}]
+        monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", lambda path: interpreter)
+        metadata = _metadata(
+            format="tflite",
+            task="detect",
+            input_shape=(2, 3, 8, 8),
+            input_layout="NHWC",
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+
+        runtime = load_runtime(path, metadata)
+
+        assert runtime.metadata.input_shape == (2, 3, 8, 8)
+
+    def test_fixed_graph_rejects_dynamic_batch_metadata(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A graph with a fixed batch refuses metadata that promises any batch size.
+
+        Without a dynamic signature the interpreter cannot resize, so accepting ``-1`` metadata would defer the failure
+        to the first multi-image call.
+        """
+        path = tmp_path / "model.tflite"
+        path.write_bytes(b"model")
+        interpreter = Mock()
+        interpreter.get_input_details.return_value = [
+            {"name": "input", "index": 0, "shape": [1, 8, 8, 3], "shape_signature": [1, 8, 8, 3], "dtype": np.float32}
+        ]
+        interpreter.get_output_details.return_value = [{"name": "dets", "index": 1}, {"name": "labels", "index": 2}]
+        monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", lambda path: interpreter)
+        metadata = _metadata(
+            format="tflite",
+            task="detect",
+            input_shape=(-1, 3, 8, 8),
+            input_layout="NHWC",
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+
+        with pytest.raises(ValueError, match="disagrees with export metadata"):
+            load_runtime(path, metadata)
+
     def test_dynamic_batch_resizes_one_interpreter(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A dynamic model resizes once and still executes one two-image batch."""
         path = tmp_path / "model.tflite"
