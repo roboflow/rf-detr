@@ -396,6 +396,26 @@ def scale_coco_annotation(annotation: dict[str, Any], x_scale: float, y_scale: f
     return scaled
 
 
+def _enclosing_polygons(segmentation: list[Any]) -> list[Any]:
+    """Return the parts of a COCO polygon segmentation that have at least three points.
+
+    ``pycocotools.mask.frPyObjects`` picks the input format from the length of the first part alone: four values are
+    read as an ``[x, y, w, h]`` box, which raises a ``TypeError`` for a list, and an empty part raises ``Exception``. A
+    part with fewer than three points encloses no area, so dropping it leaves the rasterised mask unchanged.
+
+    Args:
+        segmentation: A polygon segmentation, one flat ``[x1, y1, x2, y2, ...]`` list per part.
+
+    Returns:
+        The parts with at least six coordinates, in their original order.
+
+    Examples:
+        >>> _enclosing_polygons([[1, 1, 8, 8], [0, 0, 5, 0, 5, 5], []])
+        [[0, 0, 5, 0, 5, 5]]
+    """
+    return [polygon for polygon in segmentation if len(polygon) >= 6]
+
+
 def _is_rle(segmentation: Any) -> bool:
     """Check whether a COCO segmentation entry is in RLE format.
 
@@ -454,6 +474,12 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
                 # Uncompressed RLE (counts is a list of ints) — compress first
                 rles = [coco_mask.frPyObjects(segmentation, height, width)]
         else:
+            if isinstance(segmentation, list):
+                segmentation = _enclosing_polygons(segmentation)
+                if not segmentation:
+                    # every part is shorter than three points, so the instance has no mask area
+                    masks.append(torch.zeros((height, width), dtype=torch.uint8))
+                    continue
             rles = coco_mask.frPyObjects(segmentation, height, width)
         mask = coco_mask.decode(rles)
         if mask.ndim < 3:
@@ -500,7 +526,7 @@ def _compressed_crowd_segmentation(
 
     Returns:
         A compressed RLE dict; *segmentation* itself when it is already compressed or cannot be compressed; ``None``
-        for a missing or empty payload.
+        for a missing or empty payload, or a polygon payload with no part of at least three points.
 
     Examples:
         >>> _compressed_crowd_segmentation(None, 4, 4) is None
@@ -522,6 +548,10 @@ def _compressed_crowd_segmentation(
         import pycocotools.mask as coco_mask
     except ImportError:
         return raw
+    if isinstance(segmentation, list):
+        segmentation = _enclosing_polygons(segmentation)
+        if not segmentation:
+            return None
     converted = coco_mask.frPyObjects(segmentation, int(height), int(width))
     return cast("dict[str, Any]", coco_mask.merge([converted] if is_rle else converted))
 
