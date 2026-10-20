@@ -43,6 +43,7 @@ from rfdetr.export._tflite.exporter import (
     TFLiteConfig,
     TFLiteExporter,
     _check_onnx2tf_available,
+    _check_single_onnxsim_owner,
     _check_tf_keras_available,
     _get_onnx_input_info,
     _interpreter_scripts_on_path,
@@ -1619,6 +1620,80 @@ class TestTFKerasCheck:
         monkeypatch.setitem(sys.modules, "tf_keras", types.ModuleType("tf_keras"))
 
         _check_tf_keras_available()
+
+
+class TestSingleOnnxsimOwnerCheck:
+    """``_check_single_onnxsim_owner`` refuses a host where two distributions install the ``onnxsim`` package.
+
+    onnx2tf 2.4.x simplifies the ONNX graph through the ``onnxsim`` console script of its pinned ``onnxsim-prebuilt``. A
+    separately installed ``onnxsim`` wheel writes the same ``onnxsim/`` package and script, the one installed last
+    replaces the other, and onnx2tf then runs a simplifier it does not pin: ``onnxsim`` 0.8.1 made the conversion crash.
+    """
+
+    @pytest.mark.parametrize(
+        "owners",
+        [
+            pytest.param({"onnxsim": ["onnxsim-prebuilt"]}, id="prebuilt-only"),
+            pytest.param({"onnxsim": ["onnxsim"]}, id="onnxsim-only"),
+            pytest.param({}, id="neither"),
+        ],
+    )
+    def test_single_or_no_owner_passes(self, monkeypatch: pytest.MonkeyPatch, owners: dict[str, list[str]]) -> None:
+        """One distribution owning ``onnxsim``, or none, passes: there is no second copy to replace the first.
+
+        onnx2tf 2.4.x depends on ``onnxsim-prebuilt`` and 2.5+ on ``onnxsim``, so either owner alone is a consistent
+        install; a host without either fails later, in onnx2tf's own simplification step, not here.
+        """
+        monkeypatch.setattr("rfdetr.export._tflite.exporter.packages_distributions", lambda: owners)
+
+        _check_single_onnxsim_owner()
+
+    @pytest.mark.parametrize(
+        "owners",
+        [
+            pytest.param(["onnxsim", "onnxsim-prebuilt"], id="hyphenated"),
+            pytest.param(["onnxsim_prebuilt", "onnxsim"], id="underscored"),
+        ],
+    )
+    def test_both_owners_are_refused(self, monkeypatch: pytest.MonkeyPatch, owners: list[str]) -> None:
+        """``onnxsim`` and ``onnxsim-prebuilt`` installed together are refused, naming the reinstall that fixes it.
+
+        This is the environment the ``onnxsim>=0.7.0`` line in ``rfdetr[tflite]`` produced; dropping the line from the
+        extra does not remove the wheel from an environment that already has it. Distribution names are compared in
+        normalized form, since metadata may spell the prebuilt with an underscore.
+        """
+        monkeypatch.setattr("rfdetr.export._tflite.exporter.packages_distributions", lambda: {"onnxsim": owners})
+
+        with pytest.raises(ImportError, match="pip uninstall -y onnxsim onnxsim-prebuilt"):
+            _check_single_onnxsim_owner()
+
+    def test_check_environment_refuses_both_owners(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """``TFLiteExporter.check_environment`` runs the owner check, refusing the host before the forward pass.
+
+        ``RFDETR.export`` and ``Exporter.__call__`` call ``check_environment`` before any work on the model starts.
+        """
+        monkeypatch.setattr(
+            "rfdetr.export._tflite.exporter.packages_distributions",
+            lambda: {"onnxsim": ["onnxsim", "onnxsim-prebuilt"]},
+        )
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=str(tmp_path)))
+
+        with pytest.raises(ImportError, match="onnxsim-prebuilt"):
+            exporter.check_environment()
+
+    def test_convert_onnx_refuses_both_owners(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """``convert_onnx``, a public entry point that bypasses ``Exporter.__call__``, runs the owner check first.
+
+        The source path does not exist, so reaching the source validation would raise ``FileNotFoundError`` instead.
+        """
+        monkeypatch.setattr(
+            "rfdetr.export._tflite.exporter.packages_distributions",
+            lambda: {"onnxsim": ["onnxsim", "onnxsim-prebuilt"]},
+        )
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=str(tmp_path)))
+
+        with pytest.raises(ImportError, match="onnxsim-prebuilt"):
+            exporter.convert_onnx(tmp_path / "missing.onnx")
 
 
 def _stop_at_onnx_import(name: str, path: object, target: object = None) -> None:

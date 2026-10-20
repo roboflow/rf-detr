@@ -77,11 +77,13 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
 import sysconfig
 import threading
 import warnings
 from dataclasses import dataclass
+from importlib.metadata import packages_distributions
 from pathlib import Path
 from typing import Any, Generator, cast
 
@@ -580,6 +582,36 @@ def _check_onnx2tf_available() -> None:
         )
 
 
+#: Distributions that install the top-level ``onnxsim`` package and the ``onnxsim`` console script onnx2tf runs.
+_ONNXSIM_DISTRIBUTIONS: frozenset[str] = frozenset({"onnxsim", "onnxsim-prebuilt"})
+
+
+def _check_single_onnxsim_owner() -> None:
+    """Refuse an environment where ``onnxsim`` and ``onnxsim-prebuilt`` are both installed.
+
+    onnx2tf simplifies the ONNX graph by running the ``onnxsim`` console script of the distribution its release
+    depends on: ``onnxsim-prebuilt`` for onnx2tf 2.4.x, ``onnxsim`` for 2.5 and later. Both wheels install the same
+    ``onnxsim`` package and script, so with both present the one installed last has replaced the other's files and
+    onnx2tf simplifies with a release it does not pin; ``onnxsim`` 0.8.1 under onnx2tf 2.4.3 made the conversion of
+    every RF-DETR model fail. Earlier ``rfdetr[tflite]`` releases installed ``onnxsim`` beside onnx2tf's own
+    ``onnxsim-prebuilt``, so an environment upgraded in place still has both.
+
+    Raises:
+        ImportError: If both distributions are installed.
+
+    Examples:
+        >>> _check_single_onnxsim_owner()  # a host with at most one of them passes
+    """
+    owners = {re.sub(r"[-_.]+", "-", name).lower() for name in packages_distributions().get("onnxsim", [])}
+    if _ONNXSIM_DISTRIBUTIONS <= owners:
+        raise ImportError(
+            "TFLite export found both onnxsim and onnxsim-prebuilt installed. Both install the onnxsim package and "
+            "console script that onnx2tf runs to simplify the graph, so the one installed last replaced the other and "
+            "onnx2tf would simplify with a release it does not pin. Remove both, then reinstall the extra: "
+            'pip uninstall -y onnxsim onnxsim-prebuilt && pip install "rfdetr[tflite]"'
+        )
+
+
 # Serializes the global ``np.load`` monkey-patch below so concurrent conversions in the
 # same process cannot clobber each other's patch/restore cycle.
 _NUMPY_LOAD_PATCH_LOCK = threading.Lock()
@@ -1017,6 +1049,18 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         _check_onnx_graphsurgeon_available()
         _check_onnx2tf_available()
 
+    def check_environment(self) -> None:
+        """Refuse a host with two distributions of ``onnxsim`` installed, before the forward pass.
+
+        The ``onnxsim`` console script onnx2tf runs may then not be the one onnx2tf depends on. ``RFDETR.export``
+        and ``Exporter.__call__`` call it after :meth:`check_dependencies`; :meth:`convert_onnx`, a public entry point
+        that bypasses both, calls it too.
+
+        Raises:
+            ImportError: If ``onnxsim`` and ``onnxsim-prebuilt`` are both installed.
+        """
+        _check_single_onnxsim_owner()
+
     def _convert(self, graph: ExportGraph) -> Path:
         """Export to ONNX, convert to TFLite, and return the converted artifact's path.
 
@@ -1054,7 +1098,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
 
         Raises:
             FileNotFoundError: If *onnx_path* does not exist.
-            ImportError: If ``onnx2tf`` is not installed.
+            ImportError: If ``onnx2tf`` is not installed, or ``onnxsim`` and ``onnxsim-prebuilt`` are both installed.
             RuntimeError: If the conversion fails.
 
         Note:
@@ -1083,6 +1127,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             # -> PosixPath('output/rfdetr-small_gs_patched_fp32.tflite')
             ```
         """
+        self.check_environment()
         onnx_path = Path(onnx_path)
         output_dir = Path(self.config.output_dir)
 
