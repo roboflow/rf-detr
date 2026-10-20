@@ -15,7 +15,7 @@ import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.coco import ConvertCoco, _is_rle, convert_coco_poly_to_mask
+from rfdetr.datasets.coco import ConvertCoco, _compressed_crowd_segmentation, _is_rle, convert_coco_poly_to_mask
 
 # Shared test dimensions
 _H, _W = 100, 100
@@ -421,3 +421,67 @@ class TestMalformedRle:
     def test_size_mismatch_is_still_classified_as_rle(self) -> None:
         """Dicts with both keys are RLE even when the embedded size mismatches the image dimensions."""
         assert _is_rle({"counts": [1, 2], "size": [50, 50]}) is True
+
+
+class TestDegeneratePolygonParts:
+    """Polygon parts with fewer than three points enclose no area and must not reach ``frPyObjects``.
+
+    ``pycocotools.mask.frPyObjects`` picks the input format from the first part alone, so a four-value part is read as a
+    box and rejected, and an empty part is rejected outright.
+    """
+
+    @pytest.mark.parametrize(
+        "segmentation",
+        [
+            pytest.param([[30, 20, 70, 50]], id="two-point-part"),
+            pytest.param([[30.5, 20.0]], id="one-point-part"),
+            pytest.param([[]], id="empty-part"),
+            pytest.param([[30, 20, 70, 50], []], id="only-degenerate-parts"),
+        ],
+    )
+    def test_no_enclosing_part_gives_empty_mask(self, segmentation: list) -> None:
+        """A segmentation made only of degenerate parts produces a zero mask."""
+        result = convert_coco_poly_to_mask([segmentation], _H, _W)
+
+        assert result.shape == (1, _H, _W)
+        assert result.sum() == 0
+
+    @pytest.mark.parametrize(
+        "segmentation",
+        [
+            pytest.param([[30, 20, 70, 50], *_make_polygon(_make_reference_mask())], id="degenerate-first"),
+            pytest.param([[], *_make_polygon(_make_reference_mask())], id="empty-first"),
+            pytest.param([*_make_polygon(_make_reference_mask()), [30, 20, 70, 50]], id="degenerate-last"),
+        ],
+    )
+    def test_degenerate_part_is_ignored(self, segmentation: list) -> None:
+        """Degenerate parts next to a real polygon leave the polygon's mask unchanged."""
+        expected = convert_coco_poly_to_mask([_make_polygon(_make_reference_mask())], _H, _W)
+
+        result = convert_coco_poly_to_mask([segmentation], _H, _W)
+
+        assert torch.equal(result, expected)
+
+    def test_convert_coco_keeps_instance_with_degenerate_part(self) -> None:
+        """``ConvertCoco`` loads an image whose annotation starts with a degenerate polygon part."""
+        polygon = _make_polygon(_make_reference_mask())
+        converter = ConvertCoco(include_masks=True)
+
+        def _convert(segmentation: list) -> dict:
+            annotation = {"bbox": [30, 20, 40, 30], "category_id": 0, "area": 1200, "iscrowd": 0}
+            annotation["segmentation"] = segmentation
+            return converter(_IMAGE, {"image_id": 1, "annotations": [annotation]})[1]
+
+        target = _convert([[30, 20, 70, 50], *polygon])
+
+        assert target["masks"].shape == (1, _H, _W)
+        assert torch.equal(target["masks"], _convert(polygon)["masks"])
+
+    def test_crowd_compression_skips_degenerate_parts(self) -> None:
+        """Crowd segmentations drop degenerate parts and become ``None`` when no part encloses an area."""
+        polygon = _make_polygon(_make_reference_mask())
+
+        compressed = _compressed_crowd_segmentation([[30, 20, 70, 50], *polygon], _H, _W)
+
+        assert compressed == _compressed_crowd_segmentation(polygon, _H, _W)
+        assert _compressed_crowd_segmentation([[30, 20, 70, 50]], _H, _W) is None
