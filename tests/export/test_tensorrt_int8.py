@@ -3592,6 +3592,77 @@ class TestBiasCorrectionInInt8Source:
         norm = next(node for node in quantized.graph.node if node.op_type == "LayerNormalization")
         assert (norm.input[1] != "gamma") == smoothed
 
+    @pytest.mark.parametrize(
+        ("outputs", "passes"),
+        [(("dets", "labels"), 3), (("dets", "labels", "masks"), 1), (("dets", "labels", "keypoints"), 1)],
+    )
+    def test_a_detector_reads_the_calibration_images_once_per_step(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outputs: tuple[str, ...], passes: int
+    ) -> None:
+        path = tmp_path / "mlp.onnx"
+        onnx.save(_gelu_mlp(outputs=outputs, norm=True), path)
+        reads = Mock(wraps=calibration.calibration_batches)
+        monkeypatch.setattr(calibration, "calibration_batches", reads)
+        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=images,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ):
+            pass
+        assert reads.call_count == passes
+
+    @pytest.mark.parametrize(("index", "constant"), [(1, "gamma"), (2, "beta")])
+    def test_the_fp16_norm_carries_the_scales_the_ranges_were_calibrated_with(
+        self, tmp_path: Path, index: int, constant: str
+    ) -> None:
+        path = tmp_path / "mlp.onnx"
+        onnx.save(_gelu_mlp(norm=True), path)
+        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=images,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        model = onnx.load(path)
+        quantize._lift_opset(model)
+        name = f"{BACKBONE}norm2/LayerNormalization"
+        scales = quantize.measure_smoothing_scales(str(path), model, quantize.plan_int8(model), list(images[:, None]))
+        original = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}[constant]
+        norm = next(node for node in quantized.graph.node if node.name == name)
+        actual = numpy_helper.to_array(quantize._constant_weights(quantized.graph)[norm.input[index]])
+        expected = (original.astype(np.float16).astype(np.float64) / scales[name]).astype(np.float16)
+        np.testing.assert_array_equal(actual, expected)
+
+    def test_the_fp16_projection_carries_the_scales_the_ranges_were_calibrated_with(self, tmp_path: Path) -> None:
+        path = tmp_path / "mlp.onnx"
+        onnx.save(_gelu_mlp(norm=True), path)
+        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=images,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        model = onnx.load(path)
+        quantize._lift_opset(model)
+        name = f"{BACKBONE}norm2/LayerNormalization"
+        scales = quantize.measure_smoothing_scales(str(path), model, quantize.plan_int8(model), list(images[:, None]))
+        original = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}["w1"]
+        fc1 = next(node for node in quantized.graph.node if node.name == f"{BACKBONE}mlp/fc1/MatMul")
+        dequantize = next(node for node in quantized.graph.node if fc1.input[1] in node.output)
+        smoothed = original.astype(np.float16).astype(np.float64) * scales[name][:, None]
+        expected, _ = quantize._quantized_weight(smoothed.astype(np.float16), quantize._weight_axis(fc1))
+        actual = numpy_helper.to_array(quantize._constant_weights(quantized.graph)[dequantize.input[0]])
+        np.testing.assert_array_equal(actual, expected)
+
     def test_the_first_projection_is_corrected_on_the_smoothed_graph(self, tmp_path: Path) -> None:
         path = tmp_path / "mlp.onnx"
         onnx.save(_gelu_mlp(norm=True), path)
