@@ -104,9 +104,15 @@ def decode_detections(
     else:
         logger.debug("Logits stats: empty shape=%s", logits.shape)
     # Use at least float32 intermediates, then round once to the original score dtype, as PyTorch sigmoid does.
-    sigmoid_logits = logits.astype(np.result_type(logits.dtype, np.float32), copy=False)
-    one = np.asarray(1, dtype=sigmoid_logits.dtype)
-    scores_all = (one / (one + np.exp(-sigmoid_logits.clip(-88, 88)))).astype(logits.dtype, copy=False)
+    # Copy even FP32/FP64 inputs so the reusable work buffer never modifies caller-owned logits.
+    scores_all = logits.astype(np.result_type(logits.dtype, np.float32), copy=True)
+    one = np.asarray(1, dtype=scores_all.dtype)
+    np.clip(scores_all, -88, 88, out=scores_all)
+    np.negative(scores_all, out=scores_all)
+    np.exp(scores_all, out=scores_all)
+    np.add(scores_all, one, out=scores_all)
+    np.divide(one, scores_all, out=scores_all)
+    scores_all = scores_all.astype(logits.dtype, copy=False)
     scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
     # The query count is read off the logits rather than the boxes; a valid RF-DETR export gives both the same Q.
     selection_cap = logits.shape[0] if num_select is None else num_select

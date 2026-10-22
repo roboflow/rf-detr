@@ -148,6 +148,25 @@ class TestDecodeDetections:
         assert decoded.confidence.dtype == logits.dtype
         np.testing.assert_allclose(decoded.confidence, expected, rtol=4 * np.finfo(dtype).eps, atol=0.0)
 
+    @pytest.mark.parametrize("dtype", ["float16", "float32", "float64"])
+    @pytest.mark.parametrize("read_only", [False, True])
+    def test_decode_does_not_modify_logits(self, dtype: str, read_only: bool) -> None:
+        """Decoding must leave caller-owned logits intact, including strided and read-only views.
+
+        Reusing a sigmoid work buffer must not overwrite model outputs or aliases held by the caller, even when no dtype
+        conversion is needed.
+        """
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2], [0.3, 0.3, 0.1, 0.1]], dtype=np.float32)
+        storage = np.array([[-100.0, 2.0, 1.1005859375, 3.0], [100.0, 4.0, -12.0, 5.0]], dtype=dtype)
+        original = storage.copy()
+        logits = storage[:, ::2]
+        if read_only:
+            logits.flags.writeable = False
+
+        decode_detections(boxes, logits, (10, 10))
+
+        np.testing.assert_array_equal(storage, original)
+
     def test_excluded_background_slot_keeps_original_class_ids(self) -> None:
         """Dropping the background slot must not renumber the surviving classes.
 
