@@ -14,6 +14,7 @@ that lets one query produce more than one detection, thresholding, and the empty
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from rfdetr.export._runtime.decode import decode_detections
@@ -63,6 +64,89 @@ class TestDecodeDetections:
         decoded = decode_detections(boxes, logits, (10, 10), background_class_id=None)
 
         np.testing.assert_allclose(decoded.confidence, [1.0 / (1.0 + np.exp(-2.0))], rtol=1e-6)
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=[
+                    pytest.mark.gpu,
+                    pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for sigmoid parity"),
+                ],
+            ),
+        ],
+    )
+    def test_fp16_threshold_matches_torch_sigmoid(self, device: str) -> None:
+        """An FP16 score just above 0.75 must survive like PyTorch's CPU and CUDA sigmoid.
+
+        Rounding each sigmoid operation in FP16 produces exactly 0.75 for this representable logit, so the exported
+        runtime used to discard a detection retained by ``PostProcess``.
+        """
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[1.1005859375]], dtype=np.float16)
+        expected = torch.from_numpy(logits).to(device).sigmoid().cpu().numpy().ravel()
+
+        decoded = decode_detections(boxes, logits, (10, 10), threshold=0.75)
+
+        assert expected[0] > 0.75
+        assert decoded.query_index.tolist() == [0]
+        assert decoded.class_id.tolist() == [0]
+        assert decoded.confidence.dtype == logits.dtype
+        np.testing.assert_array_equal(decoded.confidence, expected)
+
+    def test_fp16_topk_preserves_high_confidence_order(self) -> None:
+        """Rounding intermediate values must not turn distinct high confidences into a tie.
+
+        Both logits used to decode to 1.0, allowing the lower-confidence query/class pair to take the only selected
+        slot. PyTorch's FP16 sigmoid still distinguishes the two scores.
+        """
+        boxes = np.array([[0.2, 0.2, 0.1, 0.1], [0.8, 0.8, 0.1, 0.1]], dtype=np.float32)
+        logits = np.array([[8.0, -9.0], [-9.0, 9.0]], dtype=np.float16)
+
+        decoded = decode_detections(boxes, logits, (10, 10), num_select=1)
+
+        assert decoded.query_index.tolist() == [1]
+        assert decoded.class_id.tolist() == [1]
+        np.testing.assert_array_equal(decoded.confidence, torch.from_numpy(logits[1, 1:]).sigmoid().numpy())
+
+    @pytest.mark.parametrize("logit", [-65504.0, -12.0, 12.0, 65504.0])
+    def test_fp16_extreme_logits_do_not_overflow(self, logit: float) -> None:
+        """Finite FP16 inputs must decode without overflowing the exponential, even under strict NumPy settings."""
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[logit]], dtype=np.float16)
+        expected = torch.from_numpy(logits).sigmoid().numpy().ravel()
+
+        with np.errstate(over="raise"):
+            decoded = decode_detections(boxes, logits, (10, 10), threshold=-1.0)
+
+        assert np.isfinite(decoded.confidence).all()
+        assert decoded.confidence.dtype == logits.dtype
+        np.testing.assert_array_equal(decoded.confidence, expected)
+
+    @pytest.mark.parametrize("dtype", ["float16", "float32", "float64"])
+    def test_threshold_remains_strict(self, dtype: str) -> None:
+        """Higher-precision sigmoid arithmetic must still drop a score exactly equal to the threshold."""
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[0.0]], dtype=dtype)
+
+        decoded = decode_detections(boxes, logits, (10, 10), threshold=0.5)
+
+        assert decoded.confidence.size == 0
+        assert decoded.confidence.dtype == logits.dtype
+
+    @pytest.mark.parametrize("dtype", ["float32", "float64"])
+    def test_sigmoid_preserves_floating_point_precision(self, dtype: str) -> None:
+        """FP32 and FP64 confidence keeps its input precision instead of being forced through a lower dtype."""
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[1.1005859375]], dtype=dtype)
+        expected = torch.from_numpy(logits).sigmoid().numpy().ravel()
+
+        decoded = decode_detections(boxes, logits, (10, 10), threshold=0.75)
+
+        assert decoded.confidence.dtype == logits.dtype
+        np.testing.assert_allclose(decoded.confidence, expected, rtol=4 * np.finfo(dtype).eps, atol=0.0)
 
     def test_excluded_background_slot_keeps_original_class_ids(self) -> None:
         """Dropping the background slot must not renumber the surviving classes.
