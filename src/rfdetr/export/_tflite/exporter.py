@@ -30,6 +30,11 @@ into an equivalent bilinear sampling subgraph built from ``Gather(axis=0)`` on a
 ``batch_dims`` — the only TFLite gather path that is unconditionally supported, neither crashing on
 ``AllocateTensors()`` nor producing wrong values.
 
+The same pass rewrites each ``GatherElements`` that reads a constant (the two-stage query selection gathers its boxes
+from the constant-folded anchor proposals). ``onnx2tf`` moves such a constant into its channel-last layout but leaves
+the indices alone, so the gather silently returns the wrong boxes; :func:`_replace_constant_gather_elements` turns it
+into a rank-1 ``Gather(axis=0)`` over the flattened constant.
+
 Import order
 ------------
 TensorFlow must be imported before ONNX's C extension or the conversion deadlocks, so :class:`TFLiteExporter` calls
@@ -435,6 +440,69 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     graph.nodes.extend(nodes)
 
 
+def _replace_constant_gather_elements(node: Any, graph: Any, *, index: int) -> None:
+    """Rewrite one ``GatherElements`` that reads a constant into a rank-1 ``Gather`` over the flattened constant.
+
+    ``onnx2tf`` moves a rank-3 or higher constant ``GatherElements`` input into its channel-last layout and remaps
+    ``axis`` to match, but leaves the indices in ONNX layout (onnx2tf 2.4.3, ``ops/GatherElements.py``), so the gather
+    reads the wrong elements. A square index shape, such as the ``(1, 4, 4)`` box indices of RF-DETR's two-stage query
+    selection, raises no shape error, and the selected boxes come out silently wrong. A rank-1 constant has no layout
+    to move: the replacement reads the flattened constant at ``sum(coordinate * stride)``, where the coordinate along
+    ``axis`` comes from the indices and every other coordinate is the output position, precomputed because the index
+    shape is static.
+
+    Args:
+        node: The ``gs.Node`` to replace: a ``GatherElements`` whose data input is a ``gs.Constant`` and whose
+            indices have a static shape.
+        graph: The ``gs.Graph`` that owns *node*.
+        index: Unique integer suffix used to namespace tensor and constant names.
+    """
+    import onnx
+    import onnx_graphsurgeon as gs
+
+    data, indices = node.inputs
+    out = node.outputs[0]
+    values = np.asarray(data.values)
+    axis = node.attrs.get("axis", 0) % values.ndim
+    index_shape = tuple(int(size) for size in indices.shape)
+    strides = [int(np.prod(values.shape[dim + 1 :])) for dim in range(values.ndim)]
+    position = np.indices(index_shape, dtype=np.int64)
+    offsets = np.zeros(index_shape, dtype=np.int64)
+    for dim in range(values.ndim):
+        if dim != axis:
+            offsets += position[dim] * strides[dim]
+
+    pfx = f"_gerepl{index}"
+
+    def v(name: str) -> Any:
+        return gs.Variable(f"{pfx}_{name}", dtype=np.int64, shape=list(index_shape))
+
+    def c(name: str, value: Any, dtype: Any = np.int64) -> Any:
+        return gs.Constant(f"{pfx}_c_{name}", np.asarray(value, dtype=dtype))
+
+    as_int64, shifted, wrapped, scaled, linear = v("i64"), v("shifted"), v("wrapped"), v("scaled"), v("linear")
+    size = c("size", values.shape[axis])
+    flat = c("flat", values.reshape(-1), values.dtype)
+    linear_1d = gs.Variable(f"{pfx}_linear_1d", dtype=np.int64, shape=[offsets.size])
+    gathered_1d = gs.Variable(f"{pfx}_gathered_1d", dtype=values.dtype, shape=[offsets.size])
+    graph.nodes.extend(
+        [
+            gs.Node("Cast", inputs=[indices], outputs=[as_int64], attrs={"to": int(onnx.TensorProto.INT64)}),
+            # GatherElements accepts indices in [-size, size); (i + size) mod size maps them all to [0, size).
+            gs.Node("Add", inputs=[as_int64, size], outputs=[shifted]),
+            gs.Node("Mod", inputs=[shifted, size], outputs=[wrapped]),
+            gs.Node("Mul", inputs=[wrapped, c("stride", strides[axis])], outputs=[scaled]),
+            gs.Node("Add", inputs=[scaled, c("offsets", offsets)], outputs=[linear]),
+            gs.Node("Reshape", inputs=[linear, c("rank1", [-1])], outputs=[linear_1d]),
+            gs.Node("Gather", inputs=[flat, linear_1d], outputs=[gathered_1d], attrs={"axis": 0}),
+            gs.Node("Reshape", inputs=[gathered_1d, c("shape", index_shape)], outputs=[out]),
+        ]
+    )
+    # Disconnect the original node so graph.cleanup() removes it.
+    node.inputs.clear()
+    node.outputs.clear()
+
+
 def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     """Rewrite every GridSample node in *onnx_path* to use TFLite-safe ops.
 
@@ -450,14 +518,17 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     Only ``mode="bilinear"``, ``padding_mode="zeros"``, ``align_corners=0`` nodes are patched — the only variant emitted
     by RF-DETR's exporter.
 
+    The same pass rewrites every ``GatherElements`` that reads a constant with static-shape indices, which ``onnx2tf``
+    converts into a gather over the wrong elements (see :func:`_replace_constant_gather_elements`).
+
     Args:
         onnx_path: Path to the source ``.onnx`` file.
         output_dir: Directory where the patched ``.onnx`` is written.  Must
             already exist.
 
     Returns:
-        Path to the patched ``.onnx`` file if any ``GridSample`` nodes were found; *onnx_path* unchanged if the graph
-        contains no such nodes.
+        Path to the patched ``.onnx`` file if any ``GridSample`` or constant-input ``GatherElements`` nodes were found;
+        *onnx_path* unchanged if the graph contains no such nodes.
 
     Raises:
         ImportError: If ``onnx`` or ``onnx_graphsurgeon`` are not available.
@@ -476,18 +547,34 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     model = onnx.load(str(onnx_path))
     model = onnx.shape_inference.infer_shapes(model)
     graph = gs.import_onnx(model)
+    # onnx2tf's own onnxsim pass folds constant subgraphs (the segmentation model's anchor proposals reach their
+    # GatherElements through Where and Cast) into the constants its layout bug mishandles; fold them here first.
+    graph.fold_constants().cleanup()
 
     gs_nodes = [n for n in graph.nodes if n.op == "GridSample"]
-    if not gs_nodes:
-        logger.debug("No GridSample nodes found; skipping TFLite-safe patch.")
+    ge_nodes = [
+        n
+        for n in graph.nodes
+        if n.op == "GatherElements"
+        and isinstance(n.inputs[0], gs.Constant)
+        and n.inputs[1].shape is not None
+        and all(isinstance(size, int) for size in n.inputs[1].shape)
+    ]
+    if not gs_nodes and not ge_nodes:
+        logger.debug("No GridSample or constant-input GatherElements nodes found; skipping TFLite-safe patch.")
         return onnx_path
 
-    logger.info(
-        "Patching %d GridSample node(s) → TFLite-safe Gather(axis=0) subgraph.",
-        len(gs_nodes),
-    )
+    if gs_nodes:
+        logger.info(
+            "Patching %d GridSample node(s) → TFLite-safe Gather(axis=0) subgraph.",
+            len(gs_nodes),
+        )
     for i, node in enumerate(gs_nodes):
         _replace_single_gridsample(node, graph, index=i)
+    if ge_nodes:
+        logger.info("Patching %d constant-input GatherElements node(s) → rank-1 Gather(axis=0).", len(ge_nodes))
+    for i, node in enumerate(ge_nodes):
+        _replace_constant_gather_elements(node, graph, index=i)
 
     graph.cleanup().toposort()
 

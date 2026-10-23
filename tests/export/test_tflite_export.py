@@ -130,13 +130,14 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
             ``None`` all ``onnx2tf*`` keys are simply deleted (legacy behaviour).
 
     Examples:
-        >>> _, _, saved = _install_fake_onnx2tf()
         >>> import sys
-        >>> "onnx2tf" in sys.modules
-        True
-        >>> _remove_fake_onnx2tf(saved)
-        >>> "onnx2tf" in sys.modules
+        >>> original = sys.modules.get("onnx2tf")
+        >>> _, _, saved = _install_fake_onnx2tf()
+        >>> sys.modules["onnx2tf"] is original
         False
+        >>> _remove_fake_onnx2tf(saved)
+        >>> sys.modules.get("onnx2tf") is original
+        True
     """
     if saved is not None:
         for key in _ONNX2TF_KEYS:
@@ -1421,6 +1422,106 @@ class TestGridSampleOnnxRewrite:
         np.testing.assert_allclose(
             result, ref, atol=1e-5, rtol=0, err_msg="Gather(axis=0) rewrite output diverges from F.grid_sample"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestConstantGatherElementsOnnxRewrite
+# ---------------------------------------------------------------------------
+
+#: Shape of the gathered tensor; RF-DETR's two-stage proposal gather reads boxes from a ``(1, queries, 4)`` constant.
+_GATHER_DATA_SHAPE: tuple[int, int, int] = (2, 6, 4)
+
+
+def _gather_indices_shape(axis: int) -> tuple[int, ...]:
+    """Shape of an index tensor that selects 3 entries along *axis* of the test data.
+
+    Examples:
+        >>> _gather_indices_shape(1)
+        (2, 3, 4)
+    """
+    return tuple(3 if dim == axis else size for dim, size in enumerate(_GATHER_DATA_SHAPE))
+
+
+def _build_gather_elements_onnx(
+    path: Path, data: np.ndarray, *, axis: int, constant_data: bool, cast_data: bool = False
+) -> None:
+    """Write a minimal ONNX model with one ``GatherElements`` node whose indices are a graph input.
+
+    With *cast_data*, the constant reaches the gather through a ``Cast``, so the node reads a computed tensor that
+    constant folding turns into a constant, as onnx2tf's own simplification pass does.
+
+    Examples:
+        Requires ``onnx`` which is optional — skipped in the doctest runner.
+
+        >>> data = np.zeros((2, 6, 4), np.float32)
+        >>> _build_gather_elements_onnx(Path("m.onnx"), data, axis=1, constant_data=True)  # doctest: +SKIP
+    """
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, list(_gather_indices_shape(axis)))
+    out = helper.make_tensor_value_info("out", TensorProto.FLOAT, list(_gather_indices_shape(axis)))
+    nodes = [helper.make_node("GatherElements", inputs=["data", "indices"], outputs=["out"], axis=axis)]
+    if constant_data:
+        source = "data_initializer" if cast_data else "data"
+        inputs, initializers = [indices], [numpy_helper.from_array(data, name=source)]
+        if cast_data:
+            nodes.insert(0, helper.make_node("Cast", inputs=[source], outputs=["data"], to=TensorProto.FLOAT))
+    else:
+        inputs, initializers = [helper.make_tensor_value_info("data", TensorProto.FLOAT, list(data.shape)), indices], []
+    graph = helper.make_graph(nodes, "gather_elements_test", inputs, [out], initializer=initializers)
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), str(path))
+
+
+class TestConstantGatherElementsOnnxRewrite:
+    """Onnx2tf transposes a constant ``GatherElements`` input but not its indices; the rewrite keeps both in place."""
+
+    @onnx_gs_available
+    @pytest.mark.parametrize("axis", [0, 1, 2])
+    def test_rewritten_gather_matches_take_along_axis(self, axis: int, tmp_path: Path) -> None:
+        """The rank-1 ``Gather`` replacement returns what ``GatherElements`` returns, negative indices included."""
+        import onnxruntime as ort
+
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
+
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal(_GATHER_DATA_SHAPE).astype(np.float32)
+        dim = _GATHER_DATA_SHAPE[axis]
+        indices = rng.integers(-dim, dim, size=_gather_indices_shape(axis), dtype=np.int64)
+        source = tmp_path / "gather_elements.onnx"
+        _build_gather_elements_onnx(source, data, axis=axis, constant_data=True)
+
+        patched_path = _replace_gridsample_for_tflite(source, tmp_path)
+        sess = ort.InferenceSession(str(patched_path), providers=["CPUExecutionProvider"])
+        (result,) = sess.run(None, {"indices": indices})
+
+        np.testing.assert_array_equal(result, np.take_along_axis(data, indices, axis=axis))
+
+    @onnx_gs_available
+    @pytest.mark.parametrize("cast_data", [False, True])
+    def test_constant_data_gather_elements_is_removed(self, cast_data: bool, tmp_path: Path) -> None:
+        """No ``GatherElements`` reading a constant, or a tensor that folds to one, reaches onnx2tf."""
+        import onnx
+
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
+
+        source = tmp_path / "gather_elements.onnx"
+        data = np.zeros(_GATHER_DATA_SHAPE, np.float32)
+        _build_gather_elements_onnx(source, data, axis=1, constant_data=True, cast_data=cast_data)
+
+        patched = onnx.load(str(_replace_gridsample_for_tflite(source, tmp_path)))
+
+        assert [node.op_type for node in patched.graph.node if node.op_type == "GatherElements"] == []
+
+    @onnx_gs_available
+    def test_variable_data_gather_elements_is_kept(self, tmp_path: Path) -> None:
+        """A ``GatherElements`` reading a computed tensor converts correctly in onnx2tf, so it is left alone."""
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
+
+        source = tmp_path / "gather_elements.onnx"
+        _build_gather_elements_onnx(source, np.zeros(_GATHER_DATA_SHAPE, np.float32), axis=1, constant_data=False)
+
+        assert _replace_gridsample_for_tflite(source, tmp_path) == source
 
 
 # ---------------------------------------------------------------------------
