@@ -252,6 +252,9 @@ jobs:
           save: "false"
 
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
+        # TMPDIR keeps the exported artifacts off /tmp, which is size-limited on ubuntu-26.04.
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: |
           uv run --no-sync pytest tests/ -m "e2e_${{ matrix.format }}" -n ${{ matrix.workers || 1 }} \
             --cov=rfdetr --cov-report=xml \
@@ -503,6 +506,8 @@ jobs:
           ROBOFLOW_API_KEY: ${{ secrets.ROBOFLOW_API_KEY }}
           ROBOFLOW_TEST_WORKSPACE: ${{ secrets.ROBOFLOW_TEST_WORKSPACE }}
           ROBOFLOW_TEST_PROJECT: ${{ secrets.ROBOFLOW_TEST_PROJECT }}
+          # Keep temp files off /tmp, which is size-limited on ubuntu-26.04.
+          TMPDIR: ${{ runner.temp }}
         run: |
           uv run --no-sync pytest tests/ -m e2e_roboflow -n 1 \
             --timeout=600 \
