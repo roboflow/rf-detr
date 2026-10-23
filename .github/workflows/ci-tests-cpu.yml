@@ -32,7 +32,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest"]
+        # Pinned: on the ubuntu-26.04 image that ubuntu-latest now resolves to, the suite fails with
+        # "OSError: [Errno 122] Disk quota exceeded" under /tmp and the workspace.
+        os: ["ubuntu-24.04"]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - { os: "windows-latest", python-version: "3.10" }
