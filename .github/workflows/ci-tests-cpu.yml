@@ -32,7 +32,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest"]
+        # Pinned: on the ubuntu-26.04 image that ubuntu-latest now resolves to, the suite fails with
+        # "OSError: [Errno 122] Disk quota exceeded" under /tmp and the workspace.
+        os: ["ubuntu-24.04"]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - { os: "windows-latest", python-version: "3.10" }
@@ -43,6 +45,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -90,7 +94,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5.5.4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"
@@ -107,6 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: run-tests
     if: always()
+    timeout-minutes: 5
     steps:
       - name: 📋 Display test result
         run: echo "${{ needs.run-tests.result }}"

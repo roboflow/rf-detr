@@ -38,8 +38,10 @@ jobs:
     steps:
       - name: Validate confirmation
         if: github.event_name == 'workflow_dispatch'
+        env:
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [[ "${{ inputs.confirm }}" != "BACKFILL" ]]; then
+          if [[ "$CONFIRM" != "BACKFILL" ]]; then
             echo "::error::Backfill requires confirm=BACKFILL."
             exit 1
           fi
