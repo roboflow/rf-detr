@@ -6,16 +6,17 @@
 """TFLite inference helpers for RF-DETR exported models.
 
 These functions handle interpreter creation, image preprocessing, and decoding of detection and segmentation-mask
-outputs without requiring PyTorch or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``), ``numpy``,
-``supervision``, and ``Pillow`` are needed at inference time.
+outputs using ``tflite-runtime`` (or ``tensorflow``), ``numpy``, ``supervision``, and ``Pillow``, alongside the RF-DETR
+package dependencies.
 """
 
 from __future__ import annotations
 
 import contextlib
 import importlib
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,9 +24,21 @@ from PIL import Image as PILImage
 from supervision import Detections
 
 from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
@@ -73,6 +86,59 @@ def _create_interpreter(model_path: str | Path) -> Any:
     for od in out_det:
         logger.debug("Output : %s  name=%s", od["shape"], od.get("name", "<unnamed>"))
     return interp
+
+
+def _run_interpreter_raw(
+    interp: Any, input_index: int, array: NDArray[Any]
+) -> tuple[list[dict[str, Any]], list[NDArray[Any]]]:
+    """Execute one interpreter batch and read each output once."""
+    detail = interp.get_input_details()[0]
+    if tuple(detail["shape"]) != tuple(array.shape):
+        signature = tuple(detail.get("shape_signature", detail["shape"]))
+        if len(signature) != 4 or any(size != -1 and size != actual for size, actual in zip(signature, array.shape)):
+            raise ValueError(f"TFLite input shape {tuple(array.shape)} is outside graph signature {signature}.")
+        interp.resize_tensor_input(input_index, array.shape, strict=True)
+        interp.allocate_tensors()
+    interp.set_tensor(input_index, array)
+    interp.invoke()
+    details = interp.get_output_details()
+    return details, [interp.get_tensor(item["index"]) for item in details]
+
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
+    """Load a TFLite or LiteRT artifact through the shared interpreter; it reads no runtime options."""
+    _runtime_options("TFLite" if metadata.format.lower() == "tflite" else "LiteRT", options, ())
+    if device not in {"auto", "cpu"}:
+        raise ValueError("TFLite inference supports cpu or auto only.")
+
+    session = _create_interpreter(path)
+    input_info = _single_input("TFLite", session.get_input_details())
+    # The signature, not the current allocation, says which axes the graph can resize; -1 marks a dynamic axis.
+    signature = input_info.get("shape_signature", input_info["shape"])
+    _check_input_interface(
+        "TFLite",
+        metadata,
+        input_info.get("name", "") if isinstance(metadata.input_name, str) else None,
+        [None if int(size) == -1 else int(size) for size in signature],
+        input_info["dtype"],
+    )
+    _check_output_interface("TFLite", metadata, [detail.get("name") for detail in session.get_output_details()])
+
+    def execute(batch: Any) -> dict[str, Any] | list[Any]:
+        """Run one batch, using metadata to preserve output names when needed."""
+        details, raw = _run_interpreter_raw(session, input_info["index"], _input_array(batch, metadata))
+        if any(isinstance(key, str) for key in metadata.outputs.values()):
+            return {item["name"]: value for item, value in zip(details, raw)}
+        return raw
+
+    return ExportRuntime(
+        metadata.format.lower(),
+        metadata,
+        session=session,
+        device_policy="cpu",
+        execute=execute,
+        borrowed_outputs=False,
+    )
 
 
 def _decode_masks(mask_logits: NDArray[np.floating[Any]], out_size: tuple[int, int]) -> NDArray[np.bool_]:
@@ -192,7 +258,6 @@ def _run_inference(
         raise ValueError(f"rank4_output must be one of {_RANK4_OUTPUT_KINDS} or None; got {rank4_output!r}")
 
     inp_det = interp.get_input_details()
-    out_det = interp.get_output_details()
     _, height, width, channels = inp_det[0]["shape"]
 
     expected_dtype = np.float32
@@ -206,8 +271,7 @@ def _run_inference(
     with PILImage.open(image_path) as pil_img:
         inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
 
-    interp.set_tensor(inp_det[0]["index"], inp_tensor)
-    interp.invoke()
+    out_det, raw_outputs = _run_interpreter_raw(interp, inp_det[0]["index"], inp_tensor)
 
     # RF-DETR ONNX output names: "dets" = pred_boxes, "labels" = pred_logits.
     # Match by name so the code is robust to onnx2tf output reordering.
@@ -242,7 +306,7 @@ def _run_inference(
                 f"last dim == 4 (boxes) and one rank-3 tensor with last dim != 4 (logits). "
                 f"Available output shapes: {available_shapes}"
             )
-    boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]  # (Q, 4) normalized cxcywh
+    boxes_cwh = raw_outputs[boxes_idx][0]  # (Q, 4) normalized cxcywh
 
     # Sanity-check: normalized cxcywh boxes must be in [0, 1].  When num_classes==3
     # the logits tensor also has last-dim 4, making shape-based and positional matching
@@ -256,13 +320,13 @@ def _run_inference(
             "Box tensor max=%.2f exceeds [0,1] — swapping boxes/logits assignment "
             "(num_classes==%d likely caused ambiguous positional fallback).",
             float(boxes_cwh.max()),
-            interp.get_tensor(out_det[logits_idx]["index"]).shape[-1] - 1,
+            raw_outputs[logits_idx].shape[-1] - 1,
         )
         boxes_idx, logits_idx = logits_idx, boxes_idx
-        boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]
+        boxes_cwh = raw_outputs[boxes_idx][0]
 
     # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
-    logits = interp.get_tensor(out_det[logits_idx]["index"])[0]
+    logits = raw_outputs[logits_idx][0]
 
     decoded = decode_detections(
         boxes_cwh,
@@ -296,7 +360,7 @@ def _run_inference(
             )
     masks = None
     if mask_idx is not None and query_idx.shape[0] > 0:
-        raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
+        raw_masks = raw_outputs[mask_idx][0]  # (Q, Hm, Wm)
         # Fancy-index by query_idx, NOT a boolean mask: a query can now contribute more than one
         # detection (see _select_topk_multiclass), so its mask must be gathered once per detection,
         # repeats included, rather than once per unique query.

@@ -93,6 +93,8 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 | `inference_model_fp16.tflite`                | FP16 model (always produced)            |
 | `inference_model_dynamic_range_quant.tflite` | INT8 model (when `quantization="int8"`) |
 
+Each TFLite artifact also has an inference metadata sidecar named `<artifact>.rfdetr.json`, for example `inference_model_fp32.tflite.rfdetr.json`. Copy the matching sidecar alongside each model you deploy with `RFDETRInference`; without it, loading fails unless you supply the missing metadata through `metadata=`.
+
 !!! note
 
     Segmentation models produce TFLite files with three outputs: `dets` (bounding boxes), `labels` (class scores), and `masks` (per-instance segmentation masks). Keypoint models produce three outputs too, the third being `keypoints`.
@@ -103,7 +105,20 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 
     Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite `_run_inference` reference helper safely defaults `rank4_output` to `None`, decoding a mask only from an output that names itself. For a name-stripped segmentation export, pass `rank4_output="masks"`; pass `"keypoints"` to suppress anonymous-mask decoding for a keypoint export.
 
-## TFLite Inference Example
+This private NumPy helper is kept for dependency-light numerical reference checks and shares raw interpreter execution with the common runtime adapter. Use `RFDETRInference` for normal image prediction.
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model_fp32.tflite")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+The loader reads the TFLite input layout from export metadata. It returns the same Supervision result types as the native model. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use the TFLite interpreter directly
 
 ```python
 import numpy as np
