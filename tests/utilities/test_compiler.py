@@ -5,12 +5,14 @@
 # ------------------------------------------------------------------------
 """Tests for rfdetr.utilities.compiler — version-compatible compile, trace and CUDA autocast predicates."""
 
-from unittest.mock import patch
+import sys
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
-from rfdetr.utilities.compiler import cuda_autocast_dtype, is_compiling, is_tracing
+from rfdetr.utilities.box_ops import batch_dice_loss
+from rfdetr.utilities.compiler import cuda_autocast_dtype, is_compiling, is_tracing, script_or_eager
 
 
 def _is_autocast_enabled_without_device(*args: object) -> bool:
@@ -103,3 +105,62 @@ class TestCudaAutocastDtype:
         monkeypatch.setattr(torch, "get_autocast_gpu_dtype", lambda: torch.float16, raising=False)
 
         assert cuda_autocast_dtype() == torch.float16
+
+
+# ---------------------------------------------------------------------------
+# script_or_eager
+# ---------------------------------------------------------------------------
+
+
+def _sum_variadic(*tensors: torch.Tensor) -> torch.Tensor:
+    """Sum tensors through a variadic signature, which the TorchScript frontend rejects.
+
+    Examples:
+        >>> _sum_variadic(torch.tensor(1.0), torch.tensor(2.0))
+        tensor(3.)
+    """
+    return torch.stack(tensors).sum(0)
+
+
+class TestScriptOrEager:
+    """script_or_eager compiles where TorchScript works and returns the eager function where it cannot."""
+
+    @pytest.mark.skipif(sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+")
+    def test_returns_script_function_when_scripting_succeeds(self) -> None:
+        """A scriptable function comes back as a TorchScript function before Python 3.14.
+
+        This is the historical contract of the ``*_jit`` loss aliases on every interpreter where TorchScript works.
+        """
+        assert isinstance(script_or_eager(batch_dice_loss), torch.jit.ScriptFunction)
+
+    def test_returns_eager_function_when_scripting_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A TorchScript ``RuntimeError`` falls back to the eager function instead of propagating.
+
+        Hosts that wrap ``warnings.warn`` (Databricks notebooks) make TorchScript raise ``RuntimeError`` while compiling
+        torch's own loss helpers, which previously failed ``import rfdetr``.
+        """
+        monkeypatch.setattr(sys, "version_info", (3, 13, 0))
+        monkeypatch.setattr(torch.jit, "script", MagicMock(side_effect=RuntimeError("not supported in Torchscript")))
+
+        assert script_or_eager(batch_dice_loss) is batch_dice_loss
+
+    @pytest.mark.skipif(sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+")
+    def test_returns_eager_function_when_frontend_rejects_source(self) -> None:
+        """A TorchScript frontend error falls back to the eager function instead of propagating.
+
+        A ``warnings.warn`` wrapper installed after torch was imported is compiled as Python source, and its variadic
+        signature makes the TorchScript frontend raise; a variadic function reproduces that without patching torch.
+        """
+        assert script_or_eager(_sum_variadic) is _sum_variadic
+
+    def test_skips_scripting_on_python_314(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Python 3.14+ returns the eager function without calling TorchScript at all.
+
+        TorchScript is unsupported there, and compiling it during import emits a deprecation warning.
+        """
+        monkeypatch.setattr(sys, "version_info", (3, 14, 0))
+        script = MagicMock()
+        monkeypatch.setattr(torch.jit, "script", script)
+
+        assert script_or_eager(batch_dice_loss) is batch_dice_loss
+        script.assert_not_called()

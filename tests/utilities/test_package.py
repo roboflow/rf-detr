@@ -261,6 +261,50 @@ class TestImportPaths:
         )
 
     @pytest.mark.parametrize(
+        ("wrap_before_torch", "wrap_before_rfdetr"),
+        [
+            pytest.param("warnings.warn = _wrapped\n", "warnings.warn = _orig\n", id="wrapped-at-torch-import"),
+            pytest.param("", "warnings.warn = _wrapped\n", id="wrapped-at-rfdetr-import"),
+        ],
+    )
+    def test_top_level_import_survives_wrapped_warnings_warn(
+        self, wrap_before_torch: str, wrap_before_rfdetr: str
+    ) -> None:
+        """Importing rfdetr must not fail when the host has replaced ``warnings.warn`` around the torch import.
+
+        Databricks notebooks wrap ``warnings.warn``. TorchScript looks builtins up by object identity, so scripting a
+        loss that reaches a torch warning failed during ``import rfdetr``: with ``RuntimeError`` when torch saw the
+        wrapper, and with a TorchScript frontend error when the wrapper appeared after torch was imported.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import warnings\n"
+                    "_orig = warnings.warn\n"
+                    "def _wrapped(*args, **kwargs):\n"
+                    "    return _orig(*args, **kwargs)\n"
+                    f"{wrap_before_torch}"
+                    "import torch\n"
+                    f"{wrap_before_rfdetr}"
+                    "import rfdetr\n"
+                    "from rfdetr.utilities import box_ops\n"
+                    "assert box_ops.batch_sigmoid_ce_loss_jit is box_ops.batch_sigmoid_ce_loss\n"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for import under wrapped warnings.warn failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
+    @pytest.mark.parametrize(
         ("alias", "eager"),
         [
             pytest.param(criterion.dice_loss_jit, criterion.dice_loss, id="dice"),
