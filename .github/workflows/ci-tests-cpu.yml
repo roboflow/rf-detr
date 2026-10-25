@@ -28,7 +28,7 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.timeout || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +38,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - { os: "windows-latest", python-version: "3.10" }
-          - { os: "macos-latest", python-version: "3.10" }
+          # Slower hosted runners have pushed this leg past 25 minutes.
+          - { os: "macos-latest", python-version: "3.10", timeout: 30 }
           - { os: "windows-latest", python-version: "3.13" }
           - { os: "macos-latest", python-version: "3.13" }
     runs-on: ${{ matrix.os }}
