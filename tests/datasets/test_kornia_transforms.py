@@ -218,7 +218,7 @@ class TestBuildKorniaPipeline:
         transform = next(iter(pipeline.children()))
         assert transform.flags["kernel_size"] == expected
 
-    def test_scalar_std_range_is_used_verbatim(self):
+    def test_scalar_std_range_is_used_verbatim(self) -> None:
         """A scalar ``std_range`` is used as-is, with no per-sample-drift warning emitted."""
         from unittest import mock
 
@@ -228,7 +228,11 @@ class TestBuildKorniaPipeline:
             pipeline = kornia_transforms.build_kornia_pipeline({"GaussNoise": {"std_range": 0.05, "p": 1.0}}, 560)
 
         transform = next(iter(pipeline.children()))
-        assert transform.flags["std"] == pytest.approx(0.05)
+        image = torch.ones(1, 3, 16, 16)
+        torch.manual_seed(0)
+        expected = image + torch.randn_like(image) * 0.05
+        torch.manual_seed(0)
+        torch.testing.assert_close(transform(image), expected, rtol=1e-4, atol=1e-6)
         mock_warning.assert_not_called()
 
     def test_hflip_disabled_for_keypoint_pipeline(self):
@@ -1877,7 +1881,7 @@ class TestGaussianDefaultsMatchAlbumentations:
         assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((1.25, 1.5))
 
     @albumentations_only
-    def test_gauss_noise_std_default_matches_albumentations(self):
+    def test_gauss_noise_std_default_matches_albumentations(self) -> None:
         """An unspecified std_range must equal albumentations' GaussNoise std_range default."""
         import albumentations
 
@@ -1886,13 +1890,13 @@ class TestGaussianDefaultsMatchAlbumentations:
         cpu_default = tuple(albumentations.GaussNoise().std_range)
         # Kornia takes a single std (the range's upper bound); the DEFAULT range must still
         # be the albumentations one, so an unspecified config lands on the same upper bound.
-        transform = kornia_transforms._make_gauss_noise({"p": 0.3})
-        gpu_std = float(transform.flags["std"])
+        transform = kornia_transforms._make_gauss_noise({"p": 1.0})
+        image = torch.ones(1, 3, 16, 16)
+        torch.manual_seed(0)
+        expected = image + torch.randn_like(image) * cpu_default[1]
+        torch.manual_seed(0)
 
-        assert gpu_std == pytest.approx(cpu_default[1]), (
-            f"unspecified GaussNoise std is {gpu_std} on the GPU path but the CPU path "
-            f"samples up to {cpu_default[1]}, so the default upper bound is not aligned"
-        )
+        torch.testing.assert_close(transform(image), expected, rtol=1e-4, atol=1e-6)
 
     def test_default_gauss_noise_warns_because_the_default_range_is_non_degenerate(self):
         """The albumentations default range is non-degenerate, so building with no std_range still emits the fixed-std

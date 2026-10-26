@@ -36,6 +36,7 @@ nav:
           - Install: getting-started/install.md
           - Migration Guide: getting-started/migration.md
       - Run Model:
+          - Inference: learn/inference.md
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
           - Keypoints: learn/run/keypoints.md
@@ -68,6 +69,7 @@ nav:
           - Exporter Blueprint: exports/blueprint.md
   - API Reference:
       - RF-DETR: reference/rfdetr.md
+      - Inference: reference/inference.md
       - Detection Models:
           - RF-DETR Nano: reference/nano.md
           - RF-DETR Small: reference/small.md
