@@ -129,5 +129,10 @@ class PixelTranslatedAffine(RandomAffine):  # type: ignore[misc]
         Returns:
             Values shifted back to their original positions, with the same shape and dtype as the input.
         """
-        params = {**self._params, "translations": -self._params["translations"]}
+        translations = self._params["translations"]
+        # Kornia 0.9 samples the full batch, but inverse still passes only selected images; older versions sample
+        # only selected rows. Keep each input paired with its own original offset in either layout.
+        if translations.shape[0] != input.shape[0]:
+            translations = translations[self._params["batch_prob"] > 0.5]
+        params = {**self._params, "translations": -translations}
         return self.apply_transform(input, params, flags, transform)

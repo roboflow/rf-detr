@@ -39,6 +39,7 @@ from torch import nn
 
 from rfdetr.export._litert.sampling import pixel_row_sampling
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -297,3 +298,7 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
         if self.config.verbose:
             logger.info(f"✓ LiteRT model saved to {output_file}")
         return output_file
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Use LiteRT's NCHW input and tuple output positions."""
+        return positional_metadata(metadata)
