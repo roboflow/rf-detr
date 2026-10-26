@@ -19,6 +19,7 @@ from torch import nn
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export._runtime.calibration_checks import check_calibration_data
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -40,6 +41,15 @@ def _check_openvino_available() -> None:
         import openvino  # noqa: F401
     except ImportError as error:
         raise ImportError('OpenVINO requires `openvino`. Install it with: pip install "rfdetr[openvino]"') from error
+
+
+def _has_dynamic_batch(path: Path) -> bool:
+    """Read the saved IR to determine whether its statically ranked input accepts a dynamic batch."""
+    _check_openvino_available()
+    import openvino as ov
+
+    shape = ov.Core().read_model(path).input(0).partial_shape
+    return shape.rank.is_static and not shape[0].is_static
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +109,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     Note:
         Output tensor names in the saved IR are OpenVINO-inferred, not renamed to ``dets``/``labels``/etc. --
         consumers must match outputs by **position**, mirroring the CoreML export's naming limitation.
+        The inference metadata records a dynamic batch axis (``-1``) when the saved IR's batch axis is dynamic, which
+        is what lets ``RFDETRInference`` predict several images in one call.
 
     Examples:
         Requires the optional ``openvino`` dependency and a prepared graph, so this is documentation only
@@ -325,3 +337,10 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
             logger.info(f"✓ OpenVINO IR model saved to {output_xml}")
             logger.info(f"✓ Model binary saved to {output_bin}")
         return str(output_xml)
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Record positional outputs and the saved IR's dynamic batch without changing spatial preprocessing."""
+        metadata = positional_metadata(metadata)
+        if _has_dynamic_batch(path):
+            metadata = metadata.model_copy(update={"input_shape": (-1, *metadata.input_shape[1:])})
+        return metadata

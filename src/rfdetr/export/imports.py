@@ -32,3 +32,11 @@ _IS_OPENVINO_INSTALLED = is_installed("openvino")
 _IS_NNCF_INSTALLED = is_installed("nncf")
 #: Whether the optional LiteRT Torch package is installed.
 _IS_LITERT_TORCH_INSTALLED = is_installed("litert_torch")
+#: Whether the optional LiteRT interpreter package (``ai_edge_litert``) is installed.
+_IS_AI_EDGE_LITERT_INSTALLED = is_installed("ai_edge_litert")
+#: Whether the optional standalone TFLite interpreter package (``tflite_runtime``) is installed.
+_IS_TFLITE_RUNTIME_INSTALLED = is_installed("tflite_runtime")
+#: Whether TensorFlow, whose ``tf.lite`` interpreter also runs TFLite models, is installed.
+_IS_TENSORFLOW_INSTALLED = is_installed("tensorflow")
+#: Whether the Core AI runtime package (``coreai``) that executes ``.aimodel`` assets is installed.
+_IS_COREAI_INSTALLED = is_installed("coreai")
