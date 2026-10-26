@@ -78,7 +78,7 @@ def is_live_source(source: PredictionInput) -> bool:
     url = urlparse(path)
     return (
         path.isdecimal()
-        or path.split(" ", 1)[0] == "screen"
+        or (path.split(" ", 1)[0] == "screen" and not Path(path).is_file())
         or Path(path).suffix.lower() == ".streams"
         or url.scheme.lower() in ("rtsp", "rtsps", "rtmp", "tcp")
         or (url.scheme.lower() in ("http", "https") and Path(url.path).suffix.lower() in {".m3u8", ".mjpg", ".mjpeg"})
@@ -172,7 +172,7 @@ def _iter_source_groups(
         finally:
             entries.close()
         return
-    if path.split(" ", 1)[0] == "screen":
+    if path.split(" ", 1)[0] == "screen" and not Path(path).is_file():
         if warn_on_live:
             _warn_live_accumulation()
         screenshots = _iter_screenshots(path)
@@ -262,7 +262,7 @@ def _manifest_entries(path: Path) -> Generator[str, None, None]:
                 if (
                     not urlparse(entry).scheme
                     and not entry.isdecimal()
-                    and entry.split(" ", 1)[0] != "screen"
+                    and (entry.split(" ", 1)[0] != "screen" or (path.parent / entry).is_file())
                     and not Path(entry).is_absolute()
                 ):
                     entry = str(path.parent / entry)

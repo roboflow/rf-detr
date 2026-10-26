@@ -242,7 +242,7 @@ uv run twine check --strict dist/*
 
 - Re-export public `PredictionInput` from `rfdetr` and `rfdetr.prediction`. Import OpenCV lazily. Preserve RGB inputs and copy arrays used for source-image outputs. Store source images in `sv.Detections` metadata or `sv.KeyPoints` per-object data.
 
-- Keep source parsing in `src/rfdetr/_prediction.py`, shared by `RFDETR.predict()` and `RFDETRInference.predict()`. Both facades delegate to it; runtime adapters never parse sources. Distinguish live sources by explicit schemes and media suffixes. Treat extensionless HTTP URLs as images. Reject screen capture inside `.streams` manifests with a clear error.
+- Keep source parsing in `src/rfdetr/_prediction_sources.py`. Both `RFDETR.predict()` and `RFDETRInference.predict()` use it through the shared pipeline in `src/rfdetr/_prediction.py`; runtime adapters never parse sources. Distinguish live sources by explicit schemes and media suffixes. Treat extensionless HTTP URLs as images. Reject screen capture inside `.streams` manifests with a clear error.
 
 - Preserve scalar still-image returns and image-list batching. Expanded finite inputs use bounded batches and flush the last partial batch. `.streams` predicts a batch in manifest order and stops when a known finite source ends. Live sources also support `stream=False`, so resolve live inputs before warning about accumulated results, including live entries in nested manifests.
 

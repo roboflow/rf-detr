@@ -26,6 +26,32 @@ if TYPE_CHECKING:
 class TestPredictSources:
     """Exercise source inputs through the public prediction API."""
 
+    @pytest.mark.parametrize("filename", ["screen shot.png", "screen", "screen 1"])
+    @pytest.mark.parametrize("source_kind", ["file", "stream", "manifest"])
+    def test_existing_screen_image_precedes_capture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str, source_kind: str
+    ) -> None:
+        """Existing image paths take precedence over screen capture syntax."""
+        monkeypatch.chdir(tmp_path)
+        image_dir = tmp_path / "images" if source_kind == "manifest" else tmp_path
+        image_dir.mkdir(exist_ok=True)
+        Image.new("RGB", (32, 24), color=(10, 20, 30)).save(image_dir / filename, format="PNG")
+        source = filename
+        if source_kind == "manifest":
+            manifest = image_dir / "sources.txt"
+            manifest.write_text(filename)
+            source = str(manifest)
+
+        with patch.dict("sys.modules", {"mss": None}):
+            result = _DummyRFDETR().predict(source, stream=source_kind == "stream")
+            if source_kind != "file":
+                results = list(result)
+                assert len(results) == 1
+                result = results[0]
+
+        assert isinstance(result, sv.Detections)
+        np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [10, 20, 30])
+
     @pytest.mark.parametrize("animated", [False, True])
     @pytest.mark.parametrize("source_kind", ["file", "directory"])
     def test_gif_predicts_first_frame(self, tmp_path: Path, animated: bool, source_kind: str) -> None:
