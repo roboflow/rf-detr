@@ -20,6 +20,32 @@ from .helpers import _DummyRFDETR
 class TestLivePredictions:
     """Exercise live sources through the public prediction API."""
 
+    @pytest.mark.parametrize("vid_stride", [1, 2])
+    def test_finite_streams_preserve_frames_for_slow_consumer(self, tmp_path: Path, vid_stride: int) -> None:
+        """Finite videos retain selected frames even when latest-frame mode is requested."""
+        source = tmp_path / "videos.streams"
+        source.write_text("https://example.com/a.mp4\nhttps://example.com/b.mp4\n")
+        captures = [MagicMock(), MagicMock()]
+        finished = [Event(), Event()]
+        for capture, event, offset in zip(captures, finished, [0, 10]):
+            capture.get.return_value = 0
+            capture.read.side_effect = [
+                (True, np.full((24, 32, 3), value + offset, dtype=np.uint8)) for value in range(1, 6)
+            ] + [(False, None)]
+            capture.release.side_effect = event.set
+
+        with patch("cv2.VideoCapture", side_effect=captures):
+            results = _DummyRFDETR().predict(source, stream=True, stream_buffer=False, vid_stride=vid_stride)
+            try:
+                first = next(results)
+                assert all(event.wait(2) for event in finished)
+                predictions = [first, *results]
+            finally:
+                results.close()
+
+        expected = [1, 11, 2, 12, 3, 13, 4, 14, 5, 15] if vid_stride == 1 else [1, 11, 3, 13, 5, 15]
+        assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in predictions] == expected
+
     @pytest.mark.parametrize("entry", ["video.mp4", "https://example.com/video.mp4"])
     def test_manifest_video_without_frame_count_stops_at_eof(self, tmp_path: Path, entry: str) -> None:
         """Known video files end without reconnecting when frame-count metadata is absent."""

@@ -26,6 +26,7 @@ _IMAGE_SUFFIXES = {
     ".avif",
     ".bmp",
     ".dng",
+    ".gif",
     ".heic",
     ".heif",
     ".ico",
@@ -39,7 +40,7 @@ _IMAGE_SUFFIXES = {
     ".webp",
 }
 #: Extensions that identify finite video sources.
-_VIDEO_SUFFIXES = {".asf", ".avi", ".gif", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+_VIDEO_SUFFIXES = {".asf", ".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
 #: Supported source manifest formats.
 _MANIFEST_SUFFIXES = {".txt", ".csv", ".streams"}
 

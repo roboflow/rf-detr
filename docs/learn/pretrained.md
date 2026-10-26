@@ -128,7 +128,9 @@ Pass an integer webcam index, a numeric camera index as text, or an explicit liv
 
 Live sources also run with `stream=False`. This call stores every result in memory and warns after source resolution identifies a live input. This includes live sources inside text and CSV manifests. Recorded YouTube videos are finite and do not trigger this warning. Use `stream=True` to keep memory use bounded. Capture keeps the first frame. By default, it replaces pending frames with the latest frame. This policy can skip frames when prediction is slower than capture. Set `stream_buffer=True` to queue up to 30 pending frames per source. If a stream read fails, RF-DETR tries to reconnect three times, then raises an error.
 
-Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. The latest-frame policy can still skip frames when prediction is slower than capture.
+Finite videos in `.streams` always use the bounded buffer, even with `stream_buffer=False`, so prediction speed does not discard frames.
+
+Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. For live sources, the latest-frame policy can still skip frames when prediction is slower than capture.
 
 Video, camera, network stream, and screen capture require `uv pip install "rfdetr[stream]"`. Use `screen` to capture the desktop. Add an optional monitor index, or a monitor index and crop rectangle. For example, use `screen 1 100 100 640 480`. YouTube page URLs also require this optional extra for `yt-dlp` URL resolution. Recorded YouTube videos end at the final frame. Live YouTube URLs continue as live sources.
 

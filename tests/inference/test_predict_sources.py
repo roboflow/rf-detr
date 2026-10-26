@@ -26,6 +26,27 @@ if TYPE_CHECKING:
 class TestPredictSources:
     """Exercise source inputs through the public prediction API."""
 
+    @pytest.mark.parametrize("animated", [False, True])
+    @pytest.mark.parametrize("source_kind", ["file", "directory"])
+    def test_gif_predicts_first_frame(self, tmp_path: Path, animated: bool, source_kind: str) -> None:
+        """GIF files retain image return types and use only the first frame."""
+        path = tmp_path / "image.gif"
+        first = Image.new("RGB", (32, 24), color=(10, 20, 30))
+        first.save(
+            path,
+            save_all=animated,
+            append_images=[Image.new("RGB", (32, 24), color=(40, 50, 60))] if animated else [],
+        )
+
+        result = _DummyRFDETR().predict(path if source_kind == "file" else tmp_path)
+
+        if source_kind == "directory":
+            assert isinstance(result, list)
+            assert len(result) == 1
+            result = result[0]
+        assert isinstance(result, sv.Detections)
+        np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [10, 20, 30])
+
     def test_prediction_input_has_public_import(self) -> None:
         """Wrappers can annotate prediction inputs without private imports."""
         from rfdetr import PredictionInput

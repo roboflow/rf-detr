@@ -42,7 +42,6 @@ class _LiveCapture:
             "tcp",
         }
         self.vid_stride = vid_stride
-        self.stream_buffer = stream_buffer
         self.frames: deque[np.ndarray[Any, Any]] = deque()
         self.condition = Condition()
         self.stop = Event()
@@ -67,6 +66,7 @@ class _LiveCapture:
             self.finite = finite or (
                 isinstance(frame_count, (int, float)) and isfinite(frame_count) and frame_count > 0
             )
+            self.stream_buffer = stream_buffer or self.finite
             self.first: np.ndarray[Any, Any] | None = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         except BaseException:
             self.capture.release()
@@ -164,7 +164,8 @@ def iter_live_frames(
     """Yield RGB batches in source order with bounded background capture.
 
     Each source contributes one frame per batch. Buffered mode retains up to 30
-    pending frames per source; the default keeps only the latest pending frame.
+    pending frames per source; live sources default to the latest pending frame.
+    Finite sources always use buffered mode to preserve selected frames.
     Closing the iterator stops every worker. A backend blocked in a native read
     releases its capture when that read returns. Network backends must support
     OpenCV open/read timeouts. Known finite sources or sources with a known frame count stop at EOF;
