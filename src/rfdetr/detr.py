@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-import io
 import json
 import ntpath
 import operator
 import os
 import pickle
-import re
 import tempfile
 import threading
 import warnings
@@ -23,26 +21,22 @@ from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar, cast
-from urllib.parse import urlparse
 from weakref import WeakKeyDictionary
 
 import numpy as np
-import requests
 import torch
-import torchvision.transforms.functional as F  # noqa: N812
+from deprecate.deprecation import deprecation_warning
 from PIL import Image
+from pydantic import ValidationError
 
-try:
-    # torchvision 0.29 deprecated these codecs for removal in favour of TorchCodec. Once they are gone, local files
-    # passed to predict() decode through Pillow instead of ``import rfdetr`` failing.
-    from torchvision.io import ImageReadMode, decode_image
-
-    _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = True
-except ImportError:
-    _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
-
+from rfdetr import _prediction
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
+from rfdetr._prediction import (
+    PredictionContext,
+    _resolve_patch_size,
+    _validate_shape_dims,
+)
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets._keypoint_schema import (
@@ -53,13 +47,14 @@ from rfdetr.datasets._keypoint_schema import (
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
-from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.inference import ModelContext, RFDETRInference, _build_model_context
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
+from rfdetr.utilities.class_names import _task_of, prediction_labels
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
-from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
+from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -74,160 +69,6 @@ logger = get_logger()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _ModuleT = TypeVar("_ModuleT", bound="torch.nn.Module")
-
-
-def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
-    """Convert a normalized CHW tensor into the uint8 HWC source-image representation.
-
-    For a CUDA tensor in ``float16``/``float32``/``float64`` with every dimension greater than one, the
-    multiply-then-truncate cast runs on-device before the (now ``uint8``) transfer; every other input,
-    including CPU tensors and CUDA tensors of another dtype such as ``bfloat16``, keeps the previous
-    NumPy-side conversion. NaN pixels convert successfully on both paths, but only the NumPy-side path
-    emits an incidental invalid-cast ``RuntimeWarning`` for them; the on-device path does not.
-
-    Args:
-        image: Source tensor in channel-first layout.
-
-    Returns:
-        The writable, owning NumPy array stored in prediction metadata.
-
-    Examples:
-        >>> source = _tensor_to_source_array(torch.zeros(3, 2, 2))
-        >>> source.shape
-        (2, 2, 3)
-    """
-    source_view = image.permute(1, 2, 0)
-    if (
-        image.device.type == "cuda"
-        and image.dtype in (torch.float16, torch.float32, torch.float64)
-        and all(size > 1 for size in image.shape)
-    ):
-        # Preserve the existing multiply-then-truncate result, but transfer one byte per channel instead of a
-        # floating-point image before NumPy performs the same conversion on the host.
-        # ``copy(order="K")`` retains NumPy ownership and the channel-major strides produced by the existing cast.
-        # NumPy types ``ndarray.copy`` as ``Any``, so ``asarray`` restores the element type; it returns the very
-        # same object for an ndarray, keeping the copy's ownership, writability, and strides untouched.
-        return np.asarray(source_view.mul(255).to(torch.uint8).cpu().numpy().copy(order="K"))
-    return (source_view.cpu().numpy() * 255).astype(np.uint8)
-
-
-def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
-    """Return a zero-copy ``uint8`` CHW *view* of a 2-D/3-D HWC image array.
-
-    This is the layout half of ``torchvision.transforms.functional.to_tensor``; the dtype half is
-    :func:`_uint8_chw_to_float`. Splitting them lets :meth:`RFDETR.predict` send the
-    1-byte-per-channel storage across the host-to-device boundary and widen it on the accelerator,
-    instead of widening it 4x on the host and transferring that.
-
-    Args:
-        image: A ``(H, W)`` grayscale or ``(H, W, C)`` HWC ``uint8`` array without negative strides, which
-            ``torch.from_numpy`` rejects. :meth:`RFDETR.predict` copies such arrays before calling this.
-
-    Returns:
-        A ``(C, H, W)`` ``uint8`` tensor sharing *image*'s storage.
-
-    Examples:
-        >>> arr = np.zeros((2, 2, 3), dtype=np.uint8)
-        >>> _uint8_image_to_chw_view(arr).shape
-        torch.Size([3, 2, 2])
-    """
-    if image.ndim == 2:
-        image = image[:, :, None]
-    return torch.from_numpy(image.transpose((2, 0, 1)))
-
-
-#: Byte offset of the bit depth in a PNG file: the 8-byte signature, then the IHDR chunk's length, type, width and
-#: height (4 bytes each).
-_PNG_BIT_DEPTH_OFFSET = 24
-
-
-def _decode_local_image(path: str) -> torch.Tensor | None:
-    """Decode a local JPEG or PNG directly into RGB ``uint8`` CHW storage.
-
-    Pillow remains the compatibility path for every other format and for files that torchvision
-    cannot decode. Restricting the fast path to these two measured formats also avoids changing
-    animated-image semantics: torchvision represents animated GIFs as a four-dimensional tensor,
-    while Pillow exposes the first frame.
-
-    This is separate from :func:`rfdetr.datasets.io_utils.decode_image`, which the dataset readers use:
-    torchvision is a core dependency and yields the CHW tensor ``predict()`` consumes, whereas that
-    function's ``simplejpeg`` fast path needs the ``[train]`` extra and returns HWC NumPy arrays.
-
-    The file is read into memory once. Pillow validates the header of that in-memory buffer and
-    torchvision decodes the same buffer, so a file changed on disk after the read cannot skip
-    Pillow's decompression-bomb limit. The cost is that the whole encoded file is in memory before
-    Pillow inspects its header, whereas opening the path with Pillow reads only the header; a file
-    that ends up on the Pillow path pays that read before Pillow opens it again.
-
-    Unlike Pillow, torchvision's bundled libjpeg and libpng print their messages about corrupt data
-    (``Corrupt JPEG data: ...``) straight to the process's standard error. torchvision offers no hook to
-    route them through ``logging``, and redirecting file descriptor 2 would affect the whole process,
-    so they are left as is.
-
-    Args:
-        path: Local image path.
-
-    Returns:
-        An RGB ``uint8`` CHW tensor, or ``None`` when the caller should use Pillow.
-
-    Raises:
-        Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
-    """
-    if not _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE or Path(path).suffix.lower() not in {".jpeg", ".jpg", ".png"}:
-        return None
-    try:
-        stream = io.BytesIO(Path(path).read_bytes())
-        # Opening is lazy: Pillow validates the header (including its decompression-bomb limit),
-        # while torchvision still owns the expensive pixel decode below.
-        with Image.open(stream) as header:
-            if header.format not in {"JPEG", "PNG"} or getattr(header, "n_frames", 1) != 1:
-                return None
-            # torchvision 0.21+ decodes a 16-bit PNG to uint16 (older releases raise), and either way the result is
-            # rejected below, so read the bit depth first rather than pay for a full decode.
-            if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
-                return None
-        # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
-        # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
-        decoded = decode_image(torch.frombuffer(stream.getbuffer(), dtype=torch.uint8), mode=ImageReadMode.RGB)
-    except (OSError, RuntimeError, DeprecationWarning, AttributeError):
-        # A missing or unreadable path and bytes Pillow cannot identify raise OSError, torchvision raises RuntimeError
-        # for bytes it cannot decode, and torch raises AttributeError when the image operators were not loaded.
-        # torchvision 0.29+ also warns on every call that its codecs are deprecated, which ``-W error`` turns into a
-        # raised DeprecationWarning. The caller then opens the path with Pillow, which reports each of those cases
-        # with its usual error.
-        return None
-    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
-    return decoded if decoded.dtype == torch.uint8 else None
-
-
-def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-    """Widen a ``uint8`` CHW tensor to the default float dtype and scale it into ``[0, 1]``.
-
-    Dtype and layout are converted together and the division is done in place on that fresh float
-    allocation, so the pair costs one allocation rather than ``to_tensor``'s three.
-
-    Args:
-        chw: ``(C, H, W)`` ``uint8`` tensor, on any device.
-        scale: 0-dim tensor holding ``255``, on ``chw``'s device and in the target dtype. It has to
-            be a tensor rather than the Python ``int``: CUDA evaluates ``Tensor.div_(255)`` as a
-            multiplication by ``255``'s reciprocal, which rounds differently from the host's
-            division for just under half of all byte values (126 of 256, 1 ULP). A tensor divisor
-            keeps IEEE-754 correctly rounded division on both, so the result does not depend on
-            where it was computed.
-
-    Returns:
-        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to
-        ``[0, 1]``, byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading
-        dimension's own stride may differ from ``to_tensor``'s, which is immaterial: a size-1
-        dimension's stride has no memory-layout effect.
-
-    Examples:
-        >>> chw = _uint8_image_to_chw_view(np.zeros((2, 2, 3), dtype=np.uint8))
-        >>> _uint8_chw_to_float(chw, torch.tensor(255.0)).dtype
-        torch.float32
-    """
-    widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
-    return widened.div_(scale)
 
 
 class _CUDAGraphInferenceModel:
@@ -339,26 +180,6 @@ class _CUDAGraphInferenceModel:
         return output
 
 
-def _mps_lacks_antialiased_resize() -> bool:
-    """Report whether the installed torch predates MPS support for antialiased bilinear resize.
-
-    ``aten::_upsample_bilinear2d_aa`` has no MPS kernel before torch 2.7 (pytorch/pytorch#141287 tracks it, and
-    #145581 is the PR it credits for 2.7); ``v2.7.0`` is the first tag whose ``native_functions.yaml`` dispatches it to
-    MPS. Delete this predicate and the CPU-resize branch in :meth:`RFDETR.predict` once the ``torch`` floor in
-    ``pyproject.toml`` reaches 2.7.
-
-    Returns:
-        ``True`` when ``torch.__version__`` is older than 2.7. An unparsable version string counts as modern, so
-        the MPS path is not detoured through the CPU on an unrecognised build.
-
-    Examples:
-        >>> isinstance(_mps_lacks_antialiased_resize(), bool)
-        True
-    """
-    match = re.match(r"(\d+)\.(\d+)", torch.__version__)
-    return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
-
-
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
@@ -413,89 +234,6 @@ _CHECKPOINT_PLUS_STEM_ENTRIES: tuple[tuple[str, str], ...] = (
     ("rf-detr-pico", "RFDETRPico"),
     ("rfdetr-pico", "RFDETRPico"),
 )
-
-
-def _validate_shape_dims(
-    shape: object,
-    block_size: int,
-    patch_size: int,
-    num_windows: int,
-) -> tuple[int, int]:
-    """Validate a user-supplied ``(height, width)`` shape tuple and return normalised plain-int dims.
-
-    Args:
-        shape: The raw value supplied by the caller (e.g. from ``export(shape=...)`` or
-            ``predict(shape=...)``).  Must be a two-element sequence of positive integers (or integer-compatible types
-            accepted by :func:`operator.index`).
-        block_size: Required divisor for both dimensions.  Equals ``patch_size * num_windows``.
-        patch_size: Backbone patch size — used only in error messages.
-        num_windows: Number of attention windows — used only in error messages.
-
-    Returns:
-        A ``(height, width)`` tuple of plain Python :class:`int` values.
-
-    Raises:
-        ValueError: If ``shape`` cannot be unpacked as a two-element sequence, if either
-            dimension is a bool, float, or other non-integer type, if either dimension is not positive, or if either
-            dimension is not divisible by ``block_size``.
-    """
-    try:
-        raw_height, raw_width = cast("tuple[Any, Any]", shape)
-    except (TypeError, ValueError):
-        raise ValueError(f"shape must be a sequence of two positive integers (height, width), got {shape!r}.") from None
-    for dim_name, dim in (("height", raw_height), ("width", raw_width)):
-        if isinstance(dim, bool):
-            raise ValueError(f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r}).")
-        try:
-            operator.index(dim)
-        except TypeError:
-            raise ValueError(
-                f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r}).",
-            ) from None
-        if dim <= 0:
-            raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
-    # Normalise to plain Python ints; also accepts numpy.int64, torch scalars, etc.
-    height, width = operator.index(raw_height), operator.index(raw_width)
-    if height % block_size != 0 or width % block_size != 0:
-        raise ValueError(
-            f"shape must have both dimensions divisible by {block_size} "
-            f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}.",
-        )
-    return height, width
-
-
-def _resolve_patch_size(patch_size: int | None, model_config: object, caller: str) -> int:
-    """Resolve and validate the ``patch_size`` argument for :meth:`RFDETR.export` and :meth:`RFDETR.predict`.
-
-    Args:
-        patch_size: Value supplied by the caller, or ``None`` to read from ``model_config``.
-        model_config: The model's configuration object.  Must expose ``patch_size`` as a
-            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch check is needed.
-        caller: Name of the calling method (``"export"`` or ``"predict"``) — used in
-            error messages to help the caller locate the problem.
-
-    Returns:
-        A validated, positive :class:`int` patch size.
-
-    Raises:
-        ValueError: If the resolved or provided ``patch_size`` is not a positive integer,
-            or if a caller-provided value disagrees with ``model_config.patch_size``.
-    """
-    if patch_size is None:
-        patch_size = getattr(model_config, "patch_size", 14)
-    else:
-        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
-            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
-        model_patch_size = getattr(model_config, "patch_size", None)
-        if model_patch_size is not None and patch_size != model_patch_size:
-            raise ValueError(
-                f"{caller}(patch_size={patch_size}) does not match the instantiated model's "
-                f"patch_size={model_patch_size}. Patch size is an architectural parameter; "
-                f"omit patch_size to use the model's configured value.",
-            )
-    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
-        raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
-    return patch_size
 
 
 #: Guards :data:`_MODULE_MOVE_LOCKS` itself, never a move. Held only long enough to hand out one module's lock, so
@@ -620,11 +358,11 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         # back to CPU by ``export()`` / ``evaluate()`` is detected: the real devices are re-read on every call.
         if all(param.device == target for param in inner.parameters()):
             return
-        # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
-        # move can run while inference mode is active.  Tensors materialised by ``.to()`` under inference mode become
-        # *inference tensors*: they can never require gradients, so a later ``train()`` or auto-batch probe would
-        # silently produce no gradients.  Disable inference mode for the move so deferred device placement is safe
-        # regardless of decorator order.
+        # ``predict()`` is wrapped in ``@torch.inference_mode()`` and calls ``_prediction_context()``, which carries
+        # ``@_ensure_model_on_device``, so the deferred move can run while inference mode is active.  Tensors
+        # materialised by ``.to()`` under inference mode become *inference tensors*: they can never require
+        # gradients, so a later ``train()`` or auto-batch probe would silently produce no gradients.  Disable
+        # inference mode for the move so deferred device placement is safe regardless of decorator order.
         with torch.inference_mode(False):
             model_ctx.model = inner.to(target)
 
@@ -1929,122 +1667,58 @@ class RFDETR:
 
         return {key: float(value) for key, value in results[0].items()} if results else {}
 
-    @_ensure_model_on_device
     def inference(
         self,
         compile: bool = True,
         batch_size: int = 1,
         dtype: torch.dtype | str = torch.float32,
         *,
-        inplace: bool = False,
         compile_backend: Literal["torchscript", "cudagraph", "inductor"] = "torchscript",
-    ) -> None:
-        """Optimize the model for inference with optional compilation and dtype casting.
+    ) -> RFDETRInference:
+        """Create an independent, optimized predictor from the current base weights.
 
-        Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
-        ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
-        the model's current resolution. The default ``"torchscript"`` backend preserves the existing
-        ``torch.jit.trace`` path. ``"cudagraph"`` freezes that trace and captures its fixed-shape CUDA work for direct
-        replay, cloning graph-owned outputs before returning them. It is therefore TorchScript trace plus
-        ``torch.jit.freeze`` plus one directly replayed CUDA graph, not a separate compiler; ``"inductor"`` in
-        reduce-overhead mode also replays CUDA graphs, but of an Inductor-compiled model. ``"inductor"`` uses
-        ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the dummy input twice before synchronizing the
-        selected device so setup is paid inside this method instead of the first :meth:`predict` call. By default,
-        optimization deep-copies the loaded model before exporting it so the original module remains available. Set
-        ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
-        cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
-        destructive: :meth:`remove_optimized_model` becomes a no-op (issues :class:`UserWarning`), and :meth:`export`
-        raises :class:`RuntimeError`. Create or reload a new ``RFDETR`` instance to recover the original model.
+        The returned predictor owns a snapshot of the weights, configuration, class names, normalization and
+        postprocessor. Creating or using it leaves this model's weights, device, dtype, training mode and optimization
+        state unchanged. Later training or edits to this model do not affect the snapshot. Do not mutate or train the
+        source concurrently with snapshot creation. An existing legacy optimized runtime is not copied; the current
+        base weights are the source of truth.
 
-        If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
-        internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
-        state but cannot undo changes made inside ``export()``. Create a new RFDETR instance for reliable inference
-        after such a failure.
+        Capture the return value and call ``predictor.predict(images)``. Calling ``model.predict(images)`` continues
+        to use the source model. Each factory call allocates its own weight copy; release a predictor to release its
+        runtime, or release the source model when only inference is needed. The former ``inplace`` option is removed.
 
         Args:
-            compile: If ``True``, compile the model using ``compile_backend``. Set to ``False`` for broader
-                compatibility (e.g. models with dynamic control flow).
-            batch_size: Number of images the compiled model will be optimized for. Ignored when ``compile=False``.
-            dtype: Target floating-point dtype for the inference model. Accepts a
-                ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
-                ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
-                allocates both old and new parameter tensors simultaneously; peak memory during optimization is
-                approximately 1.5× the model weight size rather than 1×.
-            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is a destructive,
-                inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
-                Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
-                memory savings come only from clearing the base model reference rather than from dtype reduction.
-            compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
-                preserves the existing trace path. ``"cudagraph"`` is CUDA-only and captures a frozen TorchScript
-                trace once during setup. It keeps a graph-private memory pool holding the captured forward's
-                intermediates, plus the static input/output buffers, for as long as the optimized model exists; that
-                device memory grows with batch size, resolution and model size.
-                Freezing uses ``torch.jit.freeze``, deprecated since torch 2.5 along with TorchScript; its default
-                ``optimize_numerics=True`` passes do not strictly preserve numerics, so outputs are not guaranteed to
-                match the ``"torchscript"`` backend bit for bit.
-                Capture checks only the calling thread's CUDA calls, but entering it still synchronizes the device
-                and empties the process's cached CUDA and pinned host memory, so call ``inference()`` before
-                serving threads start.
-                ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode; it can reduce steady-state latency
-                but has a substantially higher one-time compilation cost and its device/operator support depends on the
-                installed PyTorch version.
+            compile: Compile the snapshot for fixed batch size and resolution. Set to ``False`` to use its eager
+                export-mode forward, with a fixed resolution and flexible batch size.
+            batch_size: Positive batch size for compilation. Ignored when ``compile=False``.
+            dtype: Floating-point dtype for the snapshot, as a ``torch.dtype`` or its string name.
+            compile_backend: ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally freezes the trace
+                and captures its fixed-shape CUDA work for replay, cloning graph-owned outputs before returning them.
+                It is CUDA-only and retains a graph-private memory pool. ``"inductor"`` uses
+                ``torch.compile(mode="reduce-overhead")`` and warms up the result before returning. On CUDA, this
+                includes a second call and synchronization for CUDA Graph Trees. Compilation support and setup cost
+                depend on the installed PyTorch version and device. TorchScript freezing does not guarantee
+                bit-identical numerics. Create CUDA graph predictors before serving threads start: capture synchronizes
+                the device and empties process-wide CUDA and pinned-host caches.
+
+        Returns:
+            An inference-only facade owning the optimized snapshot.
 
         Raises:
-            TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
-                string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, if
-                ``inplace=True`` is used with ``compile=True``, or if ``compile=True`` with
-                ``compile_backend="cudagraph"`` targets a non-CUDA device.
-            RuntimeError: If the base model has already been cleared by a previous inplace optimization, or if
-                ``compile_backend="cudagraph"`` fails to capture the model. A failed capture can leave CUDA
-                random-number state unusable, so restart the process before trying another backend.
-            torch.cuda.OutOfMemoryError: If ``compile_backend="cudagraph"`` runs out of device memory during
-                capture. Retry with a smaller ``batch_size``; a process restart may be required first.
+            TypeError: If ``dtype`` is neither a floating-point dtype nor the name of a torch dtype.
+            ValueError: If the dtype is non-floating, the backend is unknown, the compiled batch size is invalid,
+                or CUDA graph compilation targets a non-CUDA device.
+            RuntimeError: If the source has no base weights, or compilation/capture fails. A failed CUDA graph
+                capture can leave CUDA random-number state unusable; restart the process before trying another backend.
+            torch.cuda.OutOfMemoryError: If copying or compiling the snapshot exhausts device memory.
 
         Examples:
-            >>> from types import SimpleNamespace
-            >>> import torch
-            >>> class _TinyModel(torch.nn.Module):
-            ...     def __init__(self):
-            ...         super().__init__()
-            ...         self.linear = torch.nn.Linear(1, 1)
-            ...     def forward(self, x):
-            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
-            ...         return None
-            >>> class _TinyContext:
-            ...     def __init__(self):
-            ...         self.device = torch.device("cpu")
-            ...         self.resolution = 28
-            ...         self.model = _TinyModel()
-            ...         self.inference_model = None
-            >>> model = object.__new__(RFDETR)
-            >>> model.model_config = SimpleNamespace(num_channels=3)
-            >>> model.model = _TinyContext()
-            >>> model._is_optimized_for_inference = False
-            >>> model._has_warned_about_not_being_optimized_for_inference = False
-            >>> model._optimized_has_been_compiled = False
-            >>> model._optimized_batch_size = None
-            >>> model._optimized_resolution = None
-            >>> model._optimized_dtype = None
-            >>> model._optimized_inplace = False
-            >>> # Standard (non-inplace) optimization — reversible:
-            >>> model.inference(compile=False)
-            >>> model._is_optimized_for_inference
-            True
-            >>> model._optimized_inplace
-            False
-            >>> model.remove_optimized_model()
-            >>> model._is_optimized_for_inference
-            False
-            >>> # Inplace optimization — destructive, cannot be reversed:
-            >>> model.inference(compile=False, dtype="float16", inplace=True)
-            >>> model._is_optimized_for_inference
-            True
-            >>> model._optimized_dtype
-            torch.float16
-            >>> model._optimized_inplace
-            True
+            Requires model weights; the predictor can be reused for multiple images.
+
+            >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
+            >>> model = RFDETRSmall()  # doctest: +SKIP
+            >>> predictor = model.inference(compile=False)  # doctest: +SKIP
+            >>> detections = predictor.predict("image.jpg")  # doctest: +SKIP
         """
         if isinstance(dtype, str):
             try:
@@ -2059,124 +1733,73 @@ class RFDETR:
             raise ValueError(
                 f"compile_backend must be 'torchscript', 'cudagraph', or 'inductor', got {compile_backend!r}"
             )
-        if inplace and compile:
-            raise ValueError(
-                "inference(inplace=True) requires compile=False. "
-                "Compiled models can retain references to the original parameter storage, so setting "
-                "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
-                "memory usage."
-            )
-        if compile and compile_backend == "cudagraph" and self.model.device.type != "cuda":
+        if compile and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
+            raise ValueError("batch_size must be a positive integer when compile=True.")
+        device = torch.device(self.model.device)
+        if compile and compile_backend == "cudagraph" and device.type != "cuda":
             raise ValueError("compile_backend='cudagraph' requires a CUDA device.")
+        source_model = self.model.model
+        if source_model is None:
+            raise RuntimeError("Cannot create a predictor: the base model has been cleared. Reload the source model.")
+        if device.type == "cuda" and device.index is None:
+            device = torch.device("cuda", torch.cuda.current_device())
 
-        # Clear any previously optimized state before starting a new optimization run.
-        self.remove_optimized_model()
-
-        if self.model.model is None:
-            raise RuntimeError(
-                "Cannot optimize: the base model has been cleared by a previous inplace optimization. "
-                "Create or reload a new RFDETR instance."
-            )
-
-        device = self.model.device
+        # Copy only prediction state, never training callbacks or a trainer which can retain the source model.
+        # Exclude both weight-bearing entries while copying metadata, then clone the base module exactly once.
+        snapshot = object.__new__(RFDETR)
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
-
-        try:
-            with cuda_ctx:
-                inference_model: Any = self.model.model if inplace else deepcopy(self.model.model)
-                inference_model.eval()
-                inference_model.export()
-
-                inference_model = inference_model.to(dtype=dtype)
-
-                if compile:
-                    dummy_input = torch.randn(
-                        batch_size,
-                        self.model_config.num_channels,
-                        self.model.resolution,
-                        self.model.resolution,
-                        device=self.model.device,
-                        dtype=dtype,
-                    )
-                    if compile_backend in ("torchscript", "cudagraph"):
-                        inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
-                            inference_model,
-                            dummy_input,
-                        )
-                        if compile_backend == "cudagraph":
-                            # Retained from the benchmarked configuration: the latency and COCO val2017 parity results
-                            # recorded in CHANGELOG.md were measured on this frozen trace, and no other reason for
-                            # freezing is recorded. Dropping it requires re-running both measurements on a GPU.
-                            inference_model = torch.jit.freeze(inference_model)
-                            inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
-                    else:
-                        inference_model = torch.compile(inference_model, mode="reduce-overhead")
-                        with torch.inference_mode():
+        with cuda_ctx:
+            with _device_move_lock(source_model), torch.inference_mode(False):
+                snapshot.model_config, snapshot.model, snapshot.means, snapshot.stds = deepcopy(
+                    (self.model_config, self.model, self.means, self.stds),
+                    {id(source_model): None, id(self.model.inference_model): None},
+                )
+                inference_model: Any = deepcopy(source_model)
+            snapshot.model.device = device
+            inference_model = inference_model.to(device=device)
+            inference_model.eval()
+            inference_model.export()
+            inference_model = inference_model.to(dtype=dtype)
+            if compile:
+                dummy_input = torch.randn(
+                    batch_size,
+                    snapshot.model_config.num_channels,
+                    snapshot.model.resolution,
+                    snapshot.model.resolution,
+                    device=device,
+                    dtype=dtype,
+                )
+                if compile_backend in ("torchscript", "cudagraph"):
+                    inference_model = torch.jit.trace(inference_model, dummy_input)  # type: ignore[no-untyped-call]
+                    if compile_backend == "cudagraph":
+                        # The existing CUDA parity/latency measurements use a frozen trace; retain that capture path.
+                        inference_model = torch.jit.freeze(inference_model)
+                        inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
+                else:
+                    inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                    with torch.inference_mode():
+                        inference_model(dummy_input)
+                        if device.type == "cuda":
+                            # CUDA Graph Trees reserve memory on the first call and record on the second.
                             inference_model(dummy_input)
-                            if device.type == "cuda":
-                                # CUDA Graph Trees reserve memory on the first call and record on the second.
-                                inference_model(dummy_input)
-                                torch.cuda.synchronize(device)
-                    self._optimized_has_been_compiled = True
-                    self._optimized_batch_size = batch_size
+                            torch.cuda.synchronize(device)
 
-                # Set success flags only after all operations complete.
-                self.model.inference_model = inference_model
-                # _optimized_inplace must be set before the destructive clear so the cleanup
-                # guard in remove_optimized_model() sees the correct state if an exception fires
-                # between this assignment and the None clear (extremely unlikely in normal Python
-                # but eliminates a theoretical zombie-state window).
-                self._optimized_inplace = inplace
-                if inplace:
-                    self.model.model = None
-                self._optimized_resolution = self.model.resolution
-                self._is_optimized_for_inference = True
-                self._optimized_dtype = dtype
-        except Exception:
-            # Ensure the object is left in a consistent, unoptimized state if optimization fails.
-            with contextlib.suppress(Exception):
-                self.remove_optimized_model()
-            raise
+        snapshot.model.inference_model = inference_model
+        snapshot._is_optimized_for_inference = True
+        snapshot._has_warned_about_not_being_optimized_for_inference = False
+        snapshot._optimized_has_been_compiled = compile
+        snapshot._optimized_batch_size = batch_size if compile else None
+        snapshot._optimized_resolution = snapshot.model.resolution
+        snapshot._optimized_dtype = dtype
+        snapshot._optimized_inplace = False
+        return RFDETRInference(snapshot)
 
     def remove_optimized_model(self) -> None:
-        """Remove the optimized inference model and reset all optimization flags.
+        """Clear legacy optimization state on this RFDETR instance.
 
-        Clears ``model.inference_model`` and resets all internal state set by :meth:`inference`. Safe to
-        call even if the model has not been optimized. When the model was optimized with ``inplace=True``, this method
-        issues a :class:`UserWarning` and returns without modifying state — the original module cannot be restored
-        because ``export()`` and dtype casting mutate it; create or reload a new ``RFDETR`` instance instead.
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> import torch
-            >>> class _TinyModel(torch.nn.Module):
-            ...     def __init__(self):
-            ...         super().__init__()
-            ...         self.linear = torch.nn.Linear(1, 1)
-            ...     def forward(self, x):
-            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
-            ...         return None
-            >>> class _TinyContext:
-            ...     def __init__(self):
-            ...         self.device = torch.device("cpu")
-            ...         self.resolution = 28
-            ...         self.model = _TinyModel()
-            ...         self.inference_model = None
-            >>> model = object.__new__(RFDETR)
-            >>> model.model_config = SimpleNamespace(num_channels=3)
-            >>> model.model = _TinyContext()
-            >>> model._is_optimized_for_inference = False
-            >>> model._has_warned_about_not_being_optimized_for_inference = False
-            >>> model._optimized_has_been_compiled = False
-            >>> model._optimized_batch_size = None
-            >>> model._optimized_resolution = None
-            >>> model._optimized_dtype = None
-            >>> model._optimized_inplace = False
-            >>> model.inference(compile=False)
-            >>> model.remove_optimized_model()
-            >>> model._is_optimized_for_inference
-            False
+        Predictors returned by :meth:`inference` own independent runtimes; this method does not change or release them.
+        Release the predictor itself when it is no longer needed. A legacy instance optimized destructively cannot
+        recover its original module, so cleanup warns and leaves that state intact.
         """
         if getattr(self, "_optimized_inplace", False):
             warnings.warn(
@@ -2197,45 +1820,150 @@ class RFDETR:
 
     @property
     def is_optimized_inplace(self) -> bool:
-        """Whether the model was optimized with ``inplace=True``.
+        """Report destructive optimization state retained by a legacy RFDETR instance.
 
-        Returns ``True`` after a successful :meth:`inference` call with ``inplace=True``,
-        meaning the base model has been cleared and :meth:`remove_optimized_model` is a no-op.
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> import torch
-            >>> class _TinyModel(torch.nn.Module):
-            ...     def __init__(self):
-            ...         super().__init__()
-            ...         self.linear = torch.nn.Linear(1, 1)
-            ...     def forward(self, x):
-            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
-            ...         return None
-            >>> class _TinyContext:
-            ...     def __init__(self):
-            ...         self.device = torch.device("cpu")
-            ...         self.resolution = 28
-            ...         self.model = _TinyModel()
-            ...         self.inference_model = None
-            >>> model = object.__new__(RFDETR)
-            >>> model.model_config = SimpleNamespace(num_channels=3)
-            >>> model.model = _TinyContext()
-            >>> model._is_optimized_for_inference = False
-            >>> model._has_warned_about_not_being_optimized_for_inference = False
-            >>> model._optimized_has_been_compiled = False
-            >>> model._optimized_batch_size = None
-            >>> model._optimized_resolution = None
-            >>> model._optimized_dtype = None
-            >>> model._optimized_inplace = False
-            >>> model.is_optimized_inplace
-            False
-            >>> model.inference(compile=False, inplace=True)
-            >>> model.is_optimized_inplace
-            True
+        The snapshot factory :meth:`inference` never sets this flag on its source.
         """
         return getattr(self, "_optimized_inplace", False)
+
+    @staticmethod
+    def _resolve_export_batch(
+        format: str, batch_size: int, dynamic_batch: bool, max_batch_size: int | None
+    ) -> tuple[str, int, int | None]:
+        """Normalize the format and validate the export's effective batch bounds.
+
+        Args:
+            format: Export format name or alias.
+            batch_size: Requested export batch size.
+            dynamic_batch: Whether the export has a dynamic batch dimension.
+            max_batch_size: TensorRT dynamic-batch profile upper bound; warned about and dropped for other exports.
+
+        Returns:
+            The normalized format, the validated batch size, and the validated maximum batch size or ``None``.
+
+        Raises:
+            ValueError: If the batch size or the TensorRT maximum batch size is not a positive integer.
+
+        Examples:
+            >>> RFDETR._resolve_export_batch("TRT", 2, True, 4)
+            ('tensorrt', 2, 4)
+        """
+        from rfdetr.export.prepare import validate_batch_size
+        from rfdetr.export.registry import normalize_format
+
+        export_batch_size = validate_batch_size(batch_size)
+        export_max_batch_size = None
+        format = normalize_format(format)
+        if max_batch_size is not None and format == "tensorrt" and dynamic_batch:
+            try:
+                export_max_batch_size = validate_batch_size(max_batch_size)
+            except ValueError:
+                raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
+        elif max_batch_size is not None:
+            warnings.warn(
+                f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
+                f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return format, export_batch_size, export_max_batch_size
+
+    def write_export_metadata(
+        self,
+        artifact: str | os.PathLike[str],
+        *,
+        format: str = "onnx",
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        batch_size: int = 1,
+        dynamic_batch: bool = False,
+        max_batch_size: int | None = None,
+        backbone_only: bool = False,
+        backend: str | None = None,
+        soc: str | None = None,
+        **export_settings: Any,
+    ) -> Path | None:
+        """Write inference metadata for an existing artifact from its live source model.
+
+        Load the checkpoint the artifact was exported from and supply the same export settings. This method reads
+        model configuration and prediction semantics without running the model or converting the artifact. Each
+        format's exporter supplies its artifact-specific input and output mapping before metadata is written.
+
+        Args:
+            artifact: Existing exported file or model bundle.
+            format: Export format, with the same names and aliases accepted by :meth:`export`.
+            shape: Exported ``(height, width)``; defaults to the source model's square resolution.
+            patch_size: Backbone patch size; must match the source model when supplied.
+            batch_size: Positive batch size used to export the artifact.
+            dynamic_batch: Whether the artifact was exported with a dynamic batch dimension.
+            max_batch_size: TensorRT dynamic-batch profile upper bound; ignored for other exports.
+            backbone_only: Whether the artifact contains only backbone features.
+            backend: ExecuTorch backend used to export the artifact.
+            soc: Target Qualcomm SoC for the ExecuTorch QNN backend.
+            **export_settings: Format settings forwarded to the exporter's configuration builder, such as
+                ``coreai_precision``. Use the values supplied to :meth:`export`.
+
+        Returns:
+            Adjacent digest-bound metadata path, or ``None`` when metadata is embedded in an ONNX artifact.
+
+        Raises:
+            FileNotFoundError: If the artifact does not exist.
+            ValueError: If the format, batch bounds, shape, patch size, backend, SoC, or format settings are invalid.
+            NotImplementedError: If the requested settings are unsupported by the format.
+            ImportError: If embedding metadata or reading the artifact's interface needs a missing optional package.
+            OSError: If the artifact cannot be read or metadata cannot be written.
+
+        Examples:
+            A real source checkpoint and its exported artifact are required.
+
+            >>> from rfdetr import RFDETRSmall
+            >>> model = RFDETRSmall(pretrain_weights="checkpoint.pth")  # doctest: +SKIP
+            >>> model.write_export_metadata("output/model.xml", format="openvino")  # doctest: +SKIP
+        """
+        from rfdetr.export._backend import _resolve_export_backend
+        from rfdetr.export._runtime.metadata import metadata_from_model, write_metadata
+        from rfdetr.export.base import reject_unsupported_dynamic_batch
+        from rfdetr.export.prepare import validate_export_shape
+        from rfdetr.export.registry import resolve_exporter
+
+        artifact = Path(artifact)
+        if not artifact.exists():
+            raise FileNotFoundError(artifact)
+        format, batch_size, max_batch_size = RFDETR._resolve_export_batch(
+            format, batch_size, dynamic_batch, max_batch_size
+        )
+        backend, soc = _resolve_export_backend(format, backend, soc)
+        reject_unsupported_dynamic_batch(format, dynamic_batch=dynamic_batch)
+        shape = validate_export_shape(
+            shape,
+            patch_size,
+            self.model_config,
+            self.model.resolution,
+            resolve_patch_size=_resolve_patch_size,
+            validate_shape_dims=_validate_shape_dims,
+        )
+        exporter_class = resolve_exporter(format)
+        config = exporter_class.build_config(
+            **export_settings,
+            backbone_only=backbone_only,
+            dynamic_batch=dynamic_batch,
+            batch_size=batch_size,
+            max_batch_size=max_batch_size,
+            backend=backend,
+            soc=soc,
+        )
+        exporter = exporter_class(config)
+        metadata = metadata_from_model(
+            self,
+            format=format,
+            shape=shape,
+            batch_size=batch_size,
+            dynamic_batch=dynamic_batch,
+            backbone_only=backbone_only,
+            backend=backend,
+            max_batch_size=max_batch_size,
+        )
+        return write_metadata(artifact, exporter._metadata_for_artifact(metadata, artifact))
 
     def export(
         self,
@@ -2287,7 +2015,7 @@ class RFDETR:
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the model accepts variable batch sizes at runtime
                 (spatial dimensions always stay fixed). Applies to the ONNX
-                graph and to ``format="tensorrt"``, where the engine is built with one
+                graph, and to ``format="tensorrt"``, where the engine is built with one
                 optimization profile spanning batch ``1 .. max_batch_size`` (tuned for *batch_size*); pass
                 *max_batch_size* in that case. Not supported for ExecuTorch export on
                 executorch 1.3.1 (raises ``NotImplementedError``): the runtime
@@ -2296,12 +2024,11 @@ class RFDETR:
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
                 Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
-                the converted OpenVINO IR already accepts any batch size. Also
-                unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed input shape;
-                export one file per batch size instead. Also refused for ``format="tflite"``:
-                ``onnx2tf`` fails on the dynamic-batch graph (an ``Add`` against the dynamic-shaped
-                encoder input reports mismatched dimensions) — export one ``.tflite`` per batch size
-                instead.
+                the converted OpenVINO IR already accepts any batch size.
+                Also refused for ``format="tflite"``: ``onnx2tf`` fails on the dynamic-batch graph (an ``Add``
+                against the dynamic-shaped encoder input reports mismatched dimensions) — export one ``.tflite``
+                per batch size instead. Also unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed
+                input shape; export one file per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's
@@ -2575,28 +2302,23 @@ class RFDETR:
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
             OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
+
+        Examples:
+            Skipped because this example requires pretrained weights and optional ONNX export dependencies.
+
+            >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
+            >>> model = RFDETRSmall()  # doctest: +SKIP
+            >>> model.export(format="onnx", output_dir="output")  # doctest: +SKIP
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
-        from rfdetr.export.prepare import prepare_export_graph, validate_batch_size, validate_export_shape
-        from rfdetr.export.registry import normalize_format, resolve_exporter
+        from rfdetr.export.prepare import prepare_export_graph, validate_export_shape
+        from rfdetr.export.registry import resolve_exporter
 
         # Every format builds its example batch from this, so it is checked before any exporter is imported.
-        export_batch_size = validate_batch_size(batch_size)
-        export_max_batch_size = None
-        format = normalize_format(format)
-        if max_batch_size is not None and format == "tensorrt" and dynamic_batch:
-            try:
-                export_max_batch_size = validate_batch_size(max_batch_size)
-            except ValueError:
-                raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
-        elif max_batch_size is not None:
-            warnings.warn(
-                f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
-                f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
+        format, export_batch_size, export_max_batch_size = RFDETR._resolve_export_batch(
+            format, batch_size, dynamic_batch, max_batch_size
+        )
         for keyword, requested in (
             ("trt_metadata", trt_metadata),
             ("trt_hardware_compatibility", trt_hardware_compatibility is not None),
@@ -2684,6 +2406,28 @@ class RFDETR:
         model.to(device)
         try:
             os.makedirs(output_dir, exist_ok=True)
+            from rfdetr.export._runtime.metadata import metadata_from_model
+
+            try:
+                metadata = metadata_from_model(
+                    self,
+                    format=format,
+                    shape=shape,
+                    batch_size=export_batch_size,
+                    dynamic_batch=dynamic_batch,
+                    backbone_only=backbone_only,
+                    backend=backend,
+                    max_batch_size=export_max_batch_size,
+                )
+            except ValidationError as error:
+                logger.warning(
+                    "Could not capture inference metadata: %s. Export will proceed without inference metadata; "
+                    "load the artifact with RFDETRInference(metadata=<json>).",
+                    error,
+                    exc_info=True,
+                )
+                metadata = None
+
             graph = prepare_export_graph(
                 model,
                 self.model_config,
@@ -2693,6 +2437,7 @@ class RFDETR:
                 batch_size=export_batch_size,
                 dynamic_batch=dynamic_batch,
                 backbone_only=backbone_only,
+                metadata=metadata,
             )
             return exporter(graph)
         finally:
@@ -3188,8 +2933,8 @@ class RFDETR:
         if not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
-                " For full GPU throughput (e.g. ~8x on T4 via FP16 Tensor Cores),"
-                " call model.inference(dtype=torch.float16).",
+                " Create predictor = native_model.inference(...) and use predictor.predict(...)."
+                " For a checkpoint, first load native_model = RFDETR.from_checkpoint(...).",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
         # self.model.model is only cleared when optimized for inference (guarded by the early return above).
@@ -3201,18 +2946,109 @@ class RFDETR:
         if any(module.training for module in model.modules()):
             model.eval()
 
+    def _runtime_info(self) -> dict[str, Any]:
+        """Return native runtime policy and input constraints without preparing the model."""
+        # _prediction_context moves the model to its device; reading runtime_info must not.
+        config = self.model_config
+        batch_size = self._optimized_batch_size if self._optimized_has_been_compiled else None
+        spatial_size = self._optimized_resolution if self._is_optimized_for_inference else None
+        return {
+            "backend": "pytorch",
+            "device": str(self.model.device),
+            "task": _task_of(config),
+            "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
+            "default_shape": (self.model.resolution, self.model.resolution),
+            "batch_size": batch_size,
+            "max_batch_size": None,
+        }
+
+    @_ensure_model_on_device
+    def _prediction_context(self) -> PredictionContext:
+        """Read the live native model's prediction rules for one call."""
+        labels = prediction_labels(self)
+        if getattr(self.model, "args", None) is None and labels.class_names == list(COCO_CLASS_NAMES):
+            logger.warning_once(
+                "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
+                "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
+            )
+        return PredictionContext(
+            config=self.model_config,
+            device=self.model.device,
+            default_shape=(self.model.resolution, self.model.resolution),
+            means=self.means,
+            stds=self.stds,
+            class_names=labels.class_names,
+            class_id_to_name=labels.class_id_to_name,
+            num_classes=labels.num_classes,
+            num_keypoints_per_class=labels.num_keypoints_per_class,
+            postprocess=self.model.postprocess,
+            run=self._run_inference_batch,
+            prepare=self._ensure_eval_mode_for_unoptimized_inference,
+            runtime_info={"backend": "pytorch", "device": str(self.model.device)},
+        )
+
+    def _run_inference_batch(self, batch_tensor: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Execute the current eager or optimized native model."""
+        if self._is_optimized_for_inference:
+            if (
+                self._optimized_resolution != batch_tensor.shape[2]
+                or self._optimized_resolution != batch_tensor.shape[3]
+            ):
+                # this could happen if someone manually changes self.model.resolution after optimizing the model,
+                # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
+                _restore_hint = (
+                    " Use native_model.predict(..., shape=...) on the source model for a different resolution,"
+                    " or create a new predictor from a source configured for that resolution."
+                )
+                raise ValueError(
+                    f"Resolution mismatch. "
+                    f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
+                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}." + _restore_hint,
+                )
+            if self._optimized_has_been_compiled:
+                if self._optimized_batch_size != batch_tensor.shape[0]:
+                    _restore_hint = (
+                        " Create predictor = native_model.inference(batch_size=<new_batch_size>)"
+                        " and use predictor.predict(...), or use native_model.predict(...) for flexible batches."
+                    )
+                    raise ValueError(
+                        f"Batch size mismatch. "
+                        f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
+                        f"but got {batch_tensor.shape[0]}." + _restore_hint,
+                    )
+
+        if self._is_optimized_for_inference:
+            inference_model = self.model.inference_model
+            assert inference_model is not None, "inference_model is set whenever _is_optimized_for_inference is True."
+            predictions = inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+        else:
+            model = self.model.model
+            assert model is not None, "self.model.model is only cleared when optimized for inference."
+            predictions = model(batch_tensor)
+        if isinstance(predictions, tuple):
+            return_predictions = {
+                "pred_logits": predictions[1],
+                "pred_boxes": predictions[0],
+            }
+            if len(predictions) == 3:
+                # Distinguish optional keypoint vs mask tuple output for legacy compiled/export shims.
+                if getattr(getattr(self.model, "args", None), "use_grouppose_keypoints", False):
+                    return_predictions["pred_keypoints"] = predictions[2]
+                else:
+                    return_predictions["pred_masks"] = predictions[2]
+            predictions = return_predictions
+        return cast(dict[str, torch.Tensor], predictions)
+
     @torch.inference_mode()
-    # mypy can't match this signature against _ensure_model_on_device's Concatenate[Any, _P] typing without
-    # `self` being positional-only (a side effect of the trailing **kwargs); ignored rather than changing the
-    # public signature.
-    @_ensure_model_on_device  # type: ignore[arg-type]
     def predict(
         self,
         images: str
+        | os.PathLike[str]
         | Image.Image
         | np.ndarray[Any, Any]
         | torch.Tensor
-        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
+        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
@@ -3223,14 +3059,20 @@ class RFDETR:
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
 
-        This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
+        This method accepts a single image or a list or tuple of images in various formats (string or path-like file
+        path, image URL string, PIL Image,
         NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
         already be normalized to values in the [0, 1] range and have the shape (C, H, W).
 
         Args:
             images:
                 A single image or a list of images to process. Images can be provided
-                as file paths, PIL Images, NumPy arrays, or torch.Tensors.
+                as string or path-like file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. PIL and file
+                inputs convert to grayscale for one-channel models and RGB for three-channel models.
+                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
+                which does not bound the total download time. Redirects are followed, and the whole response body is
+                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
+                URLs, download and validate the image yourself and pass the decoded image instead.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:
@@ -3255,12 +3097,14 @@ class RFDETR:
                 installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU
                 augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or
                 antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time
-                therefore decides which setting a default-trained checkpoint expects. Exported models and the
-                ``rfdetr.export`` runtime helpers always resize with ``antialias=False``, so results with
-                ``antialias=True`` will not match them unless the caller pre-resizes the image with antialiasing.
+                therefore decides which setting a default-trained checkpoint expects.
+                ``RFDETRInference`` uses the artifact metadata's ``resize_antialias`` by default for exported
+                models; callers can override it with an explicit ``antialias`` argument. The lower-level
+                ``rfdetr.export`` runtime preprocessing helpers always resize with ``antialias=False``.
                 Defaults to ``False`` to preserve the existing inference behavior.
             **kwargs:
-                Additional keyword arguments.
+                Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since
+                v1.12.0 and will raise TypeError in v2.0.0.
 
         Returns:
             A single or multiple Supervision prediction objects. Detection and segmentation models return
@@ -3316,470 +3160,30 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
+
+        Examples:
+            Skipped because this example requires pretrained weights and a local image file.
+
+            >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
+            >>> model = RFDETRSmall()  # doctest: +SKIP
+            >>> detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP
         """
-        from supervision import Detections, KeyPoints
-
-        patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
-        num_windows = getattr(self.model_config, "num_windows", 1)
-        if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-            raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
-        block_size = patch_size * num_windows
-
-        if shape is None:
-            default_res = self.model.resolution
-            if default_res % block_size != 0:
-                raise ValueError(
-                    f"Model's default resolution ({default_res}) is not divisible by "
-                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                    f"Provide an explicit shape divisible by {block_size}.",
-                )
-        else:
-            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
-
-        self._ensure_eval_mode_for_unoptimized_inference()
-
-        # Determine the return shape from the *input* type, not the runtime batch
-        # length: a single image (path / PIL / tensor) yields a bare Detections,
-        # while a list/tuple always yields a list — even when it holds one image.
-        single_input = not isinstance(images, (list, tuple))
-        if not isinstance(images, (list, tuple)):
-            images = [images]
-
-        orig_sizes: list[Any] = []
-        processed_images: list[Any] = []
-        source_images: list[Any] | None = [] if include_source_image else None
-        # Tensor range checks stay deferred: `(img > 1).any()` itself is a cheap async kernel launch, but
-        # consuming its result in `if ...:` forces Python to call `Tensor.__bool__()`, which blocks
-        # the calling thread until the device catches up. For a CUDA tensor passed directly to
-        # `predict()` (the documented host-round-trip-free path, see the Note above on pinning), doing
-        # that inline inside this loop serializes every image behind its own blocking round-trip,
-        # defeating the non-blocking transfers below. Collecting the (still un-synced) result tensors
-        # here and only forcing them to Python bools once, after every image has had its conversion,
-        # range-check kernels, and transfer all queued, lets the sync for image 1 overlap with the GPU
-        # work already queued for images 2..N instead of blocking in front of it. Kept per-image
-        # (not `torch.stack`-ed into one combined check) because the images in one `predict()` call
-        # are not guaranteed to share a device (e.g. a CPU-tensor image and a CUDA-tensor image mixed
-        # in the same list) — stacking would raise instead of validating each on its own device.
-        # The shape check below costs no sync (a plain Python int comparison on `.shape[0]`), but its
-        # raise is deferred here too, and re-ordered after both range checks in the loop below: the
-        # original code checked range before shape for a given image, and raising it eagerly here
-        # would flip that precedence for any tensor that is invalid on both axes at once.
-        pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
-        # Built lazily on the first uint8 image, then shared by the rest of the batch.
-        uint8_scale: torch.Tensor | None = None
-
-        # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
-        # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
-        # resizing. MPS-resident tensor inputs take the same detour (device -> CPU, then the resized batch back to
-        # MPS). From torch 2.7 on the MPS kernel exists and this stays False; once the torch floor reaches 2.7,
-        # delete this branch together with `_mps_lacks_antialiased_resize`.
-        resize_on_cpu = antialias and self.model.device.type == "mps" and _mps_lacks_antialiased_resize()
-        preprocess_device = torch.device("cpu") if resize_on_cpu else self.model.device
-
-        for img_input in images:
-            img: Any = img_input
-            decoded_local_file = False
-            if isinstance(img, str):
-                if urlparse(img).scheme in ("http", "https"):
-                    resp = requests.get(img, timeout=30)
-                    resp.raise_for_status()
-                    img = io.BytesIO(resp.content)
-                else:
-                    decoded = _decode_local_image(img)
-                    if decoded is not None:
-                        img = decoded
-                        decoded_local_file = True
-                if not decoded_local_file:
-                    img = Image.open(img)
-
-            range_known_valid = decoded_local_file
-            deferred_widen = decoded_local_file
-            if decoded_local_file:
-                if include_source_image:
-                    source_images.append(img.permute(1, 2, 0).numpy().copy())  # type: ignore[union-attr]
-            elif not isinstance(img, torch.Tensor):
-                # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
-                # etc.) to RGB before converting to tensor.  This matches the
-                # standard detector API contract: callers passing a file path or
-                # a PIL image should not have to pre-convert; for tensor inputs
-                # the channel dimension is the caller's responsibility.
-                if isinstance(img, Image.Image) and img.mode != "RGB":
-                    img = img.convert("RGB")
-                pil_image = isinstance(img, Image.Image)
-                source_array: np.ndarray[Any, Any] | None = None
-                if include_source_image:
-                    source_array = np.array(img)
-                    if source_array.dtype != np.uint8:
-                        source_array = (source_array * 255).clip(0, 255).astype(np.uint8)
-                    source_images.append(source_array)  # type: ignore[union-attr]
-                uint8_array = isinstance(img, np.ndarray) and img.dtype == np.uint8
-                if isinstance(img, np.ndarray) and any(stride < 0 for stride in img.strides):
-                    # ``torch.from_numpy``, used by both conversions below, rejects negative strides, e.g. the
-                    # ``frame[:, :, ::-1]`` BGR-to-RGB view. Copy only these, so contiguous, positive-step and
-                    # broadcast views stay zero-copy.
-                    if uint8_array and source_array is not None:
-                        # ``np.array(img)`` above already made a positive-stride copy, so reuse it. The model input
-                        # then shares storage with ``source_image``, as the PIL path below does.
-                        img = source_array
-                    else:
-                        # ``.copy()``, not ``np.ascontiguousarray``: NumPy ignores the stride of a length-1 axis when
-                        # it flags an array C-contiguous, so ``ascontiguousarray`` would hand back the same view.
-                        img = img.copy()
-                # PIL conversion above guarantees an 8-bit RGB image, and both conversion paths below
-                # scale PIL and uint8 NumPy storage into [0, 1]. Their range cannot fail the checks below.
-                range_known_valid = pil_image or uint8_array
-                if pil_image or (uint8_array and img.ndim in (2, 3)):
-                    # ``F.to_tensor`` first materializes contiguous CHW uint8 storage, then
-                    # allocates float storage, then allocates again for division. Convert dtype
-                    # and layout together and divide that fresh float allocation in place.
-                    if pil_image:
-                        tensor_source = (
-                            source_array if source_array is not None else np.array(img, dtype=np.uint8, copy=True)
-                        )
-                    else:
-                        tensor_source = img
-                    # Keep the 1-byte-per-channel storage for now: the widening to float is
-                    # deferred until after the host-to-device transfer below, so only a quarter of
-                    # the bytes cross the bus and the widen+divide run on the accelerator (except MPS
-                    # with antialias=True on torch < 2.7, where preprocessing stays on the CPU). The
-                    # view is already (C, H, W), so every shape check and error message below is
-                    # unchanged.
-                    img = _uint8_image_to_chw_view(tensor_source)
-                    deferred_widen = True
-                else:
-                    img = F.to_tensor(img)
-            elif include_source_image and img.dim() == 3:
-                # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
-                # validation below raises the public shape error instead of an internal RuntimeError.
-                source_images.append(_tensor_to_source_array(img))  # type: ignore[union-attr]
-
-            # img.dim() != 3 is checked alongside the channel count (not just deferred as a message
-            # detail) because `h, w = img_tensor.shape[1:]` a few lines down unpacks exactly 2 values --
-            # deferring only the *raise* while still unconditionally unpacking a non-3D tensor's shape
-            # would trade the clear "Invalid tensor image shape" error for a confusing internal
-            # `ValueError: not enough values to unpack` (or, for a 0-d/1-d tensor, an IndexError out of
-            # `img.shape[0]` itself) the moment a malformed tensor reached this point.
-            invalid_shape = img.dim() != 3 or img.shape[0] != self.model_config.num_channels
-            pending_checks.append(
-                (
-                    False if range_known_valid else (img > 1).any(),
-                    False if range_known_valid else (img < 0).any(),
-                    invalid_shape,
-                    tuple(img.shape),
-                )
+        if kwargs:
+            # Account for the torch.inference_mode wrapper so the warning points to the caller.
+            deprecation_warning(
+                "Passing unknown keyword arguments to RFDETR.predict is deprecated since v1.12.0: "
+                f"{', '.join(sorted(kwargs))}. They are ignored and will raise TypeError in v2.0.0.",
+                stacklevel=3,
             )
-            img_tensor = img
-
-            if invalid_shape:
-                # Already known to be un-usable -- record a placeholder so `processed_images`/
-                # `orig_sizes` don't silently go missing an entry (kept parallel with `pending_checks`
-                # for clarity, even though the loop below is guaranteed to raise on this image's
-                # `invalid_shape` before either list is ever read), and skip the size unpacking and
-                # transfer that assume a valid (C, H, W) tensor.
-                orig_sizes.append(None)
-                processed_images.append(None)
-                continue
-
-            h, w = img_tensor.shape[1:]
-            orig_sizes.append((h, w))
-
-            # A pageable-memory .to(device) copy onto CUDA is slower than a pinned-memory one: the driver has to
-            # pin the source buffer itself before it can start the transfer. Pin it explicitly here — but only for a
-            # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
-            # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
-            # the target device is the CPU itself.
-            if img_tensor.device.type == "cpu" and preprocess_device.type == "cuda":
-                img_tensor = img_tensor.pin_memory()
-            # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
-            # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
-            # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
-            # reads of the tensor's data can observe an in-flight (partially written) copy.
-            non_blocking = preprocess_device.type == "cuda"
-            img_tensor = img_tensor.to(preprocess_device, non_blocking=non_blocking)
-            if deferred_widen:
-                if uint8_scale is None:
-                    uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
-                img_tensor = _uint8_chw_to_float(img_tensor, uint8_scale)
-            processed_images.append(img_tensor)
-
-        # Force the range-check results to Python bools only now, after every image's conversion,
-        # range-check kernels, and transfer have all been queued (see the comment where
-        # pending_checks is built). Same nested per-image, per-condition order as the original inline
-        # checks (image 0's "above 1", then "below 0", then its shape check; then image 1's, ...), so
-        # which of the three messages a given multi-image, multi-violation input raises is unchanged.
-        for invalid_high, invalid_low, invalid_shape, img_shape in pending_checks:
-            if invalid_high:
-                raise ValueError(
-                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
-                )
-            if invalid_low:
-                raise ValueError(
-                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
-                )
-            if invalid_shape:
-                raise ValueError(
-                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
-                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
-                    f"Received tensor with shape {img_shape}. "
-                    "For automatic RGB conversion, pass a PIL Image or a file path instead of a tensor."
-                )
-
-        resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
-        # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
-        # used by Albumentations during training — see issue #1203. The opt-in flag
-        # also supports checkpoints trained with torchvision or platform resizing.
-        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=antialias) for t in processed_images])
-        if resize_on_cpu:
-            batch_tensor = batch_tensor.to(self.model.device)
-        batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
-
-        if self._is_optimized_for_inference:
-            if (
-                self._optimized_resolution != batch_tensor.shape[2]
-                or self._optimized_resolution != batch_tensor.shape[3]
-            ):
-                # this could happen if someone manually changes self.model.resolution after optimizing the model,
-                # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
-                _restore_hint = (
-                    " Create a new RFDETR instance to use a different resolution."
-                    if getattr(self, "_optimized_inplace", False)
-                    else " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
-                )
-                raise ValueError(
-                    f"Resolution mismatch. "
-                    f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
-                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}." + _restore_hint,
-                )
-            if self._optimized_has_been_compiled:
-                if self._optimized_batch_size != batch_tensor.shape[0]:
-                    _restore_hint = (
-                        " Create a new RFDETR instance to recompile for a different batch size."
-                        if getattr(self, "_optimized_inplace", False)
-                        else (
-                            " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
-                            " Alternatively, you can recompile the optimized model for a different batch size"
-                            " by calling model.inference(batch_size=<new_batch_size>)."
-                        )
-                    )
-                    raise ValueError(
-                        f"Batch size mismatch. "
-                        f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
-                        f"but got {batch_tensor.shape[0]}." + _restore_hint,
-                    )
-
-        if self._is_optimized_for_inference:
-            inference_model = self.model.inference_model
-            assert inference_model is not None, "inference_model is set whenever _is_optimized_for_inference is True."
-            predictions = inference_model(batch_tensor.to(dtype=self._optimized_dtype))
-        else:
-            model = self.model.model
-            assert model is not None, "self.model.model is only cleared when optimized for inference."
-            predictions = model(batch_tensor)
-        if isinstance(predictions, tuple):
-            return_predictions = {
-                "pred_logits": predictions[1],
-                "pred_boxes": predictions[0],
-            }
-            if len(predictions) == 3:
-                # Distinguish optional keypoint vs mask tuple output for legacy compiled/export shims.
-                if getattr(getattr(self.model, "args", None), "use_grouppose_keypoints", False):
-                    return_predictions["pred_keypoints"] = predictions[2]
-                else:
-                    return_predictions["pred_masks"] = predictions[2]
-            predictions = return_predictions
-        target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
-
-        model_class_names = self.class_names
-        n = len(model_class_names)
-        # Pretrained COCO models use COCO category IDs (1–90, with gaps) as class_ids,
-        # while class_names is a flat 0-indexed list of 80 entries. Detected when
-        # args.num_classes > len(class_names) AND class_names == COCO_CLASS_NAMES.
-        # Fine-tuned models remap category IDs to 0-based contiguous indices, so
-        # class_id i maps directly to class_names[i].
-        _model_args = getattr(self.model, "args", None)
-        if _model_args is None and model_class_names == list(COCO_CLASS_NAMES):
-            logger.warning_once(
-                "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
-                "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
-            )
-        num_logit_slots: int = getattr(_model_args, "num_classes", n)
-        _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
-        # Legacy keypoint models may use a shifted class scheme: slot 0 = background
-        # (0 keypoints), real classes start at slot 1. Active-first schemas such as
-        # [17] use normal 0-based class IDs and fall through to the default mapping.
-        _num_keypoints_per_class: list[int] = getattr(_model_args, "num_keypoints_per_class", []) or []
-        _is_legacy_bgfirst_keypoint = _is_bg_first_schema(_num_keypoints_per_class)
-        if _is_coco_pretrained:
-            _class_id_to_name: dict[int, str] = {
-                coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
-            }
-        elif _is_legacy_bgfirst_keypoint:
-            # Map foreground keypoint slots (slots where num_keypoints > 0) to class names.
-            # Slot 0 is background and is skipped. Slot 1 → class_names[0], slot 2 → class_names[1], …
-            # Note: slots where num_keypoints == 0 but slot != 0 (detect-only classes in a mixed schema
-            # such as [0, 17, 0, 4]) are not present in _kp_foreground_slots and will map to an empty
-            # string with a one-time warning. Mixed keypoint+detection schemas are not a supported
-            # configuration for the shipped models.
-            _kp_foreground_slots = [idx for idx, k in enumerate(_num_keypoints_per_class) if k > 0]
-            _class_id_to_name = {slot: model_class_names[i] for i, slot in enumerate(_kp_foreground_slots) if i < n}
-        else:
-            _class_id_to_name = dict(enumerate(model_class_names))
-        predictions_list: list[Detections | KeyPoints] = []
-        for i, result in enumerate(results):
-            scores = result["scores"]
-            labels = result["labels"]
-            boxes = result["boxes"]
-
-            # INVARIANT: this predicate must stay identical (same operator and threshold) to the
-            # pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`), which is
-            # fed `score_threshold=threshold` above. The seg path drops below-threshold masks before
-            # upsampling on the strength of that match; diverging here (e.g. `>=`, per-class, top-k)
-            # would make it silently drop rows this filter keeps — a behaviour change with no failing test.
-            # Materialized as an index vector (not a bool mask) so the bool-mask advanced-indexing
-            # sync below runs once per image instead of once per kept tensor: `t[bool_mask]` re-derives
-            # its output size via `nonzero(bool_mask)` on every call (a documented CUDA host-device
-            # sync), while `t[int64_index]` is index_select-shaped and needs no further sync. Row order
-            # is unaffected — `nonzero` returns ascending indices, identical to bool-mask selection order.
-            keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
-            scores = scores[keep_idx]
-            labels = labels[keep_idx]
-            boxes = boxes[keep_idx]
-            has_keypoints_result = "keypoints" in result
-            has_masks = "masks" in result
-            has_kp_precision = "keypoint_precision_cholesky" in result
-            # Bound unconditionally (None when absent) rather than left unbound under a guard: these
-            # locals live inside `for i, result in enumerate(results)`, so a guard that silently
-            # diverges from its transfer/consume counterparts would otherwise carry the *previous*
-            # image's tensor forward instead of raising. Rebinding every iteration makes that failure
-            # mode a loud AttributeError/TypeError on the stale `None` instead of a silent wrong value.
-            keypoints = result["keypoints"][keep_idx] if has_keypoints_result else None
-            masks = result["masks"][keep_idx] if has_masks else None
-            keypoint_precision = result["keypoint_precision_cholesky"][keep_idx] if has_kp_precision else None
-
-            # PERF: queue every GPU->CPU transfer for this image as non_blocking, then
-            # synchronize ONCE instead of once per tensor. Each bare `.cpu()` call below
-            # used to impose its own stream synchronization -- up to 4 (5 with keypoints,
-            # 6 with keypoint precision) sequential blocking round-trips per image, scaling
-            # with the number of kept detections (the mask tensor especially, since it is
-            # by far the largest of the group in a crowded/high-detection-count frame).
-            # Queuing the copies together lets them share the copy stream and collapses
-            # the wait to a single barrier; `.numpy()` is only called after that barrier,
-            # so every array below is fully populated exactly as before.
-            #
-            # Restrict the async path to CUDA and synchronize the tensors' own device's
-            # current stream (not the whole device, and not "the current device") -- a bare
-            # `torch.cuda.synchronize()` waits on every stream on `torch.cuda.current_device()`,
-            # which can differ from `boxes.device` on a multi-GPU setup with a model on a
-            # non-default device (e.g. `cuda:1`), and non-CUDA accelerators (e.g. MPS) have
-            # no synchronization here at all, so a `non_blocking=True` copy there could be
-            # read before it lands. Falling back to the original blocking transfer for
-            # non-CUDA devices keeps every other backend exactly as correct as before this
-            # change; the coalesced-sync optimization is only claimed for CUDA in the first
-            # place.
-            # INVARIANT: keypoints/masks/keypoint_precision above all come from this same
-            # `result` dict, i.e. one `postprocess()` call on one device — so `is_cuda`,
-            # derived from `boxes` alone, applies identically to every field below, and the
-            # single stream sync a few lines down (scoped to `boxes.device`) covers all of
-            # them. Not enforced here (would be hot-loop validation for a condition that
-            # can't happen with today's callers) — holds only as long as `postprocess()`
-            # never returns fields split across devices.
-            is_cuda = boxes.is_cuda
-            boxes_cpu = boxes.float().to("cpu", non_blocking=is_cuda)
-            scores_cpu = scores.float().to("cpu", non_blocking=is_cuda)
-            labels_cpu = labels.to("cpu", non_blocking=is_cuda)
-            keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
-            masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda) if masks is not None else None
-            keypoint_precision_cpu = (
-                keypoint_precision.float().to("cpu", non_blocking=is_cuda) if keypoint_precision is not None else None
-            )
-            if is_cuda:
-                torch.cuda.current_stream(boxes.device).synchronize()
-
-            keypoints_array = keypoints_cpu.numpy() if keypoints_cpu is not None else None
-            has_keypoints = keypoints_array is not None
-
-            if masks_cpu is not None:
-                detections = Detections(
-                    xyxy=boxes_cpu.numpy(),
-                    confidence=scores_cpu.numpy(),
-                    class_id=labels_cpu.numpy(),
-                    mask=masks_cpu.numpy(),
-                )
-            else:
-                detections = Detections(
-                    xyxy=boxes_cpu.numpy(),
-                    confidence=scores_cpu.numpy(),
-                    class_id=labels_cpu.numpy(),
-                )
-            if keypoint_precision_cpu is not None:
-                detections.data["keypoint_precision_cholesky"] = keypoint_precision_cpu.numpy()
-
-            if include_source_image:
-                detections.metadata["source_image"] = source_images[i]  # type: ignore[index]
-            detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
-
-            # Attach class names so callers can map class_id → name without a
-            # separate lookup. Always set data["class_name"] for a consistent interface.
-            #
-            # For fine-tuned models, logit index num_logit_slots is the no-object slot —
-            # map it to "__background__" without warning. For COCO-pretrained models,
-            # background is implicit (filtered by threshold); class ID 90 is "toothbrush".
-            # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
-            # string with a one-time warning.
-            class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            # Sentinel for the no-object / background class differs by model type.
-            # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
-            # Detection/segmentation models: the no-object slot is at index num_logit_slots.
-            _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
-            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
-            if truly_oob:
-                logger.warning_once(
-                    "predict() encountered unmapped class_id(s): %s — mapping to empty string",
-                    truly_oob[:5],
-                )
-            if _is_coco_pretrained:
-                class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
-            else:
-                class_names = [
-                    "__background__" if cid == _bg_sentinel else _class_id_to_name.get(cid, "") for cid in class_ids
-                ]
-            detections.data["class_name"] = np.array(class_names, dtype=object)
-
-            if has_keypoints and keypoints_array is not None:
-                keypoint_data = dict(detections.data)
-                keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
-                if include_source_image:
-                    keypoint_data["source_image"] = [
-                        source_images[i]  # type: ignore[index]
-                        for _ in range(len(detections))
-                    ]
-                raw_precision = keypoint_data.get("keypoint_precision_cholesky")
-                raw_source_shape = keypoint_data.get("source_shape")
-                if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
-                    precision = np.asarray(raw_precision, dtype=np.float32)
-                    source_shape = np.asarray(raw_source_shape, dtype=np.float32)
-                    if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
-                        keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
-                            precision_cholesky=precision, source_shape=source_shape
-                        )
-                keypoints_array = keypoints_array.astype(np.float32, copy=False)
-                keypoint_confidence = keypoints_array[:, :, 2]
-                key_points = KeyPoints(
-                    xy=keypoints_array[:, :, :2],
-                    keypoint_confidence=keypoint_confidence,
-                    detection_confidence=detections.confidence.astype(np.float32)
-                    if detections.confidence is not None
-                    else None,
-                    class_id=detections.class_id.astype(int) if detections.class_id is not None else None,
-                    visible=keypoint_confidence > 0,
-                    data=keypoint_data,
-                )
-                predictions_list.append(key_points)
-            else:
-                predictions_list.append(detections)
-
-        return predictions_list[0] if single_input else predictions_list
+        return _prediction.predict(
+            self._prediction_context(),
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias=antialias,
+        )
 
     def deploy_to_roboflow(
         self,
@@ -3811,7 +3215,7 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
-            RuntimeError: If the model was cleared by ``inference(inplace=True)``.
+            RuntimeError: If a legacy in-place optimization cleared the base weights.
 
         Note:
             Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
@@ -3819,7 +3223,7 @@ class RFDETR:
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot deploy after inference(inplace=True) — "
+                "Cannot deploy after legacy inplace optimization — "
                 "the model weights have been cleared from memory. "
                 "Call export_for_roboflow() before optimizing, then deploy the exported bundle."
             )
@@ -3877,11 +3281,11 @@ class RFDETR:
             PermissionError: If the process lacks write access to *output_dir* or its parent directory.
             OSError: On disk-full, invalid path, or other filesystem failure during directory creation,
                 file write, or ``torch.save``.
-            RuntimeError: If the model was cleared by ``inference(inplace=True)``.
+            RuntimeError: If a legacy in-place optimization cleared the base weights.
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot export after inference(inplace=True) — "
+                "Cannot export after legacy inplace optimization — "
                 "the model has been cleared from memory. "
                 "Call export_for_roboflow() before optimizing."
             )

@@ -148,12 +148,14 @@ tflite = [
     # TFLite export writes the ONNX graph first (onnx), rewrites its GridSample nodes for the converter
     # (onnx_graphsurgeon), then converts it with onnx2tf. onnx2tf lists TensorFlow and tf-keras only as an
     # optional extra, so they are listed here; it pins its own onnxruntime, so that one is not. onnx2tf shells out
-    # to the onnxsim console script for its own simplification pass, and its own pinned onnxsim-prebuilt already
-    # provides one, so the onnxsim line below overlaps it; its removal is tracked in the onnxsim follow-up.
+    # to the onnxsim console script for its own simplification pass, and the distribution it depends on provides it:
+    # onnxsim-prebuilt for 2.4.x, which ships cp312 abi3 wheels for every platform. Never also list onnxsim here:
+    # both wheels install the same onnxsim package and script, the one installed last replaces the other, and
+    # onnx2tf 2.4.3 then fails to convert any RF-DETR model under onnxsim 0.8.1.
     "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
-    "onnxsim>=0.7.0; python_version >= '3.12' and python_version < '3.13'",  # 0.7.0 ships a cp312 abi3 wheel; the old <0.6.0 pin resolved to 0.5.0 whose wheels don't cover every platform, so pip built from source and hung (#749).
     "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
-    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
+    # <2.5: 2.5 and later move to numpy 2.2.6 and onnxsim 0.6.5, a converter stack this extra has not been tested on.
+    "onnx2tf>=2.4.0,<2.5; python_version >= '3.12' and python_version < '3.13'",
     "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
@@ -478,6 +480,7 @@ markers = [
     "e2e_coreai: Core AI end-to-end convert + numerical parity (needs the macOS 27 Core AI runtime; opt-in)",
     "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
     "e2e_onnx: ONNX Runtime session construction + inference, [onnx] extra (opt-in; also marked integration)",
+    "e2e_tflite: TFLite export + public prediction parity (opt-in)",
     "e2e_litert: LiteRT end-to-end .tflite export + numerical parity (opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",

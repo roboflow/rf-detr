@@ -12,10 +12,16 @@ from typing import Any, Generator
 import pytest
 from fuse_augmentations.data import SplitRatios, generate_dataset
 
+from rfdetr.export._backend import preload_tensorflow_before_onnx
+
 # NOTE: Model weights (rf-detr-*.pth) download to the CWD (typically tests/ when running pytest).
 # This is a known limitation. Route: change pretrain_weights default to
 # platformdirs.user_cache_dir("rfdetr") in a future PR.
 from rfdetr.utilities.reproducibility import seed_all
+
+# Collection imports ONNX in several test modules, before fixtures or exporters can preload TensorFlow.
+# Keep their shared Abseil symbols owned by TensorFlow in each xdist worker; absent TensorFlow is a no-op.
+preload_tensorflow_before_onnx()
 
 #: Seed handed to ``generate_dataset``; it draws from fresh entropy when left unset, which would make
 #: the session-scoped dataset fixtures differ between runs.

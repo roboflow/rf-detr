@@ -110,28 +110,25 @@ class TestModelInferenceDtype:
         """Passing dtype='float32' (str) should be coerced to torch.float32."""
         rfdetr = _FakeRFDETR()
 
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False, dtype="float32")
+        predictor = rfdetr.inference(compile=False, dtype="float32")
 
-        assert rfdetr._optimized_dtype == torch.float32
+        assert predictor._native_model._optimized_dtype == torch.float32
 
     def test_string_dtype_float16_is_accepted(self) -> None:
         """Passing dtype='float16' (str) should be coerced to torch.float16."""
         rfdetr = _FakeRFDETR()
 
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False, dtype="float16")
+        predictor = rfdetr.inference(compile=False, dtype="float16")
 
-        assert rfdetr._optimized_dtype == torch.float16
+        assert predictor._native_model._optimized_dtype == torch.float16
 
     def test_torch_dtype_is_passed_through(self) -> None:
         """Passing dtype=torch.float32 directly should work as before."""
         rfdetr = _FakeRFDETR()
 
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False, dtype=torch.float32)
+        predictor = rfdetr.inference(compile=False, dtype=torch.float32)
 
-        assert rfdetr._optimized_dtype == torch.float32
+        assert predictor._native_model._optimized_dtype == torch.float32
 
     def test_invalid_dtype_type_raises_type_error(self) -> None:
         """Passing an invalid dtype type (e.g. int) should raise TypeError."""
@@ -160,95 +157,63 @@ class TestModelInferenceDtype:
         rfdetr = _FakeRFDETR()
         expected = getattr(torch, dtype_str)
 
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False, dtype=dtype_str)
+        predictor = rfdetr.inference(compile=False, dtype=dtype_str)
 
-        assert rfdetr._optimized_dtype == expected
+        assert predictor._native_model._optimized_dtype == expected
 
 
 class TestModelInferenceCudaDeviceContext:
-    """Verify that inference() wraps operations in the correct device context."""
+    """Device placement belongs to the copied runtime and preserves a cold source."""
 
-    @pytest.mark.gpu
-    @patch("rfdetr.detr._move_model_context_to_device")
-    @patch("rfdetr.detr.deepcopy")
-    @patch("torch.cuda.device")
-    def test_cuda_device_context_manager_is_used_for_cuda_device(
-        self,
-        mock_cuda_device,
-        mock_deepcopy,
-        _mock_move_model_context_to_device,
-    ) -> None:
-        """torch.cuda.device() context should be entered when model is on CUDA."""
-        rfdetr = _FakeRFDETR()
-        # Simulate a CUDA device without actually requiring CUDA hardware
-        rfdetr.model.device = torch.device("cuda", 0)
-        mock_deepcopy.return_value = rfdetr.model.model
+    @pytest.mark.parametrize("device_index", [0, 2])
+    def test_cuda_device_context_uses_snapshot_device(self, device_index: int) -> None:
+        """CUDA work enters the source's configured device while moving only the copied module."""
+        source = _FakeRFDETR()
+        target = torch.device("cuda", device_index)
+        source.model.device = target
+        original = source.model.model
+        with (
+            patch("torch.cuda.device", return_value=nullcontext()) as device_context,
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module) as move,
+        ):
+            predictor = source.inference(compile=False)
 
-        entered_devices: list[torch.device] = []
-
-        class _CapturingDeviceCtx:
-            def __init__(self, captured_device):
-                entered_devices.append(captured_device)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                pass
-
-        mock_cuda_device.side_effect = _CapturingDeviceCtx
-        rfdetr.inference(compile=False, dtype=torch.float32)
-
-        assert len(entered_devices) == 1
-        assert entered_devices[0] == torch.device("cuda", 0)
+        device_context.assert_called_once_with(target)
+        assert move.call_args.args[0] is not original
+        assert predictor._native_model.model.device == target
+        assert original.linear.weight.device.type == "cpu"
+        assert source.model.device == target
 
     def test_nullcontext_used_for_cpu_device(self) -> None:
-        """contextlib.nullcontext() should be used when model is on CPU (no CUDA init)."""
-        rfdetr = _FakeRFDETR()
-        rfdetr.model.device = torch.device("cpu")
-
-        # torch.cuda.device should NOT be called for CPU devices
-        with (
-            patch("torch.cuda.device") as mock_cuda_device,
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-        ):
-            rfdetr.inference(compile=False, dtype=torch.float32)
-
-        mock_cuda_device.assert_not_called()
+        """A CPU factory does not initialize a CUDA device context."""
+        source = _FakeRFDETR()
+        with patch("torch.cuda.device") as device_context:
+            source.inference(compile=False)
+        device_context.assert_not_called()
 
     @pytest.mark.gpu
-    @patch("rfdetr.detr._move_model_context_to_device")
-    @patch("rfdetr.detr.deepcopy")
-    @patch("torch.cuda.device")
-    def test_cuda_device_context_uses_model_device(
-        self,
-        mock_cuda_device,
-        mock_deepcopy,
-        _mock_move_model_context_to_device,
-    ) -> None:
-        """The device passed to torch.cuda.device() should match self.model.device."""
-        rfdetr = _FakeRFDETR()
-        expected_device = torch.device("cuda", 2)
-        rfdetr.model.device = expected_device
-        mock_deepcopy.return_value = rfdetr.model.model
+    def test_cold_cuda_source_stays_on_cpu_and_snapshot_fixes_device_index(self) -> None:
+        """A deferred CUDA source stays on CPU while its predictor owns a concrete CUDA device."""
+        source = _FakeRFDETR()
+        source.model.device = torch.device("cuda")
+        original = source.model.model
+        weights = original.linear.weight.detach().clone()
+        expected_device = torch.device("cuda", torch.cuda.current_device())
 
-        captured: dict[str, torch.device] = {}
+        predictor = source.inference(compile=False)
+        snapshot = predictor._native_model
 
-        class _CapturingCtx:
-            def __init__(self, captured_device):
-                captured["device"] = captured_device
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                pass
-
-        mock_cuda_device.side_effect = _CapturingCtx
-        rfdetr.inference(compile=False)
-
-        assert captured.get("device") == expected_device
+        assert snapshot.model.device == expected_device
+        assert snapshot.model.inference_model.linear.weight.device == expected_device
+        assert source.model.model is original
+        assert original.linear.weight.device.type == "cpu"
+        assert torch.equal(original.linear.weight, weights)
+        assert original.training is True
+        assert source.model.device == torch.device("cuda")
+        assert source.model.inference_model is None
+        # The device stays explicit even if a later call observes another current CUDA device.
+        with patch("torch.cuda.current_device", return_value=expected_device.index + 1):
+            assert snapshot.model.device == expected_device
 
 
 class TestModelInferenceCompile:
@@ -264,21 +229,21 @@ class TestModelInferenceCompile:
         captured = Mock()
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("rfdetr.detr.torch.jit.trace", return_value=traced) as mock_trace,
             patch("rfdetr.detr.torch.jit.freeze", return_value=frozen) as mock_freeze,
             patch("rfdetr.detr._CUDAGraphInferenceModel", return_value=captured) as mock_capture,
             patch("rfdetr.detr.torch.randn", return_value=dummy_input),
             patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
             patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
-            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module),
         ):
-            rfdetr.inference(compile=True, batch_size=2, compile_backend="cudagraph")
+            predictor = rfdetr.inference(compile=True, batch_size=2, compile_backend="cudagraph")
 
-        mock_trace.assert_called_once_with(rfdetr.model.model, dummy_input)
+        assert mock_trace.call_args.args[0] is not rfdetr.model.model
+        assert mock_trace.call_args.args[1] is dummy_input
         mock_freeze.assert_called_once_with(traced)
-        mock_capture.assert_called_once_with(frozen, dummy_input, rfdetr.model.device)
-        assert rfdetr.model.inference_model is captured
+        mock_capture.assert_called_once_with(frozen, dummy_input, torch.device("cuda", 0))
+        assert predictor._native_model.model.inference_model is captured
 
     @pytest.mark.gpu
     @pytest.mark.parametrize(
@@ -292,9 +257,9 @@ class TestModelInferenceCompile:
         rfdetr.model.device = device
         rfdetr.model.model = _TupleModule().to(device)
 
-        rfdetr.inference(compile=True, batch_size=2, dtype=dtype, compile_backend="cudagraph")
+        predictor = rfdetr.inference(compile=True, batch_size=2, dtype=dtype, compile_backend="cudagraph")
 
-        graph_model = rfdetr.model.inference_model
+        graph_model = predictor._native_model.model.inference_model
         assert isinstance(graph_model, detr_module._CUDAGraphInferenceModel)
         first_input = torch.randn(2, 3, 28, 28, device=device, dtype=dtype)
         second_input = torch.randn(2, 3, 28, 28, device=device, dtype=dtype)
@@ -346,15 +311,19 @@ class TestModelInferenceCompile:
         """
         model = model_class(pretrain_weights=None, device="cuda")
         image = torch.rand(3, 480, 640)
-        model.inference(compile=True, batch_size=1, dtype=dtype)
-        with patch.object(model.model, "postprocess", wraps=model.model.postprocess) as torchscript_postprocess:
-            model.predict(image)
-        model.inference(compile=True, batch_size=1, dtype=dtype, compile_backend="cudagraph")
+        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype)
+        with patch.object(
+            torchscript._native_model.model, "postprocess", wraps=torchscript._native_model.model.postprocess
+        ) as torchscript_postprocess:
+            torchscript.predict(image)
+        cudagraph = model.inference(compile=True, batch_size=1, dtype=dtype, compile_backend="cudagraph")
 
-        with patch.object(model.model, "postprocess", wraps=model.model.postprocess) as cudagraph_postprocess:
-            model.predict(image)
+        with patch.object(
+            cudagraph._native_model.model, "postprocess", wraps=cudagraph._native_model.model.postprocess
+        ) as cudagraph_postprocess:
+            cudagraph.predict(image)
 
-        inference_model = model.model.inference_model
+        inference_model = cudagraph._native_model.model.inference_model
         assert isinstance(inference_model, detr_module._CUDAGraphInferenceModel)
         if dtype == torch.float16:
             # Half precision on random weights flips near-tied top-k proposals between the two separate traces. Each
@@ -381,12 +350,13 @@ class TestModelInferenceCompile:
         rfdetr = _FakeRFDETR()
         rfdetr.model.device = device
         rfdetr.model.model = _TupleModule().to(device)
-        rfdetr.inference(compile=True, batch_size=1, compile_backend="cudagraph")
+        first_predictor = rfdetr.inference(compile=True, batch_size=1, compile_backend="cudagraph")
         value = torch.randn(2, 3, 28, 28, device=device)
 
-        rfdetr.inference(compile=True, batch_size=2, compile_backend="cudagraph")
-        first, second = rfdetr.model.inference_model(value)
+        predictor = rfdetr.inference(compile=True, batch_size=2, compile_backend="cudagraph")
+        first, second = predictor._native_model.model.inference_model(value)
 
+        assert first_predictor._native_model._optimized_batch_size == 1
         torch.cuda.synchronize(device)
         assert torch.equal(first, value + 1)
         assert torch.equal(second, value * 2)
@@ -406,33 +376,46 @@ class TestModelInferenceCompile:
     def test_compile_true_calls_jit_trace(self) -> None:
         """torch.jit.trace should be called with the model and a correctly-shaped dummy input."""
         rfdetr = _FakeRFDETR()
-        mock_traced = rfdetr.model.model
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-            patch("torch.jit.trace", return_value=mock_traced) as mock_trace,
+            patch("torch.jit.trace", side_effect=lambda module, _input: module) as mock_trace,
             patch("torch.jit.freeze") as mock_freeze,
         ):
             rfdetr.inference(compile=True, batch_size=2)
 
-        assert mock_trace.called
+        assert mock_trace.call_count == 1
+        assert mock_trace.call_args.args[0] is not rfdetr.model.model
+        assert rfdetr.model.model.training is True
         mock_freeze.assert_not_called()
         dummy_input: torch.Tensor = mock_trace.call_args.args[1]
         resolution = rfdetr.model.resolution
         assert dummy_input.shape == (2, 3, resolution, resolution)
 
+    def test_torchscript_backend_runs_real_trace_without_mutating_source(self) -> None:
+        """The default backend traces a copied module and preserves its numerical outputs."""
+        source = _FakeRFDETR()
+        original = _TupleModule()
+        source.model.model = original
+        value = torch.randn(2, 3, 28, 28)
+
+        predictor = source.inference(batch_size=2)
+        runtime = predictor._native_model.model.inference_model
+
+        assert isinstance(runtime, torch.jit.ScriptModule)
+        torch.testing.assert_close(runtime(value), original(value))
+        assert source.model.model is original
+        assert original.training is True
+        assert source.model.inference_model is None
+
     def test_compile_true_sets_compiled_flags(self) -> None:
         """_optimized_has_been_compiled=True and _optimized_batch_size should be set after compile=True."""
         rfdetr = _FakeRFDETR()
 
-        with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-            patch("torch.jit.trace", return_value=rfdetr.model.model),
-        ):
-            rfdetr.inference(compile=True, batch_size=4)
+        with patch("torch.jit.trace", side_effect=lambda module, _input: module):
+            predictor = rfdetr.inference(compile=True, batch_size=4)
 
-        assert rfdetr._optimized_has_been_compiled is True
-        assert rfdetr._optimized_batch_size == 4
+        assert predictor._native_model._optimized_has_been_compiled is True
+        assert predictor._native_model._optimized_batch_size == 4
 
     def test_inductor_backend_compiles_and_warms_up_with_dummy_input(self) -> None:
         """The CUDA Inductor backend should complete allocator warmup and graph recording before success."""
@@ -455,14 +438,13 @@ class TestModelInferenceCompile:
                 >>> callable(assert_unoptimized_before_sync)
                 True
             """
-            assert device == rfdetr.model.device
+            assert device == torch.device("cuda", 0)
             assert rfdetr._is_optimized_for_inference is False
             assert rfdetr._optimized_has_been_compiled is False
             assert rfdetr._optimized_batch_size is None
             assert rfdetr.model.inference_model is None
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.compile", return_value=compiled_model) as mock_compile,
             patch("torch.jit.trace") as mock_trace,
             patch("torch.jit.freeze") as mock_freeze,
@@ -470,18 +452,19 @@ class TestModelInferenceCompile:
             patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
             patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
             patch("rfdetr.detr.torch.cuda.synchronize", side_effect=assert_unoptimized_before_sync) as mock_synchronize,
-            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module),
         ):
-            rfdetr.inference(compile=True, batch_size=2, compile_backend="inductor")
+            predictor = rfdetr.inference(compile=True, batch_size=2, compile_backend="inductor")
 
         mock_trace.assert_not_called()
         mock_freeze.assert_not_called()
-        mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
+        assert mock_compile.call_args.args[0] is not rfdetr.model.model
+        assert mock_compile.call_args.kwargs == {"mode": "reduce-overhead"}
         assert compiled_model.call_count == 2
-        mock_synchronize.assert_called_once_with(rfdetr.model.device)
+        mock_synchronize.assert_called_once_with(torch.device("cuda", 0))
         assert warmup == {"shape": torch.Size((2, 3, 28, 28)), "inference_mode": True}
-        assert rfdetr._optimized_has_been_compiled is True
-        assert rfdetr._optimized_batch_size == 2
+        assert predictor._native_model._optimized_has_been_compiled is True
+        assert predictor._native_model._optimized_batch_size == 2
 
     def test_invalid_compile_backend_raises(self) -> None:
         """An unknown backend should fail before copying or exporting the model."""
@@ -500,16 +483,15 @@ class TestModelInferenceCompile:
         rfdetr = _FakeRFDETR()
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace") as mock_trace,
             patch("torch.jit.freeze") as mock_freeze,
         ):
-            rfdetr.inference(compile=False)
+            predictor = rfdetr.inference(compile=False)
 
         mock_trace.assert_not_called()
         mock_freeze.assert_not_called()
-        assert rfdetr._optimized_has_been_compiled is False
-        assert rfdetr._optimized_batch_size is None
+        assert predictor._native_model._optimized_has_been_compiled is False
+        assert predictor._native_model._optimized_batch_size is None
 
     @pytest.mark.parametrize("compile_backend", ["cudagraph", "inductor"])
     def test_compile_false_ignores_compile_backend(self, compile_backend: str) -> None:
@@ -520,237 +502,179 @@ class TestModelInferenceCompile:
         """
         rfdetr = _FakeRFDETR()
 
-        rfdetr.inference(compile=False, compile_backend=compile_backend)
+        predictor = rfdetr.inference(compile=False, compile_backend=compile_backend)
 
-        assert isinstance(rfdetr.model.inference_model, _FakeModel)
-        assert rfdetr._optimized_has_been_compiled is False
+        assert isinstance(predictor._native_model.model.inference_model, _FakeModel)
+        assert predictor._native_model._optimized_has_been_compiled is False
 
 
 class TestModelInferenceState:
-    """Verify that inference() correctly sets internal state flags."""
+    """The returned predictor owns optimization state and its runtime lifetime."""
 
-    def test_is_optimized_inplace_false_before_optimization(self) -> None:
-        """is_optimized_inplace is False before any optimization is applied."""
-        rfdetr = _FakeRFDETR()
-        assert rfdetr.is_optimized_inplace is False
+    def test_snapshot_owns_flags_and_runtime(self) -> None:
+        """The source remains eager while the returned snapshot owns only its exported copy."""
+        source = _FakeRFDETR()
+        original = source.model.model
+        predictor = source.inference(compile=False)
+        snapshot = predictor._native_model
 
-    def test_is_optimized_flag_set(self) -> None:
-        """_is_optimized_for_inference should be True after optimization."""
-        rfdetr = _FakeRFDETR()
+        assert snapshot is not source
+        assert snapshot._is_optimized_for_inference is True
+        assert snapshot.is_optimized_inplace is False
+        assert snapshot.model.model is None
+        assert isinstance(snapshot.model.inference_model, _FakeModel)
+        assert snapshot.model.inference_model is not original
+        assert source.model.model is original
+        assert source.model.inference_model is None
+        assert source._is_optimized_for_inference is False
+        assert source.is_optimized_inplace is False
 
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False)
+    def test_legacy_cleanup_does_not_change_predictor(self) -> None:
+        """Clearing old source optimization state does not discard a returned predictor's runtime."""
+        source = _FakeRFDETR()
+        predictor = source.inference(compile=False)
+        runtime = predictor._native_model.model.inference_model
+        source._is_optimized_for_inference = True
+        source._optimized_dtype = torch.float32
+        source._optimized_resolution = 28
+        source._optimized_has_been_compiled = True
+        source._optimized_batch_size = 2
+        source.model.inference_model = _FakeModel()
 
-        assert rfdetr._is_optimized_for_inference is True
+        source.remove_optimized_model()
 
-    def test_inference_model_set(self) -> None:
-        """model.inference_model should be set after optimization."""
-        rfdetr = _FakeRFDETR()
+        assert source.model.inference_model is None
+        assert source._is_optimized_for_inference is False
+        assert source._optimized_dtype is None
+        assert source._optimized_resolution is None
+        assert source._optimized_has_been_compiled is False
+        assert source._optimized_batch_size is None
+        assert source.is_optimized_inplace is False
+        assert predictor._native_model.model.inference_model is runtime
 
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False)
-
-        assert rfdetr.model.inference_model is not None
-
-    def test_remove_optimized_model_clears_state(self) -> None:
-        """remove_optimized_model() should clear all optimization flags."""
-        rfdetr = _FakeRFDETR()
-
-        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
-            rfdetr.inference(compile=False)
-
-        rfdetr.remove_optimized_model()
-
-        assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr.model.inference_model is None
-        assert rfdetr._optimized_dtype is None
-        assert rfdetr._optimized_resolution is None
-        assert rfdetr._optimized_has_been_compiled is False
-        assert rfdetr._optimized_batch_size is None
-        assert rfdetr.is_optimized_inplace is False
-
-    def test_remove_optimized_model_releases_cudagraph_wrapper(self) -> None:
-        """remove_optimized_model() leaves no reference to the CUDA graph wrapper, so the graph can be freed.
-
-        The wrapper owns the captured graph and its memory; a reference kept after ``remove_optimized_model()`` would
-        hold that device memory for the rest of the process.
-        """
-        rfdetr = _FakeRFDETR()
-        rfdetr.model.device = torch.device("cuda")
-        wrapper_class = detr_module._CUDAGraphInferenceModel
-        with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-            patch("torch.jit.trace", return_value=rfdetr.model.model),
-            patch("torch.jit.freeze", return_value=rfdetr.model.model),
-            patch("rfdetr.detr._CUDAGraphInferenceModel", side_effect=lambda *_: wrapper_class.__new__(wrapper_class)),
-            patch("rfdetr.detr.torch.randn", return_value=torch.randn(1, 3, 28, 28)),
-            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
-            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
-            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
-        ):
-            rfdetr.inference(compile=True, compile_backend="cudagraph")
-        released = weakref.ref(rfdetr.model.inference_model)
-
-        rfdetr.remove_optimized_model()
-
-        assert released() is None
-
-
-class TestModelInferenceInplace:
-    """Tests for the low-memory in-place optimization path."""
-
-    def test_inplace_false_keeps_deepcopy_behavior(self) -> None:
-        """The default path should still deep-copy the loaded module."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-        copied_model = _FakeModel()
-
-        with patch("rfdetr.detr.deepcopy", return_value=copied_model) as mock_deepcopy:
-            rfdetr.inference(compile=False)
-
-        mock_deepcopy.assert_called_once_with(original_model)
-        assert rfdetr.model.model is original_model
-        assert rfdetr.model.inference_model is copied_model
-        assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr.is_optimized_inplace is False
-
-    @patch("rfdetr.detr.deepcopy")
-    def test_inplace_true_compile_false_does_not_deepcopy(self, mock_deepcopy) -> None:
-        """Inplace=True with compile=False should use the loaded module directly."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-
-        rfdetr.inference(compile=False, inplace=True)
-
-        mock_deepcopy.assert_not_called()
-        assert rfdetr.model.model is None
-        assert rfdetr.model.inference_model is original_model
-        assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr.is_optimized_inplace is True
-
-    def test_remove_optimized_model_after_inplace_warns_and_preserves_state(self) -> None:
-        """remove_optimized_model() after inplace optimization issues UserWarning and no-ops."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-
-        rfdetr.inference(compile=False, inplace=True)
+    def test_legacy_inplace_cleanup_warns_and_preserves_runtime(self) -> None:
+        """Cleanup cannot recreate base weights removed by an older destructive optimization."""
+        source = _FakeRFDETR()
+        runtime = source.model.model
+        source.model.model = None
+        source.model.inference_model = runtime
+        source._optimized_inplace = True
+        source._is_optimized_for_inference = True
 
         with pytest.warns(UserWarning, match="no effect after inplace optimization"):
-            rfdetr.remove_optimized_model()
+            source.remove_optimized_model()
 
-        assert rfdetr.model.model is None
-        assert rfdetr.model.inference_model is original_model
-        assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr.is_optimized_inplace is True
+        assert source.model.model is None
+        assert source.model.inference_model is runtime
+        assert source._is_optimized_for_inference is True
+        assert source.is_optimized_inplace is True
 
-    def test_second_optimize_after_inplace_raises_runtime_error(self) -> None:
-        """Calling inference() again after inplace=True raises RuntimeError."""
-        rfdetr = _FakeRFDETR()
+    def test_deleting_predictor_releases_runtime(self) -> None:
+        """The source retains no reference to a predictor's runtime after the predictor is deleted."""
+        source = _FakeRFDETR()
+        predictor = source.inference(compile=False)
+        released = weakref.ref(predictor._native_model.model.inference_model)
 
-        rfdetr.inference(compile=False, inplace=True)
+        del predictor
 
-        with pytest.raises(RuntimeError, match="base model has been cleared"):
-            rfdetr.inference(compile=False)
+        assert released() is None
+        assert source.model.inference_model is None
 
-    def test_inplace_true_default_dtype_float32_does_not_cast(self) -> None:
-        """Inplace=True with default dtype (float32) leaves weights unchanged — no casting occurs."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-        original_dtype = original_model.linear.weight.dtype
-
-        rfdetr.inference(compile=False, inplace=True)
-
-        assert rfdetr.model.inference_model is original_model
-        assert original_model.linear.weight.dtype == original_dtype
-        assert rfdetr._optimized_dtype == torch.float32
-        assert rfdetr._optimized_has_been_compiled is False
-        assert rfdetr._optimized_batch_size is None
-
-    @pytest.mark.parametrize(
-        "dtype",
-        [
-            pytest.param(torch.float16, id="float16"),
-            pytest.param(torch.bfloat16, id="bfloat16"),
-        ],
-    )
-    def test_inplace_true_allows_destructive_dtype_casting(self, dtype: torch.dtype) -> None:
-        """In-place optimization may cast the original module to the target dtype."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-
-        rfdetr.inference(compile=False, dtype=dtype, inplace=True)
-
-        assert rfdetr.model.model is None
-        assert rfdetr.model.inference_model is original_model
-        assert original_model.linear.weight.dtype == dtype
-        assert rfdetr._optimized_dtype == dtype
-
-    def test_inplace_export_failure_keeps_base_model(self) -> None:
-        """Export failure in the in-place path should not clear model.model."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-
+    def test_deleting_predictor_releases_cudagraph_wrapper(self) -> None:
+        """The predictor exclusively retains its CUDA graph wrapper after capture completes."""
+        source = _FakeRFDETR()
+        source.model.device = torch.device("cuda")
+        wrapper_class = detr_module._CUDAGraphInferenceModel
+        dummy_input = torch.randn(1, 3, 28, 28)
         with (
-            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            patch.object(original_model, "export", side_effect=RuntimeError("export failed")),
-            pytest.raises(RuntimeError, match="export failed"),
+            patch("torch.jit.trace", side_effect=lambda module, _input: module),
+            patch("torch.jit.freeze", side_effect=lambda module: module),
+            patch("rfdetr.detr._CUDAGraphInferenceModel", side_effect=lambda *_: wrapper_class.__new__(wrapper_class)),
+            patch("rfdetr.detr.torch.randn", return_value=dummy_input),
+            patch("torch.cuda.current_device", return_value=0),
+            patch("torch.cuda.device", return_value=nullcontext()),
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module),
         ):
-            rfdetr.inference(compile=False, inplace=True)
+            predictor = source.inference(compile_backend="cudagraph")
+        released = weakref.ref(predictor._native_model.model.inference_model)
 
-        mock_deepcopy.assert_not_called()
-        assert rfdetr.model.model is original_model
-        assert rfdetr.model.inference_model is None
-        assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr.is_optimized_inplace is False
+        del predictor
+
+        assert released() is None
+        assert source.model.inference_model is None
+
+
+class TestModelInferenceIndependence:
+    """Factories preserve source storage, dtype and mode across repeated calls and rejected requests."""
+
+    @pytest.mark.parametrize("inplace", [False, True])
+    @pytest.mark.parametrize("compile", [False, True])
+    def test_inplace_keyword_is_rejected_without_mutation(self, inplace: bool, compile: bool) -> None:
+        """The removed keyword cannot activate destructive optimization, even with its former default."""
+        source = _FakeRFDETR()
+        original = source.model.model
+        weights = original.linear.weight.detach().clone()
+
+        with pytest.raises(TypeError, match="inplace"):
+            source.inference(compile=compile, inplace=inplace)
+
+        assert source.model.model is original
+        assert torch.equal(original.linear.weight, weights)
+        assert original.training is True
+        assert source.model.inference_model is None
+        assert source._is_optimized_for_inference is False
 
     @pytest.mark.parametrize(
-        "dtype",
-        [
-            pytest.param(torch.int8, id="torch-int8"),
-            pytest.param("int8", id="string-int8"),
-        ],
+        "dtype", [pytest.param(torch.float16, id="float16"), pytest.param(torch.bfloat16, id="bfloat16")]
     )
-    def test_inplace_non_floating_dtype_raises_before_export(self, dtype: torch.dtype | str) -> None:
-        """In-place optimization rejects non-floating dtypes before mutating the base model."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
+    def test_dtype_cast_only_changes_independent_runtime(self, dtype: torch.dtype) -> None:
+        """Casting a predictor preserves source values, storage, dtype and training mode."""
+        source = _FakeRFDETR()
+        original = source.model.model
+        weights = original.linear.weight.detach().clone()
+        predictor = source.inference(compile=False, dtype=dtype)
+        runtime = predictor._native_model.model.inference_model
 
+        assert runtime.linear.weight.dtype == dtype
+        assert runtime.linear.weight.data_ptr() != original.linear.weight.data_ptr()
+        assert runtime.training is False
+        assert original.linear.weight.dtype == torch.float32
+        assert torch.equal(original.linear.weight, weights)
+        assert original.training is True
+
+    def test_repeated_calls_copy_current_base_weights(self) -> None:
+        """Each factory copies current base weights even when stale legacy optimization remains on the source."""
+        source = _FakeRFDETR()
+        legacy = _FakeModel()
+        source.model.inference_model = legacy
+        source._is_optimized_for_inference = True
+        first = source.inference(compile=False)
+        first_runtime = first._native_model.model.inference_model
+        original_weights = first_runtime.linear.weight.detach().clone()
+        with torch.no_grad():
+            source.model.model.linear.weight.add_(2)
+        second = source.inference(compile=False)
+        second_runtime = second._native_model.model.inference_model
+
+        assert torch.equal(first_runtime.linear.weight, original_weights)
+        assert torch.equal(second_runtime.linear.weight, source.model.model.linear.weight)
+        assert first_runtime.linear.weight.data_ptr() != second_runtime.linear.weight.data_ptr()
+        assert source.model.inference_model is legacy
+        assert source._is_optimized_for_inference is True
+
+    @pytest.mark.parametrize("dtype", [pytest.param(torch.int8, id="torch-int8"), "int8"])
+    def test_non_floating_dtype_rejected_before_copy(self, dtype: torch.dtype | str) -> None:
+        """Integer dtypes fail before exporting or copying the source module."""
+        source = _FakeRFDETR()
         with (
-            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            patch.object(original_model, "export") as mock_export,
+            patch("rfdetr.detr.deepcopy") as copy,
+            patch.object(_FakeModel, "export") as export,
             pytest.raises(ValueError, match="floating-point torch.dtype"),
         ):
-            rfdetr.inference(compile=False, dtype=dtype, inplace=True)
-
-        mock_deepcopy.assert_not_called()
-        mock_export.assert_not_called()
-        assert rfdetr.model.model is original_model
-        assert rfdetr.model.inference_model is None
-        assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr.is_optimized_inplace is False
-
-    def test_inplace_compile_true_raises_before_export_or_trace(self) -> None:
-        """In-place optimization rejects compile=True before mutating the base model."""
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-
-        with (
-            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            patch.object(original_model, "export") as mock_export,
-            patch("torch.jit.trace") as mock_trace,
-            pytest.raises(ValueError, match="inplace=True.*compile=False"),
-        ):
-            rfdetr.inference(compile=True, inplace=True)
-
-        mock_deepcopy.assert_not_called()
-        mock_export.assert_not_called()
-        mock_trace.assert_not_called()
-        assert rfdetr.model.model is original_model
-        assert rfdetr.model.inference_model is None
-        assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr._optimized_has_been_compiled is False
-        assert rfdetr._optimized_batch_size is None
-        assert rfdetr.is_optimized_inplace is False
+            source.inference(compile=False, dtype=dtype)
+        copy.assert_not_called()
+        export.assert_not_called()
+        assert source.model.inference_model is None
 
 
 class TestModelInferenceExceptionRecovery:
@@ -764,12 +688,11 @@ class TestModelInferenceExceptionRecovery:
         compiled_model = Mock(side_effect=[rfdetr.model.model(dummy_input), RuntimeError("recording failed")])
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.compile", return_value=compiled_model),
             patch("rfdetr.detr.torch.randn", return_value=dummy_input),
             patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
             patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
-            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module),
             pytest.raises(RuntimeError, match="recording failed"),
         ):
             rfdetr.inference(compile=True, compile_backend="inductor")
@@ -780,10 +703,10 @@ class TestModelInferenceExceptionRecovery:
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
 
-    def test_deepcopy_failure_leaves_clean_state(self) -> None:
-        """If deepcopy raises, inference_model should be None and _is_optimized_for_inference False."""
+    def test_deepcopy_failure_preserves_legacy_state(self) -> None:
+        """A copy failure leaves any legacy source runtime and flags untouched."""
         rfdetr = _FakeRFDETR()
-        # Simulate a previously-optimized state to confirm remove_optimized_model ran
+        # A failed independent factory must preserve even legacy source optimization state.
         rfdetr._is_optimized_for_inference = True
         rfdetr.model.inference_model = rfdetr.model.model
 
@@ -793,17 +716,15 @@ class TestModelInferenceExceptionRecovery:
         ):
             rfdetr.inference(compile=False)
 
-        assert rfdetr.model.inference_model is None
-        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is rfdetr.model.model
+        assert rfdetr._is_optimized_for_inference is True
 
     def test_export_failure_leaves_is_optimized_false(self) -> None:
         """If export() raises after deepcopy succeeds, _is_optimized_for_inference stays False."""
         rfdetr = _FakeRFDETR()
-        fake_copy = _FakeModel()
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=fake_copy),
-            patch.object(fake_copy, "export", side_effect=RuntimeError("export failed")),
+            patch.object(_FakeModel, "export", side_effect=RuntimeError("export failed")),
             pytest.raises(RuntimeError, match="export failed"),
         ):
             rfdetr.inference(compile=False)
@@ -815,7 +736,6 @@ class TestModelInferenceExceptionRecovery:
         rfdetr = _FakeRFDETR()
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
             pytest.raises(RuntimeError, match="trace failed"),
         ):
@@ -829,7 +749,6 @@ class TestModelInferenceExceptionRecovery:
         rfdetr = _FakeRFDETR()
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
             pytest.raises(RuntimeError, match="trace failed"),
         ):
@@ -845,13 +764,12 @@ class TestModelInferenceExceptionRecovery:
         dummy_input = torch.randn(1, 3, 28, 28)
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-            patch("torch.jit.trace", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", side_effect=lambda module, _input: module),
             patch("torch.jit.freeze", side_effect=RuntimeError("freeze failed")),
             patch("rfdetr.detr.torch.randn", return_value=dummy_input),
             patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
             patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
-            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module),
             pytest.raises(RuntimeError, match="freeze failed"),
         ):
             rfdetr.inference(compile=True, compile_backend="cudagraph")
@@ -868,14 +786,13 @@ class TestModelInferenceExceptionRecovery:
         dummy_input = torch.randn(1, 3, 28, 28)
 
         with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-            patch("torch.jit.trace", return_value=rfdetr.model.model),
-            patch("torch.jit.freeze", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", side_effect=lambda module, _input: module),
+            patch("torch.jit.freeze", side_effect=lambda module: module),
             patch("rfdetr.detr._CUDAGraphInferenceModel", side_effect=RuntimeError("capture failed")),
             patch("rfdetr.detr.torch.randn", return_value=dummy_input),
             patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
             patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
-            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            patch.object(_FakeModel, "to", autospec=True, side_effect=lambda module, *args, **kwargs: module),
             pytest.raises(RuntimeError, match="capture failed"),
         ):
             rfdetr.inference(compile=True, compile_backend="cudagraph")
@@ -885,49 +802,53 @@ class TestModelInferenceExceptionRecovery:
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
 
-    def test_rejected_cudagraph_request_keeps_previous_optimization(self) -> None:
-        """A cudagraph request on a CPU model fails without discarding the model that is already optimized.
-
-        The non-CUDA check runs before ``remove_optimized_model()``, so a bad request must leave the optimized model
-        that ``predict()`` already uses in place instead of silently falling back to the eager path.
-        """
-        rfdetr = _FakeRFDETR()
-        rfdetr.inference(compile=False, dtype="float16")
-        optimized_model = rfdetr.model.inference_model
+    def test_rejected_cudagraph_request_keeps_previous_predictor(self) -> None:
+        """A rejected CUDA request leaves an earlier independent predictor usable and unchanged."""
+        source = _FakeRFDETR()
+        predictor = source.inference(compile=False, dtype="float16")
+        runtime = predictor._native_model.model.inference_model
 
         with pytest.raises(ValueError, match="cudagraph.*CUDA"):
-            rfdetr.inference(compile=True, compile_backend="cudagraph")
+            source.inference(compile=True, compile_backend="cudagraph")
 
-        assert rfdetr.model.inference_model is optimized_model
-        assert rfdetr._is_optimized_for_inference is True
-        assert rfdetr._optimized_dtype == torch.float16
+        assert predictor._native_model.model.inference_model is runtime
+        assert predictor._native_model._optimized_dtype == torch.float16
+        assert source.model.inference_model is None
+        assert source._is_optimized_for_inference is False
 
-    def test_inplace_export_failure_module_mutations_are_not_undone(self) -> None:
-        """RFDETR resets flags on export failure but cannot undo module-level mutations.
+    def test_export_failure_isolates_module_mutations(self) -> None:
+        """An export that mutates its receiver before failing cannot mutate the source module."""
+        source = _FakeRFDETR()
+        original = source.model.model
 
-        Production export() may mutate the module (e.g. forward->forward_export) before raising; those changes are not
-        reversed by the exception-recovery path.
-        """
-        rfdetr = _FakeRFDETR()
-        original_model = rfdetr.model.model
-        mutated: dict[str, bool] = {"happened": False}
+        def mutate_and_fail(module: _FakeModel) -> None:
+            """Mutate the copied module and fail before publication.
 
-        def _mutating_export() -> None:
-            mutated["happened"] = True
+            Examples:
+                >>> module = _FakeModel()
+                >>> try:
+                ...     mutate_and_fail(module)
+                ... except RuntimeError:
+                ...     print(module.training)
+                False
+            """
+            module.eval()
+            with torch.no_grad():
+                module.linear.weight.zero_()
             raise RuntimeError("export failed mid-mutation")
 
+        weights = original.linear.weight.detach().clone()
         with (
-            patch("rfdetr.detr.deepcopy"),
-            patch.object(original_model, "export", side_effect=_mutating_export),
+            patch.object(_FakeModel, "export", autospec=True, side_effect=mutate_and_fail),
             pytest.raises(RuntimeError, match="export failed mid-mutation"),
         ):
-            rfdetr.inference(compile=False, inplace=True)
+            source.inference(compile=False)
 
-        assert rfdetr._is_optimized_for_inference is False
-        assert rfdetr.is_optimized_inplace is False
-        assert rfdetr.model.model is original_model
-        # The mutation happened and cannot be undone by RFDETR's recovery path
-        assert mutated["happened"] is True
+        assert source.model.model is original
+        assert original.training is True
+        assert torch.equal(original.linear.weight, weights)
+        assert source.model.inference_model is None
+        assert source._is_optimized_for_inference is False
 
 
 class TestCudaGraphInferenceModel:
@@ -1199,7 +1120,7 @@ class TestCudaGraphInferenceModel:
 
 
 class TestModelContextClearedWeights:
-    """``ModelContext`` rejects work needing the underlying module once ``inplace=True`` cleared it."""
+    """Inference-only contexts reject work that requires base weights."""
 
     @staticmethod
     def _context() -> ModelContext:

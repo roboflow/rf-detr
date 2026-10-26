@@ -3,17 +3,22 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""ModelContext and model-context builder for RF-DETR inference."""
+"""Public inference facade and model-context builder for RF-DETR."""
 
 from __future__ import annotations
 
-__all__ = ["ModelContext"]
+__all__ = ["ModelContext", "RFDETRInference"]
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import torch
+from PIL import Image
 
+from rfdetr._prediction import PredictionContext, predict
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -22,7 +27,219 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
+    from supervision import Detections, KeyPoints
+
     from rfdetr.config import ModelConfig
+    from rfdetr.detr import RFDETR
+
+
+class RFDETRInference:
+    """Predict with a live native model, checkpoint, or exported artifact.
+
+    This facade shares prediction behavior across native models and exported runtimes. ``model.inference()`` returns
+    an owned, optimized snapshot of a live model. Passing a live model directly to this constructor borrows it instead:
+    predictions follow later changes to that model.
+
+    Examples:
+        Skipped when run as a doctest: requires model weights and an image file.
+
+        >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
+        >>> predictor = RFDETRSmall().inference(compile=False)  # doctest: +SKIP
+        >>> detections = predictor.predict("image.jpg")  # doctest: +SKIP
+    """
+
+    def __init__(
+        self,
+        source: RFDETR | str | os.PathLike[str],
+        *,
+        device: str | torch.device = "auto",
+        metadata: Mapping[str, Any] | str | os.PathLike[str] | None = None,
+        trust_checkpoint: bool = False,
+        runtime_options: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Create a prediction facade from native weights or an exported artifact.
+
+        Each source accepts its own device vocabulary; a value valid for one format can be refused by another:
+
+        | Source | Accepted ``device`` values |
+        | --- | --- |
+        | Live ``RFDETR`` model | ``auto`` only; configure the model's own device instead |
+        | Checkpoint path | Any device ``RFDETR.from_checkpoint`` accepts; ``auto`` defers to it |
+        | ONNX | ``auto`` (CUDA provider when installed, else CPU), ``cpu``, ``cuda``, ``cuda:N`` |
+        | TensorRT | ``auto`` (``cuda:0``), ``cuda`` (the current CUDA device), ``cuda:N`` |
+        | OpenVINO | ``auto`` (AUTO plugin), ``cpu``, ``gpu``, ``npu``, ``gpu.N``, ``npu.N``, any case |
+        | TFLite, LiteRT | ``auto``, ``cpu`` |
+        | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only) |
+        | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
+        | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+
+        A live model owns its device policy. Omit ``device`` for that source;
+        configure the native model itself to select its device.
+
+        Args:
+            source: A live RFDETR model or a checkpoint or exported artifact path.
+            device: Runtime device, as a string or ``torch.device`` (converted with ``str()``), or ``"auto"`` to
+                inherit the source device.
+            metadata: Missing inference semantics for an older exported artifact, supplied as a JSON file path or
+                JSON-serializable mapping. Accepts a plain metadata object or an ``artifact_sha256`` / ``metadata``
+                envelope whose digest matches the artifact. Required fields describe the format, task, input shape,
+                outputs, normalization, classes and postprocessing; see "Metadata for older exports" in the export
+                basics guide for the complete schema and example. Supplied values must agree with stored metadata;
+                unknown fields and unsupported schema versions are rejected. Invalid for native models or checkpoints.
+            trust_checkpoint: Allow loading a checkpoint that contains custom Python objects.
+            runtime_options: Settings for an exported artifact's runtime. Each format reads only its own keys and
+                raises ``ValueError`` for any other: TensorRT takes ``cuda_graph``, ``engine_host_code_allowed`` and
+                ``verbose`` (each a ``bool``); OpenVINO takes ``cache_dir``, ``inference_precision`` and ``config``;
+                the other formats take none.
+
+        Raises:
+            FileNotFoundError: If the artifact or metadata file is missing.
+            ImportError: If a required format extra or runtime package is not installed.
+            RuntimeError: If the host or requested device cannot run the runtime.
+            TypeError: If runtime_options is not a mapping.
+            ValueError: If metadata, runtime_options or device conflicts with a native source; metadata is missing,
+                stale or conflicting; the format is unsupported; the artifact is backbone-only; or the loader
+                refuses a device or runtime option.
+        """
+        # Keep RFDETR imports local because detr imports ModelContext from this module.
+        from rfdetr.detr import RFDETR
+
+        # Format loaders compare device strings; RFDETR itself also accepts a torch.device.
+        device = str(device)
+        self._native_model: RFDETR | None = None
+        self._export_context: PredictionContext | None = None
+        if isinstance(source, RFDETR):
+            self._set_native_model(source, device, metadata, runtime_options)
+            return
+
+        path = Path(source)
+        if path.suffix.lower() in {".pt", ".pth", ".ckpt"}:
+            if metadata is not None:
+                raise ValueError("metadata is only valid for exported artifacts.")
+            if runtime_options is not None:
+                raise ValueError("runtime_options is only valid for exported artifacts.")
+            checkpoint_options: dict[str, Any] = {"trust_checkpoint": trust_checkpoint}
+            if device != "auto":
+                checkpoint_options["device"] = device
+            native_model = RFDETR.from_checkpoint(path, **checkpoint_options)
+            self._set_native_model(native_model, "auto", None, None)
+            return
+
+        from rfdetr.export._runtime.context import load_exported_context
+
+        self._export_context = load_exported_context(
+            path, device=device, metadata=metadata, runtime_options=runtime_options
+        )
+
+    def _set_native_model(
+        self,
+        native_model: RFDETR,
+        device: str,
+        metadata: Mapping[str, Any] | str | os.PathLike[str] | None,
+        runtime_options: Mapping[str, Any] | None,
+    ) -> None:
+        """Store a native model after validating facade-only arguments."""
+        if metadata is not None:
+            raise ValueError("metadata is only valid for exported artifacts.")
+        if runtime_options is not None:
+            raise ValueError("runtime_options is only valid for exported artifacts.")
+        if device != "auto":
+            raise ValueError("A live model owns its device policy. Omit device or configure the native model itself.")
+        self._native_model = native_model
+
+    def _prediction_context(self) -> PredictionContext:
+        """Build a fresh context for prediction or return the loaded export context."""
+        if self._native_model is not None:
+            return self._native_model._prediction_context()
+        assert self._export_context is not None
+        return self._export_context
+
+    @property
+    def class_names(self) -> list[str]:
+        """Return a copy of the source class names."""
+        if self._native_model is not None:
+            return self._native_model.class_names
+        return list(self._prediction_context().class_names)
+
+    @property
+    def runtime_info(self) -> dict[str, Any]:
+        """Return runtime policy and current input constraints without preparing the model.
+
+        ``input_shape`` uses canonical NCHW order with ``None`` for dynamic axes. ``default_shape`` is the default image
+        height and width. ``batch_size`` is an exact requirement; ``max_batch_size`` is an upper bound. Neither is a
+        batching request. The returned dictionary is independent of the source.
+        """
+        if self._native_model is not None:
+            return self._native_model._runtime_info()
+        context = self._prediction_context()
+        return {
+            **context.runtime_info,
+            "input_shape": (context.batch_size, context.config.num_channels, *context.default_shape),
+            "default_shape": context.default_shape,
+            "batch_size": context.batch_size,
+            "max_batch_size": context.max_batch_size,
+        }
+
+    @torch.inference_mode()
+    def predict(
+        self,
+        images: str
+        | os.PathLike[str]
+        | Image.Image
+        | np.ndarray[Any, Any]
+        | torch.Tensor
+        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
+        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool | None = None,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+        """Run prediction with the shared native and exported inference pipeline.
+
+        Args:
+            images: A file path, URL string, PIL image, HWC NumPy array, CHW tensor, or list or tuple of those inputs.
+                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
+                which does not bound the total download time. Redirects are followed, and the whole response body is
+                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
+                URLs, download and validate the image yourself and pass the decoded image instead.
+            threshold: Minimum confidence score for a prediction.
+            shape: Optional input height and width.
+            patch_size: Advanced override for shape divisibility validation; it does not change the backbone.
+            include_source_image: Include each source image in prediction metadata.
+            antialias: Use antialiasing during image resize. None uses the artifact metadata's resize_antialias
+                for exported sources and False for native sources. An explicit boolean overrides the default;
+                match the checkpoint training resize.
+
+        Returns:
+            A Supervision prediction object or a list of prediction objects.
+
+        Raises:
+            TypeError: If an unknown prediction keyword is supplied.
+            ValueError: If shape or patch_size is invalid, or the source cannot accept the channel count, batch size
+                or input shape.
+
+        Examples:
+            Skipped when run as a doctest: requires model weights and image files.
+
+            >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
+            >>> predictor = RFDETRSmall().inference(compile=False)  # doctest: +SKIP
+            >>> results = predictor.predict(["a.jpg", "b.jpg"], threshold=0.4)  # doctest: +SKIP
+            >>> len(results)  # doctest: +SKIP
+            2
+        """
+        context = self._prediction_context()
+        return predict(
+            context,
+            images,
+            threshold=threshold,
+            shape=shape,
+            patch_size=patch_size,
+            include_source_image=include_source_image,
+            antialias=context.antialias if antialias is None else antialias,
+        )
 
 
 class ModelContext:
@@ -32,9 +249,8 @@ class ModelContext:
     ``populate_args()`` or the legacy stack.
 
     Args:
-        model: The underlying ``LWDETR`` module. The attribute is cleared to ``None`` by
-            :meth:`RFDETR.inference` when called with ``inplace=True``, which frees the
-            weights from memory.
+        model: The underlying ``LWDETR`` module. Owned inference snapshots keep this ``None`` and store their
+            optimized runtime in ``inference_model``; their source model keeps its base weights.
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on. An index-less ``torch.device("cuda")`` is replaced by the concrete
             device (e.g. ``cuda:0``) that ``rfdetr.detr._move_model_context_to_device`` resolves on the deferred
@@ -68,12 +284,12 @@ class ModelContext:
             num_classes: New number of output classes (including background).
 
         Raises:
-            RuntimeError: If the model weights were already cleared by ``RFDETR.inference(inplace=True)``.
+            RuntimeError: If the context has no base model weights, as in an owned inference snapshot.
         """
         if self.model is None:
             raise RuntimeError(
-                "Cannot reinitialize the detection head after inplace optimization. "
-                "The original model has been cleared. Create a new RFDETR instance."
+                "Cannot reinitialize the detection head without base model weights. "
+                "Use the source RFDETR instance or reload the model."
             )
         reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
@@ -114,7 +330,8 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
     model is intentionally kept on CPU; :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
-    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``inference()`` call.  Keeping construction
+    ``.to(device)`` on the first ``predict()`` / ``export()`` call. ``inference()`` moves only its owned snapshot.
+    Keeping construction
     CPU-only prevents CUDA initialisation during ``__init__``, which would block DDP strategies (``ddp_notebook``,
     ``ddp_spawn``) from spawning child processes in notebook environments.
 
@@ -187,9 +404,8 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
-    # Keep the model on CPU here; predict() / export() / inference()
-    # will lazily move it to the target device on first use.  Eagerly calling
-    # .to("cuda") would initialise the CUDA runtime during __init__(), which
+    # Keep the model on CPU here; predict() / export() move it lazily, while inference() moves only its snapshot.
+    # Eagerly calling .to("cuda") would initialise the CUDA runtime during __init__(), which
     # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning
     # child processes in notebook environments.
     postprocess = PostProcess(
