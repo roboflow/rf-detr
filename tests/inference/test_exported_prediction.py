@@ -109,7 +109,7 @@ def _channel_readout_graph(path: Path, channels: int = 3) -> None:
     onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=8), path)
 
 
-def _expected_detection(rgb: tuple[int, int, int], height: int, width: int) -> tuple[list[float], float]:
+def _expected_detection(rgb: tuple[float, float, float], height: int, width: int) -> tuple[list[float], float]:
     """Compute the box and score the channel-readout graph gives a uniform image under native preprocessing.
 
     Each channel is normalized by hand as ``(pixel / 255 - mean) / std`` in RGB order; a uniform image keeps that value
@@ -580,8 +580,11 @@ class TestExportedStreaming:
         assert len(results) == 3
         for result, value in zip(results, [40, 80, 120]):
             assert isinstance(result, Detections)
-            np.testing.assert_allclose(result.metadata["source_image"], value, atol=2)
-            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            source_image = result.metadata["source_image"]
+            np.testing.assert_allclose(source_image, value, atol=2)
+            # MJPEG may shift decoded colors by a few levels across codec backends.
+            red, green, blue = source_image.mean(axis=(0, 1))
+            expected_box, _ = _expected_detection((red, green, blue), height=64, width=96)
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
 
     @pytest.mark.parametrize("ending", ["exhaustion", "close", "error"])
