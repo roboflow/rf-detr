@@ -47,7 +47,7 @@ from rfdetr.datasets._keypoint_schema import (
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
-from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.inference import ModelContext, RFDETRInference, _build_model_context
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
@@ -1667,122 +1667,58 @@ class RFDETR:
 
         return {key: float(value) for key, value in results[0].items()} if results else {}
 
-    @_ensure_model_on_device
     def inference(
         self,
         compile: bool = True,
         batch_size: int = 1,
         dtype: torch.dtype | str = torch.float32,
         *,
-        inplace: bool = False,
         compile_backend: Literal["torchscript", "cudagraph", "inductor"] = "torchscript",
-    ) -> None:
-        """Optimize the model for inference with optional compilation and dtype casting.
+    ) -> RFDETRInference:
+        """Create an independent, optimized predictor from the current base weights.
 
-        Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
-        ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
-        the model's current resolution. The default ``"torchscript"`` backend preserves the existing
-        ``torch.jit.trace`` path. ``"cudagraph"`` freezes that trace and captures its fixed-shape CUDA work for direct
-        replay, cloning graph-owned outputs before returning them. It is therefore TorchScript trace plus
-        ``torch.jit.freeze`` plus one directly replayed CUDA graph, not a separate compiler; ``"inductor"`` in
-        reduce-overhead mode also replays CUDA graphs, but of an Inductor-compiled model. ``"inductor"`` uses
-        ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the dummy input twice before synchronizing the
-        selected device so setup is paid inside this method instead of the first :meth:`predict` call. By default,
-        optimization deep-copies the loaded model before exporting it so the original module remains available. Set
-        ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
-        cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
-        destructive: :meth:`remove_optimized_model` becomes a no-op (issues :class:`UserWarning`), and :meth:`export`
-        raises :class:`RuntimeError`. Create or reload a new ``RFDETR`` instance to recover the original model.
+        The returned predictor owns a snapshot of the weights, configuration, class names, normalization and
+        postprocessor. Creating or using it leaves this model's weights, device, dtype, training mode and optimization
+        state unchanged. Later training or edits to this model do not affect the snapshot. Do not mutate or train the
+        source concurrently with snapshot creation. An existing legacy optimized runtime is not copied; the current
+        base weights are the source of truth.
 
-        If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
-        internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
-        state but cannot undo changes made inside ``export()``. Create a new RFDETR instance for reliable inference
-        after such a failure.
+        Capture the return value and call ``predictor.predict(images)``. Calling ``model.predict(images)`` continues
+        to use the source model. Each factory call allocates its own weight copy; release a predictor to release its
+        runtime, or release the source model when only inference is needed. The former ``inplace`` option is removed.
 
         Args:
-            compile: If ``True``, compile the model using ``compile_backend``. Set to ``False`` for broader
-                compatibility (e.g. models with dynamic control flow).
-            batch_size: Number of images the compiled model will be optimized for. Ignored when ``compile=False``.
-            dtype: Target floating-point dtype for the inference model. Accepts a
-                ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
-                ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
-                allocates both old and new parameter tensors simultaneously; peak memory during optimization is
-                approximately 1.5× the model weight size rather than 1×.
-            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is a destructive,
-                inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
-                Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
-                memory savings come only from clearing the base model reference rather than from dtype reduction.
-            compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
-                preserves the existing trace path. ``"cudagraph"`` is CUDA-only and captures a frozen TorchScript
-                trace once during setup. It keeps a graph-private memory pool holding the captured forward's
-                intermediates, plus the static input/output buffers, for as long as the optimized model exists; that
-                device memory grows with batch size, resolution and model size.
-                Freezing uses ``torch.jit.freeze``, deprecated since torch 2.5 along with TorchScript; its default
-                ``optimize_numerics=True`` passes do not strictly preserve numerics, so outputs are not guaranteed to
-                match the ``"torchscript"`` backend bit for bit.
-                Capture checks only the calling thread's CUDA calls, but entering it still synchronizes the device
-                and empties the process's cached CUDA and pinned host memory, so call ``inference()`` before
-                serving threads start.
-                ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode; it can reduce steady-state latency
-                but has a substantially higher one-time compilation cost and its device/operator support depends on the
-                installed PyTorch version.
+            compile: Compile the snapshot for fixed batch size and resolution. Set to ``False`` to use its eager
+                export-mode forward, with a fixed resolution and flexible batch size.
+            batch_size: Positive batch size for compilation. Ignored when ``compile=False``.
+            dtype: Floating-point dtype for the snapshot, as a ``torch.dtype`` or its string name.
+            compile_backend: ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally freezes the trace
+                and captures its fixed-shape CUDA work for replay, cloning graph-owned outputs before returning them.
+                It is CUDA-only and retains a graph-private memory pool. ``"inductor"`` uses
+                ``torch.compile(mode="reduce-overhead")`` and warms up the result before returning. On CUDA, this
+                includes a second call and synchronization for CUDA Graph Trees. Compilation support and setup cost
+                depend on the installed PyTorch version and device. TorchScript freezing does not guarantee
+                bit-identical numerics. Create CUDA graph predictors before serving threads start: capture synchronizes
+                the device and empties process-wide CUDA and pinned-host caches.
+
+        Returns:
+            An inference-only facade owning the optimized snapshot.
 
         Raises:
-            TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
-                string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, if
-                ``inplace=True`` is used with ``compile=True``, or if ``compile=True`` with
-                ``compile_backend="cudagraph"`` targets a non-CUDA device.
-            RuntimeError: If the base model has already been cleared by a previous inplace optimization, or if
-                ``compile_backend="cudagraph"`` fails to capture the model. A failed capture can leave CUDA
-                random-number state unusable, so restart the process before trying another backend.
-            torch.cuda.OutOfMemoryError: If ``compile_backend="cudagraph"`` runs out of device memory during
-                capture. Retry with a smaller ``batch_size``; a process restart may be required first.
+            TypeError: If ``dtype`` is neither a floating-point dtype nor the name of a torch dtype.
+            ValueError: If the dtype is non-floating, the backend is unknown, the compiled batch size is invalid,
+                or CUDA graph compilation targets a non-CUDA device.
+            RuntimeError: If the source has no base weights, or compilation/capture fails. A failed CUDA graph
+                capture can leave CUDA random-number state unusable; restart the process before trying another backend.
+            torch.cuda.OutOfMemoryError: If copying or compiling the snapshot exhausts device memory.
 
         Examples:
-            >>> from types import SimpleNamespace
-            >>> import torch
-            >>> class _TinyModel(torch.nn.Module):
-            ...     def __init__(self):
-            ...         super().__init__()
-            ...         self.linear = torch.nn.Linear(1, 1)
-            ...     def forward(self, x):
-            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
-            ...         return None
-            >>> class _TinyContext:
-            ...     def __init__(self):
-            ...         self.device = torch.device("cpu")
-            ...         self.resolution = 28
-            ...         self.model = _TinyModel()
-            ...         self.inference_model = None
-            >>> model = object.__new__(RFDETR)
-            >>> model.model_config = SimpleNamespace(num_channels=3)
-            >>> model.model = _TinyContext()
-            >>> model._is_optimized_for_inference = False
-            >>> model._has_warned_about_not_being_optimized_for_inference = False
-            >>> model._optimized_has_been_compiled = False
-            >>> model._optimized_batch_size = None
-            >>> model._optimized_resolution = None
-            >>> model._optimized_dtype = None
-            >>> model._optimized_inplace = False
-            >>> # Standard (non-inplace) optimization — reversible:
-            >>> model.inference(compile=False)
-            >>> model._is_optimized_for_inference
-            True
-            >>> model._optimized_inplace
-            False
-            >>> model.remove_optimized_model()
-            >>> model._is_optimized_for_inference
-            False
-            >>> # Inplace optimization — destructive, cannot be reversed:
-            >>> model.inference(compile=False, dtype="float16", inplace=True)
-            >>> model._is_optimized_for_inference
-            True
-            >>> model._optimized_dtype
-            torch.float16
-            >>> model._optimized_inplace
-            True
+            Requires model weights; the predictor can be reused for multiple images.
+
+            >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
+            >>> model = RFDETRSmall()  # doctest: +SKIP
+            >>> predictor = model.inference(compile=False)  # doctest: +SKIP
+            >>> detections = predictor.predict("image.jpg")  # doctest: +SKIP
         """
         if isinstance(dtype, str):
             try:
@@ -1797,124 +1733,73 @@ class RFDETR:
             raise ValueError(
                 f"compile_backend must be 'torchscript', 'cudagraph', or 'inductor', got {compile_backend!r}"
             )
-        if inplace and compile:
-            raise ValueError(
-                "inference(inplace=True) requires compile=False. "
-                "Compiled models can retain references to the original parameter storage, so setting "
-                "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
-                "memory usage."
-            )
-        if compile and compile_backend == "cudagraph" and self.model.device.type != "cuda":
+        if compile and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
+            raise ValueError("batch_size must be a positive integer when compile=True.")
+        device = torch.device(self.model.device)
+        if compile and compile_backend == "cudagraph" and device.type != "cuda":
             raise ValueError("compile_backend='cudagraph' requires a CUDA device.")
+        source_model = self.model.model
+        if source_model is None:
+            raise RuntimeError("Cannot create a predictor: the base model has been cleared. Reload the source model.")
+        if device.type == "cuda" and device.index is None:
+            device = torch.device("cuda", torch.cuda.current_device())
 
-        # Clear any previously optimized state before starting a new optimization run.
-        self.remove_optimized_model()
-
-        if self.model.model is None:
-            raise RuntimeError(
-                "Cannot optimize: the base model has been cleared by a previous inplace optimization. "
-                "Create or reload a new RFDETR instance."
-            )
-
-        device = self.model.device
+        # Copy only prediction state, never training callbacks or a trainer which can retain the source model.
+        # Exclude both weight-bearing entries while copying metadata, then clone the base module exactly once.
+        snapshot = object.__new__(RFDETR)
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
-
-        try:
-            with cuda_ctx:
-                inference_model: Any = self.model.model if inplace else deepcopy(self.model.model)
-                inference_model.eval()
-                inference_model.export()
-
-                inference_model = inference_model.to(dtype=dtype)
-
-                if compile:
-                    dummy_input = torch.randn(
-                        batch_size,
-                        self.model_config.num_channels,
-                        self.model.resolution,
-                        self.model.resolution,
-                        device=self.model.device,
-                        dtype=dtype,
-                    )
-                    if compile_backend in ("torchscript", "cudagraph"):
-                        inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
-                            inference_model,
-                            dummy_input,
-                        )
-                        if compile_backend == "cudagraph":
-                            # Retained from the benchmarked configuration: the latency and COCO val2017 parity results
-                            # recorded in CHANGELOG.md were measured on this frozen trace, and no other reason for
-                            # freezing is recorded. Dropping it requires re-running both measurements on a GPU.
-                            inference_model = torch.jit.freeze(inference_model)
-                            inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
-                    else:
-                        inference_model = torch.compile(inference_model, mode="reduce-overhead")
-                        with torch.inference_mode():
+        with cuda_ctx:
+            with _device_move_lock(source_model), torch.inference_mode(False):
+                snapshot.model_config, snapshot.model, snapshot.means, snapshot.stds = deepcopy(
+                    (self.model_config, self.model, self.means, self.stds),
+                    {id(source_model): None, id(self.model.inference_model): None},
+                )
+                inference_model: Any = deepcopy(source_model)
+            snapshot.model.device = device
+            inference_model = inference_model.to(device=device)
+            inference_model.eval()
+            inference_model.export()
+            inference_model = inference_model.to(dtype=dtype)
+            if compile:
+                dummy_input = torch.randn(
+                    batch_size,
+                    snapshot.model_config.num_channels,
+                    snapshot.model.resolution,
+                    snapshot.model.resolution,
+                    device=device,
+                    dtype=dtype,
+                )
+                if compile_backend in ("torchscript", "cudagraph"):
+                    inference_model = torch.jit.trace(inference_model, dummy_input)  # type: ignore[no-untyped-call]
+                    if compile_backend == "cudagraph":
+                        # The existing CUDA parity/latency measurements use a frozen trace; retain that capture path.
+                        inference_model = torch.jit.freeze(inference_model)
+                        inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
+                else:
+                    inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                    with torch.inference_mode():
+                        inference_model(dummy_input)
+                        if device.type == "cuda":
+                            # CUDA Graph Trees reserve memory on the first call and record on the second.
                             inference_model(dummy_input)
-                            if device.type == "cuda":
-                                # CUDA Graph Trees reserve memory on the first call and record on the second.
-                                inference_model(dummy_input)
-                                torch.cuda.synchronize(device)
-                    self._optimized_has_been_compiled = True
-                    self._optimized_batch_size = batch_size
+                            torch.cuda.synchronize(device)
 
-                # Set success flags only after all operations complete.
-                self.model.inference_model = inference_model
-                # _optimized_inplace must be set before the destructive clear so the cleanup
-                # guard in remove_optimized_model() sees the correct state if an exception fires
-                # between this assignment and the None clear (extremely unlikely in normal Python
-                # but eliminates a theoretical zombie-state window).
-                self._optimized_inplace = inplace
-                if inplace:
-                    self.model.model = None
-                self._optimized_resolution = self.model.resolution
-                self._is_optimized_for_inference = True
-                self._optimized_dtype = dtype
-        except Exception:
-            # Ensure the object is left in a consistent, unoptimized state if optimization fails.
-            with contextlib.suppress(Exception):
-                self.remove_optimized_model()
-            raise
+        snapshot.model.inference_model = inference_model
+        snapshot._is_optimized_for_inference = True
+        snapshot._has_warned_about_not_being_optimized_for_inference = False
+        snapshot._optimized_has_been_compiled = compile
+        snapshot._optimized_batch_size = batch_size if compile else None
+        snapshot._optimized_resolution = snapshot.model.resolution
+        snapshot._optimized_dtype = dtype
+        snapshot._optimized_inplace = False
+        return RFDETRInference(snapshot)
 
     def remove_optimized_model(self) -> None:
-        """Remove the optimized inference model and reset all optimization flags.
+        """Clear legacy optimization state on this RFDETR instance.
 
-        Clears ``model.inference_model`` and resets all internal state set by :meth:`inference`. Safe to
-        call even if the model has not been optimized. When the model was optimized with ``inplace=True``, this method
-        issues a :class:`UserWarning` and returns without modifying state — the original module cannot be restored
-        because ``export()`` and dtype casting mutate it; create or reload a new ``RFDETR`` instance instead.
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> import torch
-            >>> class _TinyModel(torch.nn.Module):
-            ...     def __init__(self):
-            ...         super().__init__()
-            ...         self.linear = torch.nn.Linear(1, 1)
-            ...     def forward(self, x):
-            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
-            ...         return None
-            >>> class _TinyContext:
-            ...     def __init__(self):
-            ...         self.device = torch.device("cpu")
-            ...         self.resolution = 28
-            ...         self.model = _TinyModel()
-            ...         self.inference_model = None
-            >>> model = object.__new__(RFDETR)
-            >>> model.model_config = SimpleNamespace(num_channels=3)
-            >>> model.model = _TinyContext()
-            >>> model._is_optimized_for_inference = False
-            >>> model._has_warned_about_not_being_optimized_for_inference = False
-            >>> model._optimized_has_been_compiled = False
-            >>> model._optimized_batch_size = None
-            >>> model._optimized_resolution = None
-            >>> model._optimized_dtype = None
-            >>> model._optimized_inplace = False
-            >>> model.inference(compile=False)
-            >>> model.remove_optimized_model()
-            >>> model._is_optimized_for_inference
-            False
+        Predictors returned by :meth:`inference` own independent runtimes; this method does not change or release them.
+        Release the predictor itself when it is no longer needed. A legacy instance optimized destructively cannot
+        recover its original module, so cleanup warns and leaves that state intact.
         """
         if getattr(self, "_optimized_inplace", False):
             warnings.warn(
@@ -1935,43 +1820,9 @@ class RFDETR:
 
     @property
     def is_optimized_inplace(self) -> bool:
-        """Whether the model was optimized with ``inplace=True``.
+        """Report destructive optimization state retained by a legacy RFDETR instance.
 
-        Returns ``True`` after a successful :meth:`inference` call with ``inplace=True``,
-        meaning the base model has been cleared and :meth:`remove_optimized_model` is a no-op.
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> import torch
-            >>> class _TinyModel(torch.nn.Module):
-            ...     def __init__(self):
-            ...         super().__init__()
-            ...         self.linear = torch.nn.Linear(1, 1)
-            ...     def forward(self, x):
-            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
-            ...         return None
-            >>> class _TinyContext:
-            ...     def __init__(self):
-            ...         self.device = torch.device("cpu")
-            ...         self.resolution = 28
-            ...         self.model = _TinyModel()
-            ...         self.inference_model = None
-            >>> model = object.__new__(RFDETR)
-            >>> model.model_config = SimpleNamespace(num_channels=3)
-            >>> model.model = _TinyContext()
-            >>> model._is_optimized_for_inference = False
-            >>> model._has_warned_about_not_being_optimized_for_inference = False
-            >>> model._optimized_has_been_compiled = False
-            >>> model._optimized_batch_size = None
-            >>> model._optimized_resolution = None
-            >>> model._optimized_dtype = None
-            >>> model._optimized_inplace = False
-            >>> model.is_optimized_inplace
-            False
-            >>> model.inference(compile=False, inplace=True)
-            >>> model.is_optimized_inplace
-            True
+        The snapshot factory :meth:`inference` never sets this flag on its source.
         """
         return getattr(self, "_optimized_inplace", False)
 
@@ -3082,9 +2933,8 @@ class RFDETR:
         if not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
-                " Optimize the native RFDETR instance with native_model.inference(...)."
-                " For a checkpoint, load native_model = RFDETR.from_checkpoint(...), optimize it,"
-                " then wrap it with RFDETRInference(native_model).",
+                " Create predictor = native_model.inference(...) and use predictor.predict(...)."
+                " For a checkpoint, first load native_model = RFDETR.from_checkpoint(...).",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
         # self.model.model is only cleared when optimized for inference (guarded by the early return above).
@@ -3147,14 +2997,8 @@ class RFDETR:
                 # this could happen if someone manually changes self.model.resolution after optimizing the model,
                 # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
                 _restore_hint = (
-                    " Reload a native model with RFDETR.from_checkpoint(...) to use a different resolution,"
-                    " then wrap it with RFDETRInference(native_model) if using the facade."
-                    if getattr(self, "_optimized_inplace", False)
-                    else (
-                        " Call native_model.remove_optimized_model() on the retained native RFDETR instance."
-                        " For a checkpoint-owned facade, reload with RFDETR.from_checkpoint(...)"
-                        " and wrap with RFDETRInference(native_model)."
-                    )
+                    " Use native_model.predict(..., shape=...) on the source model for a different resolution,"
+                    " or create a new predictor from a source configured for that resolution."
                 )
                 raise ValueError(
                     f"Resolution mismatch. "
@@ -3164,15 +3008,8 @@ class RFDETR:
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
                     _restore_hint = (
-                        " Reload a native model with RFDETR.from_checkpoint(...) to recompile for a different batch,"
-                        " then wrap it with RFDETRInference(native_model) if using the facade."
-                        if getattr(self, "_optimized_inplace", False)
-                        else (
-                            " Call native_model.remove_optimized_model() on the retained native RFDETR instance,"
-                            " or recompile it with native_model.inference(batch_size=<new_batch_size>)."
-                            " For a checkpoint-owned facade, reload with RFDETR.from_checkpoint(...)"
-                            " and wrap with RFDETRInference(native_model)."
-                        )
+                        " Create predictor = native_model.inference(batch_size=<new_batch_size>)"
+                        " and use predictor.predict(...), or use native_model.predict(...) for flexible batches."
                     )
                     raise ValueError(
                         f"Batch size mismatch. "
@@ -3378,7 +3215,7 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
-            RuntimeError: If the model was cleared by ``inference(inplace=True)``.
+            RuntimeError: If a legacy in-place optimization cleared the base weights.
 
         Note:
             Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
@@ -3386,7 +3223,7 @@ class RFDETR:
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot deploy after inference(inplace=True) — "
+                "Cannot deploy after legacy inplace optimization — "
                 "the model weights have been cleared from memory. "
                 "Call export_for_roboflow() before optimizing, then deploy the exported bundle."
             )
@@ -3444,11 +3281,11 @@ class RFDETR:
             PermissionError: If the process lacks write access to *output_dir* or its parent directory.
             OSError: On disk-full, invalid path, or other filesystem failure during directory creation,
                 file write, or ``torch.save``.
-            RuntimeError: If the model was cleared by ``inference(inplace=True)``.
+            RuntimeError: If a legacy in-place optimization cleared the base weights.
         """
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
-                "Cannot export after inference(inplace=True) — "
+                "Cannot export after legacy inplace optimization — "
                 "the model has been cleared from memory. "
                 "Call export_for_roboflow() before optimizing."
             )

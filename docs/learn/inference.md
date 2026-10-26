@@ -4,31 +4,35 @@ description: Load RF-DETR models and run image prediction through one native and
 
 # Run Inference
 
-`RFDETRInference` gives native models, checkpoints, and supported full exports one image-prediction API. It owns input conversion, preprocessing, one runtime call per image batch, result decoding, and Supervision outputs.
+`RFDETR.inference()` creates an independent predictor for native model inference, while `RFDETRInference` gives live models, checkpoints, and supported full exports one shared image-prediction API. The native factory snapshots the current model weights and prediction settings; later training or source mutations do not affect that predictor. Both paths use one runtime call per image batch and return decoded Supervision outputs.
 
 ![Diagram showing inference source loading and ownership, followed by per-call image preprocessing, one runtime execution, shared decoding, and Supervision results.](../assets/inference-data-flow.svg)
 
 ## Choose a source
 
-Pass a live model, a native checkpoint path, or a full exported artifact path. A live model is borrowed: the facade does not copy it, and later predictions read its current weights and optimization state. Configure its device on the model and omit `device`, `metadata`, and `runtime_options` for this source. This borrowing does not promise safety when training mutates the model concurrently with prediction.
+Use `model.inference()` when you want a predictor that owns an independent snapshot of a native model. It copies the current base weights, labels, normalization, and postprocessing settings once; subsequent training or source changes do not affect predictions or class names. Do not train or mutate the source concurrently with snapshot creation. Delete the predictor when finished to release its owned runtime. The source model remains unchanged.
 
 ```python
-from rfdetr import RFDETRInference, RFDETRSmall
+from rfdetr import RFDETRSmall
 
-native_model = RFDETRSmall()
-predictor = RFDETRInference(native_model)
-```
-
-A `.pth`, `.pt`, or `.ckpt` path loads and owns a native model; an exported path loads and owns its runtime. Checkpoint loading may require architecture information available from the checkpoint name or supplied to `RFDETR.from_checkpoint()`. For a CPU-safe checkpoint recipe, load explicitly on CPU, optimize without compilation, then wrap the live model:
-
-```python
-from rfdetr import RFDETR, RFDETRInference
-
-native_model = RFDETR.from_checkpoint("checkpoint.pth", device="cpu")
-native_model.inference(compile=False)
-predictor = RFDETRInference(native_model)
+model = RFDETRSmall()
+predictor = model.inference()
 results = predictor.predict("image.jpg")
 ```
+
+A `.pth`, `.pt`, or `.ckpt` path passed to `RFDETRInference` loads and owns a native model; an exported path loads and owns its runtime. Checkpoint loading may require architecture information available from the checkpoint name or supplied to `RFDETR.from_checkpoint()`. For a CPU-safe native predictor, create the snapshot without compilation:
+
+```python
+from rfdetr import RFDETR
+
+model = RFDETR.from_checkpoint("checkpoint.pth", device="cpu")
+predictor = model.inference(compile=False)
+results = predictor.predict("image.jpg")
+```
+
+The native factory defaults to TorchScript compilation, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
+
+For the borrowed live-model behavior, construct `RFDETRInference(model)` directly. That facade reads the model's current state on every prediction, so it observes later training or optimization changes; configure the model's device and omit `device`, `metadata`, and `runtime_options` for this source. This mode does not promise safety when training mutates the model concurrently with prediction.
 
 For export files, install the runtime extra for the target format and keep any `.rfdetr.json` sidecar beside its artifact. ONNX stores inference metadata in the model; other exported formats use the sidecar. For older exports, load the source checkpoint and call `model.write_export_metadata(path, format=...)` with the original export settings; without that checkpoint, supply missing inference semantics through `metadata=` as a JSON path or mapping. Sidecar metadata is checked against the artifact. `notes` do not replace task, classes, output, or preprocessing metadata. See [Export Basics](../exports/basics.md#predict-with-rfdetrinference) and its format guides for runtime installation and options.
 
@@ -81,7 +85,7 @@ The output is `supervision.Detections` for detection and segmentation, or `super
 | `batch_size`        | Exact required batch size, or `None` when not fixed.       |
 | `max_batch_size`    | Batch upper bound, or `None` when unbounded by the source. |
 
-Eager native models accept dynamic spatial dimensions and batch sizes. An optimized native model fixes its spatial dimensions; it reports an exact `batch_size` only after compilation. Exported artifacts report their own fixed or dynamic axes and batch limits. A fixed batch requires exactly that many images; a maximum permits smaller batches down to one. Invalid shapes or batches fail before runtime execution.
+Eager native models accept dynamic spatial dimensions and batch sizes. A native predictor returned by `model.inference()` fixes its spatial dimensions and reports an exact `batch_size` after compilation. Exported artifacts report their own fixed or dynamic axes and batch limits. A fixed batch requires exactly that many images; a maximum permits smaller batches down to one. Invalid shapes or batches fail before runtime execution.
 
 By default, preprocessing resizes to `default_shape`. Pass `shape=(height, width)` to override it where the source allows. Each dimension must be positive and divisible by `patch_size * num_windows`; fixed-shape artifacts require their exported dimensions. `patch_size` is an advanced validation override, not a way to change the backbone: it must be a positive integer matching the model's configured patch size. Omit it to use the configured value.
 

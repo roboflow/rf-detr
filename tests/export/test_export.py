@@ -2270,7 +2270,7 @@ class TestExportDependencyCheck:
     def test_inplace_optimized_model_is_refused_before_the_dependency_check(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A model whose weights an in-place optimization cleared is refused first: installing an extra cannot help."""
+        """A legacy model whose base weights were cleared is refused before checking export dependencies."""
         monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock(side_effect=ImportError("missing package")))
         model = _make_tensorrt_export_model()
         model._optimized_inplace = True

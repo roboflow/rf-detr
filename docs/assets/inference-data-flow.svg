@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 710" role="img" aria-labelledby="title desc">
   <title id="title">RF-DETR inference data flow</title>
-  <desc id="desc">Source loading selects a borrowed live model or an owned checkpoint or exported runtime, with task and preprocessing metadata. For each call, images are converted and batched, preprocessed, executed once, decoded by the shared pipeline, and returned as Supervision detections or keypoints.</desc>
+  <desc id="desc">Source loading selects a borrowed live model, a native predictor snapshot created by RFDETR.inference(), or an owned checkpoint or exported runtime, with task and preprocessing metadata. For each call, images are converted and batched, preprocessed, executed once, decoded by the shared pipeline, and returned as Supervision detections or keypoints.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#425466"/></marker>
     <style>
@@ -53,4 +53,5 @@
   <path class="flow" d="M1010 520 H1060"/>
   <text class="small" x="600" y="625">Context supplies input rules, runtime execution, task decoding and class names.</text>
   <text class="small" x="600" y="655">Live native state is read per call; exported metadata and session are loaded once.</text>
+  <text class="small" x="600" y="685">model.inference() instead snapshots native weights into its own predictor.</text>
 </svg>

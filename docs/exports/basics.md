@@ -124,13 +124,13 @@ With `trt_metadata=True`, `format="tensorrt"` also writes a JSON description nex
 
 ## Predict with RFDETRInference
 
-Use `RFDETRInference` to predict with a live native model, a native checkpoint, or any supported full export. It uses the same image inputs and Supervision results as `RFDETR.predict()`.
+For a native model, use its `inference()` factory to get an independent predictor snapshot. `RFDETRInference` also loads checkpoints and supported full exports, and can explicitly borrow a live model. All paths use the same image inputs and Supervision results as `RFDETR.predict()`.
 
 ```python
 from rfdetr import RFDETRInference
 
-model = RFDETRInference("output/inference_model.onnx")
-detections = model.predict("image.jpg", threshold=0.5)
+predictor = RFDETRInference("output/inference_model.onnx")
+detections = predictor.predict("image.jpg", threshold=0.5)
 ```
 
 Detection and segmentation return `supervision.Detections`. Keypoint models return `supervision.KeyPoints`. A path ending in `.pth`, `.pt`, or `.ckpt` loads a native checkpoint. To use an existing model instance, pass it directly:
@@ -142,7 +142,7 @@ native_model = RFDETRSmall()
 model = RFDETRInference(native_model)
 ```
 
-This wraps the live model without copying its weights. Each prediction reads the model's current state, including changes from training or inference optimization. Do not pass `device` with a live model. Configure the native model's device when you create it. When you pass a path, the `RFDETRInference` instance loads and owns the native model or exported runtime.
+This wraps the live model without copying its weights. Each prediction reads the model's current state, including changes from training or legacy inference optimization. Do not pass `device` with a live model. Configure the native model's device when you create it. When you pass a path, the `RFDETRInference` instance loads and owns the native model or exported runtime. For an independent native snapshot, call `native_model.inference()` and use the returned predictor; it keeps its own copy of the current base weights and prediction settings.
 
 The public constructor supports ONNX, TensorRT (`.trt` and `.engine`), TFLite, LiteRT, ExecuTorch, OpenVINO, native CoreML, Core AI, and native `.pth`/`.pt`/`.ckpt` checkpoints. Install the runtime package for the format on the target system. For ONNX, install `rfdetr[onnx]`: the loader reads the metadata embedded in the model with the `onnx` package and runs it with ONNX Runtime, and the extra installs both. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions and are not supported by this prediction API.
 

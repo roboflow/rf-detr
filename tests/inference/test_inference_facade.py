@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
-from supervision import Detections
+from supervision import Detections, KeyPoints
 
 from rfdetr.detr import RFDETR
 from rfdetr.export._runtime.metadata import ExportMetadata
@@ -42,6 +42,94 @@ def nano_model() -> RFDETRNano:
         num_select=4,
         num_classes=2,
     )
+
+
+class TestInferenceSnapshot:
+    """The factory owns an independent predictor and leaves its trainable source unchanged."""
+
+    def test_factory_preserves_source_weights_modes_and_optimization(self, nano_model: RFDETRNano) -> None:
+        """Casting the snapshot must not change source tensors, module modes, or optimization state."""
+        source = nano_model.model.model
+        source.train()
+        source.backbone.eval()
+        modes = [module.training for module in source.modules()]
+        weights = {name: value.clone() for name, value in source.state_dict().items()}
+        source_flags = {name: value for name, value in vars(nano_model).items() if "optimized" in name}
+
+        predictor = nano_model.inference(compile=False, dtype="float64")
+
+        assert isinstance(predictor, RFDETRInference)
+        assert nano_model.model.model is source
+        assert nano_model.model.inference_model is None
+        assert [module.training for module in source.modules()] == modes
+        assert {name: value for name, value in vars(nano_model).items() if "optimized" in name} == source_flags
+        for name, value in source.state_dict().items():
+            torch.testing.assert_close(value, weights[name], rtol=0, atol=0)
+        assert next(source.parameters()).dtype == torch.float32
+        assert next(source.parameters()).device == torch.device("cpu")
+
+    def test_snapshot_predictions_and_metadata_survive_source_changes(self, nano_model: RFDETRNano) -> None:
+        """Later weight, label, normalization and config changes must not affect the predictor."""
+        nano_model.model.class_names = ["cat", "dog"]
+        image = np.random.default_rng(42).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        expected = nano_model.predict(image, threshold=0.0)
+        predictor = nano_model.inference(compile=False)
+        assert isinstance(predictor, RFDETRInference)
+        initial = predictor.predict(image, threshold=0.0)
+        np.testing.assert_allclose(initial.xyxy, expected.xyxy, rtol=1e-4, atol=1e-6)
+        np.testing.assert_allclose(initial.confidence, expected.confidence, rtol=1e-4, atol=1e-6)
+        np.testing.assert_array_equal(initial.class_id, expected.class_id)
+
+        with torch.no_grad():
+            nano_model.model.model.class_embed.bias.fill_(-100)
+            nano_model.model.model.class_embed.bias[1] = 100
+        nano_model.model.class_names[0] = "changed"
+        nano_model.model.args.num_classes = 20
+        nano_model.model.resolution = 128
+        nano_model.model_config.num_channels = 1
+        nano_model.means[0] = 10.0
+        nano_model.stds[0] = 10.0
+        nano_model.model.model.train()
+
+        actual = predictor.predict(image, threshold=0.0)
+        np.testing.assert_array_equal(actual.xyxy, initial.xyxy)
+        np.testing.assert_array_equal(actual.confidence, initial.confidence)
+        np.testing.assert_array_equal(actual.class_id, initial.class_id)
+        assert predictor.class_names == ["cat", "dog"]
+        assert predictor.runtime_info["input_shape"] == (None, 3, 64, 64)
+        assert nano_model.model.model.training is True
+
+    def test_invalid_request_does_not_place_a_cold_source(self, nano_model: RFDETRNano) -> None:
+        """Validation must happen before attempting the configured accelerator move."""
+        nano_model.model.device = torch.device("cuda")
+
+        with pytest.raises(ValueError, match="compile_backend"):
+            nano_model.inference(compile_backend="unknown")  # type: ignore[arg-type]
+
+        assert next(nano_model.model.model.parameters()).device == torch.device("cpu")
+        assert nano_model.model.device == torch.device("cuda")
+
+    @pytest.mark.parametrize(
+        "model_type",
+        [pytest.param(RFDETRSegNano, id="segmentation"), pytest.param(RFDETRKeypointPreview, id="keypoints")],
+    )
+    def test_snapshot_preserves_task_outputs(self, model_type: type[RFDETR]) -> None:
+        """Segmentation masks and keypoint coordinates survive snapshot export and decoding."""
+        native = model_type(pretrain_weights=None, device="cpu", resolution=96, num_queries=4, num_select=4)
+        image = np.random.default_rng(43).integers(0, 256, (96, 96, 3), dtype=np.uint8)
+        expected = native.predict(image, threshold=0.0)
+
+        predictor = native.inference(compile=False)
+        assert isinstance(predictor, RFDETRInference)
+        actual = predictor.predict(image, threshold=0.0)
+
+        assert type(actual) is type(expected)
+        if isinstance(actual, KeyPoints):
+            np.testing.assert_allclose(actual.xy, expected.xy, rtol=1e-4, atol=1e-6)
+            np.testing.assert_allclose(actual.keypoint_confidence, expected.keypoint_confidence, rtol=1e-4, atol=1e-6)
+        else:
+            np.testing.assert_allclose(actual.xyxy, expected.xyxy, rtol=1e-4, atol=1e-6)
+            np.testing.assert_array_equal(actual.mask, expected.mask)
 
 
 class TestLiveModelDevicePolicy:
@@ -215,8 +303,7 @@ class TestCheckpointSource:
         assert "RFDETR.from_checkpoint(" in caplog.text
 
         native_model = RFDETR.from_checkpoint(checkpoint, device="cpu")
-        native_model.inference(compile=False)
-        facade = RFDETRInference(native_model)
+        facade = native_model.inference(compile=False)
         actual = facade.predict(image, threshold=0.0)
 
         assert isinstance(actual, Detections)
@@ -308,26 +395,27 @@ class TestRuntimeOptionsRouting:
 class TestOptimizedNativeSource:
     """Exercise optimization behavior through the inference API."""
 
-    @pytest.mark.parametrize("inplace", [False, True])
-    def test_facade_prediction_uses_model_after_optimization(self, nano_model: RFDETRNano, inplace: bool) -> None:
-        """A borrowed facade uses the native model's current optimized execution path."""
-        facade = RFDETRInference(nano_model)
+    def test_snapshot_matches_prediction_through_a_borrowed_facade(self, nano_model: RFDETRNano) -> None:
+        """Snapshot creation leaves a borrowed facade on the source model's flexible eager path."""
+        borrowed = RFDETRInference(nano_model)
         image = np.random.default_rng(43).integers(0, 256, (64, 64, 3), dtype=np.uint8)
 
-        nano_model.inference(compile=False, inplace=inplace)
+        facade = nano_model.inference(compile=False)
 
-        expected = nano_model.predict(image, threshold=0.0)
+        expected = borrowed.predict(image, threshold=0.0)
         actual = facade.predict(image, threshold=0.0)
         assert isinstance(expected, Detections)
         assert isinstance(actual, Detections)
         assert expected.confidence is not None
         assert actual.confidence is not None
-        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=0, rtol=0)
-        np.testing.assert_allclose(actual.confidence, expected.confidence, atol=0, rtol=0)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-6, rtol=1e-4)
+        np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-6, rtol=1e-4)
         np.testing.assert_array_equal(actual.class_id, expected.class_id)
 
         assert facade.runtime_info["input_shape"] == (None, 3, 64, 64)
         assert facade.runtime_info["batch_size"] is None
+
+        assert borrowed.runtime_info["input_shape"] == (None, 3, None, None)
 
 
 class TestFacadeContracts:
@@ -358,13 +446,13 @@ class TestFacadeContracts:
 
         assert "native_model.inference(" in caplog.text
         assert "RFDETR.from_checkpoint(" in caplog.text
-        assert "RFDETRInference(native_model)" in caplog.text
+        assert "predictor = native_model.inference(" in caplog.text
+        assert "predictor.predict(" in caplog.text
         assert not hasattr(facade, "inference")
 
     def test_compiled_constraints_match_the_executable_native_batch(self, nano_model: RFDETRNano) -> None:
         """A real compiled model reports its fixed batch and spatial dimensions."""
-        facade = RFDETRInference(nano_model)
-        nano_model.inference(batch_size=2)
+        facade = nano_model.inference(batch_size=2)
 
         assert facade.runtime_info["input_shape"] == (2, 3, 64, 64)
         assert facade.runtime_info["batch_size"] == 2
@@ -373,33 +461,31 @@ class TestFacadeContracts:
         assert isinstance(predictions, list)
         assert len(predictions) == 2
 
-    def test_compiled_facade_batch_hint_targets_the_retained_native_model(self, nano_model: RFDETRNano) -> None:
-        """Following the batch error's native optimization hint restores prediction through the same facade."""
-        facade = RFDETRInference(nano_model)
-        nano_model.inference(batch_size=2)
+    def test_compiled_facade_batch_hint_creates_a_replacement_predictor(self, nano_model: RFDETRNano) -> None:
+        """The batch error directs users to a new predictor while the previous snapshot stays fixed."""
+        facade = nano_model.inference(batch_size=2)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
         with pytest.raises(ValueError, match=r"native_model.inference\(batch_size="):
             facade.predict(image)
 
-        nano_model.inference(batch_size=1)
-        result = facade.predict(image)
+        replacement = nano_model.inference(batch_size=1)
+        result = replacement.predict(image)
         assert isinstance(result, Detections)
-        assert facade.runtime_info["batch_size"] == 1
+        assert replacement.runtime_info["batch_size"] == 1
+        assert facade.runtime_info["batch_size"] == 2
 
-    def test_optimized_facade_shape_hint_targets_the_retained_native_model(self, nano_model: RFDETRNano) -> None:
-        """Removing native optimization permits the previously refused shape through the borrowed facade."""
-        facade = RFDETRInference(nano_model)
-        nano_model.inference(compile=False)
+    def test_snapshot_shape_hint_targets_the_flexible_source_model(self, nano_model: RFDETRNano) -> None:
+        """The source keeps flexible shapes even when an owned snapshot fixes its resolution."""
+        facade = nano_model.inference(compile=False)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
-        with pytest.raises(ValueError, match=r"native_model.remove_optimized_model\("):
+        with pytest.raises(ValueError, match=r"native_model.predict\("):
             facade.predict(image, shape=(128, 128))
 
-        nano_model.remove_optimized_model()
-        result = facade.predict(image, shape=(128, 128))
+        result = nano_model.predict(image, shape=(128, 128))
         assert isinstance(result, Detections)
-        assert facade.runtime_info["input_shape"] == (None, 3, None, None)
+        assert facade.runtime_info["input_shape"] == (None, 3, 64, 64)
 
     def test_runtime_information_is_an_independent_copy(self, nano_model: RFDETRNano) -> None:
         """Mutating inspection values cannot alter subsequent inspection or prediction configuration."""

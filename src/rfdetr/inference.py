@@ -36,13 +36,15 @@ if TYPE_CHECKING:
 class RFDETRInference:
     """Predict with a live native model, checkpoint, or exported artifact.
 
-    This facade shares prediction behavior across native models and exported runtimes.
+    This facade shares prediction behavior across native models and exported runtimes. ``model.inference()`` returns
+    an owned, optimized snapshot of a live model. Passing a live model directly to this constructor borrows it instead:
+    predictions follow later changes to that model.
 
     Examples:
         Skipped when run as a doctest: requires model weights and an image file.
 
         >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
-        >>> predictor = RFDETRInference(RFDETRSmall())  # doctest: +SKIP
+        >>> predictor = RFDETRSmall().inference(compile=False)  # doctest: +SKIP
         >>> detections = predictor.predict("image.jpg")  # doctest: +SKIP
     """
 
@@ -223,7 +225,7 @@ class RFDETRInference:
             Skipped when run as a doctest: requires model weights and image files.
 
             >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
-            >>> predictor = RFDETRInference(RFDETRSmall())  # doctest: +SKIP
+            >>> predictor = RFDETRSmall().inference(compile=False)  # doctest: +SKIP
             >>> results = predictor.predict(["a.jpg", "b.jpg"], threshold=0.4)  # doctest: +SKIP
             >>> len(results)  # doctest: +SKIP
             2
@@ -247,9 +249,8 @@ class ModelContext:
     ``populate_args()`` or the legacy stack.
 
     Args:
-        model: The underlying ``LWDETR`` module. The attribute is cleared to ``None`` by
-            :meth:`RFDETR.inference` when called with ``inplace=True``, which frees the
-            weights from memory.
+        model: The underlying ``LWDETR`` module. Owned inference snapshots keep this ``None`` and store their
+            optimized runtime in ``inference_model``; their source model keeps its base weights.
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on. An index-less ``torch.device("cuda")`` is replaced by the concrete
             device (e.g. ``cuda:0``) that ``rfdetr.detr._move_model_context_to_device`` resolves on the deferred
@@ -283,12 +284,12 @@ class ModelContext:
             num_classes: New number of output classes (including background).
 
         Raises:
-            RuntimeError: If the model weights were already cleared by ``RFDETR.inference(inplace=True)``.
+            RuntimeError: If the context has no base model weights, as in an owned inference snapshot.
         """
         if self.model is None:
             raise RuntimeError(
-                "Cannot reinitialize the detection head after inplace optimization. "
-                "The original model has been cleared. Create a new RFDETR instance."
+                "Cannot reinitialize the detection head without base model weights. "
+                "Use the source RFDETR instance or reload the model."
             )
         reinitialize_head = cast("Callable[[int], None]", self.model.reinitialize_detection_head)
         reinitialize_head(num_classes)
@@ -329,7 +330,8 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
     model is intentionally kept on CPU; :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
-    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``inference()`` call.  Keeping construction
+    ``.to(device)`` on the first ``predict()`` / ``export()`` call. ``inference()`` moves only its owned snapshot.
+    Keeping construction
     CPU-only prevents CUDA initialisation during ``__init__``, which would block DDP strategies (``ddp_notebook``,
     ``ddp_spawn``) from spawning child processes in notebook environments.
 
@@ -402,9 +404,8 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
-    # Keep the model on CPU here; predict() / export() / inference()
-    # will lazily move it to the target device on first use.  Eagerly calling
-    # .to("cuda") would initialise the CUDA runtime during __init__(), which
+    # Keep the model on CPU here; predict() / export() move it lazily, while inference() moves only its snapshot.
+    # Eagerly calling .to("cuda") would initialise the CUDA runtime during __init__(), which
     # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning
     # child processes in notebook environments.
     postprocess = PostProcess(

@@ -14,6 +14,22 @@ You can apply all changes in one go; working through sections one release at a t
 
 ---
 
+## Unreleased: native inference returns a predictor
+
+`RFDETR.inference()` now returns an independent `RFDETRInference` snapshot instead of changing the source model's inference state. Capture the returned predictor and call `predict()` on it. The predictor snapshots the current base weights, labels, normalization and postprocessing settings; later training or source mutations do not change its predictions or class names. The source model remains unchanged.
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+predictor = model.inference(compile=False)
+detections = predictor.predict("image.jpg")
+```
+
+The defaults remain TorchScript compilation, batch size 1 and float32. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
+
+---
+
 ## Upgrade 1.11 → 1.12
 
 For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.
@@ -164,14 +180,15 @@ For new image-prediction integrations, use the shared [`RFDETRInference`](../lea
 
 !!! warning "Removed: `RFDETR.optimize_for_inference()`"
 
-    The alias deprecated in v1.9.0 is gone. Call `RFDETR.inference()`; the signature is unchanged.
+    The alias deprecated in v1.9.0 is gone. `RFDETR.inference()` kept the same signature when that alias was removed; it now returns an independent predictor. Capture the result and call `predict()` on it. See [native inference snapshots](#unreleased-native-inference-returns-a-predictor) for the current behavior.
 
     ```python
     # Before (removed)
     model.optimize_for_inference(dtype=torch.float16)
 
     # After
-    model.inference(dtype=torch.float16)
+    predictor = model.inference(dtype=torch.float16)
+    detections = predictor.predict("image.jpg")
     ```
 
 !!! warning "Removed: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
@@ -393,14 +410,15 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature.
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature at the time of deprecation. The current factory returns an independent predictor; see [native inference snapshots](#unreleased-native-inference-returns-a-predictor).
 
     ```python
     # Before (deprecated)
     model.optimize_for_inference(dtype=torch.float16)
 
     # After
-    model.inference(dtype=torch.float16)
+    predictor = model.inference(dtype=torch.float16)
+    detections = predictor.predict("image.jpg")
     ```
 
 !!! note "Deprecated: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
