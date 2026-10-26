@@ -98,7 +98,8 @@ jobs:
     concurrency:
       group: pytest-${{ matrix.format }}${{ matrix.extra_plus }}-${{ matrix.python-version }}-${{ matrix.os || 'ubuntu-latest' }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    # ExecuTorch parity takes about 29 minutes on hosted runners; allow setup and runtime variance.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
