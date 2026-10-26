@@ -755,7 +755,7 @@ class TestOpenVINOInferenceDeprecation:
 
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             with pytest.warns(
-                FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v2\.0\.0.*RFDETRInference\(.*\)\.predict"
+                FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v1\.15\.0.*RFDETRInference\(.*\)\.predict"
             ) as caught:
                 inference = OpenVINOInference(xml_path)
             result = inference.infer(np.zeros((1, 3, 8, 8), dtype=np.float32))

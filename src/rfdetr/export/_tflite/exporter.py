@@ -1470,7 +1470,9 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                     "input_onnx_file_path": str(onnx_path),
                     "output_folder_path": str(output_dir),
                     "output_signaturedefs": True,
-                    "copy_onnx_input_output_names_to_tflite": True,
+                    # Preserve TensorFlow's semantic signature. onnx2tf's optional renamer pairs sorted signature
+                    # entries with ONNX output order and swaps labels/keypoints; metadata already reads the signature.
+                    "copy_onnx_input_output_names_to_tflite": False,
                     "non_verbose": not self.config.verbose,
                     "verbosity": verbosity,
                     # Replace Erf / GeLU with TFLite-native pseudo-operators so the

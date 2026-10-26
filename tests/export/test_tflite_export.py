@@ -1559,6 +1559,47 @@ class TestConstantGatherElementsOnnxRewrite:
         assert _replace_gridsample_for_tflite(source, tmp_path) == source
 
 
+class TestNamedTFLiteOutputs:
+    """Real conversion must preserve semantic names when signature outputs are reordered."""
+
+    @onnx2tf_available
+    def test_keypoint_output_names_preserve_their_tensors(self, tmp_path: Path) -> None:
+        """Alphabetically sorted signatures must not swap logits and keypoint tensors."""
+        import onnx
+        from onnx import TensorProto, helper, numpy_helper
+
+        from rfdetr.export._tflite.inference import _create_interpreter
+
+        source = tmp_path / "named_outputs.onnx"
+        nodes = [
+            helper.make_node("ReduceMean", ["input"], ["dets"], axes=[1], keepdims=0),
+            helper.make_node("Slice", ["dets", "starts", "ends", "slice_axes"], ["labels"]),
+            helper.make_node("Unsqueeze", ["dets", "expand_axes"], ["keypoints"]),
+        ]
+        shapes = {"dets": [1, 4, 4], "labels": [1, 4, 3], "keypoints": [1, 4, 1, 4]}
+        graph = helper.make_graph(
+            nodes,
+            "named_outputs",
+            [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 4, 4])],
+            [helper.make_tensor_value_info(name, TensorProto.FLOAT, shape) for name, shape in shapes.items()],
+            initializer=[
+                numpy_helper.from_array(np.asarray(value, dtype=np.int64), name=name)
+                for name, value in {"starts": [0], "ends": [3], "slice_axes": [2], "expand_axes": [2]}.items()
+            ],
+        )
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), str(source))
+
+        artifact = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, verbose=False)).convert_onnx(source)
+
+        interpreter = _create_interpreter(artifact)
+        outputs = interpreter.get_signature_runner().get_output_details()
+        assert {name: len(details["shape"]) for name, details in outputs.items()} == {
+            "dets": 3,
+            "labels": 3,
+            "keypoints": 4,
+        }
+
+
 class TestStaticUnsqueezeOnnxRewrite:
     """Static singleton insertion must preserve coordinate axes through onnx2tf conversion."""
 

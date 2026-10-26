@@ -545,7 +545,7 @@ class TestTRTInferenceDeprecation:
         monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", lambda session, blob: outputs)
 
         with pytest.warns(
-            FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v2\.0\.0.*RFDETRInference"
+            FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v1\.15\.0.*RFDETRInference"
         ) as recorded:
             facade = tensorrt_inference.TRTInference("model.trt", "cuda:1", sync_mode=True, verbose=True)
 

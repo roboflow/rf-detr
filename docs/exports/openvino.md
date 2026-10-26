@@ -84,7 +84,7 @@ model = RFDETRInference(
 
 !!! warning "OpenVINOInference is deprecated"
 
-    Constructing `OpenVINOInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v2.0.0. Use `RFDETRInference(model_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cache_dir`, `inference_precision` and `config`. The old class remains available for compatibility until then.
+    Constructing `OpenVINOInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v1.15.0. Use `RFDETRInference(model_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cache_dir`, `inference_precision` and `config`. The old class remains available for compatibility until then.
 
 The compatibility class takes preprocessed NCHW tensors and returns raw outputs. It shares session loading and execution functions with the common adapter. The adapter calls these functions directly and does not construct the deprecated class.
 

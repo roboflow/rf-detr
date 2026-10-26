@@ -124,7 +124,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Deprecated
 
 - Passing unknown keyword arguments to `RFDETR.predict()` is deprecated since v1.12.0: they are ignored with a `FutureWarning` and will raise `TypeError` in v2.0.0.
-- `rfdetr.export.inference.TRTInference` and `OpenVINOInference` are deprecated in v1.12.0 and scheduled for removal in v2.0.0. Both remain available and emit a `FutureWarning` when constructed. Use `RFDETRInference(...).predict(image)` for image inputs and decoded results, passing legacy runtime settings through `runtime_options`; see the [migration guide](docs/getting-started/migration.md).
+- `rfdetr.export.inference.TRTInference` and `OpenVINOInference` are deprecated in v1.12.0 and scheduled for removal in v1.15.0. Both remain available and emit a `FutureWarning` when constructed. Use `RFDETRInference(...).predict(image)` for image inputs and decoded results, passing legacy runtime settings through `runtime_options`; see the [migration guide](docs/getting-started/migration.md).
 
 ### Removed
 

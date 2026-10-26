@@ -155,7 +155,7 @@ class OpenVINOInference:
 
     Use :class:`rfdetr.RFDETRInference` to load an artifact and call ``predict()`` for detections, passing
     ``cache_dir``, ``inference_precision`` and ``config`` through its ``runtime_options``. Deprecated in v1.12.0 and
-    removed in v2.0.0.
+    removed in v1.15.0.
     """
 
     # Deprecate __init__ rather than the class: deprecated_class returns a proxy, and callers using
@@ -163,7 +163,7 @@ class OpenVINOInference:
     @deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
         target=TargetMode.NOTIFY,
         deprecated_in="1.12.0",
-        remove_in="2.0.0",
+        remove_in="1.15.0",
         num_warns=-1,
         template_mgs=_OPENVINO_INFERENCE_DEPRECATION,
     )

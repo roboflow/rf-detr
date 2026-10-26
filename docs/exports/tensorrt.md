@@ -441,7 +441,7 @@ model = RFDETRInference("output/inference_model_fp16.trt", runtime_options={"cud
 
 !!! warning "TRTInference is deprecated"
 
-    Constructing `TRTInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v2.0.0. Use `RFDETRInference(engine_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cuda_graph`, `engine_host_code_allowed` and `verbose`. The old class remains available for compatibility until then.
+    Constructing `TRTInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v1.15.0. Use `RFDETRInference(engine_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cuda_graph`, `engine_host_code_allowed` and `verbose`. The old class remains available for compatibility until then.
 
 Both facades use the same session loading and execution functions. The shared adapter calls these functions directly and does not construct the deprecated class.
 

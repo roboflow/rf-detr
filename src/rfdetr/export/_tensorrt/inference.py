@@ -925,7 +925,7 @@ _TRT_INFERENCE_DEPRECATION = (
 
 
 class TRTInference:
-    """Deprecated compatibility facade for TensorRT inference, deprecated in v1.12.0 and removed in v2.0.0.
+    """Deprecated compatibility facade for TensorRT inference, deprecated in v1.12.0 and removed in v1.15.0.
 
     Runs a serialized TensorRT engine on torch tensors that already sit on its CUDA device, through the shared session
     functions behind :class:`rfdetr.inference.RFDETRInference`. Inputs are bound by pointer, never copied, except with
@@ -965,7 +965,7 @@ class TRTInference:
     @deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
         target=TargetMode.NOTIFY,
         deprecated_in="1.12.0",
-        remove_in="2.0.0",
+        remove_in="1.15.0",
         num_warns=-1,
         template_mgs=_TRT_INFERENCE_DEPRECATION,
     )
