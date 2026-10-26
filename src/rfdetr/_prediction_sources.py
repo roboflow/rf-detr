@@ -12,7 +12,7 @@ import warnings
 from collections.abc import Generator
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeAlias
 from urllib.parse import urlparse
 
 import numpy as np
@@ -45,44 +45,64 @@ _VIDEO_SUFFIXES = {".asf", ".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mp
 _MANIFEST_SUFFIXES = {".txt", ".csv", ".streams"}
 
 
+#: Source categories used by routing and manifest validation.
+_SourceKind: TypeAlias = Literal[
+    "image", "video", "http_video", "camera", "live", "youtube", "screen", "directory", "glob", "manifest", "streams"
+]
+
+
+def _classify_source(
+    source: str, *, relative_to: Path | None = None, stream_entry: bool = False
+) -> tuple[str, _SourceKind]:
+    """Resolve path spelling and classify a source without opening readers or resolving YouTube URLs.
+
+    Relative files use the manifest directory when supplied. Existing files take precedence over screen commands.
+    Extensionless HTTP URLs are images unless used as simultaneous stream entries.
+    """
+    if source.isdecimal():
+        return source, "camera"
+    url = urlparse(source)
+    if url.scheme in ("rtsp", "rtsps", "rtmp", "tcp"):
+        return source, "live"
+    if url.scheme in ("http", "https"):
+        host = (url.hostname or "").lower()
+        if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
+            return source, "youtube"
+        suffix = Path(url.path).suffix.lower()
+        if suffix in _VIDEO_SUFFIXES:
+            return source, "http_video"
+        if suffix in {".m3u8", ".mjpg", ".mjpeg"} or (stream_entry and suffix not in _IMAGE_SUFFIXES):
+            return source, "live"
+        return source, "image"
+
+    path = Path(source)
+    if relative_to is not None and not url.scheme and not path.is_absolute():
+        path = relative_to / path
+    if path.suffix.lower() in _MANIFEST_SUFFIXES:
+        return str(path), "streams" if path.suffix.lower() == ".streams" else "manifest"
+    if source.split(" ", 1)[0] == "screen" and not path.is_file():
+        return source, "screen"
+    if path.is_dir():
+        return str(path), "directory"
+    if glob.has_magic(str(path)) and not path.is_file():
+        return str(path), "glob"
+    if path.suffix.lower() in _VIDEO_SUFFIXES:
+        return str(path), "video"
+    return str(path), "image"
+
+
 def is_expanded_source(source: PredictionInput) -> bool:
     """Identify inputs that require source expansion."""
     if isinstance(source, (list, tuple)):
         return any(is_expanded_source(item) for item in source)
     if isinstance(source, torch.Tensor):
         return source.ndim == 4
-    if is_live_source(source):
-        return True
-    if not isinstance(source, (str, os.PathLike)):
-        return False
-    path = os.fspath(source)
-    url = urlparse(path)
-    if url.scheme in ("http", "https"):
-        return _is_youtube(path) or Path(url.path).suffix.lower() in _VIDEO_SUFFIXES
-    return (
-        Path(path).is_dir()
-        or (glob.has_magic(path) and not Path(path).is_file())
-        or Path(path).suffix.lower() in _VIDEO_SUFFIXES | _MANIFEST_SUFFIXES
-    )
-
-
-def is_live_source(source: PredictionInput) -> bool:
-    """Identify sources that can produce an unbounded number of frames."""
-    if isinstance(source, (list, tuple)):
-        return any(is_live_source(item) for item in source)
     if isinstance(source, int):
         return True
-    if not isinstance(source, (str, os.PathLike)):
-        return False
-    path = os.fspath(source)
-    url = urlparse(path)
-    return (
-        path.isdecimal()
-        or (path.split(" ", 1)[0] == "screen" and not Path(path).is_file())
-        or Path(path).suffix.lower() == ".streams"
-        or url.scheme.lower() in ("rtsp", "rtsps", "rtmp", "tcp")
-        or (url.scheme.lower() in ("http", "https") and Path(url.path).suffix.lower() in {".m3u8", ".mjpg", ".mjpeg"})
-    )
+    if isinstance(source, (str, os.PathLike)):
+        _, kind = _classify_source(os.fspath(source))
+        return kind != "image"
+    return False
 
 
 def iter_source_batches(
@@ -139,16 +159,14 @@ def _iter_source_groups(
     if not isinstance(source, (str, os.PathLike)):
         yield [source], False
         return
-    path = os.fspath(source)
-    url = urlparse(path)
-    remote = url.scheme in ("http", "https", "rtsp", "rtsps", "rtmp", "tcp")
-    if not remote and Path(path).suffix.lower() in _MANIFEST_SUFFIXES:
+    path, kind = _classify_source(os.fspath(source))
+    if kind in ("manifest", "streams"):
         manifest = Path(path).resolve()
         if manifest in manifests:
             raise ValueError(f"Prediction manifest cycle: {manifest}.")
         entries = _manifest_entries(manifest)
         try:
-            if manifest.suffix.lower() == ".streams":
+            if kind == "streams":
                 resolved_sources = [_stream_entry(item) for item in entries]
                 sources = [item for item, _ in resolved_sources]
                 if not sources:
@@ -172,7 +190,7 @@ def _iter_source_groups(
         finally:
             entries.close()
         return
-    if path.split(" ", 1)[0] == "screen" and not Path(path).is_file():
+    if kind == "screen":
         if warn_on_live:
             _warn_live_accumulation()
         screenshots = _iter_screenshots(path)
@@ -182,29 +200,22 @@ def _iter_source_groups(
         finally:
             screenshots.close()
         return
-    if is_live_source(path) or _is_youtube(path):
-        resolved, live = _resolve_youtube(path)
-        if live:
-            yield from _live_groups(
-                [int(path) if path.isdecimal() else resolved],
-                vid_stride=vid_stride,
-                stream_buffer=stream_buffer,
-                warn_on_live=warn_on_live,
-            )
-        else:
-            frames = _iter_video_frames(resolved, vid_stride)
-            try:
-                for frame in frames:
-                    yield [frame], False
-            finally:
-                frames.close()
+    if kind == "youtube":
+        path, live = _resolve_youtube(path)
+        kind = "live" if live else "http_video"
+    if kind in ("camera", "live"):
+        yield from _live_groups(
+            [int(path) if kind == "camera" else path],
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
+            warn_on_live=warn_on_live,
+        )
         return
     paths = None
-    if not remote:
-        if Path(path).is_dir():
-            paths = sorted(Path(path).iterdir())
-        elif glob.has_magic(path) and not Path(path).is_file():
-            paths = sorted(Path(match) for match in glob.iglob(path, recursive=True))
+    if kind == "directory":
+        paths = sorted(Path(path).iterdir())
+    elif kind == "glob":
+        paths = sorted(Path(match) for match in glob.iglob(path, recursive=True))
     if paths is not None:
         media = [item for item in paths if item.is_file() and item.suffix.lower() in _IMAGE_SUFFIXES | _VIDEO_SUFFIXES]
         if not media:
@@ -214,8 +225,8 @@ def _iter_source_groups(
                 item, vid_stride=vid_stride, stream_buffer=stream_buffer, manifests=manifests, warn_on_live=warn_on_live
             )
         return
-    if Path(url.path if remote else path).suffix.lower() in _VIDEO_SUFFIXES:
-        if not remote and not Path(path).is_file():
+    if kind in ("video", "http_video"):
+        if kind == "video" and not Path(path).is_file():
             raise FileNotFoundError(f"Video file does not exist: {path!r}.")
         frames = _iter_video_frames(path, vid_stride)
         try:
@@ -259,20 +270,12 @@ def _manifest_entries(path: Path) -> Generator[str, None, None]:
                 entry = cell.strip()
                 if not entry or entry.startswith("#"):
                     continue
-                if (
-                    not urlparse(entry).scheme
-                    and not entry.isdecimal()
-                    and (entry.split(" ", 1)[0] != "screen" or (path.parent / entry).is_file())
-                    and not Path(entry).is_absolute()
-                ):
-                    entry = str(path.parent / entry)
-                yield entry
+                resolved, _ = _classify_source(entry, relative_to=path.parent)
+                yield resolved
 
 
 def _resolve_youtube(source: str) -> tuple[str, bool]:
     """Resolve a YouTube page to a decodable video URL."""
-    if not _is_youtube(source):
-        return source, True
     try:
         yt_dlp = import_module("yt_dlp")
     except ImportError as error:
@@ -346,29 +349,17 @@ def _iter_video_frames(source: str | int, vid_stride: int = 1) -> Generator[np.n
         capture.release()
 
 
-def _is_youtube(source: str) -> bool:
-    """Identify supported YouTube page hosts."""
-    host = (urlparse(source).hostname or "").lower()
-    return host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com")
-
-
 def _stream_entry(source: str) -> tuple[str | int, bool]:
     """Validate one simultaneous capture source before any capture opens."""
-    if source.isdecimal():
+    source, kind = _classify_source(source, stream_entry=True)
+    if kind == "camera":
         return int(source), True
-    if _is_youtube(source):
+    if kind == "youtube":
         return _resolve_youtube(source)
-    url = urlparse(source)
-    if url.scheme.lower() in ("rtsp", "rtsps", "rtmp", "tcp"):
+    if kind == "live":
         return source, True
-    suffix = Path(url.path).suffix.lower()
-    if url.scheme.lower() in ("http", "https"):
-        if suffix in _VIDEO_SUFFIXES:
-            return source, False
-        if suffix not in _IMAGE_SUFFIXES:
-            return source, True
-    elif (not url.scheme or Path(source).drive) and Path(source).suffix.lower() in _VIDEO_SUFFIXES:
-        if not Path(source).is_file():
+    if kind in ("video", "http_video"):
+        if kind == "video" and not Path(source).is_file():
             raise FileNotFoundError(f"Video file does not exist: {source!r}.")
         return source, False
     raise ValueError(f"Invalid stream manifest entry: {source!r}. Use a camera index, video file, or stream URL.")

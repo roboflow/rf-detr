@@ -119,6 +119,28 @@ class TestOptionalSources:
 class TestSourceRouting:
     """Source routing preserves image URLs and validates stream manifests."""
 
+    def test_suffixless_http_stream_manifest_opens_capture(self, tmp_path: Path) -> None:
+        """A stream manifest explicitly opts an extensionless HTTP endpoint into video capture."""
+        url = "https://camera.example/feed?id=42"
+        manifest = tmp_path / "camera.streams"
+        manifest.write_text(url)
+        capture = MagicMock()
+        capture.read.return_value = (True, np.full((24, 32, 3), (10, 20, 30), dtype=np.uint8))
+        with (
+            patch("cv2.VideoCapture", return_value=capture) as open_capture,
+            patch("requests.get", side_effect=AssertionError("unexpected image download")),
+        ):
+            results = _DummyRFDETR().predict(manifest, stream=True)
+            open_capture.assert_not_called()
+            try:
+                result = next(results)
+                assert isinstance(result, sv.Detections)
+                np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [30, 20, 10])
+                assert open_capture.call_args.args[0] == url
+            finally:
+                results.close()
+        capture.release.assert_called_once()
+
     def test_suffixless_http_url_remains_an_image(self) -> None:
         """An image endpoint without a suffix keeps the existing scalar result."""
         buffer = io.BytesIO()

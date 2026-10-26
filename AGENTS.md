@@ -244,6 +244,8 @@ uv run twine check --strict dist/*
 
 - Keep source parsing in `src/rfdetr/_prediction_sources.py`. Both `RFDETR.predict()` and `RFDETRInference.predict()` use it through the shared pipeline in `src/rfdetr/_prediction.py`; runtime adapters never parse sources. Distinguish live sources by explicit schemes and media suffixes. Treat extensionless HTTP URLs as images. Reject screen capture inside `.streams` manifests with a clear error.
 
+- Keep path and URL classification, including manifest-relative paths, in `_classify_source`. Classification must not open captures or resolve YouTube URLs; those operations stay lazy in source iteration.
+
 - Preserve scalar still-image returns and image-list batching. Expanded finite inputs use bounded batches and flush the last partial batch. `.streams` predicts a batch in manifest order and stops when a known finite source ends. Live sources also support `stream=False`, so resolve live inputs before warning about accumulated results, including live entries in nested manifests.
 
 - Close source readers when iteration ends or callers close the generator. Network capture timeouts depend on OpenCV backend support. YouTube resolution and screen capture use the optional `rfdetr[stream]` extra.
