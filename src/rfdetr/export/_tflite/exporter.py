@@ -526,6 +526,7 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     converts into a gather over the wrong elements (see :func:`_replace_constant_gather_elements`).
     Static ``Unsqueeze`` outputs become equivalent ``Reshape`` operations so onnx2tf preserves coordinate layout
     through singleton-axis insertion. Symbolic output shapes are left unchanged.
+    Graph outputs are sorted by name to match TensorFlow's signature order before onnx2tf copies their names.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
@@ -576,7 +577,12 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
         and n.outputs[0].shape is not None
         and all(isinstance(size, int) and size > 0 for size in n.outputs[0].shape)
     ]
-    if not gs_nodes and not ge_nodes and not unsqueeze_nodes:
+    # onnx2tf's name copier falls back to pairing sorted signature entries with ONNX output order. Keeping both
+    # orders identical preserves labels/keypoints, while still giving signature-free segmentation its output names.
+    sorted_outputs = sorted(graph.outputs, key=lambda output: output.name)
+    output_order_changed = [output.name for output in sorted_outputs] != [output.name for output in graph.outputs]
+    graph.outputs = sorted_outputs
+    if not gs_nodes and not ge_nodes and not unsqueeze_nodes and not output_order_changed:
         logger.debug("No GridSample, constant-input GatherElements, or static Unsqueeze nodes found; skipping patch.")
         return onnx_path
 
@@ -1470,9 +1476,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                     "input_onnx_file_path": str(onnx_path),
                     "output_folder_path": str(output_dir),
                     "output_signaturedefs": True,
-                    # Preserve TensorFlow's semantic signature. onnx2tf's optional renamer pairs sorted signature
-                    # entries with ONNX output order and swaps labels/keypoints; metadata already reads the signature.
-                    "copy_onnx_input_output_names_to_tflite": False,
+                    "copy_onnx_input_output_names_to_tflite": True,
                     "non_verbose": not self.config.verbose,
                     "verbosity": verbosity,
                     # Replace Erf / GeLU with TFLite-native pseudo-operators so the
