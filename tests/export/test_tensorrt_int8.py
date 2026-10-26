@@ -6,9 +6,9 @@
 """Tests for ``export(format="tensorrt", quantization="int8")``.
 
 The request checks and the build wiring run without TensorRT. The quantization plan and the Q/DQ rewrite are pure ONNX
-work and run on CPU with ``onnx``, on small synthetic graphs that mirror RF-DETR's naming, plus one exact-count check on
-a real exported Nano graph. Calibration needs onnxruntime and runs in the ``onnx`` integration job. The end-to-end class
-builds real FP16 and INT8 engines on a GPU and compares their detections on a photo.
+work and run on CPU with ``onnx``, on small synthetic graphs that mirror RF-DETR's naming, plus exact-count checks on
+real exported Nano, segmentation and keypoint graphs. Calibration needs onnxruntime and runs in the ``onnx`` integration
+job. The end-to-end classes build real FP16 and INT8 engines on a GPU and compare their outputs.
 """
 
 from __future__ import annotations
@@ -20,9 +20,11 @@ import os
 import pickle
 import sys
 import types
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -41,7 +43,9 @@ from rfdetr.export._tensorrt.exporter import (
 from rfdetr.export.imports import _IS_ONNXCONVERTER_COMMON_INSTALLED
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, box_iou
-from tests._markers import onnxruntime_only
+from tests._markers import onnx_and_onnxruntime_only, onnxruntime_only
+
+__doctest_requires__ = {("_outputs_before_and_after_lift",): ["onnxruntime"]}
 
 # Module-level on purpose: the parametrized ``CASES`` below build ONNX nodes while the module is collected, so a guarded
 # import would raise ``NameError`` instead of skipping. Moving every graph builder behind a local import is a follow-up.
@@ -346,7 +350,7 @@ class TestInt8Host:
         with pytest.raises(ImportError, match="TensorRT 10 or newer"):
             TensorRTExporter._require_int8_host()
 
-    @pytest.mark.parametrize("version", ["10.0.1.6", "11.3.0.99"])
+    @pytest.mark.parametrize("version", ["10.0.1.6", "11.3.0.99", "11.4.0.106"])
     def test_supported_tensorrt_is_accepted(self, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
         monkeypatch.setattr(tensorrt_export, "_IS_ONNXRUNTIME_AVAILABLE", True)
         monkeypatch.setattr(tensorrt_export, "_IS_FP16_CASTER_AVAILABLE", True)
@@ -430,6 +434,7 @@ class TestInt8Host:
             pytest.param("12.0.0.1", True, id="newer-major"),
             pytest.param("10.16.1.11", False, id="10.16"),
             pytest.param("11.3.0.99", False, id="11.3"),
+            pytest.param("11.4.0.106", False, id="11.4"),
         ],
     )
     def test_unmeasured_tensorrt_is_warned_about_before_the_forward_pass(
@@ -552,8 +557,28 @@ class TestInt8Host:
         assert written["build"]["precision"] == "int8"
 
     @pytest.mark.parametrize("extra", ["masks", "keypoints"])
-    def test_non_detection_model_is_refused_before_the_onnx_export(
+    def test_segmentation_and_keypoint_models_reach_the_onnx_export(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: str
+    ) -> None:
+        monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
+        monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", Mock(side_effect=RuntimeError("ONNX export reached")))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
+        )
+        with pytest.raises(RuntimeError, match="ONNX export reached"):
+            exporter._convert(_export_graph(extra))
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            pytest.param(("masks", "keypoints"), id="both-heads"),
+            pytest.param(("boxes",), id="unknown-output"),
+            pytest.param(("keypoints", "masks"), id="heads-reversed"),
+        ],
+    )
+    def test_unsupported_outputs_are_refused_before_the_onnx_export(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: tuple[str, ...]
     ) -> None:
         monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
         monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
@@ -561,8 +586,8 @@ class TestInt8Host:
         exporter = TensorRTExporter(
             TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
         )
-        with pytest.raises(NotImplementedError, match="detection models only"):
-            exporter._convert(_export_graph(extra))
+        with pytest.raises(NotImplementedError, match="detection, segmentation and keypoint models only"):
+            exporter._convert(_export_graph(*extra))
 
 
 class TestInt8BuildWiring:
@@ -815,7 +840,7 @@ class TestPlanInt8:
             ]
         )
         graph.output.append(helper.make_tensor_value_info("head", TensorProto.FLOAT, [1, 8, 16]))
-        with pytest.raises(ValueError, match="RF-DETR detector exports only"):
+        with pytest.raises(ValueError, match="RF-DETR model exports only"):
             quantize.plan_int8(model)
 
     def test_decoder_attention_stays_float(self) -> None:
@@ -882,7 +907,7 @@ class TestPlanInt8:
 
     def test_graph_without_quantizable_layers_is_refused(self) -> None:
         model = _attention_and_mlp(HEAD, sequence=8, head_size=16, mlp_prefix=HEAD)
-        with pytest.raises(ValueError, match="RF-DETR detector exports only"):
+        with pytest.raises(ValueError, match="RF-DETR model exports only"):
             quantize.plan_int8(model)
 
     def test_layer_inside_a_subgraph_is_not_planned(self) -> None:
@@ -901,7 +926,7 @@ class TestPlanInt8:
         for node in model.graph.node:
             if node.name.endswith("fc2/MatMul"):
                 node.name = f"{BACKBONE}fc1/MatMul"
-        with pytest.raises(ValueError, match="RF-DETR detector exports only"):
+        with pytest.raises(ValueError, match="RF-DETR model exports only"):
             quantize.plan_int8(model)
 
 
@@ -1604,6 +1629,39 @@ REDUCTIONS = [
 ]
 
 
+def _outputs_before_and_after_lift(model: Any, feeds: dict[str, np.ndarray]) -> tuple[list[Any], list[Any]]:
+    """Run *model* on onnxruntime's CPU provider as given and again after ``quantize._lift_opset`` raised it to 19.
+
+    Args:
+        model: A ``ModelProto`` at opset 17; left untouched (the lift runs on a copy).
+        feeds: Graph inputs by name.
+
+    Returns:
+        The outputs at opset 17 and the outputs at opset 19.
+
+    Examples:
+        >>> node = helper.make_node("Relu", ["x"], ["y"])
+        >>> graph = helper.make_graph([node], "g", [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2])],
+        ...     [helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])])
+        >>> model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        >>> before, after = _outputs_before_and_after_lift(model, {"x": np.array([-1.0, 2.0], np.float32)})
+        >>> before[0].tolist(), after[0].tolist()
+        ([0.0, 2.0], [0.0, 2.0])
+    """
+    import onnxruntime
+
+    original, lifted = type(model)(), type(model)()
+    original.CopyFrom(model)
+    lifted.CopyFrom(model)
+    quantize._lift_opset(lifted)
+    outputs = []
+    for candidate in (original, lifted):
+        candidate.ir_version = 9  # the newest IR onnx writes can be newer than the installed onnxruntime reads
+        session = onnxruntime.InferenceSession(candidate.SerializeToString(), providers=["CPUExecutionProvider"])
+        outputs.append(session.run(None, feeds))
+    return outputs[0], outputs[1]
+
+
 class TestLiftOpset:
     """FP16 scales need opset 19; lifting a 17 graph keeps every op's meaning or refuses."""
 
@@ -1728,6 +1786,42 @@ class TestLiftOpset:
         with pytest.raises(ValueError, match="'pad' \\(Pad\\) changed meaning"):
             quantize._lift_opset(model)
 
+    @pytest.mark.parametrize(
+        ("op", "opset", "refused"),
+        [
+            ("Resize", 10, True),
+            ("Resize", 12, True),
+            ("Resize", 13, False),
+            ("ScatterND", 13, True),
+            ("ScatterND", 15, True),
+            ("ScatterND", 16, False),
+        ],
+    )
+    def test_resize_and_scatter_nd_are_lifted_only_from_the_opset_they_were_checked_from(
+        self, op: str, opset: int, refused: bool
+    ) -> None:
+        """``Resize`` (before opset 13) and ``ScatterND`` (before 16) did mean something else than at opset 19.
+
+        Their opset-17 behavior was checked against opset 19, so only a graph at or above the opset from which that
+        holds may have them lifted; a hand-made graph below it is refused instead of failing late in the runtime.
+        """
+        node = helper.make_node(op, ["x", "a", "b"], ["y"], "node")
+        graph = helper.make_graph(
+            [node],
+            "old",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
+        if refused:
+            with pytest.raises(ValueError, match=f"\\({op}\\) changed meaning"):
+                quantize._lift_opset(model)
+        else:
+            quantize._lift_opset(model)
+            assert [imported.version for imported in model.opset_import if imported.domain == ""] == [
+                quantize._FP16_QDQ_OPSET
+            ]
+
     def test_unknown_op_is_refused(self) -> None:
         """An op ONNX does not define is refused with a ValueError naming the node, not onnx's own SchemaError.
 
@@ -1744,6 +1838,435 @@ class TestLiftOpset:
         with pytest.raises(ValueError, match="'mystery' \\(NotAnOp\\) is not an ONNX op"):
             quantize._lift_opset(model)
 
+    @onnx_and_onnxruntime_only
+    @pytest.mark.parametrize("coordinate_mode", ["half_pixel", "pytorch_half_pixel", "align_corners", "asymmetric"])
+    @pytest.mark.parametrize("mode", ["nearest", "linear", "cubic"])
+    def test_resize_gives_the_same_values_at_opset_19(self, mode: str, coordinate_mode: str) -> None:
+        node = helper.make_node(
+            "Resize", ["x", "", "", "sizes"], ["y"], "resize", mode=mode, coordinate_transformation_mode=coordinate_mode
+        )
+        graph = helper.make_graph(
+            [node],
+            "resize",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 7, 9])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 20, 31])],
+            [numpy_helper.from_array(np.array([1, 2, 20, 31], np.int64), "sizes")],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        x = np.random.default_rng(0).standard_normal((1, 2, 7, 9)).astype(np.float32)
+        before, after = _outputs_before_and_after_lift(model, {"x": x})
+        np.testing.assert_allclose(after[0], before[0], atol=1e-6)
+
+    @onnx_and_onnxruntime_only
+    @pytest.mark.parametrize("reduction", ["none", "add", "mul"])
+    def test_scatter_nd_gives_the_same_values_at_opset_19(self, reduction: str) -> None:
+        node = helper.make_node("ScatterND", ["data", "indices", "updates"], ["y"], "scatter", reduction=reduction)
+        graph = helper.make_graph(
+            [node],
+            "scatter",
+            [helper.make_tensor_value_info("data", TensorProto.FLOAT, [4, 3])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 3])],
+            [
+                numpy_helper.from_array(np.array([[1], [3], [1]], np.int64), "indices"),
+                numpy_helper.from_array(np.arange(1, 10, dtype=np.float32).reshape(3, 3), "updates"),
+            ],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 16)])
+        data = np.random.default_rng(1).standard_normal((4, 3)).astype(np.float32)
+        before, after = _outputs_before_and_after_lift(model, {"data": data})
+        np.testing.assert_allclose(after[0], before[0], atol=1e-6)
+
+
+def _patch_embedding(
+    *,
+    channels: int = 3,
+    patch: int = 16,
+    size: int = 32,
+    out_channels: int = 8,
+    bias: bool = True,
+    empty_bias: bool = False,
+    prefix: str = BACKBONE,
+    batch: int = 1,
+    height: int | str | None = None,
+    width: int | None = None,
+    kernel: tuple[int, int] | None = None,
+    **attributes: Any,
+) -> Any:
+    """Build ``image -> Conv -> features`` as a patch embedding: kernel and stride *kernel*, no padding.
+
+    Args:
+        channels: Input channels of the image.
+        patch: Kernel size and stride, in pixels, when *kernel* is not given.
+        size: Image height and width, unless *height* or *width* is given.
+        out_channels: Output channels of the kernel.
+        bias: Give the ``Conv`` a bias.
+        empty_bias: Name the bias input with an empty string, how ONNX spells an omitted optional input.
+        prefix: Node-name prefix of the ``Conv``.
+        batch: Batch size of the image.
+        height: Overrides the declared image height; a string makes it symbolic.
+        width: Overrides the declared image width.
+        kernel: ``(rows, columns)`` of a rectangular kernel and stride.
+        **attributes: ``Conv`` attributes that replace the patch-embedding ones.
+
+    Returns:
+        A checked-shape ``ModelProto`` whose output ``features`` is the ``Conv``'s output.
+
+    Examples:
+        >>> model = _patch_embedding(channels=2, patch=4, size=8)
+        >>> [node.op_type for node in model.graph.node], model.graph.output[0].name
+        (['Conv'], 'features')
+    """
+    rng = np.random.default_rng(0)
+    rows, columns = kernel or (patch, patch)
+    high, wide = height or size, width or size
+    inits = [
+        numpy_helper.from_array(rng.standard_normal((out_channels, channels, rows, columns)).astype(np.float32), "w")
+    ]
+    inputs = ["image", "w"]
+    if bias:
+        inits.append(numpy_helper.from_array(rng.standard_normal(out_channels).astype(np.float32), "b"))
+        inputs.append("b")
+    elif empty_bias:
+        inputs.append("")
+    conv = {"kernel_shape": [rows, columns], "strides": [rows, columns], **attributes}
+    grid = ["out_height" if isinstance(high, str) else high // rows, wide // columns]
+    graph = helper.make_graph(
+        [helper.make_node("Conv", inputs, ["features"], f"{prefix}patch/Conv", **conv)],
+        "patch_embedding",
+        [helper.make_tensor_value_info("image", TensorProto.FLOAT, [batch, channels, high, wide])],
+        [helper.make_tensor_value_info("features", TensorProto.FLOAT, [batch, out_channels, *grid])],
+        inits,
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=10)
+
+
+def _with_detector_outputs(model: Any) -> Any:
+    """Make *model*'s ``features`` the source of ``dets`` and ``labels`` and return it, so that INT8 accepts the graph.
+
+    Examples:
+        >>> model = _with_detector_outputs(_patch_embedding(channels=2, patch=4, size=8))
+        >>> [output.name for output in model.graph.output]
+        ['dets', 'labels']
+    """
+    model.graph.node.extend([helper.make_node("Identity", ["features"], [name], name) for name in ("dets", "labels")])
+    del model.graph.output[:]
+    model.graph.output.extend(
+        helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in ("dets", "labels")
+    )
+    return model
+
+
+class TestPatchEmbeddingAsMatmul:
+    """The 3-channel patch-embedding ``Conv`` becomes a ``MatMul`` that INT8 can run, with the same output."""
+
+    @onnxruntime_only
+    @pytest.mark.parametrize(
+        ("batch", "channels", "patch", "height", "width"),
+        [
+            pytest.param(1, 3, 16, 32, 32, id="rgb-16-pixel-patches"),
+            pytest.param(2, 3, 16, 32, 48, id="batch-2-non-square"),
+            pytest.param(3, 2, 4, 8, 16, id="batch-3-two-channels-non-square"),
+            pytest.param(1, 1, 8, 16, 16, id="grayscale"),
+        ],
+    )
+    @pytest.mark.parametrize("bias", [True, False])
+    def test_features_match_the_convolution(
+        self, batch: int, channels: int, patch: int, height: int, width: int, bias: bool
+    ) -> None:
+        import onnxruntime as ort
+
+        model = _patch_embedding(channels=channels, patch=patch, height=height, width=width, batch=batch, bias=bias)
+        image = np.random.default_rng(1).standard_normal((batch, channels, height, width)).astype(np.float32)
+        expected = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
+            None, {"image": image}
+        )[0]
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        actual = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
+            None, {"image": image}
+        )[0]
+        # The convolution and the matrix multiply add up 768 float32 products in a different order: macOS differed
+        # by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is off by whole units.
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-4)
+
+    def test_convolution_is_replaced_by_the_matmul_the_plan_quantizes(self) -> None:
+        model = _patch_embedding()
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        assert [node.op_type for node in model.graph.node].count("Conv") == 0
+        assert _names(quantize.plan_int8(model)) == ["patch/MatMul"]
+
+    def test_the_matmul_weight_is_the_flattened_kernel(self) -> None:
+        model = _patch_embedding(channels=3, patch=16, size=32, out_channels=8)
+        kernel = numpy_helper.to_array(model.graph.initializer[0])
+        quantize._patch_embedding_as_matmul(model)
+        matmul = next(node for node in model.graph.node if node.op_type == "MatMul")
+        weights = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        np.testing.assert_array_equal(weights[matmul.input[1]], kernel.reshape(8, 3 * 16 * 16).T)
+
+    def test_the_output_keeps_its_name(self) -> None:
+        model = _patch_embedding()
+        quantize._patch_embedding_as_matmul(model)
+        assert model.graph.node[-1].output[0] == "features"
+
+    @pytest.mark.parametrize("bias", [True, False])
+    def test_the_rewritten_graph_is_valid_onnx(self, bias: bool) -> None:
+        model = _patch_embedding(bias=bias)
+        quantize._patch_embedding_as_matmul(model)
+        onnx.checker.check_model(model, full_check=True)
+        onnx.shape_inference.infer_shapes(model, strict_mode=True)
+
+    def test_an_empty_bias_name_is_no_bias(self) -> None:
+        model = _patch_embedding(bias=False, empty_bias=True)
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        assert "" not in [name for node in model.graph.node for name in node.input]
+        onnx.checker.check_model(model, full_check=True)
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float16])
+    def test_the_kernel_keeps_its_dtype(self, dtype: type) -> None:
+        model = _patch_embedding()
+        for init in model.graph.initializer:
+            init.CopyFrom(numpy_helper.from_array(numpy_helper.to_array(init).astype(dtype), init.name))
+        quantize._patch_embedding_as_matmul(model)
+        matmul = next(node for node in model.graph.node if node.op_type == "MatMul")
+        weights = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        assert weights[matmul.input[1]].dtype == dtype
+
+    def test_a_kernel_reached_through_an_identity_is_found(self) -> None:
+        model = _patch_embedding()
+        conv = model.graph.node[0]
+        conv.input[1] = "w_alias"
+        model.graph.node.insert(0, helper.make_node("Identity", ["w"], ["w_alias"], "alias"))
+        assert quantize._patch_embedding_as_matmul(model) == 1
+
+    def test_the_replaced_kernel_is_dropped(self) -> None:
+        model = _patch_embedding()
+        quantize._patch_embedding_as_matmul(model)
+        assert "w" not in [init.name for init in model.graph.initializer]
+
+    def test_every_replaced_kernel_is_dropped(self) -> None:
+        model = _patch_embedding()
+        model.graph.initializer.append(numpy_helper.from_array(numpy_helper.to_array(model.graph.initializer[0]), "w2"))
+        model.graph.node.append(
+            helper.make_node(
+                "Conv", ["image", "w2", "b"], ["more"], f"{BACKBONE}more/Conv", kernel_shape=[16, 16], strides=[16, 16]
+            )
+        )
+        assert quantize._patch_embedding_as_matmul(model) == 2
+        assert {"w", "w2"}.isdisjoint(init.name for init in model.graph.initializer)
+
+    @pytest.mark.parametrize("reader", ["another-node", "graph-output", "if-branch"])
+    def test_a_kernel_something_else_still_reads_is_kept(self, reader: str) -> None:
+        model = _patch_embedding()
+        kernel_info = helper.make_tensor_value_info("w_copy", TensorProto.FLOAT, [8, 3, 16, 16])
+        if reader == "another-node":
+            model.graph.node.append(helper.make_node("Identity", ["w"], ["w_copy"], "copy"))
+            model.graph.output.append(kernel_info)
+        elif reader == "graph-output":
+            model.graph.output.append(helper.make_tensor_value_info("w", TensorProto.FLOAT, [8, 3, 16, 16]))
+        else:
+            # A branch that captures the kernel from the outer scope reads it, though no top-level node does.
+            branch = helper.make_graph(
+                [helper.make_node("Identity", ["w"], ["w_copy"], "inner")], "branch", [], [kernel_info]
+            )
+            model.graph.initializer.append(numpy_helper.from_array(np.array(True), "flag"))
+            model.graph.node.append(
+                helper.make_node("If", ["flag"], ["w_copy"], "if", then_branch=branch, else_branch=branch)
+            )
+            model.graph.output.append(kernel_info)
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        assert "w" in [init.name for init in model.graph.initializer]
+
+    def test_an_initializer_that_is_a_graph_input_is_never_dropped(self) -> None:
+        # Dropping it would turn a default value into an input the caller must now supply.
+        graph = helper.make_graph(
+            [helper.make_node("Relu", ["x"], ["y"], "relu")],
+            "g",
+            [
+                helper.make_tensor_value_info("x", TensorProto.FLOAT, [1]),
+                helper.make_tensor_value_info("old", TensorProto.FLOAT, [1]),
+            ],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+            [numpy_helper.from_array(np.zeros(1, np.float32), name) for name in ("old", "unused")],
+        )
+        quantize._drop_unread_initializers(graph, ["old", "unused"])
+        assert [init.name for init in graph.initializer] == ["old"]
+
+    def test_generated_names_never_reuse_a_name_in_the_graph(self) -> None:
+        model = _patch_embedding()
+        taken = f"{BACKBONE}patch/cut"
+        model.graph.node.append(helper.make_node("Identity", ["image"], [taken], f"{BACKBONE}patch/Cut"))
+        model.graph.output.append(helper.make_tensor_value_info(taken, TensorProto.FLOAT, [1, 3, 32, 32]))
+        quantize._patch_embedding_as_matmul(model)
+        produced = [name for node in model.graph.node for name in node.output]
+        assert len(produced) == len(set(produced))
+        assert len({node.name for node in model.graph.node}) == len(model.graph.node)
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            pytest.param({"strides": [2, 2]}, id="overlapping-patches"),
+            pytest.param({"pads": [1, 1, 1, 1]}, id="padded"),
+            pytest.param({"dilations": [2, 2]}, id="dilated"),
+            pytest.param({"auto_pad": "SAME_UPPER"}, id="auto-pad"),
+            pytest.param({"kernel": (16, 8)}, id="rectangular-kernel"),
+            pytest.param({"channels": 2, "patch": 2, "size": 8}, id="patch-not-a-multiple-of-32-values"),
+            pytest.param({"channels": 32, "patch": 4, "size": 8}, id="channels-TensorRT-does-not-pad"),
+            pytest.param({"height": 36}, id="kernel-does-not-tile-the-height"),
+            pytest.param({"width": 36}, id="kernel-does-not-tile-the-width"),
+            pytest.param({"height": "height"}, id="symbolic-height"),
+            pytest.param({"size": 0}, id="empty-image"),
+            pytest.param({"prefix": HEAD}, id="outside-the-backbone"),
+            pytest.param({"prefix": DECODER}, id="in-the-decoder"),
+        ],
+    )
+    def test_other_convolutions_are_left_alone(self, case: dict[str, Any]) -> None:
+        model = _patch_embedding(**case)
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_a_grouped_convolution_is_left_alone(self) -> None:
+        # Two input channels per group and 4-pixel patches make 32 values per patch: only the grouping rules it out.
+        model = _patch_embedding(channels=4, patch=4, size=8, out_channels=4, group=2)
+        model.graph.initializer[0].CopyFrom(numpy_helper.from_array(np.ones((4, 2, 4, 4), np.float32), "w"))
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_an_existing_matmul_name_is_never_reused(self) -> None:
+        model = _patch_embedding()
+        model.graph.node.append(helper.make_node("Identity", ["features"], ["copy"], f"{BACKBONE}patch/MatMul"))
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_a_duplicated_convolution_name_is_left_alone(self) -> None:
+        model = _patch_embedding()
+        model.graph.node.append(
+            helper.make_node("Conv", ["image", "w"], ["other"], f"{BACKBONE}patch/Conv", kernel_shape=[16, 16])
+        )
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_two_convolutions_in_one_scope_get_one_matmul(self) -> None:
+        # ``patch/Conv`` and ``patch/Conv_1`` would both become ``patch/MatMul``; the second must not take the name.
+        model = _patch_embedding()
+        model.graph.node.append(
+            helper.make_node(
+                "Conv",
+                ["image", "w", "b"],
+                ["other"],
+                f"{BACKBONE}patch/Conv_1",
+                kernel_shape=[16, 16],
+                strides=[16, 16],
+            )
+        )
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        names = [node.name for node in model.graph.node]
+        assert len(names) == len(set(names))
+
+    def test_a_rejected_convolution_does_not_stop_the_next_one(self) -> None:
+        model = _patch_embedding()
+        model.graph.input.append(helper.make_tensor_value_info("narrow", TensorProto.FLOAT, [1, 3, 36, 32]))
+        model.graph.node.insert(
+            0,
+            helper.make_node(
+                "Conv", ["narrow", "w"], ["tall"], f"{BACKBONE}tall/Conv", kernel_shape=[16, 16], strides=[16, 16]
+            ),
+        )
+        assert quantize._patch_embedding_as_matmul(model) == 1
+
+    @pytest.mark.parametrize("initializer", [False, True])
+    def test_a_kernel_that_can_be_replaced_at_run_time_is_left_alone(self, initializer: bool) -> None:
+        # A graph input without an initializer is no constant kernel; one with an initializer can be overridden.
+        model = _patch_embedding()
+        model.graph.input.append(helper.make_tensor_value_info("w", TensorProto.FLOAT, [8, 3, 16, 16]))
+        if not initializer:
+            kept = [init for init in model.graph.initializer if init.name != "w"]
+            model.graph.ClearField("initializer")
+            model.graph.initializer.extend(kept)
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+
+@onnx_and_onnxruntime_only
+@onnxconverter_common_only
+class TestPatchEmbeddingInInt8Source:
+    """``int8_source_graph`` plans, calibrates and quantizes the patch embedding as the matrix multiply it becomes."""
+
+    @pytest.fixture
+    def patch_graph(self, tmp_path: Path) -> Path:
+        """A 16-pixel patch embedding over a ``(1, 3, 16, 16)`` image, saved to disk with a detector's output names.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> path = patch_graph(tmp_path)  # doctest: +SKIP
+        """
+        path = tmp_path / "patch.onnx"
+        onnx.save(_with_detector_outputs(_patch_embedding(size=16)), path)
+        return path
+
+    def test_patch_embedding_is_quantized_as_a_matrix_multiply(self, patch_graph: Path) -> None:
+        images = np.random.default_rng(0).standard_normal((3, 3, 16, 16)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(patch_graph),
+            calibration_data=images,
+            max_images=3,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            graph = onnx.load(int8_path).graph
+        producers = {output: node for node in graph.node for output in node.output}
+        (matmul,) = [node for node in graph.node if node.name == f"{BACKBONE}patch/MatMul"]
+        activation = producers[matmul.input[0]]
+        assert [node.op_type for node in graph.node].count("Conv") == 0
+        assert activation.op_type == "DequantizeLinear"
+        assert producers[activation.input[0]].op_type == "QuantizeLinear"
+        assert producers[matmul.input[1]].op_type == "DequantizeLinear"
+
+    def test_the_fp16_copy_is_lifted_before_the_patch_embedding_is_rewritten(self, tmp_path: Path) -> None:
+        # At opset 13 the rewrite's ``Add`` would be refused by the lift that follows it, after calibration has run.
+        model = _with_detector_outputs(_patch_embedding(size=16))
+        model.opset_import[0].version = 13
+        path = tmp_path / "opset13.onnx"
+        onnx.save(model, path)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=np.zeros((3, 3, 16, 16), np.float32),
+            max_images=3,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        assert quantized.opset_import[0].version == 19
+
+    @pytest.mark.parametrize("copy", ["overlapping-patches", "renamed"])
+    def test_fp16_copy_without_a_planned_node_is_refused(self, patch_graph: Path, tmp_path: Path, copy: str) -> None:
+        # Overlapping patches leave nothing to rewrite; a renamed ``Conv`` is rewritten under another ``MatMul`` name.
+        # Either way the node the plan quantizes is missing, which would otherwise surface as a ``KeyError``.
+        other = (
+            _patch_embedding(size=16, strides=[8, 8]) if copy == "overlapping-patches" else _patch_embedding(size=16)
+        )
+        if copy == "renamed":
+            other.graph.node[0].name = f"{BACKBONE}other/Conv"
+        onnx.save(_with_detector_outputs(other), tmp_path / "other.onnx")
+
+        @contextlib.contextmanager
+        def other_fp16(*_: Any, **__: Any) -> Iterator[str]:
+            yield str(tmp_path / "other.onnx")
+
+        with pytest.raises(ValueError, match="lacks 1 node"):
+            with quantize.int8_source_graph(
+                str(patch_graph),
+                calibration_data=np.zeros((3, 3, 16, 16), np.float32),
+                max_images=3,
+                dynamic_batch=False,
+                fp16_graph=other_fp16,
+            ):
+                pass
+
 
 class TestInt8SourceGraph:
     """A graph INT8 cannot start from is refused before any calibration, with advice an INT8 request can follow."""
@@ -1757,7 +2280,7 @@ class TestInt8SourceGraph:
             pytest.param("fp16-weights", "not a float32 export", id="fp16-weights-fp32-io"),
             pytest.param("dynamic", "static batch", id="dynamic-batch"),
             pytest.param("pad", "changed meaning", id="unliftable"),
-            pytest.param("masks", "detection models only", id="segmentation"),
+            pytest.param("two-heads", "detection, segmentation and keypoint models only", id="two-heads"),
             pytest.param("rank-3", "image input", id="not-an-image"),
             pytest.param("symbolic-height", "image input", id="symbolic-height"),
             pytest.param("weight-input", "as graph inputs too", id="overridable-weight"),
@@ -1812,20 +2335,21 @@ class TestInt8SourceGraph:
             # An image input (never run here), so that only the rewrite under test can be what is refused.
             height = "height" if rewrite == "symbolic-height" else 8
             model.graph.input[0].CopyFrom(helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, height, 32]))
-        if rewrite in ("pad", "masks", "rank-3", "symbolic-height", "nan-weight", "inf-weight"):
+        if rewrite in ("pad", "two-heads", "rank-3", "symbolic-height", "nan-weight", "inf-weight"):
             # A detector's outputs, so that only the rewrite under test can be what is refused.
             model.graph.node.append(helper.make_node("Identity", ["y"], ["dets"], "dets"))
-            outputs = ["dets", "labels"] + (["masks"] if rewrite == "masks" else [])
+            outputs = ["dets", "labels"] + (["masks", "keypoints"] if rewrite == "two-heads" else [])
             if rewrite != "pad":
                 model.graph.node.append(helper.make_node("Identity", ["y"], ["labels"], "labels"))
-            if rewrite == "masks":
-                model.graph.node.append(helper.make_node("Identity", ["y"], ["masks"], "masks"))
+            if rewrite == "two-heads":
+                for head in ("masks", "keypoints"):
+                    model.graph.node.append(helper.make_node("Identity", ["y"], [head], head))
             del model.graph.output[:]
             model.graph.output.extend(helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in outputs)
         path = tmp_path / "source.onnx"
         onnx.save(model, path)
         # A non-detector gets the type RFDETR.export raises for the same model; a malformed graph gets ValueError.
-        with pytest.raises(NotImplementedError if rewrite == "masks" else ValueError, match=message):
+        with pytest.raises(NotImplementedError if rewrite == "two-heads" else ValueError, match=message):
             with quantize.int8_source_graph(
                 str(path),
                 calibration_data=str(tmp_path),
@@ -1834,6 +2358,23 @@ class TestInt8SourceGraph:
                 fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
+
+    @pytest.mark.parametrize(
+        "outputs",
+        [
+            pytest.param(("dets", "labels"), id="detection"),
+            pytest.param(("dets", "labels", "masks"), id="segmentation"),
+            pytest.param(("dets", "labels", "keypoints"), id="keypoint"),
+        ],
+    )
+    def test_detection_segmentation_and_keypoint_outputs_are_accepted(self, outputs: tuple[str, ...]) -> None:
+        graph = helper.make_graph(
+            [helper.make_node("Identity", ["input"], [name], name) for name in outputs],
+            "heads",
+            [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 8, 8])],
+            [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1, 3, 8, 8]) for name in outputs],
+        )
+        quantize._refuse_unquantizable_source(helper.make_model(graph), "heads.onnx")
 
 
 @onnxruntime_only
@@ -2265,10 +2806,43 @@ class TestNanoInt8Plan:
 
     def test_counts(self, plan: quantize.Int8Plan) -> None:
         # Backbone: 9 windowed blocks x (q, k, v, o, fc1, fc2) + 3 global blocks x (fc1, fc2) = 60; the patch embedding
-        # reads the 3-channel image and stays FP16.
+        # reads the 3-channel image and is still a Conv here (``test_patch_embedding_joins_the_plan_as_a_matmul``).
         # Decoder: 2 layers x (value, offsets, attention weights, output, linear1, linear2) + reference-point MLP = 14.
         # Activations: one per weighted node + 4 per INT8 attention block (9 windowed blocks).
         assert (len(plan.weighted), len(plan.activations)) == (74, 74 + 36)
+
+    def test_patch_embedding_joins_the_plan_as_a_matmul(self, nano_onnx: Path) -> None:
+        model = onnx.load(str(nano_onnx))
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        onnx.checker.check_model(model, full_check=True)
+        onnx.shape_inference.infer_shapes(model, strict_mode=True)
+        plan = quantize.plan_int8(model)
+        # One more layer and activation input than ``test_counts``: the matrix multiply over 3 * 16 * 16 values.
+        assert (len(plan.weighted), len(plan.activations)) == (75, 75 + 36)
+        assert [n for n in plan.weighted if n.endswith("patch_embeddings/projection/MatMul")] != []
+
+    @onnx_and_onnxruntime_only
+    @onnxconverter_common_only
+    def test_int8_source_graph_quantizes_the_patch_embedding(self, nano_onnx: Path) -> None:
+        shape = [dim.dim_value for dim in onnx.load(str(nano_onnx)).graph.input[0].type.tensor_type.shape.dim]
+        samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(nano_onnx),
+            calibration_data=samples,
+            max_images=2,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        onnx.checker.check_model(quantized, full_check=True)
+        ops = Counter(node.op_type for node in quantized.graph.node)
+        # One DequantizeLinear per planned weight (74 layers and the patch embedding), plus one per activation.
+        assert ops["DequantizeLinear"] == 75 + ops["QuantizeLinear"]
+        assert [
+            n.name
+            for n in quantized.graph.node
+            if n.op_type == "Conv" and n.name.startswith(quantize._QUANTIZED_REGIONS[0])
+        ] == []
 
     def test_global_blocks_keep_attention_in_fp16(self, plan: quantize.Int8Plan) -> None:
         global_attention = [n for n in plan.weighted if any(f"layer.{i}/attention/" in n for i in (3, 6, 9))]
@@ -2283,12 +2857,234 @@ class TestNanoInt8Plan:
         assert (len(fc1), fc1) == (12, fc2)
 
 
-def _assert_confident_detections_match(fp16_engine: Path, int8_engine: Path, example: np.ndarray, batch: int) -> None:
+#: Per exported model: the head prefix that stays FP16, then the quantized layers and quantized activation inputs of its
+#: plan. Both are the 24 layers of the 12 backbone MLPs, 6 per decoder layer (4 cross-attention projections and 2
+#: feed-forward) over 4 layers, and the 2 reference-point layers; the keypoint decoder adds 6 per layer for its keypoint
+#: cross-attention and feed-forward. No attention is INT8, so layers and inputs are equal: every attention block has at
+#: least 577 tokens, above the 325 measured.
+_HEAD_MODELS = {
+    "segmentation": ("/segmentation_head/", 50, 50),
+    "keypoint": ("/keypoint_embed/", 74, 74),
+}
+
+
+class TestSegmentationAndKeypointInt8Plan:
+    """The plan of real segmentation and keypoint exports keeps their heads and extra attention in FP16."""
+
+    @pytest.fixture(scope="class")
+    def exports(self, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+        """Export an untrained RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge and RFDETRKeypointPreview.
+
+        Done once for the class, to ONNX on CPU. Small and Medium are the segmentation models whose windows fit INT8
+        attention; Nano's and Large's do not.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> paths = exports(tmp_path_factory)  # doctest: +SKIP
+        """
+        from rfdetr import RFDETRKeypointPreview, RFDETRSegLarge, RFDETRSegMedium, RFDETRSegNano, RFDETRSegSmall
+        from rfdetr.utilities.reproducibility import seed_all
+
+        # The pretrained keypoint model has the person class behind a padding class, which is what puts ScatterND in
+        # its graph; the default untrained schema (one class) has none.
+        models = (
+            ("segmentation", RFDETRSegNano, {}),
+            ("segmentation-small", RFDETRSegSmall, {}),
+            ("segmentation-medium", RFDETRSegMedium, {}),
+            ("segmentation-large", RFDETRSegLarge, {}),
+            ("keypoint", RFDETRKeypointPreview, {"num_classes": 2, "num_keypoints_per_class": [0, 17]}),
+        )
+        paths = {}
+        for kind, model_class, settings in models:
+            seed_all(7)
+            out_dir = tmp_path_factory.mktemp(f"{kind}_int8_plan")
+            paths[kind] = Path(
+                model_class(pretrain_weights=None, device="cpu", **settings).export(
+                    output_dir=str(out_dir), format="onnx", verbose=False
+                )
+            )
+        return paths
+
+    @pytest.fixture(scope="class")
+    def plans(self, exports: dict[str, Path]) -> dict[str, quantize.Int8Plan]:
+        """The INT8 plan of each exported graph.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> plan = plans(exports)["keypoint"]  # doctest: +SKIP
+        """
+        return {kind: quantize.plan_int8(onnx.load(str(path))) for kind, path in exports.items()}
+
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_counts(self, kind: str, plans: dict[str, quantize.Int8Plan]) -> None:
+        _, weighted, activations = _HEAD_MODELS[kind]
+        assert (len(plans[kind].weighted), len(plans[kind].activations)) == (weighted, activations)
+
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_heads_stay_float(self, kind: str, plans: dict[str, quantize.Int8Plan]) -> None:
+        head, _, _ = _HEAD_MODELS[kind]
+        quantized = [name for name in plans[kind].weighted if not name.startswith(quantize._QUANTIZED_REGIONS)]
+        assert (quantized, [n for n in plans[kind].weighted if n.startswith(head)]) == ([], [])
+
+    @pytest.mark.parametrize(
+        ("kind", "weighted", "activations"),
+        [("segmentation-small", 86, 122), ("segmentation-medium", 92, 128)],
+    )
+    def test_windowed_attention_of_small_and_medium_is_int8(
+        self, kind: str, weighted: int, activations: int, plans: dict[str, quantize.Int8Plan]
+    ) -> None:
+        # Both counts are pinned: nine windowed blocks add 9 * 4 = 36 activation inputs (the scores' two operands and
+        # the context's two) on top of the weights, and a difference alone would pass a regression that moved the
+        # projections and the attention by the same amount.
+        assert (len(plans[kind].weighted), len(plans[kind].activations)) == (weighted, activations)
+        assert activations - weighted == 9 * 4
+
+    def test_attention_of_large_stays_fp16(self, plans: dict[str, quantize.Int8Plan]) -> None:
+        # Seg Large's 442-token windows are above the 325 limit, so no attention input is added to the weights: both
+        # counts are equal, as for Seg Nano in ``test_counts``.
+        plan = plans["segmentation-large"]
+        assert (len(plan.weighted), len(plan.activations)) == (56, 56)
+
+    @onnx_and_onnxruntime_only
+    @onnxconverter_common_only
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_int8_source_graph_builds_from_the_real_export(
+        self, kind: str, exports: dict[str, Path], plans: dict[str, quantize.Int8Plan]
+    ) -> None:
+        model = onnx.load(str(exports[kind]))
+        shape = [dim.dim_value for dim in model.graph.input[0].type.tensor_type.shape.dim]
+        samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(exports[kind]),
+            calibration_data=samples,
+            max_images=2,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        onnx.checker.check_model(quantized, full_check=True)
+        opsets = {entry.domain: entry.version for entry in quantized.opset_import}
+        assert (opsets[""], [o.name for o in quantized.graph.output]) == (19, [o.name for o in model.graph.output])
+        # One DequantizeLinear per weight of each planned layer, plus one per quantized activation tensor (each of which
+        # has one QuantizeLinear).
+        ops = Counter(node.op_type for node in quantized.graph.node)
+        assert ops["DequantizeLinear"] == len(plans[kind].weighted) + ops["QuantizeLinear"]
+
+    @pytest.mark.parametrize(
+        "kind", ["segmentation", "segmentation-small", "segmentation-medium", "segmentation-large", "keypoint"]
+    )
+    def test_patch_embedding_stays_a_convolution(self, kind: str, exports: dict[str, Path]) -> None:
+        # 12-pixel patches of an RGB image are 432 values, not a multiple of 32, so they stay a convolution.
+        model = onnx.load(str(exports[kind]))
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_keypoint_instance_self_attention_is_left_float(self, plans: dict[str, quantize.Int8Plan]) -> None:
+        assert [n for n in plans["keypoint"].weighted if "_self_attn/" in n] == []
+
+    def test_keypoint_cross_attention_is_quantized(self, plans: dict[str, quantize.Int8Plan]) -> None:
+        # 4 layers x (value, offsets, attention weights, output) projections of the keypoint deformable attention.
+        assert len([n for n in plans["keypoint"].weighted if "/kp_cross_attn/" in n]) == 16
+
+    @pytest.mark.parametrize(("kind", "op", "count"), [("segmentation", "Resize", 1), ("keypoint", "ScatterND", 17)])
+    def test_graph_holds_the_op_the_opset_lift_must_accept(
+        self, kind: str, op: str, count: int, exports: dict[str, Path]
+    ) -> None:
+        graph = onnx.load(str(exports[kind]), load_external_data=False).graph
+        assert sum(node.op_type == op for node in graph.node) == count
+
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_every_mlp_is_quantized_in_pairs(self, kind: str, plans: dict[str, quantize.Int8Plan]) -> None:
+        fc1 = {n.replace("fc1", "fc") for n in plans[kind].weighted if "/mlp/fc1/" in n}
+        fc2 = {n.replace("fc2", "fc") for n in plans[kind].weighted if "/mlp/fc2/" in n}
+        assert (len(fc1), fc1) == (12, fc2)
+
+    @onnxconverter_common_only
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_rewritten_graph_is_valid_onnx(
+        self, kind: str, exports: dict[str, Path], plans: dict[str, quantize.Int8Plan]
+    ) -> None:
+        from rfdetr.export._tensorrt.exporter import fp16_source_graph
+
+        with fp16_source_graph(str(exports[kind])) as fp16_path:
+            model = onnx.load(fp16_path)
+        quantize.insert_qdq(model, plans[kind], dict.fromkeys(plans[kind].activations, 1.0))
+        onnx.checker.check_model(model, full_check=True)
+        onnx.shape_inference.infer_shapes(model, strict_mode=True)
+
+    @onnx_and_onnxruntime_only
+    @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
+    def test_lifted_graph_gives_the_same_outputs(self, kind: str, exports: dict[str, Path]) -> None:
+        model = onnx.load(str(exports[kind]))
+        shape = [dim.dim_value for dim in model.graph.input[0].type.tensor_type.shape.dim]
+        image = np.random.default_rng(3).standard_normal(shape).astype(np.float32)
+        before, after = _outputs_before_and_after_lift(model, {model.graph.input[0].name: image})
+        assert len(before) == len(after) == 3
+        for names, old, new in zip([o.name for o in model.graph.output], before, after):
+            np.testing.assert_allclose(new, old, atol=1e-4, err_msg=names)
+
+
+def _people_photo(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Download supervision's PEOPLE_WALKING photo; return a directory of its crops and flips, and the photo itself.
+
+    Examples:
+        Needs a network download, so it is documentation rather than a doctest:
+
+        >>> calibration_dir, photo_path = _people_photo(tmp_path_factory)  # doctest: +SKIP
+    """
+    from PIL import Image, ImageOps
+    from supervision.assets import ImageAssets, download_assets
+
+    asset_dir = tmp_path_factory.mktemp("int8_assets")
+    cwd = Path.cwd()
+    os.chdir(asset_dir)
+    try:
+        photo = Path(download_assets(ImageAssets.PEOPLE_WALKING)).resolve()
+    finally:
+        os.chdir(cwd)
+    calibration = tmp_path_factory.mktemp("int8_calibration")
+    with Image.open(photo) as image:
+        image = image.convert("RGB")
+        width, height = image.size
+        for index, box in enumerate(
+            [(0, 0, width, height), (0, 0, width // 2, height), (width // 2, 0, width, height)]
+        ):
+            crop = image.crop(box)
+            crop.save(calibration / f"{index}.jpg")
+            ImageOps.mirror(crop).save(calibration / f"{index}_flipped.jpg")
+    return calibration, photo
+
+
+def _photo_input(photo: Path, resolution: int) -> np.ndarray:
+    """Preprocess *photo* to a ``(1, 3, resolution, resolution)`` model input the way ``predict()`` does.
+
+    Examples:
+        >>> import tempfile
+        >>> from PIL import Image
+        >>> with tempfile.TemporaryDirectory() as root:
+        ...     Image.new("RGB", (20, 10)).save(Path(root) / "p.jpg")
+        ...     _photo_input(Path(root) / "p.jpg", 8).shape
+        (1, 3, 8, 8)
+    """
+    from PIL import Image
+
+    from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+
+    with Image.open(photo) as image:
+        return preprocess_to_nchw(image.convert("RGB"), height=resolution, width=resolution)
+
+
+def _assert_confident_detections_match(
+    fp16_engine: Path, int8_engine: Path, example: np.ndarray, batch: int, *, threshold: float = 0.5
+) -> None:
     """Run both engines on *batch* copies of *example*; every confident FP16 detection needs an INT8 match.
 
-    A match is an INT8 box with IoU above 0.85 and a score within 0.1 of the FP16 one, and at least three FP16
-    detections must be confident for the check to mean anything. The INT8 engine must also give every row of the batch
-    the same boxes for its confident queries.
+    A match is an INT8 box with IoU above 0.85 and a score within 0.1 of the FP16 one. An FP16 detection is confident
+    above *threshold*, and at least three must be for the check to mean anything. The INT8 engine must also give
+    every row of the batch the same boxes for its confident queries.
 
     Examples:
         Needs a GPU, TensorRT and two built engines, so it is documentation rather than a doctest:
@@ -2311,7 +3107,7 @@ def _assert_confident_detections_match(fp16_engine: Path, int8_engine: Path, exa
         int8_boxes[:, confident_int8], int8_boxes[:1, confident_int8].expand(batch, -1, -1), atol=2e-2
     ), "rows of one batch differ"
     for row in range(batch):
-        confident = fp16_scores[row] > 0.5
+        confident = fp16_scores[row] > threshold
         assert int(confident.sum()) >= 3, "the photo must give the FP16 engine several confident people"
         # (confident FP16 boxes, all INT8 boxes); several INT8 queries can cover one person, so a match is the closest
         # score among the INT8 boxes that overlap, not the score of the single best-overlapping box.
@@ -2324,6 +3120,63 @@ def _assert_confident_detections_match(fp16_engine: Path, int8_engine: Path, exa
         assert unmatched == [], (
             f"row {row}: confident FP16 detections without an INT8 match (best IoU, score gap): {unmatched}"
         )
+
+
+#: Smallest mask IoU between an FP16 and an INT8 mask for a confident detection, and largest keypoint offset (as a
+#: fraction of the image side) between them. Measured on RFDETRSegNano and RFDETRKeypointPreview (RTX 5070, TensorRT
+#: 11.4): the lowest mask IoU was 0.90 and the largest offset 0.015; the bounds leave room for another GPU.
+_MIN_MASK_IOU, _MAX_KEYPOINT_OFFSET = 0.8, 0.05
+
+#: Score above which an FP16 detection of the PEOPLE_WALKING photo counts as confident, per extra output. The keypoint
+#: model scores the photo's people low (0.62, 0.50, 0.48, 0.43 on RTX 5070), so 0.5 would let a rebuild flip one.
+_CONFIDENCE_THRESHOLD = {"masks": 0.5, "keypoints": 0.4}
+
+
+def _assert_heads_agree(fp16_engine: Path, int8_engine: Path, example: np.ndarray, head: str) -> None:
+    """Run both engines on *example*; every confident FP16 detection needs an INT8 detection with the same *head*.
+
+    A match is the INT8 query whose box has IoU above 0.85 with the FP16 box and whose score is closest within 0.1.
+    For ``head="masks"`` the matched masks (logits above zero) need an IoU of at least :data:`_MIN_MASK_IOU`; for
+    ``head="keypoints"`` the person keypoints' normalized x and y may differ by at most :data:`_MAX_KEYPOINT_OFFSET`.
+    FP16 detections are confident above ``_CONFIDENCE_THRESHOLD[head]``, and at least three must be confident and
+    matched for the check to mean anything.
+
+    Examples:
+        Needs a GPU, TensorRT and two built engines, so it is documentation rather than a doctest:
+
+        >>> _assert_heads_agree(fp16_path, int8_path, example, head="masks")  # doctest: +SKIP
+    """
+    from rfdetr.export._tensorrt.inference import TRTInference
+
+    inputs = {"input": torch.from_numpy(example).cuda()}
+    fp16, int8 = (
+        {
+            name: value.float().cpu()
+            for name, value in TRTInference(str(path), sync_mode=True, device="cuda:0")(inputs).items()
+        }
+        for path in (fp16_engine, int8_engine)
+    )
+    for outputs in (fp16, int8):
+        assert torch.isfinite(outputs[head]).all(), f"{head} hold NaN or infinite values"
+    fp16_scores = fp16["labels"][0].sigmoid().max(dim=-1).values
+    int8_scores = int8["labels"][0].sigmoid().max(dim=-1).values
+    confident = torch.nonzero(fp16_scores > _CONFIDENCE_THRESHOLD[head]).flatten()
+    overlaps = box_iou(box_cxcywh_to_xyxy(fp16["dets"][0][confident]), box_cxcywh_to_xyxy(int8["dets"][0]))[0]
+    gaps = (int8_scores[None, :] - fp16_scores[confident][:, None]).abs().masked_fill(overlaps <= 0.85, float("inf"))
+    matched = [
+        (int(q), int(m)) for q, m, gap in zip(confident, gaps.argmin(dim=1), gaps.min(dim=1).values) if gap < 0.1
+    ]
+    assert len(matched) >= 3, f"only {len(matched)} of {len(confident)} confident FP16 detections have an INT8 match"
+    for query, other in matched:
+        if head == "masks":
+            fp16_mask, int8_mask = fp16["masks"][0, query] > 0, int8["masks"][0, other] > 0
+            agreement = float((fp16_mask & int8_mask).sum() / (fp16_mask | int8_mask).sum().clamp(min=1))
+            assert agreement >= _MIN_MASK_IOU, f"query {query}: mask IoU {agreement:.3f}"
+        else:
+            offset = float(
+                (fp16["keypoints"][0, query, 17:34, :2] - int8["keypoints"][0, other, 17:34, :2]).abs().max()
+            )
+            assert offset <= _MAX_KEYPOINT_OFFSET, f"query {query}: keypoint offset {offset:.3f}"
 
 
 @tensorrt_only
@@ -2342,32 +3195,10 @@ class TestInt8EndToEnd:
 
             >>> calibration_dir, example = photo(tmp_path_factory)  # doctest: +SKIP
         """
-        from PIL import Image, ImageOps
-        from supervision.assets import ImageAssets, download_assets
-
         from rfdetr import RFDETRNano
-        from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 
-        asset_dir = tmp_path_factory.mktemp("int8_assets")
-        cwd = Path.cwd()
-        os.chdir(asset_dir)
-        try:
-            photo = Path(download_assets(ImageAssets.PEOPLE_WALKING)).resolve()
-        finally:
-            os.chdir(cwd)
-        calibration = tmp_path_factory.mktemp("int8_calibration")
-        with Image.open(photo) as image:
-            image = image.convert("RGB")
-            width, height = image.size
-            for index, box in enumerate(
-                [(0, 0, width, height), (0, 0, width // 2, height), (width // 2, 0, width, height)]
-            ):
-                crop = image.crop(box)
-                crop.save(calibration / f"{index}.jpg")
-                ImageOps.mirror(crop).save(calibration / f"{index}_flipped.jpg")
-            resolution = int(RFDETRNano().model.resolution)
-            example = preprocess_to_nchw(image, height=resolution, width=resolution)
-        return calibration, example
+        calibration, image = _people_photo(tmp_path_factory)
+        return calibration, _photo_input(image, int(RFDETRNano().model.resolution))
 
     @pytest.fixture(scope="class")
     def engines(
@@ -2452,3 +3283,54 @@ class TestInt8EndToEnd:
             verbose=False,
         )
         _assert_confident_detections_match(Path(fp16), Path(int8), example, batch=batch)
+
+
+@tensorrt_only
+@pytest.mark.gpu
+@pytest.mark.integration
+@pytest.mark.e2e_tensorrt
+class TestSegmentationAndKeypointInt8EndToEnd:
+    """Real FP16 and INT8 engines of the pretrained segmentation and keypoint models agree on a photo."""
+
+    @pytest.fixture(scope="class", params=["RFDETRSegNano", "RFDETRKeypointPreview"])
+    def engines(
+        self, request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+    ) -> tuple[Path, Path, np.ndarray, str]:
+        """Export FP16 and INT8 engines of the model at batch 1, calibrating on the photo's crops and flips.
+
+        Returns the two engine paths, the photo as that model's input, and the name of its extra output.
+
+        Examples:
+            A pytest fixture, and it needs a GPU, TensorRT and a network download.
+
+            >>> fp16_engine, int8_engine, example, head = engines(request, tmp_path_factory)  # doctest: +SKIP
+        """
+        import rfdetr
+
+        calibration, photo = _people_photo(tmp_path_factory)
+        model = getattr(rfdetr, request.param)()
+        out_dir = tmp_path_factory.mktemp("int8_head_engines")
+        fp16 = model.export(output_dir=str(out_dir / "fp16"), format="tensorrt", verbose=False)
+        int8 = model.export(
+            output_dir=str(out_dir / "int8"),
+            format="tensorrt",
+            quantization="int8",
+            calibration_data=str(calibration),
+            verbose=False,
+        )
+        head = "masks" if request.param == "RFDETRSegNano" else "keypoints"
+        return Path(fp16), Path(int8), _photo_input(photo, int(model.model.resolution)), head
+
+    def test_engine_keeps_the_extra_output(self, engines: tuple[Path, Path, np.ndarray, str]) -> None:
+        from rfdetr.export._tensorrt.inference import TRTInference
+
+        _, int8, _, head = engines
+        assert TRTInference(str(int8), sync_mode=True, device="cuda:0").get_output_names() == ["dets", "labels", head]
+
+    def test_confident_detections_match_fp16(self, engines: tuple[Path, Path, np.ndarray, str]) -> None:
+        fp16, int8, example, head = engines
+        _assert_confident_detections_match(fp16, int8, example, batch=1, threshold=_CONFIDENCE_THRESHOLD[head])
+
+    def test_head_matches_fp16(self, engines: tuple[Path, Path, np.ndarray, str]) -> None:
+        fp16, int8, example, head = engines
+        _assert_heads_agree(fp16, int8, example, head)

@@ -8,8 +8,9 @@
 TensorRT 11 has no INT8 builder flag and no calibrator: an INT8 engine is a strongly typed build of a graph that
 carries its own ``QuantizeLinear``/``DequantizeLinear`` pairs. Where those pairs sit decides whether the engine is
 faster than FP16 at all, so the placement here is not "quantize every matrix multiply". It follows what was measured
-on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token limit on Small to Large (TensorRT
-11.3); issue #1024:
+on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), for the attention token limit on Small to Large (TensorRT
+11.3), for the segmentation and keypoint models on an RTX 5070 with TensorRT 11.4, and for the patch-embedding matrix
+multiply on Nano to Large with TensorRT 11.4 only; issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -18,21 +19,26 @@ on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token
   multiplies of a block whose attention runs in INT8, below). The output of
   each quantized operation stays in floating point, so TensorRT fuses the bias, LayerScale and residual add into the
   INT8 kernel's epilogue and the quantize step into the preceding LayerNorm or GELU. The projector, the two-stage
-  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing.
+  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing. The mask and
+  keypoint heads sit outside the quantized regions and stay FP16 too; quantizing them was not measured.
 * **No convolution whose input channels TensorRT would pad.** TensorRT ran the INT8 patch embedding on the 3-channel
   image padded to 32 channels and stored the 29 added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant,
-  read on every run: at batch 8 the engine was 110 MB instead of 51 MB and INT8 1.21x instead of 1.37x faster than
-  FP16. Only that convolution was measured; any convolution whose input channels are not a multiple of 32 is kept FP16
-  as a precaution. (The FP16 convolution pads too, to 4 or 8 channels picked per build, so both engines still store 1
-  or 5 zero channels per image.)
+  read on every run: at batch 8 the engine was about twice as large and INT8 clearly less far ahead of FP16. Only that
+  convolution was measured; any convolution whose input channels are not a multiple of 32 is kept FP16 as a
+  precaution. (The FP16 convolution pads too, to 4 or 8 channels picked per build, so an engine whose patch embedding
+  stays a convolution still stores 1 or 5 zero channels per image.) The 16-pixel patch embedding of the detection
+  models is rewritten instead: :func:`_patch_embedding_as_matmul` turns it into a matrix multiply over ``3 * 16 * 16``
+  values per patch, which has no channels to pad and takes INT8 with the rest of the backbone. The 12-pixel patches of
+  the segmentation and keypoint models are 432 values, not a multiple of 32, and stay a convolution.
 * **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
   that was measured to run faster for it (head size 16, 32 or 64 and at most 325 tokens: the windowed backbone blocks
-  of Nano, Small and Medium) gets Q/DQ on both batched matrix multiplies as well as on its q/k/v/output projections,
-  which keeps attention fused in INT8. Any other block (Large's windowed blocks, the global backbone blocks, the decoder
-  self-attention) keeps its projections and batched multiplies in FP16: quantizing
-  only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the fused FP16 kernel, and
-  a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output into that kernel, which
-  returns wrong values.
+  of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both batched matrix
+  multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other block (the
+  windowed blocks of detection Large, Seg Nano, Seg Large and Keypoint Preview, the global backbone blocks, the decoder
+  self-attention and the keypoint decoder's ``kp_inst_self_attn``) keeps its projections and batched multiplies in
+  FP16: quantizing only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the
+  fused FP16 kernel, and a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output
+  into that kernel, which returns wrong values.
 * **A GELU never feeds an FP16 consumer from an INT8 multiply.** TensorRT 10.16 and 11.3 return NaN for an INT8
   ``MatMul`` -> bias -> GELU -> FP16 consumer chain, so an MLP's first projection is quantized only when its second one
   is.
@@ -50,7 +56,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -70,9 +76,10 @@ logger = get_logger()
 #: The only quantization mode a TensorRT export accepts besides ``None`` (FP16 or FP32, chosen with ``fp16``).
 INT8 = "int8"
 
-#: The graph outputs an INT8 export is measured for: a detector. Segmentation and keypoint models add outputs and are
-#: refused.
-_INT8_OUTPUT_NAMES = ("dets", "labels")
+#: The graph outputs an INT8 export is measured for: a detector's, plus a segmentation model's mask logits or a keypoint
+#: model's keypoints. The heads that produce them sit outside the quantized regions and stay FP16. Any other set (a
+#: backbone-only export, a graph with both outputs) is refused.
+_INT8_OUTPUT_NAMES = (("dets", "labels"), ("dets", "labels", "masks"), ("dets", "labels", "keypoints"))
 
 #: Largest magnitude a symmetric INT8 value takes; TensorRT requires a zero point of 0.
 _INT8_MAX = 127
@@ -104,18 +111,27 @@ _AXES_ATTRIBUTE_REDUCTIONS = frozenset(
 )
 
 #: Ops whose schema changed between opset 17 and :data:`_FP16_QDQ_OPSET` only by accepting more types (float8, strings)
-#: or a new attribute whose default keeps the old behavior, so lifting the opset import alone keeps their meaning.
+#: or a new attribute whose default keeps the old behavior (``Cast``, ``CastLike``: ``saturate``), so lifting the opset
+#: import alone keeps their meaning.
 _TYPE_ONLY_CHANGES = frozenset(
     {"Cast", "CastLike", "Constant", "Equal", "Identity", "If", "Loop", "Reshape", "Scan", "Shape", "Size"}
 )
+
+#: Ops whose schema changed between these opsets and :data:`_FP16_QDQ_OPSET` only by a new attribute whose default keeps
+#: the old behavior (``Resize``: ``antialias``, ``axes``, ``keep_aspect_ratio_policy``), a new value of an attribute
+#: (``Resize``: the ``half_pixel_symmetric`` coordinate mode, which an older graph cannot carry; ``ScatterND``:
+#: ``reduction`` ``max`` and ``min``) or more types. A graph at a lower opset is checked as any other op: before opset
+#: 11 ``Resize`` took ``scales`` as its second input, opset 11 inserted ``roi`` ahead of it, and opsets 11 and 12 still
+#: accept the ``tf_half_pixel_for_nn`` coordinate mode that opset 13 removed.
+_UNCHANGED_SINCE = {"Resize": 13, "ScatterND": 16}
 
 #: Head sizes TensorRT's INT8 fused-attention kernel accepts (TensorRT 11.3 "Attention fusion", SM75-90, SM120-121).
 _FUSED_INT8_HEAD_SIZES = frozenset({16, 32, 64})
 
 #: Longest query/key sequence that gets INT8 attention. TensorRT's INT8 fused-attention kernel accepts up to 512; this
-#: is the largest window measured to pay (Medium: 5% faster from a CUDA graph, about equal with a plain call, -0.28 AP).
-#: Large's 485-token windows ran no faster than with FP16 attention and lost 1.0 AP; 326-484 is not measured (RTX 5070,
-#: TensorRT 11.3, COCO val2017).
+#: is the largest window measured to pay (Medium: a little faster from a CUDA graph, about equal with a plain call, at a
+#: small cost in AP). Large's 485-token windows ran no faster than with FP16 attention and lost more AP; 326-484 is not
+#: measured (RTX 5070, TensorRT 11.3, COCO val2017).
 _INT8_ATTENTION_MAX_TOKENS = 325
 
 #: Node-name prefixes of the regions whose weight-bearing operations are quantized: backbone encoder and decoder. They
@@ -123,6 +139,9 @@ _INT8_ATTENTION_MAX_TOKENS = 325
 #: under the current module attribute paths; another exporter or a renamed module matches no layer, and the planner
 #: refuses.
 _QUANTIZED_REGIONS = ("/backbone/backbone.0/encoder/", "/transformer/decoder/")
+
+#: Node-name prefix of the backbone encoder, the first of the quantized regions: the patch embedding sits in it.
+_BACKBONE_ENCODER = _QUANTIZED_REGIONS[0]
 
 #: Node-name prefix of the region whose attention may run as INT8 fused attention. The decoder self-attention fits the
 #: kernel's size limits too, but TensorRT does not fuse it in INT8 and the unfused INT8 path is slower than FP16.
@@ -137,6 +156,8 @@ _PROJECTION_PASSTHROUGH = frozenset(
 _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
 
 #: TensorRT padded the INT8 patch embedding's input channels to a multiple of this and stored the padding in the engine.
+#: A patch embedding is also rewritten as a matrix multiply only when its flattened patch is a multiple of this, a
+#: precaution that Seg Small's 432-value patches back: as a matrix multiply they ran about 1% faster, with a lower AP.
 _INT8_CONV_CHANNEL_MULTIPLE = 32
 
 #: Ops that make a path a GELU.
@@ -277,6 +298,228 @@ def _dims(shapes: Mapping[str, Any], tensor: str) -> tuple[int | None, ...] | No
     if info is None or not info.type.tensor_type.HasField("shape"):
         return None
     return tuple(d.dim_value if d.HasField("dim_value") else None for d in info.type.tensor_type.shape.dim)
+
+
+class _PatchEmbedding(NamedTuple):
+    """The shape of a patch embedding: the image it reads, the patches it cuts and the channels it produces."""
+
+    batch: int
+    channels: int
+    height: int
+    width: int
+    patch: int
+    out_channels: int
+
+
+def _patch_kernel(node: Any, initializers: Mapping[str, Any]) -> tuple[int, int, int] | None:
+    """Return ``(patch, channels, out_channels)`` when *node*'s kernel cuts non-overlapping patches, else ``None``.
+
+    A patch embedding is an undilated ``Conv`` whose square kernel equals its stride and which has no padding. The
+    flattened patch of ``channels * patch * patch`` values must also be a multiple of
+    :data:`_INT8_CONV_CHANNEL_MULTIPLE`, so that its matrix multiply needs no padding either. Whether the kernel spans
+    every input channel (it does not in a grouped convolution) is for :func:`_patch_image`, which sees the image.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> weights = {"w": numpy_helper.from_array(np.zeros((8, 2, 4, 4), np.float32), "w")}
+        >>> conv = helper.make_node("Conv", ["image", "w"], ["y"], "patch", kernel_shape=[4, 4], strides=[4, 4])
+        >>> _patch_kernel(conv, weights)
+        (4, 2, 8)
+        >>> _patch_kernel(helper.make_node("Conv", ["image", "w"], ["y"], "patch"), weights) is None
+        True
+    """
+    from onnx import helper
+
+    attributes = {a.name: helper.get_attribute_value(a) for a in node.attribute}
+    out_channels, channels, *kernel = (int(d) for d in initializers[node.input[1]].dims)
+    patch = kernel[0]
+    plain = (
+        kernel[0] == kernel[1]
+        and list(attributes.get("strides", [1, 1])) == kernel
+        and list(attributes.get("dilations", [1, 1])) == [1, 1]
+        and not any(attributes.get("pads", [0]))
+        and attributes.get("auto_pad", b"NOTSET") in (b"NOTSET", "NOTSET")
+    )
+    if not plain or (channels * patch * patch) % _INT8_CONV_CHANNEL_MULTIPLE:
+        return None
+    return patch, channels, out_channels
+
+
+def _patch_image(dims: tuple[int | None, ...] | None, kernel: tuple[int, int, int]) -> _PatchEmbedding | None:
+    """Return the patch embedding that *kernel* makes of an image of shape *dims*, or ``None`` when it does not fit.
+
+    The image must be ``(batch, channels, height, width)`` with every size known and non-empty, the channels must be
+    the ones the kernel spans, and the patches must tile the height and the width exactly.
+
+    Examples:
+        >>> _patch_image((1, 2, 8, 12), (4, 2, 8))
+        _PatchEmbedding(batch=1, channels=2, height=8, width=12, patch=4, out_channels=8)
+        >>> _patch_image((1, 2, 8, 10), (4, 2, 8)) is None, _patch_image((1, 2, None, 8), (4, 2, 8)) is None
+        (True, True)
+    """
+    patch, channels, out_channels = kernel
+    known = [d for d in dims or () if d]  # drops a symbolic (None) and an empty (0) dimension
+    if len(known) != 4 or known[1] != channels or known[2] % patch or known[3] % patch:
+        return None
+    return _PatchEmbedding(known[0], channels, known[2], known[3], patch, out_channels)
+
+
+def _patch_matmul_nodes(
+    conv: Any,
+    matmul_name: str,
+    patches: _PatchEmbedding,
+    graph: Any,
+    weight: NDArray[Any],
+    taken: set[str],
+    node_names: set[str],
+) -> list[Any]:
+    """Build the nodes that compute *conv*'s output as a ``MatMul`` over flattened patches.
+
+    The new constants are appended to *graph*'s initializers. The patches are cut with a ``Reshape`` and a
+    ``Transpose`` into rows of ``(channel, row, column)`` values, which is the order a ``Conv`` kernel flattens in, so
+    the ``MatMul`` against the transposed, flattened kernel is the same sum. The last node writes *conv*'s own output
+    tensor, so everything downstream (a graph output included) is untouched.
+
+    Args:
+        conv: The ``Conv`` being replaced.
+        matmul_name: Name of the new ``MatMul``, which the INT8 plan finds by its prefix.
+        patches: The shape :func:`_patch_image` found for *conv*.
+        graph: The graph holding *conv*.
+        weight: *conv*'s kernel, ``(out_channels, channels, patch, patch)``, in the dtype the graph computes in.
+        taken: Tensor names already bound in the graph, extended with the new ones.
+        node_names: Node names already in the graph, extended with the new ones.
+
+    Returns:
+        The replacement nodes, in order.
+    """
+    from onnx import helper, numpy_helper
+
+    batch, channels, height, width, patch, out_channels = patches
+    stem = matmul_name.rsplit("/", 1)[0]
+    rows, cols = (height // patch) * (width // patch), channels * patch * patch
+    tensors = {
+        key: _unique_name(f"{stem}/{key}", taken)
+        for key in (
+            "cut_shape",
+            "cut",
+            "ordered",
+            "rows_shape",
+            "rows",
+            "matrix",
+            "product",
+            "biased",
+            "image_shape",
+            "image",
+        )
+    }
+    constants = {
+        "cut_shape": [batch, channels, height // patch, patch, width // patch, patch],
+        "rows_shape": [batch, rows, cols],
+        "image_shape": [batch, height // patch, width // patch, out_channels],
+    }
+    for key, dims in constants.items():
+        graph.initializer.append(numpy_helper.from_array(np.array(dims, np.int64), tensors[key]))
+    graph.initializer.append(
+        numpy_helper.from_array(np.ascontiguousarray(weight.reshape(out_channels, -1).T), tensors["matrix"])
+    )
+
+    def node(op_type: str, inputs: list[str], output: str, name: str, **attributes: Any) -> Any:
+        """Build one replacement node called ``<stem>/<name>``, which no other node in the graph has."""
+        return helper.make_node(op_type, inputs, [output], _unique_name(f"{stem}/{name}", node_names), **attributes)
+
+    nodes = [
+        node("Reshape", [conv.input[0], tensors["cut_shape"]], tensors["cut"], "Cut"),
+        node("Transpose", [tensors["cut"]], tensors["ordered"], "Order", perm=[0, 2, 4, 1, 3, 5]),
+        node("Reshape", [tensors["ordered"], tensors["rows_shape"]], tensors["rows"], "Rows"),
+        helper.make_node("MatMul", [tensors["rows"], tensors["matrix"]], [tensors["product"]], matmul_name),
+    ]
+    node_names.add(matmul_name)
+    result = tensors["product"]
+    if len(conv.input) > 2 and conv.input[2]:
+        result = tensors["biased"]
+        nodes.append(node("Add", [tensors["product"], conv.input[2]], result, "Bias"))
+    nodes.append(node("Reshape", [result, tensors["image_shape"]], tensors["image"], "Image"))
+    nodes.append(node("Transpose", [tensors["image"]], conv.output[0], "Channels", perm=[0, 3, 1, 2]))
+    return nodes
+
+
+def _drop_unread_initializers(graph: Any, names: Iterable[str]) -> None:
+    """Remove the initializers called *names* that no node, subgraph, graph input or graph output refers to any more.
+
+    Examples:
+        >>> from onnx import TensorProto, helper, numpy_helper
+        >>> graph = helper.make_graph([helper.make_node("Relu", ["x"], ["y"])], "g", [], [],
+        ...     [numpy_helper.from_array(np.zeros(1, np.float32), name) for name in ("old", "x")])
+        >>> _drop_unread_initializers(graph, ["old", "x"])
+        >>> [init.name for init in graph.initializer]
+        ['x']
+    """
+    read = {name for nested in _iter_graphs(graph) for node in nested.node for name in node.input}
+    read |= {value.name for value in (*graph.input, *graph.output)}
+    for initializer in [init for init in graph.initializer if init.name in set(names) - read]:
+        graph.initializer.remove(initializer)
+
+
+def _patch_embedding_as_matmul(model: Any) -> int:
+    """Rewrite the backbone's patch-embedding ``Conv`` as a ``MatMul`` over flattened patches, in place.
+
+    TensorRT pads a convolution's 3 input channels, and stores the padding in the engine (see
+    :func:`_pads_input_channels`), so the patch embedding is the one backbone layer that has to stay FP16 as a ``Conv``.
+    As a matrix multiply over ``channels * patch * patch`` values per patch (768 for an RGB image and 16-pixel patches)
+    it has nothing to pad and runs in INT8 like the other backbone layers. The two compute the same sum.
+
+    Only a ``Conv`` inside the backbone encoder that :func:`_pads_input_channels` would keep FP16 and that
+    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten: RF-DETR's detection models (16-pixel patches),
+    not its segmentation and keypoint models (12-pixel patches, 432 values per patch). The shape inference that finds
+    the image size runs only when such a ``Conv`` exists. A kernel that is also a graph input is left alone, since it
+    can be replaced at run time. The kernel of a replaced ``Conv`` is dropped when nothing else reads it (one reached
+    through an ``Identity`` alias is kept). The rewrite is deterministic for a given name, so applying it to the FP32
+    graph that is planned and calibrated and to the FP16 graph that is quantized yields the same ``MatMul`` name.
+
+    Args:
+        model: ``ModelProto`` to rewrite; left untouched when it holds no such layer.
+
+    Returns:
+        The number of layers rewritten.
+    """
+    import onnx
+    from onnx import numpy_helper
+
+    graph = model.graph
+    initializers = _constant_weights(graph)
+    counts = Counter(node.name for node in graph.node)
+    overridable = {value.name for value in graph.input}  # a kernel listed here can be replaced at run time
+    candidates = [
+        (node, kernel)
+        for node in graph.node
+        if node.op_type == "Conv"
+        and node.name.startswith(_BACKBONE_ENCODER)
+        and counts[node.name] == 1
+        and node.input[1] not in overridable
+        and _weight_name(node, initializers)
+        and _pads_input_channels(node, initializers)
+        and (kernel := _patch_kernel(node, initializers))
+    ]
+    if not candidates:
+        return 0
+    inferred = onnx.shape_inference.infer_shapes(model)
+    shapes = {v.name: v for v in (*inferred.graph.value_info, *inferred.graph.input, *inferred.graph.output)}
+    taken, node_names = _tensor_names(graph), set(counts)
+    replacements: dict[str, list[Any]] = {}
+    for conv, kernel in candidates:
+        patches = _patch_image(_dims(shapes, conv.input[0]), kernel)
+        matmul_name = f"{conv.name.rsplit('/', 1)[0]}/MatMul"
+        if patches is None or matmul_name in node_names:
+            continue
+        weight = numpy_helper.to_array(initializers[conv.input[1]])
+        replacements[conv.name] = _patch_matmul_nodes(conv, matmul_name, patches, graph, weight, taken, node_names)
+    if replacements:
+        kernels = [conv.input[1] for conv, _ in candidates if conv.name in replacements]
+        ordered = [new for node in graph.node for new in replacements.get(node.name, [node])]
+        del graph.node[:]
+        graph.node.extend(ordered)
+        _drop_unread_initializers(graph, kernels)
+    return len(replacements)
 
 
 def _trace_projection(start: str, producers: Mapping[str, Any], initializers: Mapping[str, Any]) -> str | None:
@@ -452,7 +695,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
                 raise ValueError(
                     f"Cannot place INT8 safely: the Softmax {softmax.name!r} feeds a matrix multiply of two "
                     "activations but is not a recognised attention block. INT8 TensorRT export applies to RF-DETR "
-                    "detector exports only."
+                    "model exports only (detection, segmentation or keypoint)."
                 )
             continue
         sources = (scores.input[0], scores.input[1], context.input[1])
@@ -511,7 +754,7 @@ def plan_int8(model: Any) -> Int8Plan:
         The plan, in graph order.
 
     Raises:
-        ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR detector export; if an FP16
+        ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR model export; if an FP16
             attention block's output projection cannot be identified; or if a top-level ``Softmax`` feeds a
             multiply of two activations without being a recognised attention block.
     """
@@ -549,7 +792,8 @@ def plan_int8(model: Any) -> Int8Plan:
             # cannot be followed to its projection cannot be kept out of INT8 with certainty.
             raise ValueError(
                 f"Cannot place INT8 safely: the output projection of the FP16 attention at {block.scores.name!r} "
-                "could not be identified. INT8 TensorRT export applies to RF-DETR detector exports only."
+                "could not be identified. INT8 TensorRT export applies to RF-DETR model exports only (detection, "
+                "segmentation or keypoint)."
             )
         weighted -= block.projections
         if in_region and not block.int8:
@@ -575,8 +819,8 @@ def plan_int8(model: Any) -> Int8Plan:
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "
-            "RF-DETR detector exports only. Layers are found by the node-name prefixes "
-            f"{list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
+            "RF-DETR model exports only (detection, segmentation or keypoint). Layers are found by the node-name "
+            f"prefixes {list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
         )
     order = {name: index for index, name in enumerate(names)}
     activations = sorted(
@@ -771,7 +1015,8 @@ def _lift_opset(model: Any) -> None:
 
     FP16 quantization scales need opset 19, while RF-DETR exports at 17 by default. Between the two, reductions moved
     ``axes`` from an attribute to an input and ``Split`` gained ``num_outputs``; both are rewritten to the new form. Any
-    other op whose schema changed in that range is refused rather than lifted unchecked.
+    other op whose schema changed in that range is refused rather than lifted unchecked, except the ops of
+    :data:`_TYPE_ONLY_CHANGES` and, from the opset in :data:`_UNCHANGED_SINCE`, ``Resize`` and ``ScatterND``.
 
     Args:
         model: ``ModelProto`` to lift; left untouched when its opset is already high enough.
@@ -808,7 +1053,9 @@ def _lift_opset(model: Any) -> None:
                 unsized = len(node.input) < 2 or not node.input[1]
                 if unsized and not any(attribute.name == "num_outputs" for attribute in node.attribute):
                     node.attribute.append(helper.make_attribute("num_outputs", len(node.output)))
-            elif node.op_type not in _TYPE_ONLY_CHANGES:
+            elif node.op_type not in _TYPE_ONLY_CHANGES and current < _UNCHANGED_SINCE.get(
+                node.op_type, _FP16_QDQ_OPSET
+            ):
                 try:
                     changed = (
                         defs.get_schema(node.op_type, current).since_version
@@ -946,7 +1193,7 @@ def insert_qdq(model: Any, plan: Int8Plan, ranges: Mapping[tuple[str, int], floa
 
 
 def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
-    """Refuse a graph INT8 cannot start from: quantized, not float32, not a static image, or not a detector.
+    """Refuse a graph INT8 cannot start from: quantized, not float32, not a static image, or not a supported model.
 
     Each would otherwise fail late or point the wrong way: a quantized graph plans nothing to quantize, and an FP16
     graph is calibrated in full before the FP16 cast refuses it with advice (``fp16=False``) that an INT8 request
@@ -960,8 +1207,9 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
         ValueError: If the graph holds Q/DQ nodes, FP16 inputs or weights, or a dynamic batch axis, lists an
             initializer as a graph input too, or its first input is not rank 4 with fixed, positive channels, height
             and width.
-        NotImplementedError: If its outputs are not exactly a detector's ``dets`` and ``labels`` (a segmentation,
-            keypoint or backbone-only export), matching what ``RFDETR.export`` raises for such a model.
+        NotImplementedError: If its outputs are not a detector's ``dets`` and ``labels``, optionally followed by
+            ``masks`` or ``keypoints`` (so a backbone-only export or any other set is refused), the type
+            :meth:`TensorRTExporter._convert` raises for the same set.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -1000,11 +1248,12 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
             "the ONNX graph with keep_initializers_as_inputs=False."
         )
     outputs = tuple(output.name for output in model.graph.output)
-    if outputs != _INT8_OUTPUT_NAMES:
+    if outputs not in _INT8_OUTPUT_NAMES:
         # The type _convert raises for the same model before its ONNX export, so build_engine callers catch one type.
         raise NotImplementedError(
-            f"'{onnx_path}' outputs {list(outputs)}, and quantization='int8' is measured for detection models only, "
-            f"whose outputs are {list(_INT8_OUTPUT_NAMES)}. Build this graph with quantization=None."
+            f"'{onnx_path}' outputs {list(outputs)}, and quantization='int8' is measured for detection, segmentation "
+            f"and keypoint models only, whose outputs are {[list(names) for names in _INT8_OUTPUT_NAMES]}. Build this "
+            "graph with quantization=None."
         )
     # Calibration preprocesses images to the input's own channels, height and width, so each must be a known size.
     image = model.graph.input[0]
@@ -1049,10 +1298,13 @@ def int8_source_graph(
             infinite weight it would quantize (checked before calibration); or if the calibration data is unusable,
             holds a NaN or infinite value, or gives a range that is not finite (a NaN computed inside the graph
             included) or does not fit an FP16 scale; or if a calibration
-            image cannot be identified as an image (the message names the file). An image Pillow identifies but
-            cannot decode (a truncated file) raises Pillow's own ``OSError``, which does not name the file.
-        NotImplementedError: If the graph's outputs are not exactly a detector's ``dets`` and ``labels`` (a
-            segmentation, keypoint or backbone-only export), as ``RFDETR.export`` raises for such a model.
+            image cannot be identified as an image (the message names the file); or if *fp16_graph* returns a copy
+            that lacks a node the plan quantizes, which the real FP16 cast cannot do. An image
+            Pillow identifies but cannot decode (a truncated file) raises Pillow's own ``OSError``, which does not
+            name the file.
+        NotImplementedError: If the graph's outputs are not a detector's ``dets`` and ``labels``, optionally followed
+            by ``masks`` or ``keypoints`` (so a backbone-only export or any other set is refused), the type
+            :meth:`TensorRTExporter._convert` raises for the same set.
     """
     import onnx
     from onnx import numpy_helper
@@ -1063,6 +1315,8 @@ def int8_source_graph(
     _refuse_unquantizable_source(source, onnx_path)
     # Lifting the FP32 source too keeps its meaning and makes an unliftable graph fail here, before calibration.
     _lift_opset(source)
+    # Before the plan, so that the patch embedding is planned and calibrated as the matrix multiply it becomes.
+    rewritten = _patch_embedding_as_matmul(source)
     plan = plan_int8(source)
     # A NaN or infinite weight gets a NaN or infinite FP16 scale that only TensorRT would notice, after calibration.
     weights = _constant_weights(source.graph)
@@ -1099,6 +1353,15 @@ def int8_source_graph(
 
     with fp16_graph(onnx_path, dynamic_batch=dynamic_batch) as fp16_path:
         model = onnx.load(fp16_path)
+    _lift_opset(model)  # as the FP32 source was, before the rewrite adds its nodes
+    if rewritten:
+        _patch_embedding_as_matmul(model)  # the same rewrite, so that the planned node names exist in this graph
+    missing = sorted({name for name, _ in plan.activations} - {node.name for node in model.graph.node})
+    if missing:
+        raise ValueError(
+            f"The FP16 copy of '{onnx_path}' lacks {len(missing)} node(s) the INT8 plan quantizes, e.g. {missing[0]!r} "
+            "(the patch embedding is rewritten in both graphs), so the plan cannot be applied to it."
+        )
     insert_qdq(model, plan, ranges)
     stem = os.path.basename(os.path.splitext(onnx_path)[0])
     handle, int8_path = tempfile.mkstemp(prefix=f"{stem}.int8-", suffix=".onnx", dir=os.path.dirname(onnx_path) or ".")

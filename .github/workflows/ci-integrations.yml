@@ -15,6 +15,38 @@ env:
   UV_TORCH_BACKEND: "cpu"
 
 jobs:
+  cache-model-weights:
+    name: Download fresh model weights
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RF_HOME: ${{ github.workspace }}/.roboflow
+      HF_HOME: ${{ github.workspace }}/.huggingface
+      HF_HUB_CACHE: ${{ github.workspace }}/.huggingface/hub
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.13"
+          activate-environment: true
+          enable-cache: false
+
+      - name: 🚀 Install Packages (plus extras)
+        run: uv pip install -e ".[plus]"
+
+      - name: 📥 Download fresh weights by instantiating every model
+        run: python .github/scripts/download_model_weights.py
+
+      - name: 💾 Save fresh shared model weights
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "true"
+
   try-all-models:
     runs-on: ${{ matrix.os }}
     concurrency:
@@ -196,6 +228,11 @@ jobs:
       # always tests/, selection is always by marker (never a format-specific file list or
       # `.`) — see the job-level comment above for why. Every row collects coverage; flags
       # tag it by format/os/python so Codecov keeps each row's contribution distinct.
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
+
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
         run: |
           uv run --no-sync pytest tests/ -m "e2e_${{ matrix.format }}" -n 1 \
@@ -204,6 +241,7 @@ jobs:
             --durations=20
 
       - name: Upload coverage to Codecov
+        continue-on-error: true
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -220,7 +258,7 @@ jobs:
   tensorrt-parity:
     name: TensorRT parity
     # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
-    # integration jobs this runs on the self-hosted GPU runner (same as ci-tests-gpu.yml).
+    # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml).
     runs-on: Roboflow-GPU-VM-Runner
     # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
     timeout-minutes: 35
@@ -342,6 +380,11 @@ jobs:
               env_file.write(f"LD_LIBRARY_PATH={lib_dir}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}\n")
         shell: python
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
+
       - name: 🧪 Run TensorRT end-to-end parity tests
         # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
         # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
@@ -431,6 +474,11 @@ jobs:
             echo "::error::Required secrets are not set: ${missing[*]}"
             exit 1
           fi
+
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🔎 Deploy a real model and poll for trained status
         env:

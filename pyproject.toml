@@ -212,7 +212,7 @@ visual = [
     "psutil",  # host-memory reader behind rfdetr.export.benchmark.measure_memory() on every non-CUDA device
     "seaborn",
 ]
-cli = ["jsonargparse[signatures]>=4.27.7"]
+cli = ["jsonargparse[signatures]>=4.46.0"]
 plus = ["rfdetr_plus>=1.1.0, <2.0.0"]
 # XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
 # torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
@@ -298,6 +298,7 @@ docs = [
     "pymdown-extensions<12.2",  # 12.2 requires md in Highlight.__init__, which mkdocstrings does not pass.
     "mkdocs-redirects>=1.2.2,<1.2.3",  # 1.2.3 adds ProperDocs and warns on MkDocs builds.
     "mkdocstrings>=0.25.2,<0.30.0",
+    "pymdown-extensions<12.2",  # 12.2 requires an argument not passed by mkdocstrings below 0.30.
     "mkdocstrings-python>=1.10.9",
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
@@ -569,4 +570,6 @@ overrides = [
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
+  # Supported older plus releases lack PE exports; newer releases make the guarded import's ignore unused.
+  { module = ["rfdetr.platform.models"], warn_unused_ignores = false },
 ]

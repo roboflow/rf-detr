@@ -2369,8 +2369,9 @@ class RFDETR:
                   is written, so the ``.xml`` / ``.bin`` pair is already 8-bit, and **requires** *calibration_data*.
                 * ``format="tensorrt"`` — ``None`` (an FP16 or FP32 engine, as ``fp16`` says) or ``"int8"``: most of
                   the backbone encoder and decoder run in INT8 and the rest in FP16 (placement in the TensorRT export
-                  guide), with activation ranges calibrated on *calibration_data*, which is then required.  Detection
-                  models only, static batch, ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
+                  guide), with activation ranges calibrated on *calibration_data*, which is then required.  Detection,
+                  segmentation and keypoint models (the mask head and keypoint head stay FP16), static batch,
+                  ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
                 * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
                   raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
             calibration_data: Representative data for static INT8.  **Required** for ``format="onnx"``,
@@ -2552,8 +2553,7 @@ class RFDETR:
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
                 paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
                 other than ``None`` / ``"fp32"``; if ``format="litert"`` is asked to export a keypoint model
-                (``backbone_only=True`` still converts); or if ``format="tensorrt"`` with ``quantization="int8"`` is
-                asked to export a segmentation or keypoint model.
+                (``backbone_only=True`` still converts).
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,

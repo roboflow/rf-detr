@@ -445,6 +445,9 @@ class RFDETRModelModule(LightningModule):
         # Compilation can remain enabled after the narrower Inductor graph-tree gate declines a request.
         # Keep this separate so the eager runner never captures an OptimizedModule in a compile-only fallback.
         self._compile_active: bool = False
+        # Epoch running sums (float32, weighted by batch size) and sample counts of the progress-bar loss terms.
+        self._progress_loss_sums: dict[str, Tensor] = {}
+        self._progress_sample_counts: dict[str, int] = {}
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -858,21 +861,25 @@ class RFDETRModelModule(LightningModule):
                 )
 
     def on_train_epoch_start(self) -> None:
-        """Reset the accumulated box normalizer at the start of every training epoch.
+        """Reset the per-epoch state at the start of every training epoch.
+
+        That state is the accumulated box normalizer and the progress-bar running means.
 
         Lightning may reuse the module across epochs without calling ``_step_optimizer`` at the boundary (for example
         when an epoch ends mid-accumulation window with a non-divisible batch count). Clearing the accumulator here
         guarantees the manual-optimization path always starts each epoch from a known state, so the first microbatch's
         gradients are scaled by its own box count and not by a stale previous-epoch denominator.
 
-        This is a no-op for non-keypoint models because they use Lightning's automatic optimization path and never
-        populate ``self._accumulated_box_normalizer``.
+        The box-normalizer reset is a no-op for non-keypoint models because they use Lightning's automatic optimization
+        path and never populate ``self._accumulated_box_normalizer``.
 
         Note: on finite datasets the final-batch fallback in ``_should_step_optimizer`` always flushes a partial
         trailing window, so this reset is the only change needed.  On IterableDatasets (infinite
         ``num_training_batches``) a partial window may survive epoch end with un-stepped gradients; those are
         discarded here and the optimizer is zeroed so the first microbatch of the new epoch starts from a clean state.
         """
+        self._progress_loss_sums = {}
+        self._progress_sample_counts = {}
         if self._accumulated_box_normalizer is not None:
             # Discard any partial accumulation window that survived the epoch boundary
             # (only possible for IterableDatasets where num_training_batches is infinite).
@@ -1370,33 +1377,40 @@ class RFDETRModelModule(LightningModule):
         *,
         batch_size: int,
     ) -> None:
-        """Log compact per-step convergence metrics for the progress bar only.
+        """Log the epoch running mean of the convergence metrics shown on the progress bar.
+
+        Each term shows the mean of every step since the epoch started, weighted by batch size, so one noisy batch
+        does not hide the trend. The sums stay on the device and are detached, so this adds no host sync. With
+        ``train_log_on_step=True`` every term is logged per batch and no running sums are kept.
 
         Args:
             loss: Unscaled aggregate training loss.
             loss_dict: Raw criterion loss dictionary.
-            batch_size: Current batch size used by Lightning for metric reduction metadata.
+            batch_size: Current batch size, used as the weight of this step in the running mean.
         """
         # When ``train_log_on_step`` is True, the ``train/loss`` call in ``training_step``
         # logs with ``on_step=True, on_epoch=True``; Lightning forks that into
         # ``train/loss_step`` + ``train/loss_epoch``, and ``train/loss_step`` already
-        # provides the live per-step progress-bar view. Emitting this separate ``loss``
-        # scalar in that case just duplicates it, so only log it on the default
-        # ``train_log_on_step=False`` path.
-        if not bool(self.train_config.train_log_on_step):
-            self.log(
-                "loss",
-                loss,
-                prog_bar=True,
-                logger=False,
-                on_step=True,
-                on_epoch=False,
-                batch_size=batch_size,
-            )
+        # shows the per-batch aggregate on the bar. ``train_log_on_step=True`` asks for per-step values,
+        # so every progress term is logged per batch in that mode.
+        train_log_on_step = bool(self.train_config.train_log_on_step)
+        progress_values: dict[str, Tensor] = {}
+        if not train_log_on_step:
+            progress_values["loss"] = loss
         for loss_name, progress_name in _TRAIN_PROGRESS_LOSS_ALIASES.items():
             value = loss_dict.get(loss_name)
-            if value is None:
-                continue
+            if value is not None:
+                progress_values[progress_name] = value
+        for progress_name, value in progress_values.items():
+            if not train_log_on_step:
+                # float32 accumulation: a low-precision running sum drifts over thousands of steps.
+                weighted = value.detach().float() * batch_size
+                running_sum = self._progress_loss_sums.get(progress_name)
+                total = weighted if running_sum is None else running_sum + weighted
+                self._progress_loss_sums[progress_name] = total
+                sample_count = self._progress_sample_counts.get(progress_name, 0) + batch_size
+                self._progress_sample_counts[progress_name] = sample_count
+                value = total / sample_count
             self.log(
                 progress_name,
                 value,
@@ -1466,6 +1480,26 @@ class RFDETRModelModule(LightningModule):
                 return ema_inner.model
         return self.model
 
+    def _eval_forward(self, model: Any, samples: Any, *, for_loss: bool) -> Any:
+        """Forward an eval batch, asking a segmentation model for every layer's masks only when a loss follows.
+
+        In eval mode ``LWDETR`` computes the segmentation masks of the last decoder layer alone, which is all the
+        postprocessor reads. The criterion also reads the auxiliary-layer and encoder-proposal masks, so a loss on
+        eval outputs passes ``all_layer_masks=True`` to a model with a segmentation head. Any other model, such as a
+        detection ``LWDETR`` or a stand-in whose forward takes the images alone, is called exactly as before.
+
+        Args:
+            model: The model to forward through: the base model, its ``torch.compile`` wrapper or the EMA model.
+            samples: The batched images.
+            for_loss: Whether the criterion runs on the returned outputs.
+
+        Returns:
+            The model outputs.
+        """
+        if for_loss and getattr(model, "segmentation_head", None) is not None:
+            return model(samples, all_layer_masks=True)
+        return model(samples)
+
     def validation_step(self, batch: tuple[Any, Any], batch_idx: int) -> dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
 
@@ -1484,8 +1518,9 @@ class RFDETRModelModule(LightningModule):
             # Same reason as in training_step: with eval_base_model=True or use_ema=False the
             # compiled model runs here and records its own eval-mode graph.
             torch.compiler.cudagraph_mark_step_begin()  # type: ignore[no-untyped-call]
-        outputs = self._resolve_eval_model()(samples)
-        if self._should_compute_val_loss:
+        compute_loss = self._should_compute_val_loss
+        outputs = self._eval_forward(self._resolve_eval_model(), samples, for_loss=compute_loss)
+        if compute_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
@@ -1892,8 +1927,9 @@ class RFDETRModelModule(LightningModule):
             Dict with ``results`` (postprocessed predictions) and ``targets``.
         """
         samples, targets = batch
-        outputs = self.model(samples)
-        if self.train_config.compute_test_loss:
+        compute_loss = self.train_config.compute_test_loss
+        outputs = self._eval_forward(self.model, samples, for_loss=compute_loss)
+        if compute_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)

@@ -32,6 +32,7 @@ As an AI agent contributing to RF-DETR, you are responsible for:
     - Update `.github/copilot-instructions.md` when high-level guidance changes
     - Update `.github/CONTRIBUTING.md` when human workflow is affected
     - Apply updates after receiving major feedback in PR reviews
+    - For code reviews, follow the [code-review skill](.github/skills/code-review/SKILL.md)
 
 4. **Consulting maintainers before major changes**
 
@@ -60,8 +61,11 @@ As an AI agent contributing to RF-DETR, you are responsible for:
 # Install uv (if not already installed)
 pip install uv
 
-# Full development environment (always use this)
-uv sync --all-groups
+# Create the virtual environment
+uv venv
+
+# Install the extras and groups used by the CPU test job (add ,coreml on macOS).
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 ```
 
 **Prerequisites:** Python >=3.10 (tested on 3.10-3.14)
@@ -246,7 +250,7 @@ uv run twine check --strict dist/*
 - For ONNX and OpenVINO, quantize `MatMul`/`Gemm` only, and keep attention-score multiplies, detection heads and quantized-op outputs in float. Any change to that op selection needs a COCO measurement, not a plausibility argument: run the INT8 and COCO val2017 accuracy sections of [docs/cookbooks/export-cpu.ipynb](docs/cookbooks/export-cpu.ipynb), which score the INT8 artifacts with a seeded subset, a calibration set held out of it, and recorded ONNX Runtime / NNCF versions, and compare against the fp32 rows.
 - An engine that carries host code (a TensorRT 11 version-compatible engine) loads only through an explicit `engine_host_code_allowed=True` opt-in on `TRTInference` and `rfdetr.export.benchmark`, never by default: running host code from a file is a trust decision.
 - Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/exports/blueprint.md](docs/exports/blueprint.md).
-- TensorRT INT8 placement (`src/rfdetr/export/_tensorrt/quantize.py`) encodes measurements and two TensorRT bugs, not a generic recipe: an MLP's `fc1` is quantized only together with its `fc2` (INT8 GEMM → GELU → FP16 consumer returns NaN), attention is all INT8 or all FP16 with no Q/DQ behind an FP16 attention (TensorRT 11.3 computes that wrongly) and is INT8 only up to 325 tokens per window (Large's 485 ran no faster and lost 1.0 AP), and a convolution whose input channels are not a multiple of 32 stays FP16 (TensorRT stored the zero channels it added to the INT8 patch embedding's input in the engine, as a batch-sized constant). Any placement change needs a COCO AP and latency measurement. The TensorRT INT8 figures in the docs come from an external benchmark notebook, not a harness in this repository; Section 8 of `docs/cookbooks/export-cuda.ipynb` runs the same comparison for Small at batch 1 on a val2017 subset, but does not regenerate them.
+- TensorRT INT8 placement (`src/rfdetr/export/_tensorrt/quantize.py`) encodes measurements and two TensorRT bugs, not a generic recipe: an MLP's `fc1` is quantized only together with its `fc2` (INT8 GEMM → GELU → FP16 consumer returns NaN), attention is all INT8 or all FP16 with no Q/DQ behind an FP16 attention (TensorRT 11.3 computes that wrongly) and is INT8 only up to 325 tokens per window (Large's 485 ran no faster and lost AP), and a convolution whose input channels are not a multiple of 32 stays FP16 (TensorRT stored the zero channels it added to the INT8 patch embedding's input in the engine, as a batch-sized constant), so `_patch_embedding_as_matmul` rewrites the 16-pixel patch embedding of the detection models as a `MatMul` over 768 values per patch (the 12-pixel patches of the segmentation and keypoint models are 432 values and stay a convolution). Any placement change needs a COCO AP and latency measurement. The TensorRT INT8 figures in the docs come from Section 8.1 of `docs/cookbooks/export-cuda.ipynb`, which builds the FP16 and INT8 engines of the four detection and four segmentation sizes and `RFDETRKeypointPreview`, scores them on val2017 and times them; Section 8 of the same notebook is a smaller check of Small at batch 1 on a val2017 subset. Regenerate the tables from 8.1 with the settings its table lists, never from a number measured elsewhere.
 - Do not quote INT8 accuracy or speed figures, for any format, that no harness in the repository reproduces.
 
 **Model Selection (examples, docs, CI, tests, defaults):**
@@ -324,7 +328,7 @@ result = subprocess.run(
 
 ### Making Changes
 
-1. **Setup:** `uv sync --all-groups`
+1. **Setup:** Follow the [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) instructions.
 2. **Before changes:** Run tests to establish baseline
 3. **Development:**
     - Make minimal, focused changes
@@ -367,6 +371,8 @@ GitHub Actions workflows in `.github/workflows/`:
 - **publish-docs.yml:** Deploy docs to GitHub Pages
 
 **Concurrency:** PRs cancel in-progress runs on new pushes
+
+**Pretrained weights cache:** `try-all-models` never restores caches and disables uv caching, so every matrix leg tests live downloads. The independent `cache-model-weights` job also downloads fresh weights on every run: `.github/scripts/download_model_weights.py` instantiates each supported model on CPU without inference or checkpoint round-trips. Only on pushes to `develop` does that job save the shared archive through `.github/actions/cache-model-weights`, which also downloads the test-session DINOv2 snapshot through Hugging Face. Publication requires successful initialization of every model in the downloader, but does not wait for the smoke matrix. The reusable action computes cache keys in Bash using Git object hashes and sets common directories with shell `echo`. Each successful push uses a fresh run/attempt suffix. Every other test job calls the action with `save: "false"` after dependencies and before tests, including every export row, TensorRT, Roboflow, XLA, legacy generation/compatibility, GitHub helper tests and the docs build test. These readers have no dependency on the publisher and download normally on a miss. The action sets `RF_HOME` to `${{ github.workspace }}/.roboflow` and owns `.huggingface` paths, identical archive patterns and cross-OS settings. Legacy checkpoint generation also runs from `RF_HOME` so historical releases that use the working directory share the restored weights. Key prefixes fingerprint the committed weight registry (`src/rfdetr/assets/model_weights.py`, including its MD5 checksums) and `pyproject.toml` using Git object hashes, with no OS/Python/job/format dimensions. Core and Plus jobs share the same source-based cache scope. Never save model caches from PR jobs or broaden fallback across different source fingerprints.
 
 ## Additional Resources
 

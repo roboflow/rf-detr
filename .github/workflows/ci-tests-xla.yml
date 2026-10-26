@@ -96,6 +96,11 @@ jobs:
           print("torch", torch.__version__, "| torch_xla", torch_xla.__version__, "| device", device)
           assert str(device).startswith("xla"), f"expected an xla device, got {device!r}"
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
+
       - name: 🧪 Run the XLA-marked Tests
         run: |
           uv run --no-sync pytest src/ tests/ \

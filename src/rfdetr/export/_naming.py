@@ -75,7 +75,7 @@ def append_backbone_marker(export_name: str, *, backbone_only: bool, named: bool
     ``-backbone`` marks a distinct model graph, not a precision or backend detail, so every backend appends it after
     whatever detail suffix it already added. It is appended whenever a name was supplied — custom or variant-derived —
     but never onto the bare ``backbone_model`` default, which already spells it out. Without the marker a backbone
-    export silently overwrites a full-detector export of the same name.
+    export silently overwrites a full-model export of the same name.
 
     Args:
         export_name: The artifact name resolved so far, including any precision or backend suffix.

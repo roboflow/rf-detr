@@ -22,8 +22,11 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **Package Manager:** This project uses `uv` for all dependency management.
 
 ```bash
-# Development setup
-uv sync --all-groups
+# Create the environment
+uv venv
+
+# Install the dependencies used by the CPU test job (add ,coreml on macOS).
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Run tests (always before committing)
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
@@ -34,7 +37,7 @@ uv build
 
 > [!IMPORTANT]
 >
-> Run `uv sync` after pulling changes to update dependencies.
+> Re-run the install command above after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
 
@@ -120,7 +123,7 @@ Before submitting changes:
 1. ✅ Run tests: `uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu"`
 2. ✅ Run pre-commit: `pre-commit run --all-files`
 3. ✅ Verify new functions have type hints + docstrings
-4. ✅ Review changes for minimal scope
+4. ✅ For code reviews, follow the [code-review skill](skills/code-review/SKILL.md).
 
 ## Resources
 
