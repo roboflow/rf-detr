@@ -89,7 +89,16 @@ finally:
     results.close()
 ```
 
-`cpu_and_gpu` selects `ComputeUnit.CPU_AND_GPU`. Core ML can use the CPU and GPU, but cannot use the Neural Engine. This policy does not guarantee GPU-only execution. `auto` permits all compute units; `cpu` uses the CPU only. `runtime_info` reports the selected policy.
+The loader supports all four [Core ML compute policies](https://apple.github.io/coremltools/source/coremltools.models.html):
+
+| `device`      | Core ML compute units     | Allowed processors          |
+| ------------- | ------------------------- | --------------------------- |
+| `auto`        | `ComputeUnit.ALL`         | CPU, GPU, and Neural Engine |
+| `cpu`         | `ComputeUnit.CPU_ONLY`    | CPU                         |
+| `cpu_and_gpu` | `ComputeUnit.CPU_AND_GPU` | CPU and GPU                 |
+| `cpu_and_ne`  | `ComputeUnit.CPU_AND_NE`  | CPU and Neural Engine       |
+
+`cpu_and_ne` requires macOS 13 or later. Core ML chooses among the allowed processors; these policies do not guarantee GPU-only or Neural-Engine-only execution. `runtime_info` reports the selected policy.
 
 ## Advanced: Use Core ML directly
 

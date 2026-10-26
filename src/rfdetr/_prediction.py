@@ -34,7 +34,7 @@ except ImportError:
 
 from rfdetr._prediction_sources import is_expanded_source, iter_source_batches
 from rfdetr.models.postprocess import PostProcess
-from rfdetr.prediction import PredictionInput
+from rfdetr.prediction import ImageInput, PredictionInput
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -419,7 +419,7 @@ def _predict_stream(
     try:
         for image_batch in source_batches:
             results = _predict_batch(
-                context_factory, tuple(image_batch), threshold, shape, patch_size, include_source_image, antialias
+                context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias
             )
             yield from cast("list[Detections | KeyPoints]", results)
     finally:
@@ -429,7 +429,7 @@ def _predict_stream(
 @torch.inference_mode()
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
-    images: PredictionInput,
+    images: PredictionInput | list[ImageInput],
     threshold: float,
     shape: tuple[int, int] | None,
     patch_size: int | None,

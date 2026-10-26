@@ -630,7 +630,7 @@ class TestExecuTorchRuntimeAdapter:
 class TestCoreMLRuntimeAdapter:
     """Check native CoreML output ordering and device policy."""
 
-    @pytest.mark.parametrize("device", ["cpu", "cpu_and_gpu"])
+    @pytest.mark.parametrize("device", ["auto", "cpu", "cpu_and_gpu", "cpu_and_ne"])
     def test_compute_policy_and_spec_output_order(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, device: str
     ) -> None:
@@ -658,7 +658,7 @@ class TestCoreMLRuntimeAdapter:
             "dets": boxes,
         }
         coreml = SimpleNamespace(
-            ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu"),
+            ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu", CPU_AND_NE="cpu_and_ne"),
             models=SimpleNamespace(MLModel=Mock(return_value=session)),
         )
         monkeypatch.setitem(sys.modules, "coremltools", coreml)
@@ -676,13 +676,15 @@ class TestCoreMLRuntimeAdapter:
         assert result["pred_boxes"].shape == (1, 2, 4)
         assert np.shares_memory(result["pred_boxes"].numpy(), boxes)
         assert result["pred_logits"].shape == (1, 2, 3)
-        coreml.models.MLModel.assert_called_once_with(str(path), compute_units=device)
+        coreml.models.MLModel.assert_called_once_with(str(path), compute_units="all" if device == "auto" else device)
 
     def test_explicit_ane_is_refused(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CoreML cannot guarantee an ANE-only execution request."""
         path = tmp_path / "model.mlpackage"
         path.mkdir()
-        coreml = SimpleNamespace(ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu"))
+        coreml = SimpleNamespace(
+            ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu", CPU_AND_NE="cpu_and_ne")
+        )
         monkeypatch.setitem(sys.modules, "coremltools", coreml)
         monkeypatch.setattr("rfdetr.export._runtime.adapters.platform.system", lambda: "Darwin")
         metadata = _metadata(

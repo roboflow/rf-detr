@@ -41,10 +41,12 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         "auto": ct.ComputeUnit.ALL,
         "cpu": ct.ComputeUnit.CPU_ONLY,
         "cpu_and_gpu": ct.ComputeUnit.CPU_AND_GPU,
+        "cpu_and_ne": ct.ComputeUnit.CPU_AND_NE,
     }
     if device not in units:
         raise ValueError(
-            "CoreML accepts auto, cpu, or cpu_and_gpu. Its GPU and Neural Engine policies also permit CPU execution."
+            "CoreML accepts auto, cpu, cpu_and_gpu, or cpu_and_ne. "
+            "Its GPU and Neural Engine policies also permit CPU execution."
         )
     session = ct.models.MLModel(str(path), compute_units=units[device])
     spec = session.get_spec()

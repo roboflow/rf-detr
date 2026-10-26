@@ -631,12 +631,13 @@ class TestExportedStreaming:
             next(results)
 
     def test_dynamic_batch_flushes_final_image(
-        self, exported_dynamic_batch: tuple[Path, dict[str, object]], tmp_path: Path
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path
     ) -> None:
         """A dynamic export executes batches of two, two, then one without losing images."""
         import onnxruntime as ort
 
-        path, metadata = exported_dynamic_batch
+        path, metadata = exported_detection
+        metadata = dict(metadata, input_shape=[-1, 3, 32, 48])
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         source = tmp_path / "images"
         source.mkdir()
@@ -691,15 +692,3 @@ def exported_batch_two(exported_detection: tuple[Path, dict[str, object]]) -> tu
         value.type.tensor_type.shape.dim[0].dim_value = 2
     onnx.save(model, path)
     return path, dict(metadata, input_shape=[2, 3, 32, 48])
-
-
-@pytest.fixture
-def exported_dynamic_batch(exported_detection: tuple[Path, dict[str, object]]) -> tuple[Path, dict[str, object]]:
-    """Allow dynamic batches for the channel-readout detector.
-
-    Examples:
-        >>> exported_dynamic_batch()  # doctest: +SKIP
-        # Pytest supplies the ONNX artifact fixture.
-    """
-    path, metadata = exported_detection
-    return path, dict(metadata, input_shape=[-1, 3, 32, 48])
