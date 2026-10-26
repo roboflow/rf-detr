@@ -90,7 +90,8 @@ class TestExportRoundTrip:
 
     @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
     @pytest.mark.e2e_tflite
-    @pytest.mark.timeout(1200)
+    # Temporary budget for slow Keras serialization; keep five minutes below the CI job limit.
+    @pytest.mark.timeout(1500)
     @tflite_runtime_only
     def test_tflite(self, task: str, tmp_path: Path) -> None:
         """ONNX-converted TFLite preserves all three public prediction tasks."""
