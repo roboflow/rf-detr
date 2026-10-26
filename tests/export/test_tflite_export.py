@@ -1514,6 +1514,41 @@ class TestConstantGatherElementsOnnxRewrite:
         assert [node.op_type for node in patched.graph.node if node.op_type == "GatherElements"] == []
 
     @onnx_gs_available
+    def test_constant_gather_with_folded_expand_shape_is_rewritten(self, tmp_path: Path) -> None:
+        """Constant folding resolves an Expand target before its symbolic index dimensions are matched."""
+        import onnx
+        import onnxruntime as ort
+        from onnx import helper, numpy_helper
+
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
+
+        source = tmp_path / "expanded_gather.onnx"
+        data = np.arange(np.prod(_GATHER_DATA_SHAPE), dtype=np.float32).reshape(_GATHER_DATA_SHAPE)
+        _build_gather_elements_onnx(source, data, axis=1, constant_data=True)
+        model = onnx.load(str(source))
+        model.graph.input[0].type.tensor_type.shape.dim[2].dim_value = 1
+        model.graph.initializer.extend(
+            [
+                numpy_helper.from_array(np.array([2, 0, 4], dtype=np.int64), name="base_shape"),
+                numpy_helper.from_array(np.array([0, 3, 0], dtype=np.int64), name="extra_shape"),
+            ]
+        )
+        model.graph.node[0].input[1] = "expanded_indices"
+        model.graph.node.insert(0, helper.make_node("Add", ["base_shape", "extra_shape"], ["expanded_shape"]))
+        model.graph.node.insert(1, helper.make_node("Expand", ["indices", "expanded_shape"], ["expanded_indices"]))
+        onnx.save(model, str(source))
+
+        patched_path = _replace_gridsample_for_tflite(source, tmp_path)
+
+        patched = onnx.load(str(patched_path))
+        assert not any(node.op_type == "GatherElements" for node in patched.graph.node)
+        indices = np.array([[[0], [3], [-1]], [[2], [1], [-2]]], dtype=np.int64)
+        session = ort.InferenceSession(str(patched_path), providers=["CPUExecutionProvider"])
+        (actual,) = session.run(None, {"indices": indices})
+        expected = np.take_along_axis(data, np.broadcast_to(indices, _gather_indices_shape(1)), axis=1)
+        np.testing.assert_array_equal(actual, expected)
+
+    @onnx_gs_available
     def test_variable_data_gather_elements_is_kept(self, tmp_path: Path) -> None:
         """A ``GatherElements`` reading a computed tensor converts correctly in onnx2tf, so it is left alone."""
         from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
@@ -1522,6 +1557,39 @@ class TestConstantGatherElementsOnnxRewrite:
         _build_gather_elements_onnx(source, np.zeros(_GATHER_DATA_SHAPE, np.float32), axis=1, constant_data=False)
 
         assert _replace_gridsample_for_tflite(source, tmp_path) == source
+
+
+class TestStaticUnsqueezeOnnxRewrite:
+    """Static singleton insertion must preserve coordinate axes through onnx2tf conversion."""
+
+    @onnx_gs_available
+    def test_coordinate_broadcast_uses_reshape(self, tmp_path: Path) -> None:
+        """Equal query and coordinate widths cannot confuse Unsqueeze's channel-layout handling."""
+        import onnx
+        import onnxruntime as ort
+        from onnx import TensorProto, helper, numpy_helper
+
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
+
+        source = tmp_path / "coordinate_broadcast.onnx"
+        node = helper.make_node("Unsqueeze", ["coordinates", "axes"], ["expanded"])
+        graph = helper.make_graph(
+            [node],
+            "coordinate_broadcast",
+            [helper.make_tensor_value_info("coordinates", TensorProto.FLOAT, [1, 4, 4])],
+            [helper.make_tensor_value_info("expanded", TensorProto.FLOAT, [1, 4, 1, 1, 4])],
+            initializer=[numpy_helper.from_array(np.array([2, 3], dtype=np.int64), name="axes")],
+        )
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), str(source))
+
+        patched_path = _replace_gridsample_for_tflite(source, tmp_path)
+
+        patched = onnx.load(str(patched_path))
+        assert not any(node.op_type == "Unsqueeze" for node in patched.graph.node)
+        coordinates = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
+        session = ort.InferenceSession(str(patched_path), providers=["CPUExecutionProvider"])
+        (actual,) = session.run(None, {"coordinates": coordinates})
+        np.testing.assert_array_equal(actual, coordinates[:, :, None, None, :])
 
 
 # ---------------------------------------------------------------------------

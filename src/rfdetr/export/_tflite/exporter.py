@@ -35,6 +35,10 @@ from the constant-folded anchor proposals). ``onnx2tf`` moves such a constant in
 the indices alone, so the gather silently returns the wrong boxes; :func:`_replace_constant_gather_elements` turns it
 into a rank-1 ``Gather(axis=0)`` over the flattened constant.
 
+Static ``Unsqueeze`` operations are normalized to equivalent ``Reshape`` operations. onnx2tf can lose coordinate
+layout when inserting broadcast axes into tensors with equal query and coordinate widths, causing subsequent
+slices to read the wrong coordinates even though every output shape looks correct.
+
 Import order
 ------------
 TensorFlow must be imported before ONNX's C extension or the conversion deadlocks, so :class:`TFLiteExporter` calls
@@ -520,6 +524,8 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
 
     The same pass rewrites every ``GatherElements`` that reads a constant with static-shape indices, which ``onnx2tf``
     converts into a gather over the wrong elements (see :func:`_replace_constant_gather_elements`).
+    Static ``Unsqueeze`` outputs become equivalent ``Reshape`` operations so onnx2tf preserves coordinate layout
+    through singleton-axis insertion. Symbolic output shapes are left unchanged.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
@@ -527,8 +533,8 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
             already exist.
 
     Returns:
-        Path to the patched ``.onnx`` file if any ``GridSample`` or constant-input ``GatherElements`` nodes were found;
-        *onnx_path* unchanged if the graph contains no such nodes.
+        Path to the patched ``.onnx`` file if any ``GridSample``, constant-input ``GatherElements``, or static
+        ``Unsqueeze`` nodes were found; *onnx_path* unchanged if the graph contains no such nodes.
 
     Raises:
         ImportError: If ``onnx`` or ``onnx_graphsurgeon`` are not available.
@@ -550,6 +556,9 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     # onnx2tf's own onnxsim pass folds constant subgraphs (the segmentation model's anchor proposals reach their
     # GatherElements through Where and Cast) into the constants its layout bug mishandles; fold them here first.
     graph.fold_constants().cleanup()
+    # Folding also resolves Expand targets. Refresh their symbolic index dimensions before selecting the gathers;
+    # otherwise the two-stage box gather is skipped even though its indices now have a fixed shape.
+    graph = gs.import_onnx(onnx.shape_inference.infer_shapes(gs.export_onnx(graph)))
 
     gs_nodes = [n for n in graph.nodes if n.op == "GridSample"]
     ge_nodes = [
@@ -560,9 +569,25 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
         and n.inputs[1].shape is not None
         and all(isinstance(size, int) for size in n.inputs[1].shape)
     ]
-    if not gs_nodes and not ge_nodes:
-        logger.debug("No GridSample or constant-input GatherElements nodes found; skipping TFLite-safe patch.")
+    unsqueeze_nodes = [
+        n
+        for n in graph.nodes
+        if n.op == "Unsqueeze"
+        and n.outputs[0].shape is not None
+        and all(isinstance(size, int) and size > 0 for size in n.outputs[0].shape)
+    ]
+    if not gs_nodes and not ge_nodes and not unsqueeze_nodes:
+        logger.debug("No GridSample, constant-input GatherElements, or static Unsqueeze nodes found; skipping patch.")
         return onnx_path
+
+    if unsqueeze_nodes:
+        logger.info("Normalizing %d static Unsqueeze node(s) → Reshape for coordinate layout.", len(unsqueeze_nodes))
+    for i, node in enumerate(unsqueeze_nodes):
+        # A fixed target shape inserts exactly the same singleton axes without onnx2tf's axis-remapping heuristic.
+        shape = gs.Constant(f"_usrepl{i}_shape", np.asarray(node.outputs[0].shape, dtype=np.int64))
+        node.op = "Reshape"
+        node.attrs.clear()
+        node.inputs = [node.inputs[0], shape]
 
     if gs_nodes:
         logger.info(
