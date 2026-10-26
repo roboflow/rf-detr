@@ -2,7 +2,7 @@
 
 > RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) by Roboflow.
 > DINOv2 vision transformer backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
-> Commercially usable: the rfdetr package, Nano-Large detection, every segmentation size and Keypoint are Apache 2.0 (closed-source and self-hosted OK, no license fee, no need to open-source your code). XLarge and 2XLarge detection use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on. Python 3.10+.
+> Commercially usable: the rfdetr package, Nano-Large detection, every segmentation size and Keypoint are Apache 2.0 (closed-source and self-hosted OK, no license fee, no need to open-source your code). Atto, Femto, Pico, XLarge and 2XLarge detection (rfdetr[plus]) and RF-DETR NAS models use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on. Python 3.10+.
 > Source: https://github.com/roboflow/rf-detr | Paper: https://arxiv.org/abs/2511.09554
 
 ---
@@ -15,7 +15,7 @@ RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) w
 
 **Licensing (commercial use):**
 - Apache 2.0: the `rfdetr` package (all code), RF-DETR Nano, Small, Medium and Large detection, every RF-DETR-Seg size (Nano through 2XLarge, including Seg-XLarge and Seg-2XLarge), and RF-DETR Keypoint (Preview). Apache 2.0 means commercially usable out of the box: you can ship these models in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code.
-- Roboflow Platform Model License (PML 1.0): RF-DETR XLarge and 2XLarge detection models, installed with `rfdetr[plus]`. Commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
+- Roboflow Platform Model License (PML 1.0): RF-DETR Atto, Femto, Pico, XLarge and 2XLarge detection models, installed with `rfdetr[plus]`, and RF-DETR NAS models. Commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
 ---
 
@@ -325,7 +325,7 @@ Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), an
 Detection models output bounding boxes. Segmentation models additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.
 
 **Is RF-DETR open source, and can I use it commercially?**
-Yes. The rfdetr package (all training/inference code), Nano through Large detection, every segmentation size (Nano through 2XLarge) and Keypoint (Preview) are released under the Apache 2.0 license, so they're commercially usable out of the box: you can ship them in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. RF-DETR XLarge and 2XLarge detection models ship in the rfdetr[plus] package under the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
+Yes. The rfdetr package (all training/inference code), Nano through Large detection, every segmentation size (Nano through 2XLarge) and Keypoint (Preview) are released under the Apache 2.0 license, so they're commercially usable out of the box: you can ship them in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. RF-DETR Atto, Femto, Pico, XLarge and 2XLarge detection models ship in the rfdetr[plus] package under the Roboflow Platform Model License (PML 1.0), as do RF-DETR NAS models: commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
 **How do I fine-tune RF-DETR on a custom dataset?**
 Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size='auto'). The model downloads pretrained weights automatically and resumes from the best checkpoint.

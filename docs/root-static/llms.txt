@@ -1,7 +1,7 @@
 # RF-DETR
 > RF-DETR is a real-time object detection, instance segmentation, and keypoint detection (preview) transformer by Roboflow.
 > DINOv2 backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
-> Commercially usable: the rfdetr package, Nano-Large detection, every segmentation size and Keypoint are Apache 2.0 (closed-source and self-hosted OK, no license fee, no need to open-source your code). XLarge and 2XLarge detection use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on. Install: pip install rfdetr.
+> Commercially usable: the rfdetr package, Nano-Large detection, every segmentation size and Keypoint are Apache 2.0 (closed-source and self-hosted OK, no license fee, no need to open-source your code). Atto, Femto, Pico, XLarge and 2XLarge detection (rfdetr[plus]) and RF-DETR NAS models use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on. Install: pip install rfdetr.
 
 ## Canonical Facts
 - Product: RF-DETR (Roboflow Detection Transformer)
@@ -15,7 +15,7 @@
 - Backbone: DINOv2 vision transformer
 - Dataset formats: COCO JSON and YOLO
 - Export targets: ONNX, TensorRT, and TFLite
-- License: Apache 2.0, commercially usable out of the box (closed-source and self-hosted deployments OK, no license fee, no obligation to open-source your code), for the code, Nano through Large detection, every RF-DETR-Seg size (Nano through 2XLarge) and Keypoint Preview. XLarge and 2XLarge detection models require `rfdetr[plus]` and use the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
+- License: Apache 2.0, commercially usable out of the box (closed-source and self-hosted deployments OK, no license fee, no obligation to open-source your code), for the code, Nano through Large detection, every RF-DETR-Seg size (Nano through 2XLarge) and Keypoint Preview. Atto, Femto, Pico, XLarge and 2XLarge detection models require `rfdetr[plus]`; they and RF-DETR NAS models use the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
 ## Getting Started
 - [Install](https://rfdetr.roboflow.com/latest/getting-started/install/): pip install rfdetr

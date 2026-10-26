@@ -209,15 +209,15 @@ You can run the same search on your own dataset on the [Roboflow platform](https
 
 ## RF-DETR vs. convolutional detectors
 
-| Question                    | Classic convolutional detector (YOLOv8, YOLO11)                                                            | RF-DETR                                                                                                |
-| :-------------------------- | :--------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
-| How many predictions?       | One per grid cell per scale, thousands in total                                                            | A fixed set of 300 queries                                                                             |
-| How are duplicates removed? | NMS after the network, with a tuned IoU threshold                                                          | Learned during training through one-to-one matching; no NMS                                            |
-| How far can a feature see?  | Grows layer by layer with the receptive field                                                              | Whole image in one global attention block                                                              |
-| Backbone pretraining        | Supervised, learned from labeled images                                                                    | DINOv2, self-supervised on a large curated image collection                                            |
-| Changing model size         | Train each size separately                                                                                 | One NAS run covers Nano through Large                                                                  |
-| Parameters                  | Small (YOLO11-N: 2.6 M)                                                                                    | Larger (RF-DETR-N: 30.5 M)                                                                             |
-| License                     | AGPL-3.0 — commercial use needs a license ([included on Roboflow cloud](https://roboflow.com/ultralytics)) | Apache 2.0 — free for commercial use (Nano through Large detection, every segmentation size, Keypoint) |
+| Question                    | Classic convolutional detector (YOLOv8, YOLO11)                                                                          | RF-DETR                                                                                                |
+| :-------------------------- | :----------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
+| How many predictions?       | One per grid cell per scale, thousands in total                                                                          | A fixed set of 300 queries                                                                             |
+| How are duplicates removed? | NMS after the network, with a tuned IoU threshold                                                                        | Learned during training through one-to-one matching; no NMS                                            |
+| How far can a feature see?  | Grows layer by layer with the receptive field                                                                            | Whole image in one global attention block                                                              |
+| Backbone pretraining        | Supervised, learned from labeled images                                                                                  | DINOv2, self-supervised on a large curated image collection                                            |
+| Changing model size         | Train each size separately                                                                                               | One NAS run covers Nano through Large                                                                  |
+| Parameters                  | Small (YOLO11-N: 2.6 M)                                                                                                  | Larger (RF-DETR-N: 30.5 M)                                                                             |
+| License                     | AGPL-3.0 — closed-source commercial use needs a license ([included on Roboflow cloud](https://roboflow.com/ultralytics)) | Apache 2.0 — free for commercial use (Nano through Large detection, every segmentation size, Keypoint) |
 
 What this buys you in practice, from the [Benchmarks](benchmarks.md) page (COCO val2017, NVIDIA T4, TensorRT FP16, batch size 1):
 
