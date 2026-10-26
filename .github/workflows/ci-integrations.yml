@@ -141,9 +141,9 @@ jobs:
           # tflite: every [tflite] dependency carries a python_version >= '3.12' and < '3.13' marker (onnx2tf's numpy
           # pin, see pyproject.toml), so the extra installs nothing on 3.10/3.13 and the e2e_tflite tests would only
           # skip there. Single 3.12 row; the extra also conflicts with executorch, litert and coreai, so it never
-          # shares an environment with another format. Its experimental parity cases use xfail(run=False)
-          # until onnx2tf conversion fits the CI test budget; keep this row checking dependency imports.
-          - { format: "tflite", os: "ubuntu-latest", python-version: "3.12" }
+          # shares an environment with another format. Run its three experimental parity cases concurrently;
+          # each reports XFAIL only if conversion exceeds its five-minute budget. Other failures remain fatal.
+          - { format: "tflite", os: "ubuntu-latest", python-version: "3.12", workers: 3 }
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -90,14 +91,17 @@ class TestExportRoundTrip:
 
     @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
     @pytest.mark.e2e_tflite
-    @pytest.mark.xfail(
-        run=False,
-        reason="Experimental onnx2tf conversion takes 10–20+ minutes per case; re-enable after it fits the CI budget.",
-    )
+    @pytest.mark.timeout(300)
     @tflite_runtime_only
     def test_tflite(self, task: str, tmp_path: Path) -> None:
         """ONNX-converted TFLite preserves all three public prediction tasks."""
-        assert_prediction_roundtrip("tflite", task, tmp_path)
+        try:
+            assert_prediction_roundtrip("tflite", task, tmp_path)
+        except pytest.fail.Exception as exc:
+            # Expected failure applies only to the experimental converter exceeding its budget.
+            if not re.fullmatch(r"Timeout \(>[0-9.]+s\) from pytest-timeout\.", str(exc)):
+                raise
+            pytest.xfail("Experimental onnx2tf conversion exceeded the per-test time budget.")
 
     @pytest.mark.parametrize("task", ["detect", "segment"])
     @pytest.mark.e2e_litert
