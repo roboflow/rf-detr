@@ -7,12 +7,62 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10  →  1.11
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10  →  1.11  →  1.12
 ```
 
-You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs and configuration fields emit the warning type stated in their entry until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
 
 ---
+
+## Unreleased: native inference returns a predictor
+
+`RFDETR.inference()` now returns an independent `RFDETRInference` snapshot instead of changing the source model's inference state. Capture the returned predictor and call `predict()` on it. The predictor snapshots the current base weights, labels, normalization and postprocessing settings; later training or source mutations do not change its predictions or class names. The source model remains unchanged.
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+predictor = model.inference(compile=False)
+detections = predictor.predict("image.jpg")
+```
+
+The defaults remain TorchScript compilation, batch size 1 and float32. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
+
+---
+
+## Upgrade 1.11 → 1.12
+
+For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.
+
+### Deprecated in v1.12 → Remove in v1.15
+
+!!! note "Deprecated: raw TensorRT and OpenVINO inference"
+
+    `TRTInference` and `OpenVINOInference` are deprecated in v1.12.0 and will be removed in v1.15.0, following the three-minor-release deprecation window. Both legacy classes remain available until v1.15.0 and emit a `FutureWarning` when constructed.
+
+    Use `RFDETRInference` for image inputs and decoded Supervision results. The old TensorRT facade accepts already-preprocessed, normalized NCHW CUDA tensors and returns raw engine output tensors; the old OpenVINO facade accepts an already-preprocessed, normalized, contiguous `float32` NCHW array and returns raw output arrays. `RFDETRInference.predict()` accepts images and returns `supervision.Detections` for detection or segmentation models, or `supervision.KeyPoints` for keypoint models.
+
+    ```python
+    from rfdetr import RFDETRInference
+
+    model = RFDETRInference("output/model.trt")
+    detections = model.predict("image.jpg")
+    ```
+
+    Move the legacy runtime settings into `runtime_options` when constructing `RFDETRInference`:
+
+    | Legacy runtime                                   | New API                                                                             | `runtime_options` keys                              |
+    | ------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------- |
+    | `TRTInference(engine_path, cuda_graph=True)`     | `RFDETRInference(engine_path, runtime_options={"cuda_graph": True}).predict(image)` | `cuda_graph`, `engine_host_code_allowed`, `verbose` |
+    | `OpenVINOInference(model_path, cache_dir=cache)` | `RFDETRInference(model_path, runtime_options={"cache_dir": cache}).predict(image)`  | `cache_dir`, `inference_precision`, `config`        |
+
+    Pass the runtime choice through `RFDETRInference`'s `device` keyword. TensorRT's former `sync_mode` flag has no `runtime_options` key because the shared TensorRT adapter uses `execute_v2` by default. For example, `OpenVINOInference(model_path, cache_dir=cache)` becomes `RFDETRInference(model_path, runtime_options={"cache_dir": cache})`. The shared API handles preprocessing and postprocessing; use the format-specific session interfaces only when a raw-runtime benchmark or numerical check requires raw tensors.
+
+### Deprecated in v1.12 → Remove in v2.0
+
+!!! note "Deprecated: unknown keyword arguments to `RFDETR.predict()`"
+
+    `RFDETR.predict()` used to accept and silently ignore any extra keyword argument. Since v1.12.0 it still ignores them but emits a `FutureWarning` that names them; in v2.0.0 they will raise `TypeError`, as `RFDETRInference.predict()` already does. Remove the extra keywords from your calls.
 
 ## Upgrade 1.10 → 1.11
 
@@ -132,14 +182,15 @@ You can apply all changes in one go; working through sections one release at a t
 
 !!! warning "Removed: `RFDETR.optimize_for_inference()`"
 
-    The alias deprecated in v1.9.0 is gone. Call `RFDETR.inference()`; the signature is unchanged.
+    The alias deprecated in v1.9.0 is gone. `RFDETR.inference()` kept the same signature when that alias was removed; it now returns an independent predictor. Capture the result and call `predict()` on it. See [native inference snapshots](#unreleased-native-inference-returns-a-predictor) for the current behavior.
 
     ```python
     # Before (removed)
     model.optimize_for_inference(dtype=torch.float16)
 
     # After
-    model.inference(dtype=torch.float16)
+    predictor = model.inference(dtype=torch.float16)
+    detections = predictor.predict("image.jpg")
     ```
 
 !!! warning "Removed: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
@@ -361,14 +412,15 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature.
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature at the time of deprecation. The current factory returns an independent predictor; see [native inference snapshots](#unreleased-native-inference-returns-a-predictor).
 
     ```python
     # Before (deprecated)
     model.optimize_for_inference(dtype=torch.float16)
 
     # After
-    model.inference(dtype=torch.float16)
+    predictor = model.inference(dtype=torch.float16)
+    detections = predictor.predict("image.jpg")
     ```
 
 !!! note "Deprecated: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"

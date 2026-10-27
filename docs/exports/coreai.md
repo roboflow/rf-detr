@@ -32,7 +32,20 @@ This produces `output/rfdetr-nano_fp32.aimodel`. Segmentation and keypoint model
 
 The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` input, resized without antialiasing and ImageNet-normalized, as in the [ONNX Inference](onnx.md) example. Unlike CoreML, the tensors keep their names — `input`, then `dets` and `labels`, plus `masks` or `keypoints`. Any `notes` are stored in the asset metadata under `rfdetr_notes`, as described in [Read Embedded Notes](advanced.md#read-embedded-notes).
 
-## Core AI Inference Example
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-nano_fp32.aimodel")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use Core AI directly
+
+The shared `RFDETRInference` loader also uses Core AI's vendor runtime API directly; this example shows that API for callers who need raw outputs.
 
 === "Python"
 
