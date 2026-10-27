@@ -98,7 +98,10 @@ jobs:
     concurrency:
       group: pytest-${{ matrix.format }}${{ matrix.extra_plus }}-${{ matrix.python-version }}-${{ matrix.os || 'ubuntu-latest' }}-${{ matrix.shard || 'all' }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    # The ExecuTorch rows run about 14 model exports on one worker, about a minute each of single-threaded graph
+    # passes, so their runtime follows the runner's single-core speed: 20 to 32 minutes seen against the former
+    # 30-minute limit, which cancelled them at 97%.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
