@@ -12,7 +12,7 @@ description: RF-DETR benchmark results on COCO and RF100-VL for detection, segme
     - All latency measured on NVIDIA T4 with TensorRT 10.4, CUDA 12.4, FP16, batch size 1
     - RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets
     - RF-DETR Keypoint (Preview) achieves 71.8 AP50:95 on COCO person keypoints at 9.7 ms (T4, TensorRT FP16)
-    - RF-DETR Nano–Large detection, every segmentation size and Keypoint are Apache 2.0, so they're commercially usable out of the box. The YOLOv8, YOLO11 and YOLO26 baselines are AGPL-3.0: commercial use means open-sourcing your application code or buying a [commercial license](https://roboflow.com/ultralytics)
+    - RF-DETR Nano–Large detection, every segmentation size and Keypoint are Apache 2.0, so they're commercially usable out of the box. The YOLOv8, YOLO11 and YOLO26 baselines are AGPL-3.0: using them in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a [commercial license](https://roboflow.com/ultralytics)
 
 This page reports RF-DETR benchmark results for object detection, instance segmentation, and keypoint detection on Microsoft COCO and RF100-VL (detection only). All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
 
