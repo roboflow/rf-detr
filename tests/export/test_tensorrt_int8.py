@@ -1877,6 +1877,397 @@ class TestLiftOpset:
         np.testing.assert_allclose(after[0], before[0], atol=1e-6)
 
 
+def _patch_embedding(
+    *,
+    channels: int = 3,
+    patch: int = 16,
+    size: int = 32,
+    out_channels: int = 8,
+    bias: bool = True,
+    empty_bias: bool = False,
+    prefix: str = BACKBONE,
+    batch: int = 1,
+    height: int | str | None = None,
+    width: int | None = None,
+    kernel: tuple[int, int] | None = None,
+    **attributes: Any,
+) -> Any:
+    """Build ``image -> Conv -> features`` as a patch embedding: kernel and stride *kernel*, no padding.
+
+    Args:
+        channels: Input channels of the image.
+        patch: Kernel size and stride, in pixels, when *kernel* is not given.
+        size: Image height and width, unless *height* or *width* is given.
+        out_channels: Output channels of the kernel.
+        bias: Give the ``Conv`` a bias.
+        empty_bias: Name the bias input with an empty string, how ONNX spells an omitted optional input.
+        prefix: Node-name prefix of the ``Conv``.
+        batch: Batch size of the image.
+        height: Overrides the declared image height; a string makes it symbolic.
+        width: Overrides the declared image width.
+        kernel: ``(rows, columns)`` of a rectangular kernel and stride.
+        **attributes: ``Conv`` attributes that replace the patch-embedding ones.
+
+    Returns:
+        A checked-shape ``ModelProto`` whose output ``features`` is the ``Conv``'s output.
+
+    Examples:
+        >>> model = _patch_embedding(channels=2, patch=4, size=8)
+        >>> [node.op_type for node in model.graph.node], model.graph.output[0].name
+        (['Conv'], 'features')
+    """
+    rng = np.random.default_rng(0)
+    rows, columns = kernel or (patch, patch)
+    high, wide = height or size, width or size
+    inits = [
+        numpy_helper.from_array(rng.standard_normal((out_channels, channels, rows, columns)).astype(np.float32), "w")
+    ]
+    inputs = ["image", "w"]
+    if bias:
+        inits.append(numpy_helper.from_array(rng.standard_normal(out_channels).astype(np.float32), "b"))
+        inputs.append("b")
+    elif empty_bias:
+        inputs.append("")
+    conv = {"kernel_shape": [rows, columns], "strides": [rows, columns], **attributes}
+    grid = ["out_height" if isinstance(high, str) else high // rows, wide // columns]
+    graph = helper.make_graph(
+        [helper.make_node("Conv", inputs, ["features"], f"{prefix}patch/Conv", **conv)],
+        "patch_embedding",
+        [helper.make_tensor_value_info("image", TensorProto.FLOAT, [batch, channels, high, wide])],
+        [helper.make_tensor_value_info("features", TensorProto.FLOAT, [batch, out_channels, *grid])],
+        inits,
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=10)
+
+
+def _with_detector_outputs(model: Any) -> Any:
+    """Make *model*'s ``features`` the source of ``dets`` and ``labels`` and return it, so that INT8 accepts the graph.
+
+    Examples:
+        >>> model = _with_detector_outputs(_patch_embedding(channels=2, patch=4, size=8))
+        >>> [output.name for output in model.graph.output]
+        ['dets', 'labels']
+    """
+    model.graph.node.extend([helper.make_node("Identity", ["features"], [name], name) for name in ("dets", "labels")])
+    del model.graph.output[:]
+    model.graph.output.extend(
+        helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in ("dets", "labels")
+    )
+    return model
+
+
+class TestPatchEmbeddingAsMatmul:
+    """The 3-channel patch-embedding ``Conv`` becomes a ``MatMul`` that INT8 can run, with the same output."""
+
+    @onnxruntime_only
+    @pytest.mark.parametrize(
+        ("batch", "channels", "patch", "height", "width"),
+        [
+            pytest.param(1, 3, 16, 32, 32, id="rgb-16-pixel-patches"),
+            pytest.param(2, 3, 16, 32, 48, id="batch-2-non-square"),
+            pytest.param(3, 2, 4, 8, 16, id="batch-3-two-channels-non-square"),
+            pytest.param(1, 1, 8, 16, 16, id="grayscale"),
+        ],
+    )
+    @pytest.mark.parametrize("bias", [True, False])
+    def test_features_match_the_convolution(
+        self, batch: int, channels: int, patch: int, height: int, width: int, bias: bool
+    ) -> None:
+        import onnxruntime as ort
+
+        model = _patch_embedding(channels=channels, patch=patch, height=height, width=width, batch=batch, bias=bias)
+        image = np.random.default_rng(1).standard_normal((batch, channels, height, width)).astype(np.float32)
+        expected = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
+            None, {"image": image}
+        )[0]
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        actual = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
+            None, {"image": image}
+        )[0]
+        # The convolution and the matrix multiply add up 768 float32 products in a different order: macOS differed
+        # by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is off by whole units.
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-4)
+
+    def test_convolution_is_replaced_by_the_matmul_the_plan_quantizes(self) -> None:
+        model = _patch_embedding()
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        assert [node.op_type for node in model.graph.node].count("Conv") == 0
+        assert _names(quantize.plan_int8(model)) == ["patch/MatMul"]
+
+    def test_the_matmul_weight_is_the_flattened_kernel(self) -> None:
+        model = _patch_embedding(channels=3, patch=16, size=32, out_channels=8)
+        kernel = numpy_helper.to_array(model.graph.initializer[0])
+        quantize._patch_embedding_as_matmul(model)
+        matmul = next(node for node in model.graph.node if node.op_type == "MatMul")
+        weights = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        np.testing.assert_array_equal(weights[matmul.input[1]], kernel.reshape(8, 3 * 16 * 16).T)
+
+    def test_the_output_keeps_its_name(self) -> None:
+        model = _patch_embedding()
+        quantize._patch_embedding_as_matmul(model)
+        assert model.graph.node[-1].output[0] == "features"
+
+    @pytest.mark.parametrize("bias", [True, False])
+    def test_the_rewritten_graph_is_valid_onnx(self, bias: bool) -> None:
+        model = _patch_embedding(bias=bias)
+        quantize._patch_embedding_as_matmul(model)
+        onnx.checker.check_model(model, full_check=True)
+        onnx.shape_inference.infer_shapes(model, strict_mode=True)
+
+    def test_an_empty_bias_name_is_no_bias(self) -> None:
+        model = _patch_embedding(bias=False, empty_bias=True)
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        assert "" not in [name for node in model.graph.node for name in node.input]
+        onnx.checker.check_model(model, full_check=True)
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float16])
+    def test_the_kernel_keeps_its_dtype(self, dtype: type) -> None:
+        model = _patch_embedding()
+        for init in model.graph.initializer:
+            init.CopyFrom(numpy_helper.from_array(numpy_helper.to_array(init).astype(dtype), init.name))
+        quantize._patch_embedding_as_matmul(model)
+        matmul = next(node for node in model.graph.node if node.op_type == "MatMul")
+        weights = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        assert weights[matmul.input[1]].dtype == dtype
+
+    def test_a_kernel_reached_through_an_identity_is_found(self) -> None:
+        model = _patch_embedding()
+        conv = model.graph.node[0]
+        conv.input[1] = "w_alias"
+        model.graph.node.insert(0, helper.make_node("Identity", ["w"], ["w_alias"], "alias"))
+        assert quantize._patch_embedding_as_matmul(model) == 1
+
+    def test_the_replaced_kernel_is_dropped(self) -> None:
+        model = _patch_embedding()
+        quantize._patch_embedding_as_matmul(model)
+        assert "w" not in [init.name for init in model.graph.initializer]
+
+    def test_every_replaced_kernel_is_dropped(self) -> None:
+        model = _patch_embedding()
+        model.graph.initializer.append(numpy_helper.from_array(numpy_helper.to_array(model.graph.initializer[0]), "w2"))
+        model.graph.node.append(
+            helper.make_node(
+                "Conv", ["image", "w2", "b"], ["more"], f"{BACKBONE}more/Conv", kernel_shape=[16, 16], strides=[16, 16]
+            )
+        )
+        assert quantize._patch_embedding_as_matmul(model) == 2
+        assert {"w", "w2"}.isdisjoint(init.name for init in model.graph.initializer)
+
+    @pytest.mark.parametrize("reader", ["another-node", "graph-output", "if-branch"])
+    def test_a_kernel_something_else_still_reads_is_kept(self, reader: str) -> None:
+        model = _patch_embedding()
+        kernel_info = helper.make_tensor_value_info("w_copy", TensorProto.FLOAT, [8, 3, 16, 16])
+        if reader == "another-node":
+            model.graph.node.append(helper.make_node("Identity", ["w"], ["w_copy"], "copy"))
+            model.graph.output.append(kernel_info)
+        elif reader == "graph-output":
+            model.graph.output.append(helper.make_tensor_value_info("w", TensorProto.FLOAT, [8, 3, 16, 16]))
+        else:
+            # A branch that captures the kernel from the outer scope reads it, though no top-level node does.
+            branch = helper.make_graph(
+                [helper.make_node("Identity", ["w"], ["w_copy"], "inner")], "branch", [], [kernel_info]
+            )
+            model.graph.initializer.append(numpy_helper.from_array(np.array(True), "flag"))
+            model.graph.node.append(
+                helper.make_node("If", ["flag"], ["w_copy"], "if", then_branch=branch, else_branch=branch)
+            )
+            model.graph.output.append(kernel_info)
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        assert "w" in [init.name for init in model.graph.initializer]
+
+    def test_an_initializer_that_is_a_graph_input_is_never_dropped(self) -> None:
+        # Dropping it would turn a default value into an input the caller must now supply.
+        graph = helper.make_graph(
+            [helper.make_node("Relu", ["x"], ["y"], "relu")],
+            "g",
+            [
+                helper.make_tensor_value_info("x", TensorProto.FLOAT, [1]),
+                helper.make_tensor_value_info("old", TensorProto.FLOAT, [1]),
+            ],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+            [numpy_helper.from_array(np.zeros(1, np.float32), name) for name in ("old", "unused")],
+        )
+        quantize._drop_unread_initializers(graph, ["old", "unused"])
+        assert [init.name for init in graph.initializer] == ["old"]
+
+    def test_generated_names_never_reuse_a_name_in_the_graph(self) -> None:
+        model = _patch_embedding()
+        taken = f"{BACKBONE}patch/cut"
+        model.graph.node.append(helper.make_node("Identity", ["image"], [taken], f"{BACKBONE}patch/Cut"))
+        model.graph.output.append(helper.make_tensor_value_info(taken, TensorProto.FLOAT, [1, 3, 32, 32]))
+        quantize._patch_embedding_as_matmul(model)
+        produced = [name for node in model.graph.node for name in node.output]
+        assert len(produced) == len(set(produced))
+        assert len({node.name for node in model.graph.node}) == len(model.graph.node)
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            pytest.param({"strides": [2, 2]}, id="overlapping-patches"),
+            pytest.param({"pads": [1, 1, 1, 1]}, id="padded"),
+            pytest.param({"dilations": [2, 2]}, id="dilated"),
+            pytest.param({"auto_pad": "SAME_UPPER"}, id="auto-pad"),
+            pytest.param({"kernel": (16, 8)}, id="rectangular-kernel"),
+            pytest.param({"channels": 2, "patch": 2, "size": 8}, id="patch-not-a-multiple-of-32-values"),
+            pytest.param({"channels": 32, "patch": 4, "size": 8}, id="channels-TensorRT-does-not-pad"),
+            pytest.param({"height": 36}, id="kernel-does-not-tile-the-height"),
+            pytest.param({"width": 36}, id="kernel-does-not-tile-the-width"),
+            pytest.param({"height": "height"}, id="symbolic-height"),
+            pytest.param({"size": 0}, id="empty-image"),
+            pytest.param({"prefix": HEAD}, id="outside-the-backbone"),
+            pytest.param({"prefix": DECODER}, id="in-the-decoder"),
+        ],
+    )
+    def test_other_convolutions_are_left_alone(self, case: dict[str, Any]) -> None:
+        model = _patch_embedding(**case)
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_a_grouped_convolution_is_left_alone(self) -> None:
+        # Two input channels per group and 4-pixel patches make 32 values per patch: only the grouping rules it out.
+        model = _patch_embedding(channels=4, patch=4, size=8, out_channels=4, group=2)
+        model.graph.initializer[0].CopyFrom(numpy_helper.from_array(np.ones((4, 2, 4, 4), np.float32), "w"))
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_an_existing_matmul_name_is_never_reused(self) -> None:
+        model = _patch_embedding()
+        model.graph.node.append(helper.make_node("Identity", ["features"], ["copy"], f"{BACKBONE}patch/MatMul"))
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_a_duplicated_convolution_name_is_left_alone(self) -> None:
+        model = _patch_embedding()
+        model.graph.node.append(
+            helper.make_node("Conv", ["image", "w"], ["other"], f"{BACKBONE}patch/Conv", kernel_shape=[16, 16])
+        )
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+    def test_two_convolutions_in_one_scope_get_one_matmul(self) -> None:
+        # ``patch/Conv`` and ``patch/Conv_1`` would both become ``patch/MatMul``; the second must not take the name.
+        model = _patch_embedding()
+        model.graph.node.append(
+            helper.make_node(
+                "Conv",
+                ["image", "w", "b"],
+                ["other"],
+                f"{BACKBONE}patch/Conv_1",
+                kernel_shape=[16, 16],
+                strides=[16, 16],
+            )
+        )
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        names = [node.name for node in model.graph.node]
+        assert len(names) == len(set(names))
+
+    def test_a_rejected_convolution_does_not_stop_the_next_one(self) -> None:
+        model = _patch_embedding()
+        model.graph.input.append(helper.make_tensor_value_info("narrow", TensorProto.FLOAT, [1, 3, 36, 32]))
+        model.graph.node.insert(
+            0,
+            helper.make_node(
+                "Conv", ["narrow", "w"], ["tall"], f"{BACKBONE}tall/Conv", kernel_shape=[16, 16], strides=[16, 16]
+            ),
+        )
+        assert quantize._patch_embedding_as_matmul(model) == 1
+
+    @pytest.mark.parametrize("initializer", [False, True])
+    def test_a_kernel_that_can_be_replaced_at_run_time_is_left_alone(self, initializer: bool) -> None:
+        # A graph input without an initializer is no constant kernel; one with an initializer can be overridden.
+        model = _patch_embedding()
+        model.graph.input.append(helper.make_tensor_value_info("w", TensorProto.FLOAT, [8, 3, 16, 16]))
+        if not initializer:
+            kept = [init for init in model.graph.initializer if init.name != "w"]
+            model.graph.ClearField("initializer")
+            model.graph.initializer.extend(kept)
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
+
+
+@onnx_and_onnxruntime_only
+@onnxconverter_common_only
+class TestPatchEmbeddingInInt8Source:
+    """``int8_source_graph`` plans, calibrates and quantizes the patch embedding as the matrix multiply it becomes."""
+
+    @pytest.fixture
+    def patch_graph(self, tmp_path: Path) -> Path:
+        """A 16-pixel patch embedding over a ``(1, 3, 16, 16)`` image, saved to disk with a detector's output names.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> path = patch_graph(tmp_path)  # doctest: +SKIP
+        """
+        path = tmp_path / "patch.onnx"
+        onnx.save(_with_detector_outputs(_patch_embedding(size=16)), path)
+        return path
+
+    def test_patch_embedding_is_quantized_as_a_matrix_multiply(self, patch_graph: Path) -> None:
+        images = np.random.default_rng(0).standard_normal((3, 3, 16, 16)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(patch_graph),
+            calibration_data=images,
+            max_images=3,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            graph = onnx.load(int8_path).graph
+        producers = {output: node for node in graph.node for output in node.output}
+        (matmul,) = [node for node in graph.node if node.name == f"{BACKBONE}patch/MatMul"]
+        activation = producers[matmul.input[0]]
+        assert [node.op_type for node in graph.node].count("Conv") == 0
+        assert activation.op_type == "DequantizeLinear"
+        assert producers[activation.input[0]].op_type == "QuantizeLinear"
+        assert producers[matmul.input[1]].op_type == "DequantizeLinear"
+
+    def test_the_fp16_copy_is_lifted_before_the_patch_embedding_is_rewritten(self, tmp_path: Path) -> None:
+        # At opset 13 the rewrite's ``Add`` would be refused by the lift that follows it, after calibration has run.
+        model = _with_detector_outputs(_patch_embedding(size=16))
+        model.opset_import[0].version = 13
+        path = tmp_path / "opset13.onnx"
+        onnx.save(model, path)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=np.zeros((3, 3, 16, 16), np.float32),
+            max_images=3,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        assert quantized.opset_import[0].version == 19
+
+    @pytest.mark.parametrize("copy", ["overlapping-patches", "renamed"])
+    def test_fp16_copy_without_a_planned_node_is_refused(self, patch_graph: Path, tmp_path: Path, copy: str) -> None:
+        # Overlapping patches leave nothing to rewrite; a renamed ``Conv`` is rewritten under another ``MatMul`` name.
+        # Either way the node the plan quantizes is missing, which would otherwise surface as a ``KeyError``.
+        other = (
+            _patch_embedding(size=16, strides=[8, 8]) if copy == "overlapping-patches" else _patch_embedding(size=16)
+        )
+        if copy == "renamed":
+            other.graph.node[0].name = f"{BACKBONE}other/Conv"
+        onnx.save(_with_detector_outputs(other), tmp_path / "other.onnx")
+
+        @contextlib.contextmanager
+        def other_fp16(*_: Any, **__: Any) -> Iterator[str]:
+            yield str(tmp_path / "other.onnx")
+
+        with pytest.raises(ValueError, match="lacks 1 node"):
+            with quantize.int8_source_graph(
+                str(patch_graph),
+                calibration_data=np.zeros((3, 3, 16, 16), np.float32),
+                max_images=3,
+                dynamic_batch=False,
+                fp16_graph=other_fp16,
+            ):
+                pass
+
+
 class TestInt8SourceGraph:
     """A graph INT8 cannot start from is refused before any calibration, with advice an INT8 request can follow."""
 
@@ -2415,10 +2806,43 @@ class TestNanoInt8Plan:
 
     def test_counts(self, plan: quantize.Int8Plan) -> None:
         # Backbone: 9 windowed blocks x (q, k, v, o, fc1, fc2) + 3 global blocks x (fc1, fc2) = 60; the patch embedding
-        # reads the 3-channel image and stays FP16.
+        # reads the 3-channel image and is still a Conv here (``test_patch_embedding_joins_the_plan_as_a_matmul``).
         # Decoder: 2 layers x (value, offsets, attention weights, output, linear1, linear2) + reference-point MLP = 14.
         # Activations: one per weighted node + 4 per INT8 attention block (9 windowed blocks).
         assert (len(plan.weighted), len(plan.activations)) == (74, 74 + 36)
+
+    def test_patch_embedding_joins_the_plan_as_a_matmul(self, nano_onnx: Path) -> None:
+        model = onnx.load(str(nano_onnx))
+        assert quantize._patch_embedding_as_matmul(model) == 1
+        onnx.checker.check_model(model, full_check=True)
+        onnx.shape_inference.infer_shapes(model, strict_mode=True)
+        plan = quantize.plan_int8(model)
+        # One more layer and activation input than ``test_counts``: the matrix multiply over 3 * 16 * 16 values.
+        assert (len(plan.weighted), len(plan.activations)) == (75, 75 + 36)
+        assert [n for n in plan.weighted if n.endswith("patch_embeddings/projection/MatMul")] != []
+
+    @onnx_and_onnxruntime_only
+    @onnxconverter_common_only
+    def test_int8_source_graph_quantizes_the_patch_embedding(self, nano_onnx: Path) -> None:
+        shape = [dim.dim_value for dim in onnx.load(str(nano_onnx)).graph.input[0].type.tensor_type.shape.dim]
+        samples = np.random.default_rng(5).standard_normal((2, *shape[1:])).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(nano_onnx),
+            calibration_data=samples,
+            max_images=2,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as int8_path:
+            quantized = onnx.load(int8_path)
+        onnx.checker.check_model(quantized, full_check=True)
+        ops = Counter(node.op_type for node in quantized.graph.node)
+        # One DequantizeLinear per planned weight (74 layers and the patch embedding), plus one per activation.
+        assert ops["DequantizeLinear"] == 75 + ops["QuantizeLinear"]
+        assert [
+            n.name
+            for n in quantized.graph.node
+            if n.op_type == "Conv" and n.name.startswith(quantize._QUANTIZED_REGIONS[0])
+        ] == []
 
     def test_global_blocks_keep_attention_in_fp16(self, plan: quantize.Int8Plan) -> None:
         global_attention = [n for n in plan.weighted if any(f"layer.{i}/attention/" in n for i in (3, 6, 9))]
@@ -2547,6 +2971,16 @@ class TestSegmentationAndKeypointInt8Plan:
         # has one QuantizeLinear).
         ops = Counter(node.op_type for node in quantized.graph.node)
         assert ops["DequantizeLinear"] == len(plans[kind].weighted) + ops["QuantizeLinear"]
+
+    @pytest.mark.parametrize(
+        "kind", ["segmentation", "segmentation-small", "segmentation-medium", "segmentation-large", "keypoint"]
+    )
+    def test_patch_embedding_stays_a_convolution(self, kind: str, exports: dict[str, Path]) -> None:
+        # 12-pixel patches of an RGB image are 432 values, not a multiple of 32, so they stay a convolution.
+        model = onnx.load(str(exports[kind]))
+        before = model.SerializeToString()
+        assert quantize._patch_embedding_as_matmul(model) == 0
+        assert model.SerializeToString() == before
 
     def test_keypoint_instance_self_attention_is_left_float(self, plans: dict[str, quantize.Int8Plan]) -> None:
         assert [n for n in plans["keypoint"].weighted if "_self_attn/" in n] == []
@@ -2795,7 +3229,11 @@ class TestInt8EndToEnd:
     def test_engine_is_written_without_leftovers(self, engines: tuple[Path, Path, np.ndarray]) -> None:
         _, int8, _ = engines
         assert int8.name == "rfdetr-nano_int8.trt"
-        assert sorted(p.name for p in int8.parent.iterdir()) == ["rfdetr-nano.onnx", "rfdetr-nano_int8.trt"]
+        assert sorted(p.name for p in int8.parent.iterdir()) == [
+            "rfdetr-nano.onnx",
+            "rfdetr-nano_int8.trt",
+            "rfdetr-nano_int8.trt.rfdetr.json",
+        ]
 
     def test_confident_detections_match_fp16(self, engines: tuple[Path, Path, np.ndarray]) -> None:
         fp16_path, int8_path, example = engines

@@ -23,7 +23,7 @@ RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native Co
 The export docs are split into three pages:
 
 - **Overview** (this page) — supported formats and measured performance per hardware.
-- [Export Basics](basics.md) — installation, a first `model.export()` call, output files, and inference with `inference-models`.
+- [Export Basics](basics.md) — installation, a first `model.export()` call, output files, and prediction with `RFDETRInference`.
 - [Advanced Export](advanced.md) — the full parameter reference, custom resolution, backbone-only export, and how the export pipeline works.
 
 For detailed installation, examples, and inference code per format, see the format guides:
@@ -41,15 +41,15 @@ For detailed installation, examples, and inference code per format, see the form
 
 Which format is fastest depends entirely on the hardware you deploy to. The four per-hardware cookbooks each export every format targeting one class of device, run inference on it, and benchmark it against a PyTorch baseline on the same machine. Below is the fastest end-to-end result per hardware class, plus the PyTorch anchor it was measured against; the cookbooks carry the full tables, including forward-only timings, memory, and the slower configurations.
 
-| Hardware                           | Fastest format                                                   | end2end [ms] | FPS [img/s] | PyTorch `predict()` anchor | Cookbook                              |
-| ---------------------------------- | ---------------------------------------------------------------- | ------------ | ----------- | -------------------------- | ------------------------------------- |
-| NVIDIA L4 (pkg `inference-models`) | TensorRT via `inference-models` (managed engine, auto precision) | 3.41 ± 0.06  | 293.5       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
-| NVIDIA L4 (plain `rfdetr`)         | TensorRT raw `.trt` engine (`TRTInference`, fp16, no extra pkg)  | 9.82 ± 0.34  | 101.8       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
-| Apple M4 Max (40-core GPU)         | CoreML fp32 (default)                                            | 11.57 ± 0.28 | 86.5        | 24.12 ms / 41.5 FPS        | [Apple](../cookbooks/export-apple/)   |
-| x86 CPU (shared Colab vCPU)        | No clear winner: ONNX, OpenVINO and PyTorch overlap within noise | 357–377      | 2.7–2.8     | 377.34 ms / 2.7 FPS        | [CPU](../cookbooks/export-cpu/)       |
-| Apple M4 Max CPU (12P + 4E cores)  | No clear winner yet: LiteRT ran on one thread, pending a rerun   | —            | —           | 54.54 ms / 18.3 FPS        | [Mobile](../cookbooks/export-mobile/) |
+| Hardware                           | Fastest format                                                    | end2end [ms] | FPS [img/s] | PyTorch `predict()` anchor | Cookbook                              |
+| ---------------------------------- | ----------------------------------------------------------------- | ------------ | ----------- | -------------------------- | ------------------------------------- |
+| NVIDIA L4 (pkg `inference-models`) | TensorRT via `inference-models` (managed engine, auto precision)  | 3.41 ± 0.06  | 293.5       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
+| NVIDIA L4 (plain `rfdetr`)         | TensorRT raw `.trt` engine (`TRTInference`\*, fp16, no extra pkg) | 9.82 ± 0.34  | 101.8       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
+| Apple M4 Max (40-core GPU)         | CoreML fp32 (default)                                             | 11.57 ± 0.28 | 86.5        | 24.12 ms / 41.5 FPS        | [Apple](../cookbooks/export-apple/)   |
+| x86 CPU (shared Colab vCPU)        | No clear winner: ONNX, OpenVINO and PyTorch overlap within noise  | 357–377      | 2.7–2.8     | 377.34 ms / 2.7 FPS        | [CPU](../cookbooks/export-cpu/)       |
+| Apple M4 Max CPU (12P + 4E cores)  | No clear winner yet: LiteRT ran on one thread, pending a rerun    | —            | —           | 54.54 ms / 18.3 FPS        | [Mobile](../cookbooks/export-mobile/) |
 
-All numbers are batch 1, `RFDETRSmall`, rfdetr `develop` (version not recorded). Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30). The rows come from three machines: a Colab L4 GPU host, a shared Colab x86 vCPU, and one Apple M4 Max (16-core CPU: 12 performance + 4 efficiency, 40-core GPU) that ran both the Apple row and the arm64 CPU row. Compare *within* a row, never across rows. On the shared x86 vCPU the gap between formats is about one run-to-run standard deviation, and a shared vCPU drifts between sessions, so that row is not a ranking. All of its rows were measured before the cookbook pinned one shared `CPU_THREADS` value, and its OpenVINO figures also before `OpenVINOInference` computed in float32 (see the [OpenVINO guide](openvino.md#openvino-inference-example)), so every x86 row is pending a rerun. The arm64 CPU row stands in for a phone or edge CPU only approximately: it is a laptop chip, and a phone's own delegate (NNAPI, QNN, Core ML) is not exercised. **Two L4 rows, on purpose**: the first goes through `inference-models`, a separate package that selects and loads its own prebuilt TensorRT engine; the second times the `.trt` file `model.export(format="trt")` itself writes, loaded directly with `rfdetr`'s own `TRTInference` reference runtime — no extra package beyond `rfdetr[tensorrt]`. Both are real end-to-end numbers on the same L4 — see the [CUDA cookbook](../cookbooks/export-cuda/#6-tensorrt) for the full table and the open gap against Roboflow's own product-page number.
+All numbers are batch 1, `RFDETRSmall`, rfdetr `develop` (version not recorded). Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30). The rows come from three machines: a Colab L4 GPU host, a shared Colab x86 vCPU, and one Apple M4 Max (16-core CPU: 12 performance + 4 efficiency, 40-core GPU) that ran both the Apple row and the arm64 CPU row. Compare *within* a row, never across rows. On the shared x86 vCPU the gap between formats is about one run-to-run standard deviation, and a shared vCPU drifts between sessions, so that row is not a ranking. All of its rows were measured before the cookbook pinned one shared `CPU_THREADS` value, and its OpenVINO figures also before `OpenVINOInference`\* computed in float32 (see the [OpenVINO guide](openvino.md#openvino-inference-example)), so every x86 row is pending a rerun. The arm64 CPU row stands in for a phone or edge CPU only approximately: it is a laptop chip, and a phone's own delegate (NNAPI, QNN, Core ML) is not exercised. **Two L4 rows, on purpose**: the first goes through `inference-models`, a separate package that selects and loads its own prebuilt TensorRT engine; the second times the `.trt` file `model.export(format="trt")` itself writes, loaded directly with `rfdetr`'s own `TRTInference` reference runtime — no extra package beyond `rfdetr[tensorrt]`. Both are real end-to-end numbers on the same L4 — see the [CUDA cookbook](../cookbooks/export-cuda/#6-tensorrt) for the full table and the open gap against Roboflow's own product-page number.
 
 `Memory [MB]` in the cookbooks is comparable only within one cookbook: the CUDA cookbook measures device memory, the CPU, Apple and mobile cookbooks measure host resident memory (RSS).
 
@@ -82,9 +82,11 @@ The format guides listed above cover installation, export examples, output files
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](../learn/deploy.md) for cloud-based inference and workflow integration
-- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
+- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) as a separate option for PyTorch, ONNX, or TensorRT inference
 - Deploy TFLite and LiteRT `.tflite` models on mobile/edge devices with the LiteRT runtime
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
 - Read the [Exporter Blueprint](blueprint.md) to add a new export format
 - Browse the format guides above for per-format details
+
+\* `TRTInference` and `OpenVINOInference` are retained here to identify the runtimes used for the measured benchmarks. Both are deprecated since v1.12.0 and will be removed in v1.15.0. Use `RFDETRInference` for image prediction; see the [migration guide](../getting-started/migration.md#deprecated-in-v112-remove-in-v115).

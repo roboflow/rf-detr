@@ -15,6 +15,7 @@ Use cases covered:
 """
 
 import inspect
+import logging
 import os
 import re
 import subprocess
@@ -30,12 +31,14 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from pydantic import ValidationError
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export._runtime.metadata import ExportMetadata, read_metadata, write_metadata
 from rfdetr.export._tensorrt.exporter import TensorRTExporter, _BuiltEngine
 from rfdetr.export.base import Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -45,6 +48,20 @@ from tests._markers import onnx_only, onnxruntime_only
 
 if TYPE_CHECKING:
     import onnx
+
+
+@pytest.fixture(autouse=True)
+def _skip_metadata_publication_for_export_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep facade tests focused on conversion when their fake artifacts have no file bytes.
+
+    The metadata round-trip tests use the real writer in ``test_metadata.py``. This fixture does not replace
+    ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
+
+    Examples:
+        Requires pytest's monkeypatch lifecycle, so this example cannot run standalone:
+        >>> _skip_metadata_publication_for_export_stubs(None)  # doctest: +SKIP
+    """
+    monkeypatch.setattr("rfdetr.export.base.write_metadata", lambda *_args, **_kwargs: None)
 
 
 @contextmanager
@@ -82,6 +99,50 @@ class _DummyCoreModel:
         if self._segmentation_head:
             out["pred_masks"] = torch.zeros(1, 1, 2, 2)
         return out
+
+
+def _make_export_model(
+    *,
+    core_model: _DummyCoreModel | None = None,
+    segmentation_head: bool = False,
+    device: str = "cpu",
+    resolution: int = 14,
+    patch_size: int = 14,
+    num_windows: int = 1,
+    size: str | None = None,
+) -> types.SimpleNamespace:
+    """Build an RFDETR export double with a valid detection or segmentation prediction contract.
+
+    Examples:
+        >>> model = _make_export_model(segmentation_head=True)
+        >>> model.class_names, model.model.postprocess.num_select
+        (['object'], 1)
+    """
+    return types.SimpleNamespace(
+        model=types.SimpleNamespace(
+            model=core_model or _DummyCoreModel(segmentation_head=segmentation_head),
+            device=device,
+            resolution=resolution,
+            postprocess=types.SimpleNamespace(
+                num_select=1,
+                trace_alpha=0.2,
+                upsample_masks_to_image_size=True,
+            ),
+        ),
+        model_config=types.SimpleNamespace(
+            segmentation_head=segmentation_head,
+            use_grouppose_keypoints=False,
+            num_channels=3,
+            num_classes=1,
+            num_keypoints_per_class=[],
+            patch_size=patch_size,
+            num_windows=num_windows,
+        ),
+        class_names=["object"],
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        size=size,
+    )
 
 
 def _run_onnx_export(
@@ -373,17 +434,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
 ) -> None:
     """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict to `export_onnx`;
     `dynamic_batch=False` must pass `None`."""
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(
-            model=_DummyCoreModel(segmentation_head=segmentation_head), device="cpu", resolution=14
-        ),
-        model_config=types.SimpleNamespace(
-            segmentation_head=segmentation_head,
-            use_grouppose_keypoints=False,
-            num_channels=3,
-        ),
-        size=None,
-    )
+    model = _make_export_model(segmentation_head=segmentation_head)
 
     captured: dict = {}
 
@@ -449,11 +500,7 @@ def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace
         >>> m.model.device
         'cuda'
     """
-    return types.SimpleNamespace(
-        model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
-        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
-        size=None,
-    )
+    return _make_export_model(core_model=_DeviceTrackingCoreModel(), device=device)
 
 
 def _make_mock_infer_tensor() -> MagicMock:
@@ -520,11 +567,7 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_tensorrt(
     `format="onnx"` with `dynamic_batch=True` accepts a dynamic batch axis but has no optimization-profile concept for
     `max_batch_size` to tune, so passing it there previously vanished with no signal at all.
     """
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
-        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
-        size=None,
-    )
+    model = _make_export_model()
     onnx_output = str(tmp_path / "inference_model.onnx")
 
     monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
@@ -830,11 +873,8 @@ def test_rfdetr_export_moves_the_live_model_under_the_device_move_lock(
     """
     core_model = _LockTrackingCoreModel()
     original_device = "meta"
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(model=core_model, device=original_device, resolution=14),
-        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
-        size=None,
-    )
+    model = _make_export_model(resolution=14, patch_size=14, num_windows=1, device=original_device)
+    model.model.model = core_model
 
     # Mock infer tensor (as in the TensorRT tests above): a real one cannot be copied off the "meta" device.
     monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
@@ -1014,20 +1054,10 @@ class TestExportPatchSize:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int
     ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
-        model = types.SimpleNamespace(
-            model=types.SimpleNamespace(
-                model=_DummyCoreModel(),
-                device="cpu",
-                resolution=patch_size * num_windows * 2,  # always valid
-            ),
-            model_config=types.SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=False,
-                patch_size=patch_size,
-                num_windows=num_windows,
-                num_channels=3,
-            ),
-            size=None,
+        model = _make_export_model(
+            resolution=patch_size * num_windows * 2,
+            patch_size=patch_size,
+            num_windows=num_windows,
         )
 
         def _fake_make_infer_image(*_a, **_kw):
@@ -1257,15 +1287,7 @@ class TestExportOnnxVariantNaming:
         """
         captured: dict = {}
 
-        model = types.SimpleNamespace(
-            model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
-            model_config=types.SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=False,
-                num_channels=3,
-            ),
-            size=size,
-        )
+        model = _make_export_model(size=size)
 
         def _fake_make_infer_image(*_args, **_kwargs):
             return torch.zeros(1, 3, 14, 14)
@@ -1441,7 +1463,14 @@ def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
     obj.model = MagicMock()
     obj.model.resolution = 32
     obj.model.device = "cpu"
+    obj.model.class_names = ["object"]
+    obj.model.args = types.SimpleNamespace(num_classes=1, num_keypoints_per_class=[])
+    obj.model.postprocess.num_select = 1
+    obj.model.postprocess.trace_alpha = 0.2
+    obj.model.postprocess.upsample_masks_to_image_size = True
     obj.model.model.to.return_value = obj.model.model
+    obj.means = [0.485, 0.456, 0.406]
+    obj.stds = [0.229, 0.224, 0.225]
     backbone = torch.nn.Identity()
     backbone.export = MagicMock()
     backbone.forward_export = MagicMock(return_value=([torch.zeros(1, 4, 2, 2)], None, None))
@@ -1453,6 +1482,8 @@ def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
         patch_size=16,
         num_windows=1,
         num_channels=3,
+        num_classes=1,
+        num_keypoints_per_class=[],
         projector_scale=["P4"],
     )
     stem = "custom-backbone" if backbone_only else "custom"
@@ -1647,6 +1678,10 @@ def _stub_export_dependencies(
         stubs["rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies"] = MagicMock(return_value=None)
         stubs["rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx"] = MagicMock(
             return_value=tmp_path / "inference_model_fp32.tflite"
+        )
+        # A fake flatbuffer has no signature for the metadata publication step to inspect.
+        stubs["rfdetr.export._tflite.exporter.TFLiteExporter._metadata_for_artifact"] = MagicMock(
+            side_effect=lambda metadata, _path: metadata
         )
     for target, stub in stubs.items():
         monkeypatch.setattr(target, stub)
@@ -2235,7 +2270,7 @@ class TestExportDependencyCheck:
     def test_inplace_optimized_model_is_refused_before_the_dependency_check(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A model whose weights an in-place optimization cleared is refused first: installing an extra cannot help."""
+        """A legacy model whose base weights were cleared is refused before checking export dependencies."""
         monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock(side_effect=ImportError("missing package")))
         model = _make_tensorrt_export_model()
         model._optimized_inplace = True
@@ -2703,3 +2738,269 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
 
         with pytest.raises(ValueError, match="unknown keypoint axis"):
             _keypoint_axis_broadcasts(model)
+
+
+class TestExporterMetadataPublication:
+    """Metadata errors do not hide converted artifacts or stop later variants."""
+
+    def test_metadata_validation_failure_keeps_export(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Invalid inference metadata warns while the facade still writes the artifact."""
+        with pytest.raises(ValidationError) as caught:
+            ExportMetadata.model_validate({})
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"converted")
+        converter = MagicMock(return_value=artifact)
+        monkeypatch.setattr("rfdetr.export._runtime.metadata.metadata_from_model", MagicMock(side_effect=caught.value))
+        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock())
+        monkeypatch.setattr(OnnxExporter, "_convert", converter)
+        warning = MagicMock()
+        monkeypatch.setattr(_detr_module.logger, "warning", warning)
+
+        result = _detr_module.RFDETR.export(_make_export_model(), output_dir=str(tmp_path), shape=(14, 14))
+
+        assert result == artifact
+        assert artifact.read_bytes() == b"converted"
+        assert converter.call_args.args[0].metadata is None
+        assert not Path(f"{artifact}.rfdetr.json").exists()
+        warning.assert_called_once()
+        message, *arguments = warning.call_args.args
+        rendered = message % tuple(arguments)
+        assert "without inference metadata" in rendered
+        assert "RFDETRInference(metadata=<json>)" in rendered
+        assert str(caught.value) in rendered
+
+    def test_unrelated_metadata_value_error_propagates(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The metadata guard must not hide ValueError bugs unrelated to schema validation."""
+        monkeypatch.setattr(
+            "rfdetr.export._runtime.metadata.metadata_from_model", MagicMock(side_effect=ValueError("metadata bug"))
+        )
+        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock())
+        converter = MagicMock()
+        monkeypatch.setattr(OnnxExporter, "_convert", converter)
+
+        with pytest.raises(ValueError, match="metadata bug"):
+            _detr_module.RFDETR.export(_make_export_model(), output_dir=str(tmp_path), shape=(14, 14))
+
+        converter.assert_not_called()
+
+    @staticmethod
+    def _metadata() -> ExportMetadata:
+        """Build a small TFLite prediction contract for exporter tests.
+
+        Examples:
+            >>> TestExporterMetadataPublication._metadata().class_names
+            ['object']
+        """
+        return ExportMetadata(
+            format="tflite",
+            task="detect",
+            input_shape=(1, 3, 16, 16),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+
+    @staticmethod
+    def _graph(metadata: ExportMetadata) -> ExportGraph:
+        """Build a tiny graph that carries prediction metadata.
+
+        Examples:
+            >>> graph = TestExporterMetadataPublication._graph(TestExporterMetadataPublication._metadata())
+            >>> graph.metadata.task
+            'detect'
+        """
+        return ExportGraph(
+            model=torch.nn.Identity(),
+            input_tensors=torch.zeros(1, 3, 16, 16),
+            input_names=("input",),
+            output_names=("dets", "labels"),
+            dynamic_axes=None,
+            shape=(16, 16),
+            backbone_only=False,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _exporter(output_dir: Path) -> Exporter:
+        """Create a TFLite exporter without its optional converter dependency.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     TestExporterMetadataPublication._exporter(Path(directory)).format
+            'tflite'
+        """
+        from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
+
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=output_dir))
+        exporter.check_dependencies = lambda: None
+        return exporter
+
+    def test_metadata_failure_keeps_artifact_and_continues_variants(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A failed metadata hook warns, returns the artifact, and publishes later variants."""
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        exporter = self._exporter(tmp_path)
+        artifacts = tuple(tmp_path / f"model_{precision}.tflite" for precision in ("fp32", "fp16", "int8"))
+
+        def convert(_graph: ExportGraph) -> Path:
+            """Write the enclosing test's temporary precision variants.
+
+            Examples:
+                Requires the temporary artifacts from the enclosing test.
+                >>> convert(graph)  # doctest: +SKIP
+            """
+            for artifact in artifacts:
+                artifact.write_bytes(b"converted")
+            return artifacts[0]
+
+        exporter._convert = convert
+        exporter._metadata_artifacts = lambda _path: artifacts
+        exporter._metadata_for_artifact = MagicMock(
+            side_effect=[ValueError("signature has ambiguous outputs"), metadata, metadata]
+        )
+        monkeypatch.setattr(export_base, "write_metadata", write_metadata)
+        warning = MagicMock()
+        monkeypatch.setattr(export_base.logger, "warning", warning)
+
+        result = exporter(self._graph(metadata))
+
+        assert result == artifacts[0]
+        assert artifacts[0].is_file()
+        assert not Path(f"{artifacts[0]}.rfdetr.json").exists()
+        assert read_metadata(artifacts[1]) == metadata
+        assert read_metadata(artifacts[2]) == metadata
+        assert warning.call_count == 1
+        assert artifacts[0] in warning.call_args.args
+        assert "metadata=" in warning.call_args.args[0]
+        assert "still needs format-specific output positions or signature names" in warning.call_args.args[0]
+
+    @pytest.mark.parametrize(
+        "outputs",
+        [
+            pytest.param({"pred_boxes": 1, "pred_logits": 0}, id="output-positions"),
+            pytest.param({"pred_boxes": "boxes", "pred_logits": "scores"}, id="signature-names"),
+        ],
+    )
+    def test_write_failure_logged_metadata_loads_from_json_file(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        outputs: dict[str, str | int],
+    ) -> None:
+        """Recover derived artifact metadata from the debug JSON after a write failure.
+
+        A format changes the graph's output identifiers before publication. If writing its sidecar fails, saving the
+        logged JSON to a file must preserve those identifiers when loaded as an explicit metadata override.
+        """
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        derived_metadata = metadata.model_copy(update={"outputs": outputs})
+        exporter = self._exporter(tmp_path)
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"converted")
+        exporter._convert = MagicMock(return_value=artifact)
+        exporter._metadata_for_artifact = MagicMock(return_value=derived_metadata)
+        monkeypatch.setattr(export_base, "write_metadata", MagicMock(side_effect=OSError("sidecar is not writable")))
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            result = exporter(self._graph(metadata))
+        debug_record = next(record for record in caplog.records if "Unpublished inference metadata" in record.msg)
+        metadata_path = tmp_path / "meta.json"
+        metadata_path.write_text(debug_record.args[1], encoding="utf-8")
+        recovered_metadata = read_metadata(artifact, metadata_path)
+
+        assert result == artifact
+        assert not Path(f"{artifact}.rfdetr.json").exists()
+        assert debug_record.levelno == logging.DEBUG
+        assert recovered_metadata == derived_metadata
+        warning_record = next(record for record in caplog.records if record.levelno == logging.WARNING)
+        assert artifact in warning_record.args
+        assert "Save the logged JSON as a .json file" in warning_record.getMessage()
+        assert "metadata=<path to that file>" in warning_record.getMessage()
+
+    def test_artifact_selection_failure_logs_traceback_and_metadata(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failing ``_metadata_artifacts`` override warns with its traceback and still returns the artifact.
+
+        The catch stays broad so a finished conversion is never lost, so a bug in a format override such as an
+        ``AttributeError`` only surfaces through this warning: the traceback has to be attached, and the metadata that
+        was not published is logged at debug level for the caller to save and complete before passing its file path as
+        ``metadata=``.
+        """
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        exporter = self._exporter(tmp_path)
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"converted")
+        exporter._convert = MagicMock(return_value=artifact)
+        exporter._metadata_artifacts = MagicMock(side_effect=AttributeError("override bug"))
+        monkeypatch.setattr(export_base, "write_metadata", write_metadata)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            result = exporter(self._graph(metadata))
+
+        selection_warnings = [record for record in caplog.records if "Could not select" in record.getMessage()]
+        assert result == artifact
+        assert artifact.is_file()
+        assert not Path(f"{artifact}.rfdetr.json").exists()
+        assert selection_warnings[0].levelno == logging.WARNING
+        assert selection_warnings[0].exc_info[0] is AttributeError
+        assert "metadata=" in selection_warnings[0].getMessage()
+        assert "still needs format-specific output positions or signature names" in selection_warnings[0].getMessage()
+        assert metadata.model_dump_json() in caplog.text
+
+    def test_real_writer_runs_through_exporter_hook(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The exporter publishes sidecar metadata through the real writer hook."""
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        exporter = self._exporter(tmp_path)
+        artifact = tmp_path / "model.tflite"
+
+        def convert(_graph: ExportGraph) -> Path:
+            """Write the enclosing test's temporary converted artifact.
+
+            Examples:
+                Requires the temporary artifact from the enclosing test.
+                >>> convert(graph)  # doctest: +SKIP
+            """
+            artifact.write_bytes(b"converted")
+            return artifact
+
+        exporter._convert = convert
+        exporter._metadata_for_artifact = lambda contract, _path: contract
+        monkeypatch.setattr(export_base, "write_metadata", write_metadata)
+
+        result = exporter(self._graph(metadata))
+
+        assert result == artifact
+        assert read_metadata(artifact) == metadata
+
+    def test_conversion_error_still_propagates(self, tmp_path: Path) -> None:
+        """Metadata recovery does not swallow converter errors."""
+        exporter = self._exporter(tmp_path)
+        exporter._convert = MagicMock(side_effect=RuntimeError("conversion failed"))
+
+        with pytest.raises(RuntimeError, match="conversion failed"):
+            exporter(self._graph(self._metadata()))
