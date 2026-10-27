@@ -26,13 +26,13 @@ from weakref import WeakKeyDictionary
 import numpy as np
 import torch
 from deprecate.deprecation import deprecation_warning
-from PIL import Image
 from pydantic import ValidationError
 
 from rfdetr import _prediction
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr._prediction import (
     PredictionContext,
+    _PredictionImages,
     _resolve_patch_size,
     _validate_shape_dims,
 )
@@ -3042,13 +3042,7 @@ class RFDETR:
     @torch.inference_mode()
     def predict(
         self,
-        images: str
-        | os.PathLike[str]
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
-        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
+        images: _PredictionImages,
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
