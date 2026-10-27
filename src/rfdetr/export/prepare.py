@@ -33,6 +33,7 @@ from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._backend import _BackboneExport
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.utilities.logger import get_logger
@@ -105,6 +106,7 @@ class ExportGraph:
     dynamic_axes: Mapping[str, Mapping[int, str]] | None
     shape: tuple[int, int]
     backbone_only: bool
+    metadata: ExportMetadata | None = None
 
 
 def validate_batch_size(batch_size: object) -> int:
@@ -333,6 +335,7 @@ def prepare_export_graph(
     batch_size: int = 1,
     dynamic_batch: bool = False,
     backbone_only: bool = False,
+    metadata: ExportMetadata | None = None,
 ) -> ExportGraph:
     """Prepare *model* for tracing and describe the graph a backend is about to write.
 
@@ -350,6 +353,9 @@ def prepare_export_graph(
         batch_size: Static batch size baked into the graph.
         dynamic_batch: Whether to mark the batch dimension dynamic.
         backbone_only: Export the encoder and feature projectors without the prediction heads.
+        metadata: Inference metadata captured from the exported model, including its task, class names, input
+            preprocessing, and output semantics. When provided, this metadata is attached to the prepared graph for
+            publication beside the final artifact.
 
     Returns:
         The prepared :class:`ExportGraph`.
@@ -416,4 +422,5 @@ def prepare_export_graph(
         dynamic_axes=dynamic_axes,
         shape=shape,
         backbone_only=backbone_only,
+        metadata=metadata,
     )

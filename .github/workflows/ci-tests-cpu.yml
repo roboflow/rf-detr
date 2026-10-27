@@ -28,7 +28,8 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    timeout-minutes: ${{ matrix.timeout || 25 }}
+    # Real CPU training tests take longer on macOS; the 3.10 row reached 98% before the 25-minute cap.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 30 || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -38,8 +39,7 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - { os: "windows-latest", python-version: "3.10" }
-          # Slower hosted runners have pushed this leg past 25 minutes.
-          - { os: "macos-latest", python-version: "3.10", timeout: 30 }
+          - { os: "macos-latest", python-version: "3.10" }
           - { os: "windows-latest", python-version: "3.13" }
           - { os: "macos-latest", python-version: "3.13" }
     runs-on: ${{ matrix.os }}
@@ -84,6 +84,10 @@ jobs:
       - name: 🧪 Run the Test
         # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in
         # repository maintenance scripts, which `pyproject.toml` alone cannot reach because paths are explicit here.
+        # TMPDIR moves pytest's tmp_path (and every tempfile) to the runner's disk: /tmp on ubuntu-26.04 is
+        # size-limited, and the suite's ONNX exports filled it ("Errno 122 Disk quota exceeded").
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: |
           uv run --no-sync pytest src/ tests/ scripts/ \
             -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu$EXTRA_MARKERS" \

@@ -3229,7 +3229,11 @@ class TestInt8EndToEnd:
     def test_engine_is_written_without_leftovers(self, engines: tuple[Path, Path, np.ndarray]) -> None:
         _, int8, _ = engines
         assert int8.name == "rfdetr-nano_int8.trt"
-        assert sorted(p.name for p in int8.parent.iterdir()) == ["rfdetr-nano.onnx", "rfdetr-nano_int8.trt"]
+        assert sorted(p.name for p in int8.parent.iterdir()) == [
+            "rfdetr-nano.onnx",
+            "rfdetr-nano_int8.trt",
+            "rfdetr-nano_int8.trt.rfdetr.json",
+        ]
 
     def test_confident_detections_match_fp16(self, engines: tuple[Path, Path, np.ndarray]) -> None:
         fp16_path, int8_path, example = engines
