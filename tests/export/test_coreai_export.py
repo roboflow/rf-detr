@@ -24,6 +24,7 @@ import json
 import os
 import platform
 import sys
+import threading
 import warnings
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,8 @@ from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
 from rfdetr.export._coreai.decompositions import coreai_decomposition_table, grid_sampler_2d_gather, topk_in_float32
 from rfdetr.export._coreai.exporter import CoreAIConfig, CoreAIExporter, _check_coreai_torch_available
+from rfdetr.export._coreai.inference import _CoreAILoopBridge, _stop_loop, load_export_runtime
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.prepare import ExportGraph, resolve_output_names
 from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import (
@@ -320,6 +323,73 @@ def _mocked_coreai_stack() -> Any:
         )
 
 
+class TestCoreAILoopBridge:
+    """Check bridge shutdown and load validation without the Core AI runtime."""
+
+    def test_finalizer_closes_loop(self) -> None:
+        """Finalization stops the worker and closes its event loop."""
+        bridge = _CoreAILoopBridge()
+        bridge._finalizer()
+        bridge.thread.join(timeout=5)
+        assert not bridge.thread.is_alive()
+        assert bridge.loop.is_closed()
+
+    def test_worker_closes_loop_after_join_timeout(self) -> None:
+        """A callback that outlives finalization still leaves a closed loop."""
+        bridge = _CoreAILoopBridge()
+        entered = threading.Event()
+        release = threading.Event()
+        bridge.loop.call_soon_threadsafe(lambda: (entered.set(), release.wait(timeout=5)))
+        assert entered.wait(timeout=5)
+
+        # The callback blocks the loop, so the one-second join in the finalizer times out with the thread still alive.
+        bridge._finalizer()
+        assert bridge.thread.is_alive()
+        release.set()
+        bridge.thread.join(timeout=5)
+
+        assert bridge.loop.is_closed()
+
+    def test_stop_is_scheduled_before_loop_starts(self) -> None:
+        """Shutdown queues a stop even before the worker starts running its loop."""
+        loop = mock.Mock(spec=asyncio.AbstractEventLoop)
+        loop.is_running.return_value = False
+        loop.is_closed.return_value = False
+        thread = mock.Mock(spec=threading.Thread)
+        _stop_loop(loop, thread)
+        loop.call_soon_threadsafe.assert_called_once_with(loop.stop)
+        thread.join.assert_called_once_with(timeout=1)
+        loop.close.assert_not_called()
+
+    def test_integer_output_identifier_rejected_before_bridge_starts(self, tmp_path: Path) -> None:
+        """Integer output mappings fail at load before creating a worker thread."""
+        metadata = ExportMetadata(
+            format="coreai",
+            task="detect",
+            input_shape=(1, 3, 2, 2),
+            outputs={"pred_boxes": "dets", "pred_logits": 1},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=1,
+            num_windows=1,
+        )
+        with (
+            _mocked_coreai_stack(),
+            mock.patch("rfdetr.export._runtime.adapters._require_apple"),
+            mock.patch(
+                "rfdetr.export._coreai.inference._CoreAILoopBridge",
+                side_effect=AssertionError("bridge must not start"),
+            ) as bridge,
+            pytest.raises(ValueError, match=r"Core AI output mappings must use names\."),
+        ):
+            load_export_runtime(tmp_path / "model.aimodel", metadata, "auto", {})
+        bridge.assert_not_called()
+
+
 class TestCheckCoreaiTorchAvailable:
     """Tests for ``_check_coreai_torch_available``."""
 
@@ -502,6 +572,7 @@ class TestExportFormatParameter:
             mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
             mock.patch("rfdetr.export._coreai.exporter.CoreAIExporter._convert", return_value=aimodel) as convert,
             mock.patch("rfdetr.export._coreai.exporter.CoreAIExporter.check_dependencies"),
+            mock.patch("rfdetr.export.base.write_metadata"),
             mock.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert") as onnx_convert,
         ):
             self._mock_convert = convert
@@ -523,12 +594,21 @@ class TestExportFormatParameter:
         obj.model.resolution = 560
         obj.model.device = "cpu"
         obj.model.model.to.return_value = obj.model.model
+        obj.model.args = None
+        obj.model.class_names = ["object"]
+        obj.model.postprocess.num_select = 100
+        obj.model.postprocess.trace_alpha = 0.2
+        obj.model.postprocess.upsample_masks_to_image_size = True
+        obj.means = [0.485, 0.456, 0.406]
+        obj.stds = [0.229, 0.224, 0.225]
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = False
         obj.model_config.use_grouppose_keypoints = False
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
         obj.model_config.num_channels = 3
+        obj.model_config.num_classes = 1
+        obj.model_config.num_keypoints_per_class = []
         return obj
 
     def test_coreai_format_dispatches_to_coreai_exporter(self) -> None:
@@ -574,9 +654,11 @@ class TestFloat16KeypointWarning:
         """The warning skips the exporter's frames, so ``filterwarnings(module=...)`` matches the caller's module."""
         detector = TestExportFormatParameter._make_rfdetr()
         detector.model_config.use_grouppose_keypoints = True
+        detector.model_config.num_keypoints_per_class = [3]
         with (
             _mocked_coreai_stack(),
             mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
+            mock.patch("rfdetr.export.base.write_metadata"),
             pytest.warns(UserWarning, match="Neural Engine") as caught,
         ):
             detector.export(format="coreai", coreai_precision="float16", output_dir=str(tmp_path / "out"))

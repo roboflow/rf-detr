@@ -31,6 +31,7 @@ import torch
 from PIL import Image
 
 from rfdetr.detr import RFDETR
+from rfdetr.export._runtime.metadata import _artifact_digest
 from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
 from rfdetr.export._tensorrt import exporter as tensorrt_export
 from rfdetr.export._tensorrt import metadata as tensorrt_metadata
@@ -423,6 +424,15 @@ class TestSerializedEngineFacts:
             "size": len(content),
             "sha256": hashlib.sha256(content).hexdigest(),
         }
+
+    @pytest.mark.parametrize("size", [0, 6, 1024 * 1024 + 1])
+    def test_digest_agrees_with_prediction_metadata(self, tmp_path: Path, size: int) -> None:
+        """Both sidecars identify identical bytes, including files spanning digest read chunks."""
+        serialized = (bytes(range(256)) * (size // 256 + 1))[:size]
+        engine = tmp_path / "engine.trt"
+        engine.write_bytes(serialized)
+
+        assert serialized_engine_facts(serialized)["sha256"] == _artifact_digest(engine)
 
 
 class TestIsEngineDescription:

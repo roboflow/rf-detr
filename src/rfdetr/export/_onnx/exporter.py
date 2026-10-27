@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -234,3 +235,11 @@ class OnnxExporter(Exporter[OnnxConfig]):
                 )
             )
         return output_file
+
+    def _metadata_artifacts(self, path: Path) -> tuple[Path, ...]:
+        """Annotate both the INT8 artifact and its retained FP32 baseline."""
+        if self.config.quantization == "int8":
+            # quantize_int8 appends exactly one suffix to the FP32 stem, including for custom output names.
+            baseline = path.with_name(f"{path.stem.removesuffix('_int8')}{path.suffix}")
+            return (baseline, path)
+        return (path,)
