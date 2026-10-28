@@ -403,6 +403,33 @@ class TestValidateCheckpointCompatibility:
         warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
 
+    def test_class_count_mismatch_explicit_larger_num_classes_warns_head_resize(self, caplog):
+        """A set num_classes larger than the checkpoint: the warning says the configured count is kept.
+
+        `load_pretrain_weights` honors a set `num_classes` and re-expands the head after loading; the warning must not
+        claim the checkpoint class count is used.
+        """
+        from rfdetr.config import RFDETRBaseConfig
+
+        checkpoint = {"model": {"class_embed.bias": torch.randn(91)}}
+        model_args = RFDETRBaseConfig(num_classes=93)
+
+        rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
+        rf_detr_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="rf-detr"):
+                validate_checkpoint_compatibility(checkpoint, model_args)
+        finally:
+            rf_detr_logger.propagate = prev_propagate
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        assert any(
+            "Keeping num_classes=93" in msg and "resized to 94 outputs" in msg and "the 3 new outputs" in msg
+            for msg in warning_msgs
+        ), f"Expected a 'Keeping num_classes=93' resize warning, got: {warning_msgs}"
+        assert not any("Using checkpoint class count" in msg for msg in warning_msgs), warning_msgs
+
 
 class TestRemapProjectorToCrossAttn:
     """Tests for dual-projector checkpoint key remapping."""
