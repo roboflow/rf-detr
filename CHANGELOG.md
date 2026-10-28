@@ -137,7 +137,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- Loading a pretrained model no longer warns that DINOv2 backbone weights are skipped. Most variants differ from DINOv2 in patch size or positional encodings, so `RFDETRNano()` and similar default loads printed two such warnings even though RF-DETR pretrained weights replace the backbone. The warnings still appear when DINOv2 weights are requested, as with `pretrain_weights=None`.
+- Loading a pretrained model no longer warns that DINOv2 backbone weights are skipped. Most variants differ from DINOv2 in patch size or positional encodings, so `RFDETRNano()` and similar default loads printed two such warnings even though RF-DETR pretrained weights replace the backbone. The warnings still appear when DINOv2 weights are requested, as with `pretrain_weights=None`. ([#1653](https://github.com/roboflow/rf-detr/pull/1653))
 
 - `format="tflite"` no longer fails to convert every model with onnx2tf 2.4.3 on a fresh `rfdetr[tflite]` install. The extra listed `onnxsim>=0.7.0` next to onnx2tf's own `onnxsim-prebuilt`; both wheels install the same `onnxsim` package and console script, so the one installed last replaced the other, and onnx2tf's simplification pass ran `onnxsim` 0.8.1, after which onnx2tf misplaced the backbone's token axes and stopped at `embeddings/Reshape_1`. The extra now leaves `onnxsim` to onnx2tf and caps onnx2tf below 2.5, whose releases move to numpy 2.2.6 and `onnxsim` 0.6.5. An environment that still has both packages, for example one upgraded in place, is refused before the forward pass with the commands that repair it: `pip uninstall -y onnxsim onnxsim-prebuilt`, then `pip install "rfdetr[tflite]"`.
 
