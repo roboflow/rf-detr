@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 import numpy as np
@@ -38,6 +38,9 @@ from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
+
+_ImageInput: TypeAlias = str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor
+_PredictionImages: TypeAlias = _ImageInput | list[_ImageInput] | tuple[_ImageInput, ...]
 
 logger = get_logger()
 
@@ -344,13 +347,7 @@ def _mps_lacks_antialiased_resize() -> bool:
 @torch.inference_mode()
 def predict(
     context: PredictionContext,
-    images: str
-    | os.PathLike[str]
-    | Image.Image
-    | np.ndarray[Any, Any]
-    | torch.Tensor
-    | list[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor]
-    | tuple[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor, ...],
+    images: _PredictionImages,
     threshold: float = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,

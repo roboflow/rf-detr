@@ -14,11 +14,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
 import torch
-from PIL import Image
 
-from rfdetr._prediction import PredictionContext, predict
+from rfdetr._prediction import PredictionContext, _PredictionImages, predict
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -183,13 +181,7 @@ class RFDETRInference:
     @torch.inference_mode()
     def predict(
         self,
-        images: str
-        | os.PathLike[str]
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
-        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
+        images: _PredictionImages,
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
