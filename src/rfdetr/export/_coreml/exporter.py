@@ -42,6 +42,7 @@ import torch
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
+from rfdetr.export._coreml.passes import rfdetr_pass_pipeline
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._neural_engine import neural_engine_model
 from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
@@ -213,8 +214,6 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         from coremltools import convert as ct_convert
         from coremltools import precision as ct_precision
         from coremltools import target as ct_target
-
-        from rfdetr.export._coreml.passes import rfdetr_pass_pipeline
 
         return _CoreMLApi(
             convert=ct_convert,

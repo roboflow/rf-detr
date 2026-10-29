@@ -588,6 +588,7 @@ class TestExportCoremlBareDefaultNaming:
             mock.patch("rfdetr.export._coreml.exporter._IS_COREMLTOOLS_AVAILABLE", True),
             mock.patch("torch.export.export", return_value=exported_program),
             mock.patch("rfdetr.export._coreml.exporter.unsupported_coreml_ops", return_value={}),
+            mock.patch("rfdetr.export._coreml.exporter.rfdetr_pass_pipeline"),
         ):
             config = CoreMLConfig(
                 output_dir=tmp_path,
