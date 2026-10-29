@@ -18,7 +18,7 @@ def test_package_import_without_capture_dependencies() -> None:
             sys.executable,
             "-c",
             "import sys; sys.modules.update(cv2=None, mss=None, yt_dlp=None); "
-            "from rfdetr import RFDETRNano, PredictionInput; assert RFDETRNano is not None",
+            "from rfdetr import RFDETRInference, RFDETRNano; assert RFDETRNano is not None",
         ],
         capture_output=True,
         cwd=Path(__file__).resolve().parents[2],

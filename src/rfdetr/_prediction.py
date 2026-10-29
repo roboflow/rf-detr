@@ -33,8 +33,8 @@ except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
 from rfdetr._prediction_sources import is_expanded_source, iter_source_batches
+from rfdetr._prediction_types import _ImageInput, _PredictionInput
 from rfdetr.models.postprocess import PostProcess
-from rfdetr.prediction import ImageInput, PredictionInput
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -347,7 +347,7 @@ def _mps_lacks_antialiased_resize() -> bool:
 _SCALAR_INPUTS = (str, bytes, os.PathLike, Image.Image, np.ndarray, torch.Tensor)
 
 
-def _as_collection(images: PredictionInput) -> PredictionInput:
+def _as_collection(images: _PredictionInput) -> _PredictionInput:
     """Read an iterable of inputs into a list so later steps can count and index it.
 
     Lists, tuples and single inputs pass through unchanged, including strings, arrays and tensors, which are
@@ -372,7 +372,7 @@ def _as_collection(images: PredictionInput) -> PredictionInput:
 
 def predict(
     context_factory: Callable[[], PredictionContext],
-    images: PredictionInput,
+    images: _PredictionInput,
     threshold: float = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,
@@ -440,7 +440,7 @@ def predict(
 
 def _predict_stream(
     context_factory: Callable[[], PredictionContext],
-    images: PredictionInput,
+    images: _PredictionInput,
     threshold: float,
     shape: tuple[int, int] | None,
     patch_size: int | None,
@@ -499,7 +499,7 @@ def _predict_stream(
 @torch.inference_mode()
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
-    images: PredictionInput | list[ImageInput],
+    images: _PredictionInput | list[_ImageInput],
     threshold: float,
     shape: tuple[int, int] | None,
     patch_size: int | None,
@@ -570,7 +570,7 @@ def _predict_batch(
     single_input = not isinstance(images, (list, tuple))
     if not isinstance(images, (list, tuple)):
         # ``_as_collection`` already read every other iterable into a list, so this is one image.
-        images = [cast("ImageInput", images)]
+        images = [cast("_ImageInput", images)]
 
     orig_sizes: list[Any] = []
     processed_images: list[Any] = []

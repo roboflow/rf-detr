@@ -178,8 +178,6 @@ One image returns one `sv.Detections` or `sv.KeyPoints` object. An iterable of i
 
 The model's `predict()` handles images only. Use `RFDETRInference` for videos, folders, globs, manifests, cameras, network streams, and lazy results. `RFDETRInference(model)` borrows a loaded model without copying its weights. It also loads checkpoints and exported models, and accepts every image input above.
 
-Use `PredictionInput` in type annotations for `RFDETRInference.predict()` inputs. Import it from `rfdetr` or `rfdetr.prediction`.
-
 ## Predict on files and folders
 
 Pass a directory or glob pattern to predict on supported image and video files. RF-DETR sorts matches. Directory searches are not recursive. A glob can use `**` for recursive matching.

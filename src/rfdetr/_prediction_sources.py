@@ -40,7 +40,7 @@ import torch
 from PIL import Image
 
 from rfdetr._prediction_streams import LIVE_STREAM_SCHEMES, _capture_args, _import_cv2, iter_live_frames
-from rfdetr.prediction import ImageInput, PredictionInput
+from rfdetr._prediction_types import _ImageInput, _PredictionInput
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -207,7 +207,7 @@ def _classify_source(
     return str(path), _SourceKind.IMAGE
 
 
-def is_expanded_source(source: PredictionInput) -> bool:
+def is_expanded_source(source: _PredictionInput) -> bool:
     """Identify inputs that require source expansion."""
     if isinstance(source, (list, tuple)):
         return any(is_expanded_source(item) for item in source)
@@ -222,7 +222,7 @@ def is_expanded_source(source: PredictionInput) -> bool:
 
 
 def iter_source_batches(
-    source: PredictionInput,
+    source: _PredictionInput,
     *,
     batch: int = 1,
     vid_stride: int = 1,
@@ -230,7 +230,7 @@ def iter_source_batches(
     warn_on_live: bool = False,
     num_channels: int = 3,
     warn_on_retained_frames: bool = False,
-) -> Generator[list[ImageInput], None, None]:
+) -> Generator[list[_ImageInput], None, None]:
     """Batch finite images and preserve simultaneous live-stream batches.
 
     Captured video, camera and screen frames are converted for the model's ``num_channels``.
@@ -247,7 +247,7 @@ def iter_source_batches(
         num_channels=num_channels,
         warn_on_retained_frames=warn_on_retained_frames,
     )
-    pending: list[ImageInput] = []
+    pending: list[_ImageInput] = []
     try:
         for images, simultaneous in groups:
             if simultaneous:
@@ -268,7 +268,7 @@ def iter_source_batches(
 
 
 def _iter_source_groups(
-    source: PredictionInput,
+    source: _PredictionInput,
     *,
     vid_stride: int,
     stream_buffer: bool,
@@ -276,7 +276,7 @@ def _iter_source_groups(
     warn_on_live: bool,
     num_channels: int,
     warn_on_retained_frames: bool,
-) -> Generator[tuple[list[ImageInput], bool], None, None]:
+) -> Generator[tuple[list[_ImageInput], bool], None, None]:
     """Expand nested sources recursively into groups of images, retaining live-stream batch boundaries.
 
     Lists, tuples, directories, globs and non-stream manifests recurse into their items; a 4-D tensor yields one image
@@ -330,7 +330,7 @@ def _iter_source_groups(
         return
     if not isinstance(source, (str, os.PathLike)):
         # The prediction entry point already read other iterables into a list, so this is one image.
-        yield [cast("ImageInput", source)], False
+        yield [cast("_ImageInput", source)], False
         return
     path, kind = _classify_source(os.fspath(source))
     if kind in (_SourceKind.MANIFEST, _SourceKind.STREAMS):
@@ -429,7 +429,7 @@ def _live_groups(
     warn_on_live: bool,
     num_channels: int,
     finite_sources: frozenset[str | int] = frozenset(),
-) -> Generator[tuple[list[ImageInput], bool], None, None]:
+) -> Generator[tuple[list[_ImageInput], bool], None, None]:
     """Yield frames captured together from live sources, closing background readers when prediction stops.
 
     Args:
@@ -455,7 +455,7 @@ def _live_groups(
         batches.close()
 
 
-def _frame_input(frame: np.ndarray[Any, Any], num_channels: int) -> ImageInput:
+def _frame_input(frame: np.ndarray[Any, Any], num_channels: int) -> _ImageInput:
     """Hand a captured RGB frame to preprocessing so a one-channel model receives grayscale input.
 
     A PIL image takes the same luminance conversion as image files; three-channel models keep the array without a copy.

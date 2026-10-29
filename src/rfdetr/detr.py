@@ -35,6 +35,7 @@ from rfdetr._prediction import (
     _resolve_patch_size,
     _validate_shape_dims,
 )
+from rfdetr._prediction_types import _ImageInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -50,7 +51,6 @@ from rfdetr.inference import ModelContext, RFDETRInference, _build_model_context
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
-from rfdetr.prediction import ImageInput
 from rfdetr.utilities.class_names import _task_of, prediction_labels
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
@@ -3045,7 +3045,7 @@ class RFDETR:
 
     def predict(
         self,
-        images: ImageInput | Iterable[ImageInput],
+        images: _ImageInput | Iterable[_ImageInput],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,

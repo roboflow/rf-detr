@@ -18,13 +18,13 @@ import torch
 
 from rfdetr import _prediction
 from rfdetr._prediction import PredictionContext
+from rfdetr._prediction_types import _PredictionInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
-from rfdetr.prediction import PredictionInput
 
 if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
@@ -184,7 +184,7 @@ class RFDETRInference:
 
     def predict(
         self,
-        images: PredictionInput,
+        images: _PredictionInput,
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,

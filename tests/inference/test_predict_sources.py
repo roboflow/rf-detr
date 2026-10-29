@@ -137,13 +137,6 @@ class TestPredictSources:
         assert isinstance(result, sv.Detections)
         np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [10, 20, 30])
 
-    def test_prediction_input_has_public_import(self) -> None:
-        """Wrappers can annotate prediction inputs without private imports."""
-        from rfdetr import PredictionInput
-        from rfdetr.prediction import PredictionInput as PublicPredictionInput
-
-        assert PredictionInput is PublicPredictionInput
-
     def test_directory_batches_flush_partial_batch(self, tmp_path: Path) -> None:
         """Batch inference preserves source order and emits the final partial batch."""
         for index in range(5):
