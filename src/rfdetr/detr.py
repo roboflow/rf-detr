@@ -3050,7 +3050,7 @@ class RFDETR:
         *,
         antialias: bool = False,
         stream: Literal[True],
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
         **kwargs: Any,
@@ -3067,7 +3067,7 @@ class RFDETR:
         *,
         antialias: bool = False,
         stream: Literal[False] = False,
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
         **kwargs: Any,
@@ -3084,7 +3084,7 @@ class RFDETR:
         *,
         antialias: bool = False,
         stream: bool,
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
         **kwargs: Any,
@@ -3100,7 +3100,7 @@ class RFDETR:
         *,
         antialias: bool = False,
         stream: bool = False,
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
         **kwargs: Any,
@@ -3109,7 +3109,11 @@ class RFDETR:
 
         Image inputs use RGB channel order. Tensors accept CHW or BCHW shapes with values in ``[0, 1]``.
         Video capture converts BGR frames to RGB. Directories and globs expand supported media files in sorted order.
-        Directory searches are not recursive. Use ``stream=True`` for bounded memory with live sources.
+        Directory searches are not recursive. With ``stream=False``, every result is kept, and with the default
+        ``include_source_image=True`` each result holds its full RGB source image: one minute of 1080p video at
+        30 fps keeps about 11 GB. A video, directory, or glob whose estimated source images exceed 1 GiB warns.
+        Use ``stream=True`` or ``include_source_image=False`` for bounded memory with videos, directories, globs,
+        and live sources.
 
         Args:
             images:
@@ -3117,6 +3121,12 @@ class RFDETR:
                 Images can be paths, HTTP URLs, PIL images, NumPy arrays, or tensors. Paths accept ``os.PathLike``.
                 TXT/CSV manifests list sources; ``.streams`` files capture streams concurrently.
                 YouTube URLs and ``screen`` capture require the optional ``rfdetr[stream]`` dependencies.
+                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
+                which does not bound the total download time. Redirects are followed, and the whole response body is
+                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
+                URLs, download and validate the image yourself and pass the decoded image instead. Other strings are
+                interpreted too, as a camera index, ``screen`` capture, a manifest, a glob, or a stream URL, so
+                never pass untrusted strings as ``images``.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:
@@ -3146,9 +3156,10 @@ class RFDETR:
                 Yield results lazily; defaults to false. Errors occur during iteration.
                 Close on early exit to release captures. Results accumulate only if retained.
             batch:
-                Maximum inference batch size for expanded sources and streamed images. Defaults to one.
+                Maximum inference batch size. Defaults to ``None``, which runs a bare BCHW tensor or an eager
+                image-only list or tuple as one batch and other expanded sources and streamed images one image or
+                frame at a time. An integer bounds every batch, including eager image lists and BCHW tensors.
                 The final batch can be smaller. Concurrent streams use one frame per source per batch.
-                Eager image-only lists and tuples retain their existing single-batch behavior.
             vid_stride:
                 Read every Nth video frame. Must be a positive integer. Defaults to one.
             stream_buffer:
@@ -3160,7 +3171,7 @@ class RFDETR:
 
         Returns:
             A generator with ``stream=True``; otherwise a scalar for one image or a flat list for collections.
-            Image-only lists/tuples use one forward pass. Detection and segmentation return
+            Image-only lists/tuples use one forward pass unless ``batch`` is set. Detection and segmentation return
             :class:`~supervision.Detections`; keypoints return :class:`~supervision.KeyPoints` with ``xy`` coordinates.
             ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
             is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion
@@ -3212,6 +3223,7 @@ class RFDETR:
                 ``patch_size * num_windows``, patch size is invalid, a capture cannot open, or camera, batch,
                 stride, or buffer options are invalid.
             FileNotFoundError: If a local file is missing or a directory/glob contains no supported media.
+            ImportError: If a source needs the optional ``rfdetr[stream]`` dependencies and they are not installed.
 
         Examples:
             Skipped because this example requires pretrained weights and a local image file.

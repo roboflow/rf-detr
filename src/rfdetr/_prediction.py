@@ -353,11 +353,17 @@ def predict(
     *,
     antialias: bool | None = None,
     stream: bool = False,
-    batch: int = 1,
+    batch: int | None = None,
     vid_stride: int = 1,
     stream_buffer: bool = False,
 ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
+
+    Empty sources follow one policy (details in :mod:`rfdetr._prediction_sources`). An empty collection holds no
+    inputs: ``stream=True`` yields nothing, and an eager call returns ``[]`` for an empty manifest but raises
+    ``ValueError`` for an empty list or tuple. A location that must hold media or sources raises in both modes: a
+    directory or glob without supported files raises ``FileNotFoundError``, and a ``.streams`` manifest without sources
+    raises ``ValueError``.
 
     Args:
         context_factory: Read current execution rules when an inference batch starts.
@@ -368,19 +374,25 @@ def predict(
         include_source_image: Store source pixels in each result.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         stream: Yield results on demand instead of collecting them.
-        batch: Maximum batch size for finite sources.
+        batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch and
+            other expanded or streamed sources one image or frame at a time. An integer bounds every batch.
         vid_stride: Read every Nth video frame.
         stream_buffer: Queue live frames instead of retaining the latest frame.
 
     Returns:
         A lazy generator, a scalar image result, or a list of results.
     """
-    for name, value in (("batch", batch), ("vid_stride", vid_stride)):
+    for name, value in (("batch", 1 if batch is None else batch), ("vid_stride", vid_stride)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
     if not isinstance(stream_buffer, bool):
         raise ValueError("stream_buffer must be a boolean.")
-    if stream or is_expanded_source(images):
+    # An explicit batch splits an eager image list; an empty list keeps its single-batch error below.
+    bounded_image_list = batch is not None and isinstance(images, (list, tuple)) and len(images) > 0
+    if stream or bounded_image_list or is_expanded_source(images):
+        if batch is None:
+            # A BCHW tensor already is one batch; split it only when the caller bounds the batch size.
+            batch = max(images.shape[0], 1) if isinstance(images, torch.Tensor) and images.ndim == 4 else 1
         results = _predict_stream(
             context_factory,
             images,
@@ -414,7 +426,15 @@ def _predict_stream(
 ) -> Generator[Detections | KeyPoints, None, None]:
     """Predict bounded source batches and release capture on every exit path."""
     source_batches = iter_source_batches(
-        images, batch=batch, vid_stride=vid_stride, stream_buffer=stream_buffer, warn_on_live=warn_on_live
+        images,
+        batch=batch,
+        vid_stride=vid_stride,
+        stream_buffer=stream_buffer,
+        warn_on_live=warn_on_live,
+        # Frame sources decode RGB; the model's channel count decides whether they convert to grayscale.
+        num_channels=context_factory().config.num_channels,
+        # Eager results each keep a full source image, so large finite sources warn before decoding starts.
+        warn_on_retained_frames=warn_on_live and include_source_image,
     )
     try:
         for image_batch in source_batches:

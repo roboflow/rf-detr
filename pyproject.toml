@@ -49,9 +49,9 @@ dependencies = [
 
 [project.optional-dependencies]
 stream = [
-    "opencv-python>=4.8",              # Match the distribution used by supervision 0.29
+    "opencv-python-headless>=4.8.1.78",  # Same cv2 distribution albumentations ([augment]) requires; two would both own cv2
     "mss>=9",                         # Desktop capture
-    "yt-dlp>=2024.8.6",               # Resolve YouTube video streams
+    "yt-dlp>=2026.7.4",               # Resolve YouTube video streams; floor excludes releases with published advisories
 ]
 lora = [
     "peft",                            # LoRA backbone fine-tuning

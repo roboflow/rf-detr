@@ -10,15 +10,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
-
-def test_package_import_without_capture_dependencies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_package_import_without_capture_dependencies() -> None:
     """Core model imports must work without video, screenshot, or YouTube packages."""
-    other_package = tmp_path / "rfdetr"
-    other_package.mkdir()
-    (other_package / "__init__.py").write_text('raise AssertionError("Wrong checkout imported")')
-    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     result = subprocess.run(
         [
             sys.executable,

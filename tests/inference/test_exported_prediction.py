@@ -9,7 +9,6 @@ import math
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import cv2
 import numpy as np
 import pytest
 import torch
@@ -19,6 +18,8 @@ from supervision import Detections
 from rfdetr import RFDETRInference
 from rfdetr.detr import RFDETR
 from tests._markers import onnx_and_onnxruntime_only
+
+from .helpers import _requires_opencv
 
 
 class TestInferenceLoading:
@@ -416,6 +417,22 @@ class TestExportedPrediction:
         with pytest.raises(ValueError, match="Batch size mismatch"):
             model.predict([image, image])
 
+    def test_explicit_batch_splits_image_list(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        """A fixed batch-one artifact predicts an image list when the caller passes the export's batch size.
+
+        Without the explicit bound the list runs as one batch of two and the artifact rejects it.
+        """
+        import numpy as np
+
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        image = np.zeros((32, 48, 3), dtype=np.uint8)
+
+        results = model.predict([image, image], batch=1)
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+
     def test_shape_mismatch(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """A prediction shape cannot override the artifact's fixed shape."""
         import numpy as np
@@ -558,10 +575,35 @@ class TestExportedStreaming:
         else:
             source = torch.from_numpy(images).permute(0, 3, 1, 2).float().div(255)
 
-        results = list(model.predict(source, stream=stream))
+        # The batch-one export needs an explicit batch to split the BCHW tensor; file sources already use one.
+        results = list(model.predict(source, stream=stream, batch=1))
 
         assert len(results) == 3
         for result, image, value in zip(results, images, [40, 80, 120]):
+            assert isinstance(result, Detections)
+            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+            np.testing.assert_array_equal(result.metadata["source_image"], image)
+
+    @_requires_opencv
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_bchw_default_batch_matches_fixed_export(
+        self, exported_batch_two: tuple[Path, dict[str, object]], stream: bool
+    ) -> None:
+        """A BCHW tensor runs as one batch by default, so a fixed batch-two export accepts its own B=2 tensor.
+
+        Splitting the tensor into single images would make the export reject every batch with a size mismatch, leaving
+        callers to discover the ``batch`` argument from an error.
+        """
+        path, metadata = exported_batch_two
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        images = np.stack([np.full((64, 96, 3), value, dtype=np.uint8) for value in [40, 120]])
+        source = torch.from_numpy(images).permute(0, 3, 1, 2).float().div(255)
+
+        results = list(model.predict(source, stream=stream))
+
+        assert len(results) == 2
+        for result, image, value in zip(results, images, [40, 120]):
             assert isinstance(result, Detections)
             expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
@@ -571,14 +613,14 @@ class TestExportedStreaming:
     def test_video_stride(
         self, exported_detection: tuple[Path, dict[str, object]], prediction_video: Path, stream: bool
     ) -> None:
-        """Video stride selects every second frame and stops at finite EOF."""
+        """Video stride keeps every second frame from the first and stops at finite EOF."""
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
 
         results = list(model.predict(prediction_video, stream=stream, vid_stride=2))
 
         assert len(results) == 3
-        for result, value in zip(results, [40, 80, 120]):
+        for result, value in zip(results, [20, 60, 100]):
             assert isinstance(result, Detections)
             source_image = result.metadata["source_image"]
             np.testing.assert_allclose(source_image, value, atol=2)
@@ -587,6 +629,7 @@ class TestExportedStreaming:
             expected_box, _ = _expected_detection((red, green, blue), height=64, width=96)
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
 
+    @_requires_opencv
     @pytest.mark.parametrize("ending", ["exhaustion", "close", "error"])
     def test_video_capture_cleanup(
         self,
@@ -596,6 +639,8 @@ class TestExportedStreaming:
         ending: str,
     ) -> None:
         """Real video captures close on completion, early close, and a rejected batch."""
+        import cv2  # optional dependency, guarded by the test's skipif
+
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         capture = cv2.VideoCapture(str(prediction_video))
@@ -658,6 +703,48 @@ class TestExportedStreaming:
             expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
 
+    @_requires_opencv
+    def test_two_camera_streams_fill_a_batch_two_export(
+        self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path
+    ) -> None:
+        """A `.streams` manifest of two cameras feeds one batch-two export frame by frame, in source order."""
+        path, metadata = exported_batch_two
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        manifest = tmp_path / "cameras.streams"
+        manifest.write_text("0\n1\n")
+        cameras = [Mock(), Mock()]
+        for camera, value in zip(cameras, [40, 80]):
+            camera.read.return_value = (True, np.full((64, 96, 3), value, dtype=np.uint8))
+
+        with patch("cv2.VideoCapture", side_effect=cameras):
+            results = model.predict(manifest, stream=True, stream_buffer=True)
+            try:
+                first, second = next(results), next(results)
+            finally:
+                results.close()
+
+        for result, value in zip([first, second], [40, 80]):
+            assert isinstance(result, Detections)
+            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+        for camera in cameras:
+            camera.release.assert_called_once()
+
+    @_requires_opencv
+    def test_eager_live_source_warns_about_memory(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        """Eager prediction on a live camera warns that results accumulate in memory before opening the device."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        camera = Mock()
+        camera.isOpened.return_value = False
+
+        with patch("cv2.VideoCapture", return_value=camera) as open_capture:
+            with pytest.warns(UserWarning, match="accumulate in memory"):
+                with pytest.raises(ValueError, match="Could not open"):
+                    model.predict(0)
+
+        open_capture.assert_called_once()
+
 
 @pytest.fixture
 def prediction_video(tmp_path: Path) -> Path:
@@ -667,6 +754,8 @@ def prediction_video(tmp_path: Path) -> Path:
         >>> prediction_video()  # doctest: +SKIP
         # Pytest supplies the temporary directory and OpenCV codec support.
     """
+    import cv2  # optional dependency, only requested by tests guarded with a skipif
+
     path = tmp_path / "source.avi"
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter.fourcc(*"MJPG"), 10, (96, 64))
     if not writer.isOpened():

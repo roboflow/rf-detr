@@ -7,9 +7,11 @@
 
 from collections import deque
 from collections.abc import Generator
+from concurrent.futures import Future, ThreadPoolExecutor
 from math import isfinite
 from threading import Condition, Event, Thread
 from time import monotonic
+from types import ModuleType
 from typing import Any
 from urllib.parse import urlparse
 
@@ -19,43 +21,102 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+#: Pending frames retained per source in buffered mode.
+_BUFFER_FRAMES = 30
+#: OpenCV open and read timeout, in milliseconds, applied to every network stream.
+_NETWORK_TIMEOUT_MSEC = 5000
+#: URL schemes that always name a live stream. Source classification and capture timeouts both read this set.
+LIVE_STREAM_SCHEMES = frozenset({"rtsp", "rtsps", "rtmp", "tcp", "udp", "srt"})
+#: URL schemes opened with OpenCV open and read timeouts: live streams plus HTTP videos.
+_NETWORK_SCHEMES = LIVE_STREAM_SCHEMES | {"http", "https"}
+#: Failed reads of an unknown-length source retried before giving up.
+#: The failure message and the ``iter_live_frames`` docstring spell this number out.
+_MAX_RECONNECTS = 3
+#: Seconds to wait before reopening a source after a failed read.
+_RECONNECT_DELAY = 0.1
+#: Seconds allowed for all worker threads to exit once the frame iterator closes.
+_CLOSE_TIMEOUT = 5
+
+
+def _import_cv2(task: str) -> ModuleType:
+    """Import OpenCV, or explain how to install it.
+
+    Args:
+        task: Prediction kind that needs OpenCV, used to start the error message.
+
+    Returns:
+        The imported ``cv2`` module.
+
+    Raises:
+        ImportError: If OpenCV is not installed.
+    """
+    try:
+        import cv2
+    except ImportError as error:
+        raise ImportError(
+            f'{task} prediction requires OpenCV. Install it with `uv pip install "rfdetr[stream]"`.'
+        ) from error
+    return cv2
+
+
+def _is_network_source(source: str | int) -> bool:
+    """Tell whether OpenCV opens the source as a network stream.
+
+    Examples:
+        >>> _is_network_source("rtsp://camera.local/live")
+        True
+        >>> _is_network_source("https://example.com/video.mp4")
+        True
+        >>> _is_network_source("video.mp4")
+        False
+        >>> _is_network_source(0)
+        False
+    """
+    return isinstance(source, str) and urlparse(source).scheme.lower() in _NETWORK_SCHEMES
+
+
+def _capture_args(source: str | int) -> tuple[Any, ...]:
+    """Build the positional arguments for ``cv2.VideoCapture`` and ``VideoCapture.open``.
+
+    Network streams receive open and read timeouts so a dead host cannot block forever;
+    cameras and files take the source alone. The caller must have imported OpenCV through
+    ``_import_cv2`` first.
+
+    Examples:
+        >>> _capture_args(0)
+        (0,)
+        >>> _capture_args("clip.mp4")
+        ('clip.mp4',)
+    """
+    if not _is_network_source(source):
+        return (source,)
+    import cv2  # Imported by the caller through _import_cv2; this reuses the loaded module.
+
+    timeouts = [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+        _NETWORK_TIMEOUT_MSEC,
+        cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+        _NETWORK_TIMEOUT_MSEC,
+    ]
+    return (source, cv2.CAP_ANY, timeouts)
+
 
 class _LiveCapture:
     """Own one capture and its bounded frame queue."""
 
     def __init__(self, source: str | int, vid_stride: int, stream_buffer: bool, *, finite: bool = False) -> None:
         """Read an initial frame before starting background capture."""
-        try:
-            import cv2
-        except ImportError as error:
-            raise ImportError(
-                'Live prediction requires OpenCV. Install it with `uv pip install "rfdetr[stream]"`.'
-            ) from error
+        cv2 = _import_cv2("Live")
 
         self.source = source
-        self.network = isinstance(source, str) and urlparse(source).scheme.lower() in {
-            "http",
-            "https",
-            "rtsp",
-            "rtsps",
-            "rtmp",
-            "tcp",
-        }
+        self.network = _is_network_source(source)
         self.vid_stride = vid_stride
         self.frames: deque[np.ndarray[Any, Any]] = deque()
         self.condition = Condition()
         self.stop = Event()
         self.error: BaseException | None = None
         self.finished = False
-        self.capture = (
-            cv2.VideoCapture(source)
-            if not self.network
-            else cv2.VideoCapture(
-                source,
-                cv2.CAP_ANY,
-                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000],
-            )
-        )
+        self.capture = cv2.VideoCapture(*_capture_args(source))
         try:
             if not self.capture.isOpened():
                 raise ValueError("Could not open the video source.")
@@ -86,15 +147,18 @@ class _LiveCapture:
         try:
             while not self.stop.is_set():
                 with self.condition:
-                    self.condition.wait_for(lambda: self.stop.is_set() or len(self.frames) < 30)
+                    self.condition.wait_for(lambda: self.stop.is_set() or len(self.frames) < _BUFFER_FRAMES)
                 if self.stop.is_set():
                     break
-                success = False
+                # grab() advances past skipped frames without decoding them; only the kept frame is read.
+                success = True
                 frame = None
-                for _ in range(self.vid_stride):
-                    success, frame = self.capture.read()
+                for _ in range(self.vid_stride - 1):
+                    success = self.capture.grab()
                     if not success or self.stop.is_set():
                         break
+                if success and not self.stop.is_set():
+                    success, frame = self.capture.read()
                 if self.stop.is_set():
                     break
                 if not success or frame is None:
@@ -106,18 +170,11 @@ class _LiveCapture:
                             )
                         return
                     failures += 1
-                    if failures > 3:
+                    if failures > _MAX_RECONNECTS:
                         raise RuntimeError("Live video source failed after three reconnect attempts.")
-                    if self.stop.wait(0.1):
+                    if self.stop.wait(_RECONNECT_DELAY):
                         break
-                    if not self.network:
-                        self.capture.open(self.source)
-                    else:
-                        self.capture.open(
-                            self.source,
-                            cv2.CAP_ANY,
-                            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000],
-                        )
+                    self.capture.open(*_capture_args(self.source))
                     continue
                 failures = 0
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -154,6 +211,68 @@ class _LiveCapture:
             return None
 
 
+def _open_captures(
+    sources: list[str | int], *, vid_stride: int, stream_buffer: bool, finite_sources: frozenset[str | int]
+) -> list[_LiveCapture]:
+    """Open one capture per source, overlapping the slow network opens.
+
+    Network streams can block for the full open timeout plus the first read, so with several
+    sources they open on worker threads while cameras and files open one by one on the calling
+    thread (camera backends may require it). The result is all or nothing: when any source
+    fails, every open already in flight finishes, every capture that did open is closed, and the
+    first error is raised.
+
+    Args:
+        sources: Camera indexes, files or stream URLs, in batch order.
+        vid_stride: Number of captured frames between predictions.
+        stream_buffer: Retain pending frames instead of replacing them.
+        finite_sources: Sources known to be finite even without frame-count metadata.
+
+    Returns:
+        One running capture per source, in source order.
+    """
+
+    def open_one(source: str | int) -> _LiveCapture:
+        """Open one capture and read its first frame."""
+        return _LiveCapture(source, vid_stride, stream_buffer, finite=source in finite_sources)
+
+    network = [index for index, source in enumerate(sources) if len(sources) > 1 and _is_network_source(source)]
+    opened: dict[int, _LiveCapture] = {}
+    futures: dict[int, Future[_LiveCapture]] = {}
+    error: BaseException | None = None
+    try:
+        # Leaving the pool context waits for every in-flight open, success or failure.
+        with ThreadPoolExecutor(max_workers=max(1, len(network)), thread_name_prefix="rfdetr-live-open") as pool:
+            for index in network:
+                futures[index] = pool.submit(open_one, sources[index])
+            for index, source in enumerate(sources):
+                if index not in futures:
+                    opened[index] = open_one(source)
+    except BaseException as caught:
+        error = caught
+    for index, future in futures.items():
+        failure = future.exception()
+        if failure is None:
+            opened[index] = future.result()
+        elif error is None:
+            error = failure
+    if error is not None:
+        _close_captures(list(opened.values()))
+        raise error
+    return [opened[index] for index in range(len(sources))]
+
+
+def _close_captures(captures: list[_LiveCapture]) -> None:
+    """Stop every capture worker and wait a bounded time for each to release its device."""
+    deadline = monotonic() + _CLOSE_TIMEOUT
+    for capture in captures:
+        capture.stop.set()
+        with capture.condition:
+            capture.condition.notify_all()
+    for capture in captures:
+        capture.thread.join(timeout=max(0, deadline - monotonic()))
+
+
 def iter_live_frames(
     sources: list[str | int],
     *,
@@ -166,6 +285,8 @@ def iter_live_frames(
     Each source contributes one frame per batch. Buffered mode retains up to 30
     pending frames per source; live sources default to the latest pending frame.
     Finite sources always use buffered mode to preserve selected frames.
+    Network sources open concurrently; cameras and files open in order on the
+    calling thread, and any failure releases every capture that did open.
     Closing the iterator stops every worker. A backend blocked in a native read
     releases its capture when that read returns. Network backends must support
     OpenCV open/read timeouts. Known finite sources or sources with a known frame count stop at EOF;
@@ -185,8 +306,9 @@ def iter_live_frames(
         raise ValueError("At least one live video source is required.")
     captures: list[_LiveCapture] = []
     try:
-        for source in sources:
-            captures.append(_LiveCapture(source, vid_stride, stream_buffer, finite=source in finite_sources))
+        captures = _open_captures(
+            sources, vid_stride=vid_stride, stream_buffer=stream_buffer, finite_sources=finite_sources
+        )
         while True:
             batch = []
             for capture in captures:
@@ -196,10 +318,4 @@ def iter_live_frames(
                 batch.append(frame)
             yield batch
     finally:
-        deadline = monotonic() + 5
-        for capture in captures:
-            capture.stop.set()
-            with capture.condition:
-                capture.condition.notify_all()
-        for capture in captures:
-            capture.thread.join(timeout=max(0, deadline - monotonic()))
+        _close_captures(captures)

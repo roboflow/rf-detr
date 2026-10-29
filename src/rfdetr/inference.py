@@ -69,9 +69,11 @@ class RFDETRInference:
         | TensorRT | ``auto`` (``cuda:0``), ``cuda`` (the current CUDA device), ``cuda:N`` |
         | OpenVINO | ``auto`` (AUTO plugin), ``cpu``, ``gpu``, ``npu``, ``gpu.N``, ``npu.N``, any case |
         | TFLite, LiteRT | ``auto``, ``cpu`` |
-        | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only) |
+        | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only), ``cpu_and_gpu``, ``cpu_and_ne`` (preferences) |
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
         | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+
+        The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
 
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
@@ -191,7 +193,7 @@ class RFDETRInference:
         *,
         antialias: bool | None = None,
         stream: Literal[True],
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
     ) -> Generator[Detections | KeyPoints, None, None]: ...
@@ -207,7 +209,7 @@ class RFDETRInference:
         *,
         antialias: bool | None = None,
         stream: Literal[False] = False,
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]: ...
@@ -223,7 +225,7 @@ class RFDETRInference:
         *,
         antialias: bool | None = None,
         stream: bool,
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]: ...
@@ -238,14 +240,15 @@ class RFDETRInference:
         *,
         antialias: bool | None = None,
         stream: bool = False,
-        batch: int = 1,
+        batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
         """Predict images, video, and live sources through the shared prediction pipeline.
 
         Args:
-            images: Any source accepted by :meth:`RFDETR.predict`.
+            images: Any source accepted by :meth:`RFDETR.predict`. The same trust caveat applies: string sources
+                are downloaded, opened or expanded without size or host limits, so pass only trusted strings.
             threshold: Minimum confidence for a result.
             shape: Input height and width; exports require their recorded shape.
             patch_size: Backbone patch size for shape validation.
@@ -253,13 +256,29 @@ class RFDETRInference:
             antialias: Override resize antialiasing. None uses artifact metadata for exports
                 and False for native models.
             stream: Yield results lazily. Close the generator on early exit.
-            batch: Maximum finite-source batch size. Each batch must satisfy the runtime limits.
+            batch: Maximum finite-source batch size. None runs a bare BCHW tensor or an eager image-only list as
+                one batch and other expanded sources one image or frame at a time. An integer bounds every batch,
+                including eager image lists. Each batch must satisfy the runtime limits.
                 Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.
             vid_stride: Read every Nth video frame.
             stream_buffer: Queue live frames instead of keeping the latest frame.
 
         Returns:
             A generator with stream enabled, otherwise a scalar image result or a list.
+
+        Raises:
+            ValueError: If shape, batch, stride, buffer, capture, or runtime limits are violated.
+            FileNotFoundError: If a local file is missing or a directory/glob contains no supported media.
+            ImportError: If a source needs the optional ``rfdetr[stream]`` dependencies and they are not installed.
+
+        Examples:
+            Skipped when run as a doctest: requires model weights and image files.
+
+            >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
+            >>> predictor = RFDETRSmall().inference(compile=False)  # doctest: +SKIP
+            >>> results = predictor.predict(["a.jpg", "b.jpg"], threshold=0.4)  # doctest: +SKIP
+            >>> len(results)  # doctest: +SKIP
+            2
         """
         return _prediction.predict(
             self._prediction_context,
