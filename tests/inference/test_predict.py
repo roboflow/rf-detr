@@ -115,6 +115,41 @@ class TestPredictReturnTypes:
         assert isinstance(batch, list)
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
+    @pytest.mark.parametrize("use_facade", [False, True])
+    def test_generator_input_returns_one_result_per_image(self, use_facade: bool) -> None:
+        """An iterable that is not a list or tuple is read into a list and predicted like one.
+
+        Callers often hold images in a generator or another lazy iterable; both public APIs must treat it as a
+        collection, not as one opaque image.
+        """
+        native = _DummyRFDETR()
+        predictor = RFDETRInference(native) if use_facade else native
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+
+        results = predictor.predict(image for image in (img, img, img))
+
+        assert isinstance(results, list)
+        assert len(results) == 3
+
+    def test_native_bchw_tensor_returns_one_result_per_image(self) -> None:
+        """A BCHW tensor passed to the native model is predicted as a batch of B images."""
+        results = _DummyRFDETR().predict(torch.zeros((2, 3, 48, 64)))
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+
+    @pytest.mark.parametrize("option", ["stream", "batch", "vid_stride", "stream_buffer"])
+    def test_native_rejects_source_options(self, option: str) -> None:
+        """The native model refuses source options instead of ignoring them with a deprecation warning.
+
+        Source expansion and streaming belong to ``RFDETRInference``; silently ignoring ``stream=True`` would return
+        eager results where the caller expected a generator.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+
+        with pytest.raises(TypeError, match=rf"does not accept {option}: .*RFDETRInference\(model\)"):
+            _DummyRFDETR().predict(img, **{option: 1})
+
     @pytest.mark.parametrize("input_kind", ["pil", "path"])
     def test_native_single_channel_images_use_pillow_luminance(self, tmp_path: Path, input_kind: str) -> None:
         """Native prediction shares grayscale conversion and source metadata with exported prediction."""
@@ -1140,12 +1175,14 @@ class TestPredictUint8Conversion:
 
         assert str(predict_error.value) == str(pillow_error.value)
 
-    @pytest.mark.parametrize("kind", ["missing", "empty"])
+    @pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
     def test_predict_unreadable_local_path_raises_the_error_pillow_raises(self, tmp_path: Path, kind: str) -> None:
         """A path the native route cannot read must fail with the exception Pillow raises for that same path."""
         image_path = tmp_path / f"{kind}.png"
         if kind == "empty":
             image_path.write_bytes(b"")
+        elif kind == "directory":
+            image_path.mkdir()
         with pytest.raises(OSError) as pillow_error:
             PIL.Image.open(str(image_path))
 
@@ -2071,9 +2108,8 @@ class TestPredictResizeMatchesTrainingInterpolation:
             pytest.param({"antialias": True}, True, id="opt-in"),
         ],
     )
-    @pytest.mark.parametrize("stream", [False, True])
     def test_predict_resize_antialias_flag(
-        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool, stream: bool
+        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool
     ) -> None:
         """``predict()`` passes the requested ``antialias`` flag to ``F.resize``; the default is ``False``."""
         native_model = _DummyRFDETR()
@@ -2081,13 +2117,28 @@ class TestPredictResizeMatchesTrainingInterpolation:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
         with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
-            list(model.predict([img], stream=stream, **predict_kwargs))
+            model.predict(img, **predict_kwargs)
 
         assert mock_resize.call_args.kwargs.get("antialias") is expected_antialias, (
             "predict() must resize with antialias=False by default (the #1203 contract: the antialias-free "
             "bilinear resize, cv2.INTER_LINEAR, used during training and by exported models) and honour "
             "an explicit antialias request."
         )
+
+    @pytest.mark.parametrize("antialias", [False, True])
+    def test_streamed_predict_resize_antialias_flag(self, antialias: bool) -> None:
+        """Streamed facade prediction resizes each lazy batch with the requested ``antialias`` flag.
+
+        The lazy path predicts batches after the call returns, so it must carry the flag into every batch rather than
+        read it once from the call that created the generator.
+        """
+        predictor = RFDETRInference(_DummyRFDETR())
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
+            list(predictor.predict([img], stream=True, antialias=antialias))
+
+        assert mock_resize.call_args.kwargs.get("antialias") is antialias
 
     def test_predict_antialias_changes_resize_and_matches_reference(self) -> None:
         """``antialias=True`` feeds the model an antialiased resize that differs from the default one."""

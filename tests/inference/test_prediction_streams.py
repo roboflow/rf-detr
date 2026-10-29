@@ -19,6 +19,8 @@ import numpy as np
 import pytest
 import supervision as sv
 
+from rfdetr.inference import RFDETRInference
+
 from .helpers import _DummyRFDETR, _requires_opencv, _scripted_capture
 
 #: Name every background capture thread carries, so tests can tell leaked workers apart.
@@ -92,7 +94,9 @@ class TestLivePredictions:
             capture.release.side_effect = event.set
 
         with patch("cv2.VideoCapture", side_effect=_capture_by_source(captures)):
-            results = _DummyRFDETR().predict(source, stream=True, stream_buffer=False, vid_stride=vid_stride)
+            results = RFDETRInference(_DummyRFDETR()).predict(
+                source, stream=True, stream_buffer=False, vid_stride=vid_stride
+            )
             try:
                 first = next(results)
                 assert all(event.wait(30) for event in finished)
@@ -114,7 +118,7 @@ class TestLivePredictions:
         capture.get.return_value = 0
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))] + [(False, None)] * 4
         with patch("cv2.VideoCapture", return_value=capture):
-            assert len(list(_DummyRFDETR().predict(source, stream=True, stream_buffer=True))) == 1
+            assert len(list(RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True))) == 1
         capture.open.assert_not_called()
         capture.release.assert_called_once()
 
@@ -140,7 +144,7 @@ class TestLivePredictions:
         capture = MagicMock()
         capture.read.return_value = (True, np.zeros((24, 32, 3), dtype=np.uint8))
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict(url, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(url, stream=True)
             try:
                 next(results)
             finally:
@@ -164,7 +168,7 @@ class TestLivePredictions:
         capture.get.return_value = 100
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         with patch("cv2.VideoCapture", return_value=capture):
-            assert len(list(_DummyRFDETR().predict(source, stream=True, stream_buffer=True))) == 1
+            assert len(list(RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True))) == 1
         assert "end of file or a read failure" in caplog.text
         capture.open.assert_not_called()
 
@@ -182,7 +186,7 @@ class TestLivePredictions:
         assert model.model.model is not None
         handle = model.model.model.register_forward_pre_hook(lambda module, args: batch_sizes.append(len(args[0])))
         with patch("cv2.VideoCapture", side_effect=[first, second]) as open_capture:
-            results = model.predict(source, stream=True, stream_buffer=True)
+            results = RFDETRInference(model).predict(source, stream=True, stream_buffer=True)
             open_capture.assert_not_called()
             try:
                 pixels = [cast(sv.Detections, next(results)).metadata["source_image"][0, 0].tolist() for _ in range(2)]
@@ -202,7 +206,7 @@ class TestLivePredictions:
             RuntimeError("decoder failure")
         ]
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True, stream_buffer=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True, stream_buffer=True)
             assert [cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] for _ in range(3)] == [1, 2, 3]
             with pytest.raises(RuntimeError, match="decoder failure"):
                 next(results)
@@ -217,7 +221,7 @@ class TestLivePredictions:
         capture.read.side_effect = lambda: next(reads)
         capture.open.side_effect = lambda *args: finished.set()
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True)
             try:
                 assert cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] == 1
                 assert finished.wait(30)
@@ -236,7 +240,7 @@ class TestLivePredictions:
             [*((True, np.full((24, 32, 3), value, dtype=np.uint8)) for value in (1, 2, 3, 4, 5)), RuntimeError("end")]
         )
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True, stream_buffer=True, vid_stride=2)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True, stream_buffer=True, vid_stride=2)
             try:
                 assert [cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] for _ in range(3)] == [
                     1,
@@ -258,7 +262,7 @@ class TestLivePredictions:
             RuntimeError("end"),
         ]
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True, stream_buffer=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True, stream_buffer=True)
             try:
                 assert [cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] for _ in range(2)] == [
                     1,
@@ -287,7 +291,7 @@ class TestLivePredictions:
             RuntimeError("end"),
         ]
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            with closing(_DummyRFDETR().predict(url, stream=True, stream_buffer=True)) as results:
+            with closing(RFDETRInference(_DummyRFDETR()).predict(url, stream=True, stream_buffer=True)) as results:
                 pixels = [cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] for _ in range(2)]
         assert pixels == [1, 2]
         open_capture.assert_called_once_with(url, cv2.CAP_ANY, timeouts)
@@ -310,7 +314,7 @@ class TestLivePredictions:
         second.read.side_effect = [(True, frame), RuntimeError("decoder failure")]
         workers_before = _capture_workers()
         with patch("cv2.VideoCapture", side_effect=[first, second]):
-            results = _DummyRFDETR().predict(source, stream=True, stream_buffer=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True)
             assert len(list(islice(results, 2))) == 2  # one result per source in the first batch
             with pytest.raises(RuntimeError, match="decoder failure"):
                 next(results)
@@ -334,7 +338,7 @@ class TestLivePredictions:
             capture.read.return_value = (True, np.full((24, 32, 3), value, dtype=np.uint8))
             capture.isOpened.side_effect = lambda: barrier.wait() is not None
         with patch("cv2.VideoCapture", side_effect=_capture_by_source(captures)):
-            with closing(_DummyRFDETR().predict(source, stream=True, stream_buffer=True)) as results:
+            with closing(RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True)) as results:
                 pixels = [cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] for _ in range(2)]
         assert pixels == [1, 2]
 
@@ -354,7 +358,7 @@ class TestLivePredictions:
             capture.read.return_value = (True, np.zeros((24, 32, 3), dtype=np.uint8))
             capture.isOpened.side_effect = _opened_on(opened_on, name)
         with patch("cv2.VideoCapture", side_effect=lambda source, *args: camera if source == 0 else captures[source]):
-            with closing(_DummyRFDETR().predict(source, stream=True, stream_buffer=True)) as results:
+            with closing(RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True)) as results:
                 assert len(list(islice(results, 2))) == 2
         assert opened_on["camera"] == threading.get_ident()
         assert opened_on["network"] != threading.get_ident()
@@ -379,7 +383,7 @@ class TestLivePredictions:
         workers_before = _capture_workers()
         with patch("cv2.VideoCapture", side_effect=_capture_by_source({slow_url: slow, bad_url: bad})):
             with pytest.raises(ValueError, match="Could not open the video source"):
-                next(_DummyRFDETR().predict(source, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
         slow.release.assert_called_once()
         bad.release.assert_called_once()
         assert _capture_workers() == workers_before
@@ -390,7 +394,7 @@ class TestLivePredictions:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))] + [(False, None)] * 4
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True)
             next(results)
             with pytest.raises(RuntimeError, match="three reconnect attempts"):
                 next(results)
@@ -403,7 +407,7 @@ class TestLivePredictions:
         capture = MagicMock()
         capture.read.return_value = (False, None)
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True)
             with pytest.raises(ValueError, match="Could not read the first frame"):
                 next(results)
         capture.release.assert_called_once()
@@ -419,7 +423,7 @@ class TestLivePredictions:
         second.isOpened.return_value = False
         with patch("cv2.VideoCapture", side_effect=[first, second]):
             with pytest.raises(ValueError, match="Could not open the video source"):
-                next(_DummyRFDETR().predict(source, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
         first.release.assert_called_once()
         second.release.assert_called_once()
 
@@ -446,7 +450,7 @@ class TestLivePredictions:
 
         capture.read.side_effect = read_frame
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True, stream_buffer=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True, stream_buffer=True)
             try:
                 assert cast(sv.Detections, next(results)).metadata["source_image"][0, 0, 0] == 0
                 assert full.wait(30)
@@ -476,7 +480,7 @@ class TestLivePredictions:
         ]
         captures = {"https://example.com/a.mp4": first, "https://example.com/b.mp4": second}
         with patch("cv2.VideoCapture", side_effect=_capture_by_source(captures)):
-            results = list(_DummyRFDETR().predict(source, stream=True, stream_buffer=True))
+            results = list(RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True))
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [1, 3, 2, 4]
         first.open.assert_not_called()
         second.open.assert_not_called()
@@ -495,7 +499,7 @@ class TestLivePredictions:
             (False, None)
         ]
         with patch("cv2.VideoCapture", return_value=capture):
-            results = list(_DummyRFDETR().predict(source, stream=True, stream_buffer=True))
+            results = list(RFDETRInference(_DummyRFDETR()).predict(source, stream=True, stream_buffer=True))
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [1, 2, 3]
         capture.open.assert_not_called()
         capture.release.assert_called_once()
@@ -506,4 +510,4 @@ class TestLivePredictions:
             with pytest.raises(
                 ImportError, match=r'requires OpenCV\. Install it with `uv pip install "rfdetr\[stream\]"`'
             ):
-                next(_DummyRFDETR().predict(0, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(0, stream=True))

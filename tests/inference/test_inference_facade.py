@@ -156,12 +156,11 @@ class TestLiveModelDevicePolicy:
 class TestLiveModelSource:
     """Exercise live model behavior through the inference API."""
 
-    @pytest.mark.parametrize("use_facade", [False, True])
-    def test_stream_reads_current_native_state_between_batches(self, use_facade: bool) -> None:
-        """Both APIs refresh borrowed state lazily without leaking inference mode to the caller."""
+    def test_stream_reads_current_native_state_between_batches(self) -> None:
+        """A borrowed stream refreshes live model state per batch without leaking inference mode to the caller."""
         native = _DummyRFDETR()
         native.model = _DummyModel(class_names=["cat"], labels=[0])
-        predictor = RFDETRInference(native) if use_facade else native
+        predictor = RFDETRInference(native)
         images = np.zeros((24, 32, 3), dtype=np.uint8)
         results = predictor.predict([images, images], stream=True)
         native.model.class_names = ["dog"]

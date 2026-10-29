@@ -12,7 +12,7 @@ __all__ = ["ModelContext", "RFDETRInference"]
 import os
 from collections.abc import Callable, Generator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
@@ -182,54 +182,6 @@ class RFDETRInference:
             "max_batch_size": context.max_batch_size,
         }
 
-    @overload
-    def predict(
-        self,
-        images: PredictionInput,
-        threshold: float = 0.5,
-        shape: tuple[int, int] | None = None,
-        patch_size: int | None = None,
-        include_source_image: bool = True,
-        *,
-        antialias: bool | None = None,
-        stream: Literal[True],
-        batch: int | None = None,
-        vid_stride: int = 1,
-        stream_buffer: bool = False,
-    ) -> Generator[Detections | KeyPoints, None, None]: ...
-
-    @overload
-    def predict(
-        self,
-        images: PredictionInput,
-        threshold: float = 0.5,
-        shape: tuple[int, int] | None = None,
-        patch_size: int | None = None,
-        include_source_image: bool = True,
-        *,
-        antialias: bool | None = None,
-        stream: Literal[False] = False,
-        batch: int | None = None,
-        vid_stride: int = 1,
-        stream_buffer: bool = False,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]: ...
-
-    @overload
-    def predict(
-        self,
-        images: PredictionInput,
-        threshold: float = 0.5,
-        shape: tuple[int, int] | None = None,
-        patch_size: int | None = None,
-        include_source_image: bool = True,
-        *,
-        antialias: bool | None = None,
-        stream: bool,
-        batch: int | None = None,
-        vid_stride: int = 1,
-        stream_buffer: bool = False,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]: ...
-
     def predict(
         self,
         images: PredictionInput,
@@ -247,8 +199,12 @@ class RFDETRInference:
         """Predict images, video, and live sources through the shared prediction pipeline.
 
         Args:
-            images: Any source accepted by :meth:`RFDETR.predict`. The same trust caveat applies: string sources
-                are downloaded, opened or expanded without size or host limits, so pass only trusted strings.
+            images: An image, directory, glob, video, webcam index, stream URL, manifest, or an iterable of these.
+                Images can be paths, HTTP URLs, PIL images, NumPy arrays, or tensors. Iterables other than lists and
+                tuples are read into a list first. TXT/CSV manifests list sources; ``.streams`` files capture streams
+                concurrently. YouTube URLs and ``screen`` capture require the optional ``rfdetr[stream]``
+                dependencies. String sources are downloaded, opened or expanded without size or host limits, so pass
+                only trusted strings.
             threshold: Minimum confidence for a result.
             shape: Input height and width; exports require their recorded shape.
             patch_size: Backbone patch size for shape validation.

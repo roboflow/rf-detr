@@ -18,6 +18,8 @@ import pytest
 import supervision as sv
 from PIL import Image
 
+from rfdetr.inference import RFDETRInference
+
 from .helpers import _DummyRFDETR, _requires_opencv
 
 
@@ -39,7 +41,7 @@ class TestManifestPrediction:
         Image.new("RGB", (32, 24), (40, 50, 60)).save(tmp_path / "b.png")
         manifest = tmp_path / f"sources{suffix}"
         manifest.write_text(content)
-        results = _DummyRFDETR().predict(manifest)
+        results = RFDETRInference(_DummyRFDETR()).predict(manifest)
         assert isinstance(results, list)
         pixels = []
         for result in results:
@@ -57,7 +59,7 @@ class TestManifestPrediction:
         manifest = tmp_path / "sources.txt"
         manifest.write_text(f"{name}\n")
 
-        results = _DummyRFDETR().predict(manifest)
+        results = RFDETRInference(_DummyRFDETR()).predict(manifest)
 
         assert isinstance(results, list)
         assert len(results) == 1
@@ -83,7 +85,7 @@ class TestManifestPrediction:
             return handle
 
         monkeypatch.setattr(Path, "open", recording_open)
-        results = _DummyRFDETR().predict(manifest, stream=True)
+        results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True)
         next(results)
 
         assert handles
@@ -97,7 +99,7 @@ class TestManifestPrediction:
         first.write_text("second.txt\n")
         second.write_text("first.txt\n")
         with pytest.raises(ValueError, match="manifest cycle"):
-            _DummyRFDETR().predict(first)
+            RFDETRInference(_DummyRFDETR()).predict(first)
 
     def test_nested_manifest_can_repeat_without_a_cycle(self, tmp_path: Path) -> None:
         """Repeated manifests produce repeated predictions."""
@@ -105,7 +107,7 @@ class TestManifestPrediction:
         (tmp_path / "nested.txt").write_text("image.png\n")
         manifest = tmp_path / "sources.txt"
         manifest.write_text("nested.txt\nnested.txt\n")
-        assert len(_DummyRFDETR().predict(manifest)) == 2
+        assert len(RFDETRInference(_DummyRFDETR()).predict(manifest)) == 2
 
     @pytest.mark.parametrize(
         "suffix,content",
@@ -123,7 +125,7 @@ class TestManifestPrediction:
         """
         manifest = tmp_path / f"sources{suffix}"
         manifest.write_text(content)
-        assert _DummyRFDETR().predict(manifest) == []
+        assert RFDETRInference(_DummyRFDETR()).predict(manifest) == []
 
     @pytest.mark.parametrize(
         "suffix,content",
@@ -140,7 +142,7 @@ class TestManifestPrediction:
         """
         manifest = tmp_path / f"sources{suffix}"
         manifest.write_text(content)
-        assert list(_DummyRFDETR().predict(manifest, stream=True)) == []
+        assert list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True)) == []
 
 
 def _symlinks_supported() -> bool:
@@ -218,7 +220,7 @@ class TestManifestEdgeCases:
         manifest.write_text(content)
         with patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")) as capture:
             with pytest.raises(ValueError, match="no sources"):
-                list(_DummyRFDETR().predict(manifest, stream=stream))
+                list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream))
             capture.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -239,7 +241,7 @@ class TestManifestEdgeCases:
         manifest = tmp_path / f"sources{suffix}"
         manifest.write_text(content, encoding="utf-8")
 
-        assert _source_pixels(_DummyRFDETR().predict(manifest)) == [[10, 20, 30]]
+        assert _source_pixels(RFDETRInference(_DummyRFDETR()).predict(manifest)) == [[10, 20, 30]]
 
     def test_manifest_listing_itself_is_a_cycle(self, tmp_path: Path) -> None:
         """A manifest that names itself fails with the cycle error instead of recursing."""
@@ -247,7 +249,7 @@ class TestManifestEdgeCases:
         manifest.write_text("sources.txt\n")
 
         with pytest.raises(ValueError, match="manifest cycle"):
-            _DummyRFDETR().predict(manifest)
+            RFDETRInference(_DummyRFDETR()).predict(manifest)
 
     @_skip_without_symlinks
     def test_symlink_alias_of_a_manifest_is_a_cycle_on_the_real_file(self, tmp_path: Path) -> None:
@@ -261,7 +263,7 @@ class TestManifestEdgeCases:
         (tmp_path / "alias.txt").symlink_to(manifest)
 
         with pytest.raises(ValueError, match=r"manifest cycle: .*sources\.txt\."):
-            _DummyRFDETR().predict(manifest)
+            RFDETRInference(_DummyRFDETR()).predict(manifest)
 
     @pytest.mark.parametrize("stream", [False, True])
     def test_streams_manifest_nested_in_text_manifest_opens_its_captures(self, tmp_path: Path, stream: bool) -> None:
@@ -280,7 +282,7 @@ class TestManifestEdgeCases:
         capture.get.return_value = 1.0
 
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            predictions = list(_DummyRFDETR().predict(manifest, stream=stream, stream_buffer=True))
+            predictions = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream, stream_buffer=True))
 
         assert len(predictions) == 1
         open_capture.assert_called_once_with(str(video))
@@ -303,7 +305,7 @@ class TestManifestEdgeCases:
         manifest = directory / "sources.txt"
         manifest.write_text(entry.format(root=tmp_path.as_posix()) + "\n")
 
-        assert _source_pixels(_DummyRFDETR().predict(manifest)) == [[10, 20, 30]]
+        assert _source_pixels(RFDETRInference(_DummyRFDETR()).predict(manifest)) == [[10, 20, 30]]
 
     def test_glob_entry_expands_relative_to_manifest(self, tmp_path: Path) -> None:
         """A glob entry matches inside the manifest directory and predicts its matches in sorted order."""
@@ -314,7 +316,7 @@ class TestManifestEdgeCases:
         manifest = tmp_path / "sources.txt"
         manifest.write_text("images/*.png\n")
 
-        assert _source_pixels(_DummyRFDETR().predict(manifest)) == [[10, 20, 30], [40, 50, 60]]
+        assert _source_pixels(RFDETRInference(_DummyRFDETR()).predict(manifest)) == [[10, 20, 30], [40, 50, 60]]
 
     def test_glob_entry_without_matches_raises(self, tmp_path: Path) -> None:
         """A glob entry that matches nothing raises, because an empty location is a likely wrong path."""
@@ -322,7 +324,7 @@ class TestManifestEdgeCases:
         manifest.write_text("images/*.png\n")
 
         with pytest.raises(FileNotFoundError, match="No supported images or videos"):
-            _DummyRFDETR().predict(manifest)
+            RFDETRInference(_DummyRFDETR()).predict(manifest)
 
 
 class TestOptionalSources:
@@ -338,7 +340,7 @@ class TestOptionalSources:
         ]
         capture.grab.return_value = np.full((24, 32, 4), (10, 20, 30, 255), dtype=np.uint8)
         with patch.dict("sys.modules", {"mss": module}):
-            results = _DummyRFDETR().predict("screen 1 5 6 32 24", stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict("screen 1 5 6 32 24", stream=True)
             result = next(results)
             results.close()
         assert isinstance(result, sv.Detections)
@@ -351,14 +353,14 @@ class TestOptionalSources:
         """Invalid screen arguments fail before the desktop is read."""
         with patch.dict("sys.modules", {"mss": None}):
             with pytest.raises(ValueError, match="Screen|screen"):
-                next(_DummyRFDETR().predict(source, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
 
     @pytest.mark.parametrize("module,source", [("mss", "screen"), ("yt_dlp", "https://youtu.be/video")])
     def test_missing_optional_package_has_install_guidance(self, module: str, source: str) -> None:
         """Missing optional dependencies provide an actionable install hint."""
         with patch.dict("sys.modules", {module: None}):
             with pytest.raises(ImportError, match=r"rfdetr\[stream\]"):
-                next(_DummyRFDETR().predict(source, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
 
     @_requires_opencv
     def test_youtube_resolves_page_without_downloading(self) -> None:
@@ -372,7 +374,7 @@ class TestOptionalSources:
             patch.dict("sys.modules", {"yt_dlp": module}),
             patch("cv2.VideoCapture", return_value=capture) as open_capture,
         ):
-            results = _DummyRFDETR().predict("https://youtu.be/video", stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True)
             result = next(results)
             assert list(results) == []
         assert isinstance(result, sv.Detections)
@@ -405,7 +407,7 @@ class TestOptionalSources:
             patch.dict("sys.modules", {"yt_dlp": module}),
             patch("cv2.VideoCapture", side_effect=lambda source, *args: captures[source]),
         ):
-            results = list(_DummyRFDETR().predict(manifest, stream=True, stream_buffer=True))
+            results = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True))
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [1, 2]
 
     def test_youtube_resolution_caps_height_and_bounds_the_wait(self) -> None:
@@ -420,7 +422,7 @@ class TestOptionalSources:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         with patch.dict("sys.modules", {"yt_dlp": module}), patch("cv2.VideoCapture", return_value=capture):
-            list(_DummyRFDETR().predict("https://youtu.be/video", stream=True))
+            list(RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True))
         options = module.YoutubeDL.call_args.args[0]
         assert all("[height<=?" in selector for selector in options["format"].split("/"))
         assert 0 < options["socket_timeout"] <= 30
@@ -437,7 +439,7 @@ class TestOptionalSources:
         downloader.extract_info.side_effect = module.utils.DownloadError("ERROR: [youtube] video: Video unavailable")
         with patch.dict("sys.modules", {"yt_dlp": module}):
             with pytest.raises(ValueError, match=r"https://youtu\.be/video.*Video unavailable") as raised:
-                next(_DummyRFDETR().predict("https://youtu.be/video", stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True))
         assert isinstance(raised.value.__cause__, module.utils.DownloadError)
 
 
@@ -456,7 +458,7 @@ class TestSourceRouting:
             patch("cv2.VideoCapture", return_value=capture) as open_capture,
             patch("requests.get", side_effect=AssertionError("unexpected image download")),
         ):
-            results = _DummyRFDETR().predict(manifest, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True)
             open_capture.assert_not_called()
             try:
                 result = next(results)
@@ -478,7 +480,7 @@ class TestSourceRouting:
             patch("requests.get", return_value=response),
             patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")) as capture,
         ):
-            result = _DummyRFDETR().predict("https://images.example/render?id=42")
+            result = RFDETRInference(_DummyRFDETR()).predict("https://images.example/render?id=42")
         assert isinstance(result, sv.Detections)
         capture.assert_not_called()
 
@@ -490,7 +492,7 @@ class TestSourceRouting:
         manifest.write_text(entry)
         with patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")) as capture:
             with pytest.raises((ValueError, FileNotFoundError), match="[Ss]tream|[Vv]ideo"):
-                next(_DummyRFDETR().predict(manifest, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True))
             capture.assert_not_called()
 
     @_requires_opencv
@@ -501,7 +503,7 @@ class TestSourceRouting:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict("https://video.example/movie.mp4")
+            results = RFDETRInference(_DummyRFDETR()).predict("https://video.example/movie.mp4")
         assert isinstance(results, list)
         assert len(results) == 1
         open_capture.assert_called_once_with(
@@ -519,7 +521,7 @@ class TestSourceRouting:
         with patch("cv2.VideoCapture", side_effect=RuntimeError("capture attempted")):
             with pytest.warns(UserWarning, match="stream=True"):
                 with pytest.raises(RuntimeError, match="capture attempted"):
-                    _DummyRFDETR().predict(manifest)
+                    RFDETRInference(_DummyRFDETR()).predict(manifest)
 
     @_requires_opencv
     @pytest.mark.parametrize("source", [0, "flat.txt", "nested.txt"])
@@ -537,7 +539,7 @@ class TestSourceRouting:
         with patch("cv2.VideoCapture", side_effect=RuntimeError("capture attempted")):
             with pytest.warns(UserWarning, match="stream=True") as record:
                 with pytest.raises(RuntimeError, match="capture attempted"):
-                    _DummyRFDETR().predict(source)
+                    RFDETRInference(_DummyRFDETR()).predict(source)
         live = [warning for warning in record if "stream=True" in str(warning.message)]
         assert [Path(warning.filename).resolve() for warning in live] == [Path(__file__).resolve()]
 
@@ -552,7 +554,7 @@ class TestSourceRouting:
         with patch.dict("sys.modules", {"yt_dlp": module}), patch("cv2.VideoCapture", return_value=capture):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
-                results = _DummyRFDETR().predict("https://youtu.be/video")
+                results = RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video")
         assert isinstance(results, list)
         assert len(results) == 1
         assert not any("Live results accumulate" in str(warning.message) for warning in caught)
@@ -575,7 +577,7 @@ class TestSourceRouting:
             patch("rfdetr._prediction_sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3),
         ):
             with pytest.warns(UserWarning, match="include_source_image=False"):
-                results = _DummyRFDETR().predict(source)
+                results = RFDETRInference(_DummyRFDETR()).predict(source)
         assert len(results) == 2
 
     def test_large_eager_image_directory_warns_about_retained_frames(self, tmp_path: Path) -> None:
@@ -584,7 +586,7 @@ class TestSourceRouting:
             Image.new("RGB", (32, 24)).save(tmp_path / f"{index}.png")
         with patch("rfdetr._prediction_sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3):
             with pytest.warns(UserWarning, match="include_source_image=False"):
-                results = _DummyRFDETR().predict(tmp_path)
+                results = RFDETRInference(_DummyRFDETR()).predict(tmp_path)
         assert len(results) == 2
 
     @pytest.mark.parametrize(
@@ -602,7 +604,7 @@ class TestSourceRouting:
         with patch("rfdetr._prediction_sources._RETAINED_FRAME_WARNING_BYTES", threshold):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
-                results = list(_DummyRFDETR().predict(tmp_path, **options))
+                results = list(RFDETRInference(_DummyRFDETR()).predict(tmp_path, **options))
         assert len(results) == 2
         assert not any("include_source_image=False" in str(warning.message) for warning in caught)
 
@@ -614,7 +616,7 @@ class TestSourceRouting:
             with pytest.raises(
                 ImportError, match=r'requires OpenCV\. Install it with `uv pip install "rfdetr\[stream\]"`'
             ):
-                next(_DummyRFDETR().predict(source, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
 
     @_requires_opencv
     def test_local_video_stream_manifest_requires_existing_file(self, tmp_path: Path) -> None:
@@ -627,7 +629,7 @@ class TestSourceRouting:
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         capture.get.return_value = 1.0
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict(manifest, stream=True, stream_buffer=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True)
             predictions = list(results)
         assert len(predictions) == 1
         open_capture.assert_called_once_with(str(video))

@@ -16,6 +16,8 @@ import supervision as sv
 import torch
 from PIL import Image, UnidentifiedImageError
 
+from rfdetr.inference import RFDETRInference
+
 from .helpers import _DummyModel, _DummyRFDETR, _requires_opencv, _scripted_capture
 
 if TYPE_CHECKING:
@@ -57,7 +59,7 @@ class TestPredictSources:
             patch.dict("sys.modules", {"mss": None}),
             patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")),
         ):
-            result = _DummyRFDETR().predict(source, stream=source_kind == "stream")
+            result = RFDETRInference(_DummyRFDETR()).predict(source, stream=source_kind == "stream")
             if source_kind != "file":
                 results = list(result)
                 assert len(results) == 1
@@ -83,7 +85,7 @@ class TestPredictSources:
             patch.dict("sys.modules", {"mss": None}),
             patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")),
         ):
-            results = _DummyRFDETR().predict(dirname)
+            results = RFDETRInference(_DummyRFDETR()).predict(dirname)
 
         assert isinstance(results, list)
         assert len(results) == 1
@@ -98,7 +100,7 @@ class TestPredictSources:
         """
         monkeypatch.chdir(tmp_path)
         with patch.dict("sys.modules", {"mss": None}), pytest.raises(FileNotFoundError):
-            _DummyRFDETR().predict("screen shot.png")
+            RFDETRInference(_DummyRFDETR()).predict("screen shot.png")
 
     @pytest.mark.parametrize("source", ["", "   "])
     def test_empty_source_raises_before_expanding_working_directory(
@@ -112,7 +114,7 @@ class TestPredictSources:
         monkeypatch.chdir(tmp_path)
         Image.new("RGB", (32, 24)).save(tmp_path / "image.png")
         with pytest.raises(ValueError, match="source is empty"):
-            _DummyRFDETR().predict(source)
+            RFDETRInference(_DummyRFDETR()).predict(source)
 
     @pytest.mark.parametrize("animated", [False, True])
     @pytest.mark.parametrize("source_kind", ["file", "directory"])
@@ -126,7 +128,7 @@ class TestPredictSources:
             append_images=[Image.new("RGB", (32, 24), color=(40, 50, 60))] if animated else [],
         )
 
-        result = _DummyRFDETR().predict(path if source_kind == "file" else tmp_path)
+        result = RFDETRInference(_DummyRFDETR()).predict(path if source_kind == "file" else tmp_path)
 
         if source_kind == "directory":
             assert isinstance(result, list)
@@ -151,7 +153,7 @@ class TestPredictSources:
         assert model.model.model is not None
         handle = model.model.model.register_forward_pre_hook(lambda module, args: sizes.append(len(args[0])))
         try:
-            results = list(model.predict(tmp_path, stream=True, batch=2))
+            results = list(RFDETRInference(model).predict(tmp_path, stream=True, batch=2))
         finally:
             handle.remove()
         assert sizes == [2, 2, 1]
@@ -184,7 +186,7 @@ class TestPredictSources:
         Image.new("RGB", (32, 24), color=(10, 0, 0)).save(tmp_path / "a.png")
         (tmp_path / "b.png").write_bytes(b"not an image")
         Image.new("RGB", (32, 24), color=(30, 0, 0)).save(tmp_path / "c.png")
-        results = _DummyRFDETR().predict(tmp_path, stream=True)
+        results = RFDETRInference(_DummyRFDETR()).predict(tmp_path, stream=True)
 
         first = cast(sv.Detections, next(results))
         with pytest.raises(UnidentifiedImageError):
@@ -197,7 +199,7 @@ class TestPredictSources:
         images = torch.zeros((2, 3, 24, 32))
         images[0, 0] = 1
         images[1, 2] = 1
-        predictions = _DummyRFDETR().predict(images, stream=stream, batch=2)
+        predictions = RFDETRInference(_DummyRFDETR()).predict(images, stream=stream, batch=2)
         assert isinstance(predictions, (list, Generator))
         results = list(predictions)
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0].tolist() for result in results] == [
@@ -220,7 +222,7 @@ class TestPredictSources:
         assert model.model.model is not None
         handle = model.model.model.register_forward_pre_hook(lambda module, args: sizes.append(len(args[0])))
         try:
-            results = list(model.predict(torch.zeros((3, 3, 24, 32)), stream=stream, batch=batch))
+            results = list(RFDETRInference(model).predict(torch.zeros((3, 3, 24, 32)), stream=stream, batch=batch))
         finally:
             handle.remove()
         assert sizes == expected_sizes
@@ -241,7 +243,7 @@ class TestPredictSources:
         assert model.model.model is not None
         handle = model.model.model.register_forward_pre_hook(lambda module, args: sizes.append(len(args[0])))
         try:
-            results = model.predict(images, batch=batch)
+            results = RFDETRInference(model).predict(images, batch=batch)
         finally:
             handle.remove()
         assert sizes == expected_sizes
@@ -264,7 +266,7 @@ class TestPredictSources:
         handle = model.model.model.register_forward_pre_hook(lambda module, args: sizes.append(len(args[0])))
         try:
             with patch("cv2.VideoCapture", return_value=capture):
-                results = list(model.predict(path, stream=True, vid_stride=2, batch=2))
+                results = list(RFDETRInference(model).predict(path, stream=True, vid_stride=2, batch=2))
         finally:
             handle.remove()
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [1, 3, 5, 7, 9]
@@ -282,7 +284,7 @@ class TestPredictSources:
         path.touch()
         capture = _scripted_capture([])
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(path, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(path, stream=True)
             with pytest.raises(ValueError, match="Could not read the first frame"):
                 next(results)
         capture.release.assert_called_once()
@@ -309,7 +311,7 @@ class TestPredictSources:
             patch("cv2.VideoCapture", return_value=capture),
             patch("rfdetr._prediction_sources.logger") as logger,
         ):
-            results = list(_DummyRFDETR().predict(source, stream=True))
+            results = list(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
         assert len(results) == 1
         assert logger.warning.call_count == warnings_logged
 
@@ -332,7 +334,7 @@ class TestPredictSources:
         expected = np.array(Image.new("RGB", (32, 24), (17, 127, 231)).convert("L"))
         capture = _scripted_capture([(True, bgr), RuntimeError("end")])
         with patch("cv2.VideoCapture", return_value=capture):
-            results = model.predict(source, stream=True)
+            results = RFDETRInference(model).predict(source, stream=True)
             result = next(results)
             results.close()
         assert isinstance(result, sv.Detections)
@@ -343,7 +345,7 @@ class TestPredictSources:
         path = tmp_path / "image.png"
         Image.new("RGB", (32, 24), color=(10, 20, 30)).save(path)
 
-        result = _DummyRFDETR().predict(path)
+        result = RFDETRInference(_DummyRFDETR()).predict(path)
 
         assert isinstance(result, sv.Detections)
         np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [10, 20, 30])
@@ -351,7 +353,7 @@ class TestPredictSources:
     def test_stream_predicts_each_image_only_when_requested(self) -> None:
         """A later invalid image does not prevent the first result."""
         image = Image.new("RGB", (32, 24))
-        results = _DummyRFDETR().predict([image, np.zeros((24, 32, 4), dtype=np.uint8)], stream=True)
+        results = RFDETRInference(_DummyRFDETR()).predict([image, np.zeros((24, 32, 4), dtype=np.uint8)], stream=True)
 
         assert isinstance(results, Generator)
         result = next(results)
@@ -390,7 +392,7 @@ class TestPredictSources:
         monkeypatch.delitem(Image.OPEN, "HEIF", raising=False)
         monkeypatch.setattr(Image, "OPEN", {**Image.OPEN, **openers})
 
-        results = _DummyRFDETR().predict(tmp_path)
+        results = RFDETRInference(_DummyRFDETR()).predict(tmp_path)
 
         assert isinstance(results, list)
         assert len(results) == expected
@@ -405,7 +407,7 @@ class TestPredictSources:
         Image.new("RGB", (32, 24)).save(tmp_path / "nested" / "ignored.png")
         source = tmp_path if source_kind == "directory" else str(tmp_path / "*.*")
 
-        results = _DummyRFDETR().predict(source)
+        results = RFDETRInference(_DummyRFDETR()).predict(source)
 
         assert isinstance(results, list)
         pixels = []
@@ -431,7 +433,7 @@ class TestPredictSources:
         finally:
             writer.release()
 
-        predictions = _DummyRFDETR().predict(path, stream=stream)
+        predictions = RFDETRInference(_DummyRFDETR()).predict(path, stream=stream)
         assert isinstance(predictions, (list, Generator))
         results = list(predictions)
 
@@ -461,7 +463,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.full((24, 32, 3), (10, 20, 30), dtype=np.uint8))]
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict(source, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(source, stream=True)
             assert isinstance(results, Generator)
             open_capture.assert_not_called()
 
@@ -479,7 +481,7 @@ class TestPredictSources:
         """Annotating retained source pixels must not modify the caller's image."""
         image = np.full((24, 32, 3), 127, dtype=np.uint8)
 
-        result = _DummyRFDETR().predict(image)
+        result = RFDETRInference(_DummyRFDETR()).predict(image)
 
         assert isinstance(result, sv.Detections)
         result.metadata["source_image"][:] = 0
@@ -494,7 +496,7 @@ class TestPredictSources:
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
             with pytest.warns(UserWarning, match="accumulate in memory"):
                 with pytest.raises(ValueError, match="Could not open"):
-                    _DummyRFDETR().predict(source)
+                    RFDETRInference(_DummyRFDETR()).predict(source)
             open_capture.assert_called_once()
 
     @_requires_opencv
@@ -504,13 +506,13 @@ class TestPredictSources:
         """Invalid batching and stride options fail without opening a device."""
         with patch("cv2.VideoCapture") as open_capture:
             with pytest.raises(ValueError, match=f"{option} must be a positive integer"):
-                _DummyRFDETR().predict(0, stream=True, **cast(Any, {option: value}))
+                RFDETRInference(_DummyRFDETR()).predict(0, stream=True, **cast(Any, {option: value}))
             open_capture.assert_not_called()
 
     def test_stream_buffer_requires_boolean(self) -> None:
         """A misspelled buffer value must not enable buffering implicitly."""
         with pytest.raises(ValueError, match="stream_buffer must be a boolean"):
-            _DummyRFDETR().predict([], stream_buffer=cast(Any, "false"))
+            RFDETRInference(_DummyRFDETR()).predict([], stream_buffer=cast(Any, "false"))
 
     @_requires_opencv
     def test_video_glob_expands_before_capture(self, tmp_path: Path) -> None:
@@ -520,7 +522,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict(str(tmp_path / "*.avi"))
+            results = RFDETRInference(_DummyRFDETR()).predict(str(tmp_path / "*.avi"))
 
         assert isinstance(results, list)
         assert len(results) == 1
@@ -533,7 +535,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.read.return_value = (True, np.zeros((24, 32, 3), dtype=np.uint8))
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, shape=(13, 14), stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, shape=(13, 14), stream=True)
             with pytest.raises(ValueError, match="divisible"):
                 next(results)
 
@@ -545,7 +547,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.read.side_effect = RuntimeError("decoder failed")
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True)
             with pytest.raises(RuntimeError, match="decoder failed"):
                 next(results)
 
@@ -557,7 +559,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.isOpened.return_value = False
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict(0, stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(0, stream=True)
             with pytest.raises(ValueError, match="Could not open the video source"):
                 next(results)
 
@@ -578,7 +580,7 @@ class TestPredictSources:
         """Boolean, negative, and out-of-range indexes cannot select a camera."""
         with patch("cv2.VideoCapture") as open_capture:
             with pytest.raises(ValueError, match=message):
-                next(_DummyRFDETR().predict(source, stream=True))
+                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
             open_capture.assert_not_called()
 
     @_requires_opencv
@@ -590,7 +592,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))]
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict(np.int64(1), stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(np.int64(1), stream=True)
             next(results)
             results.close()
 
@@ -615,7 +617,7 @@ class TestPredictSources:
         capture = MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))]
         with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = _DummyRFDETR().predict(cast(Any, source), stream=True)
+            results = RFDETRInference(_DummyRFDETR()).predict(cast(Any, source), stream=True)
             next(results)
             results.close()
 
@@ -627,7 +629,7 @@ class TestPredictSources:
         """A digit string beyond the 32-bit index range raises instead of opening a capture."""
         with patch("cv2.VideoCapture") as open_capture:
             with pytest.raises(ValueError, match="no greater than 2147483647"):
-                _DummyRFDETR().predict(source)
+                RFDETRInference(_DummyRFDETR()).predict(source)
             open_capture.assert_not_called()
 
     @_requires_opencv
@@ -655,7 +657,7 @@ class TestPredictSources:
         monkeypatch.chdir(tmp_path)
         with patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")):
             with pytest.raises(FileNotFoundError):
-                _DummyRFDETR().predict(source)
+                RFDETRInference(_DummyRFDETR()).predict(source)
 
     @_requires_opencv
     @pytest.mark.parametrize("stream", [False, True])
@@ -669,7 +671,7 @@ class TestPredictSources:
         source = {"directory": tmp_path, "glob": tmp_path / "*.png", "video": tmp_path / "missing.mp4"}[source_kind]
         with patch("cv2.VideoCapture") as open_capture:
             with pytest.raises(FileNotFoundError):
-                list(_DummyRFDETR().predict(source, stream=stream))
+                list(RFDETRInference(_DummyRFDETR()).predict(source, stream=stream))
             open_capture.assert_not_called()
 
     @_requires_opencv
@@ -682,7 +684,7 @@ class TestPredictSources:
         first = np.full((24, 32, 3), 10, dtype=np.uint8)
         last = np.full((24, 32, 3), 30, dtype=np.uint8)
         with patch("cv2.VideoCapture", return_value=capture):
-            results = _DummyRFDETR().predict([first, path, last])
+            results = RFDETRInference(_DummyRFDETR()).predict([first, path, last])
 
         assert isinstance(results, list)
         pixels = []
@@ -698,7 +700,7 @@ class TestPredictSources:
         model.model = cast(
             "ModelContext", _DummyModel(include_masks=task == "segmentation", include_keypoints=task == "keypoints")
         )
-        results = model.predict(
+        results = RFDETRInference(model).predict(
             Image.new("RGB", (32, 24)),
             threshold=0.95,
             include_source_image=False,
@@ -723,4 +725,4 @@ class TestPredictSources:
 
     def test_empty_stream_has_no_results(self) -> None:
         """An empty image sequence produces an empty stream."""
-        assert list(_DummyRFDETR().predict([], stream=True)) == []
+        assert list(RFDETRInference(_DummyRFDETR()).predict([], stream=True)) == []

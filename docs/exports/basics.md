@@ -148,7 +148,7 @@ The public constructor supports ONNX, TensorRT (`.trt` and `.engine`), TFLite, L
 
 Pass an image-only list to `predict()` to return one result per image. With `stream=False`, the list runs as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
 
-Both `RFDETR.predict()` and `RFDETRInference.predict()` use the same source pipeline. They accept video paths, HTTP video URLs, webcams, RTSP, YouTube, directories, globs, and manifests. Install `rfdetr[stream]` for the optional source dependencies.
+`RFDETRInference.predict()` also accepts video paths, HTTP video URLs, webcams, RTSP, YouTube, directories, globs, and manifests. `RFDETR.predict()` takes images only; wrap a loaded model with `RFDETRInference(model)` for these sources. Install `rfdetr[stream]` for the optional source dependencies.
 
 ```python
 from rfdetr import RFDETRInference

@@ -62,6 +62,12 @@ def _import_cv2(task: str) -> ModuleType:
 def _is_network_source(source: str | int) -> bool:
     """Tell whether OpenCV opens the source as a network stream.
 
+    Args:
+        source: Camera index, file path or URL. Only a string with a live-stream or HTTP(S) scheme counts.
+
+    Returns:
+        True for a network source, False for a camera index or a local path.
+
     Examples:
         >>> _is_network_source("rtsp://camera.local/live")
         True
@@ -81,6 +87,13 @@ def _capture_args(source: str | int) -> tuple[Any, ...]:
     Network streams receive open and read timeouts so a dead host cannot block forever;
     cameras and files take the source alone. The caller must have imported OpenCV through
     ``_import_cv2`` first.
+
+    Args:
+        source: Camera index, file path or URL to open.
+
+    Returns:
+        ``(source,)`` for cameras and files, or ``(source, cv2.CAP_ANY, timeouts)`` for a network stream, where
+        ``timeouts`` is the OpenCV open and read timeout parameter list.
 
     Examples:
         >>> _capture_args(0)
@@ -102,10 +115,38 @@ def _capture_args(source: str | int) -> tuple[Any, ...]:
 
 
 class _LiveCapture:
-    """Own one capture and its bounded frame queue."""
+    """Own one OpenCV capture, its worker thread and its bounded frame queue.
+
+    The initial frame is read on the constructing thread so open and read failures surface immediately. A daemon worker
+    then keeps reading, converting frames to RGB and queueing them. Setting ``stop`` ends the worker, which releases
+    the capture on exit.
+
+    Args:
+        source: Camera index, file path or stream URL.
+        vid_stride: Number of captured frames between kept frames.
+        stream_buffer: Queue up to ``_BUFFER_FRAMES`` pending frames instead of keeping only the latest.
+        finite: Treat the source as ending, even without frame-count metadata.
+
+    Attributes:
+        finite (bool): The source ends at end of file instead of reconnecting after a failed read.
+        stream_buffer (bool): Pending frames are queued; always True for a finite source.
+        error (BaseException | None): Exception that stopped the worker, re-raised by :meth:`read`.
+        finished (bool): The worker has exited.
+    """
 
     def __init__(self, source: str | int, vid_stride: int, stream_buffer: bool, *, finite: bool = False) -> None:
-        """Read an initial frame before starting background capture."""
+        """Open the capture, read an initial frame, and start the background worker.
+
+        Args:
+            source: Camera index, file path or stream URL.
+            vid_stride: Number of captured frames between kept frames.
+            stream_buffer: Queue pending frames instead of keeping only the latest.
+            finite: Treat the source as ending, even without frame-count metadata.
+
+        Raises:
+            ImportError: If OpenCV is not installed.
+            ValueError: If the source cannot be opened or its first frame cannot be read.
+        """
         cv2 = _import_cv2("Live")
 
         self.source = source
@@ -140,7 +181,14 @@ class _LiveCapture:
             raise
 
     def _run(self) -> None:
-        """Capture frames until closed, reconnecting after transient read failures."""
+        """Capture frames on the worker thread until closed, reconnecting after transient read failures.
+
+        The loop waits while the queue is full, skips ``vid_stride - 1`` frames, reads one, and queues its RGB copy
+        (replacing older frames unless buffered). A finite source stops at the first failed read. An unknown-length
+        source reopens the capture after a short delay and raises ``RuntimeError`` after more than ``_MAX_RECONNECTS``
+        consecutive failures. Any exception is stored in ``error`` for :meth:`read`; the capture is always released and
+        ``finished`` set on exit.
+        """
         import cv2  # Loaded at the optional dependency boundary in __init__.
 
         failures = 0
@@ -194,7 +242,15 @@ class _LiveCapture:
                 self.condition.notify_all()
 
     def read(self) -> np.ndarray[Any, Any] | None:
-        """Return the initial frame, then the next available queued frame."""
+        """Return the initial frame, then the next available queued frame, blocking until one exists.
+
+        Returns:
+            The next RGB frame in HWC layout, or None once the worker has finished (or been stopped) and the queue is
+            empty.
+
+        Raises:
+            BaseException: The error that stopped the worker, once every queued frame has been read.
+        """
         if self.first is not None:
             first, self.first = self.first, None
             return first
@@ -230,10 +286,21 @@ def _open_captures(
 
     Returns:
         One running capture per source, in source order.
+
+    Raises:
+        ImportError: If OpenCV is not installed.
+        ValueError: If a source cannot be opened or its first frame cannot be read.
     """
 
     def open_one(source: str | int) -> _LiveCapture:
-        """Open one capture and read its first frame."""
+        """Open one capture and read its first frame.
+
+        Args:
+            source: Camera index, file path or stream URL.
+
+        Returns:
+            A running capture, finite when the source is in ``finite_sources``.
+        """
         return _LiveCapture(source, vid_stride, stream_buffer, finite=source in finite_sources)
 
     network = [index for index, source in enumerate(sources) if len(sources) > 1 and _is_network_source(source)]
@@ -263,7 +330,14 @@ def _open_captures(
 
 
 def _close_captures(captures: list[_LiveCapture]) -> None:
-    """Stop every capture worker and wait a bounded time for each to release its device."""
+    """Stop every capture worker and wait a bounded time for each to release its device.
+
+    All workers are signalled first, then joined against one shared deadline of ``_CLOSE_TIMEOUT`` seconds. A worker
+    blocked in a native read is not forced to exit; it releases its capture when that read returns.
+
+    Args:
+        captures: Captures to stop. An empty list does nothing.
+    """
     deadline = monotonic() + _CLOSE_TIMEOUT
     for capture in captures:
         capture.stop.set()

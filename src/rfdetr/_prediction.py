@@ -11,7 +11,7 @@ import io
 import operator
 import os
 import re
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -343,6 +343,33 @@ def _mps_lacks_antialiased_resize() -> bool:
     return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
 
 
+#: Iterable inputs that are one image or source, never a collection of them.
+_SCALAR_INPUTS = (str, bytes, os.PathLike, Image.Image, np.ndarray, torch.Tensor)
+
+
+def _as_collection(images: PredictionInput) -> PredictionInput:
+    """Read an iterable of inputs into a list so later steps can count and index it.
+
+    Lists, tuples and single inputs pass through unchanged, including strings, arrays and tensors, which are
+    iterable but name one image or source.
+
+    Args:
+        images: One input or an iterable of inputs.
+
+    Returns:
+        The input itself, or a list of the iterable's items.
+
+    Examples:
+        >>> _as_collection(iter(["a.jpg", "b.jpg"]))
+        ['a.jpg', 'b.jpg']
+        >>> _as_collection("a.jpg")
+        'a.jpg'
+    """
+    if isinstance(images, (list, tuple, *_SCALAR_INPUTS)) or not isinstance(images, Iterable):
+        return images
+    return list(images)
+
+
 def predict(
     context_factory: Callable[[], PredictionContext],
     images: PredictionInput,
@@ -387,6 +414,7 @@ def predict(
             raise ValueError(f"{name} must be a positive integer.")
     if not isinstance(stream_buffer, bool):
         raise ValueError("stream_buffer must be a boolean.")
+    images = _as_collection(images)
     # An explicit batch splits an eager image list; an empty list keeps its single-batch error below.
     bounded_image_list = batch is not None and isinstance(images, (list, tuple)) and len(images) > 0
     if stream or bounded_image_list or is_expanded_source(images):
@@ -424,7 +452,29 @@ def _predict_stream(
     stream_buffer: bool,
     warn_on_live: bool,
 ) -> Generator[Detections | KeyPoints, None, None]:
-    """Predict bounded source batches and release capture on every exit path."""
+    """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
+
+    The model's channel count is read once from the first context so captured frames convert to grayscale for
+    one-channel models. Each batch runs through :func:`_predict_batch`, which re-reads the context. Closing the
+    generator closes the source reader.
+
+    Args:
+        context_factory: Read current execution rules when a batch starts.
+        images: Image data, paths, collections, videos, or live sources.
+        threshold: Minimum confidence for a result.
+        shape: Input height and width.
+        patch_size: Backbone patch size for shape validation.
+        include_source_image: Store source pixels in each result.
+        antialias: Use antialiasing during image resize.
+        batch: Maximum number of images per batch.
+        vid_stride: Read every Nth video or live frame.
+        stream_buffer: Queue live frames instead of retaining the latest frame.
+        warn_on_live: Warn about memory growth from live sources and large finite sources; set for eager callers, whose
+            results accumulate.
+
+    Yields:
+        One result per input image or frame, in source order.
+    """
     source_batches = iter_source_batches(
         images,
         batch=batch,
@@ -470,9 +520,15 @@ def _predict_batch(
 
     Returns:
         One Supervision result or a list matching the input container.
+
+    Raises:
+        ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
+            or patch size is invalid or conflicts with an export's fixed shape, or an input fails range or channel
+            validation.
     """
     from supervision import Detections, KeyPoints
 
+    images = _as_collection(images)
     if isinstance(images, (list, tuple)) and not images:
         raise ValueError("At least one image is required.")
 
@@ -513,7 +569,8 @@ def _predict_batch(
     # while a list/tuple always yields a list — even when it holds one image.
     single_input = not isinstance(images, (list, tuple))
     if not isinstance(images, (list, tuple)):
-        images = [images]
+        # ``_as_collection`` already read every other iterable into a list, so this is one image.
+        images = [cast("ImageInput", images)]
 
     orig_sizes: list[Any] = []
     processed_images: list[Any] = []

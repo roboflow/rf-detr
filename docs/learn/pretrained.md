@@ -174,9 +174,11 @@ detections = model.predict("https://media.roboflow.com/dog.jpeg", threshold=0.5)
 
 `predict()` accepts RGB PIL images and NumPy arrays. It accepts normalized CHW tensors and normalized BCHW tensor batches. It also accepts image paths, HTTP image URLs, `pathlib.Path` objects, and `os.PathLike` objects. An extensionless HTTP URL is treated as an image URL.
 
-Use `PredictionInput` in type annotations. Import it from `rfdetr` or `rfdetr.prediction`.
+One image returns one `sv.Detections` or `sv.KeyPoints` object. An iterable of images, such as a list, tuple, or generator, returns a list of results from one batched forward pass. A BCHW tensor returns one result per image.
 
-One image returns one `sv.Detections` or `sv.KeyPoints` object. A list or tuple of images returns a list of results. It uses one batched forward pass unless you pass `batch`.
+The model's `predict()` handles images only. Use `RFDETRInference` for videos, folders, globs, manifests, cameras, network streams, and lazy results. `RFDETRInference(model)` borrows a loaded model without copying its weights. It also loads checkpoints and exported models, and accepts every image input above.
+
+Use `PredictionInput` in type annotations for `RFDETRInference.predict()` inputs. Import it from `rfdetr` or `rfdetr.prediction`.
 
 ## Predict on files and folders
 
@@ -184,11 +186,11 @@ Pass a directory or glob pattern to predict on supported image and video files. 
 
 ```python
 from pathlib import Path
-from rfdetr import RFDETRSmall
+from rfdetr import RFDETRInference, RFDETRSmall
 
-model = RFDETRSmall()
-results = model.predict(Path("images"), threshold=0.5)
-results = model.predict("images/*.jpg", threshold=0.5)
+predictor = RFDETRInference(RFDETRSmall())
+results = predictor.predict(Path("images"), threshold=0.5)
+results = predictor.predict("images/*.jpg", threshold=0.5)
 ```
 
 Directories, globs, manifests, and video files return a flat list by default (`stream=False`). Use `stream=True` to process one image or video frame at a time.
@@ -206,10 +208,10 @@ An empty collection of sources is quiet; an empty location is loud. A text or CS
 Set `stream=True` to get a lazy generator. Each item is a `sv.Detections` or `sv.KeyPoints` result for one image or video frame. By default, a single source predicts one frame at a time.
 
 ```python
-from rfdetr import RFDETRSmall
+from rfdetr import RFDETRInference, RFDETRSmall
 
-model = RFDETRSmall()
-stream = model.predict("video.mp4", threshold=0.5, stream=True)
+predictor = RFDETRInference(RFDETRSmall())
+stream = predictor.predict("video.mp4", threshold=0.5, stream=True)
 
 try:
     for frame_detections in stream:
@@ -232,7 +234,7 @@ The generator closes its capture at the end, on error, or when you call `close()
 
 OpenCV converts captured video frames from BGR to RGB before prediction.
 
-RF-DETR supports many sources and controls that Ultralytics supports. Its `predict()` method is not a drop-in Ultralytics API. It returns Supervision objects. Video decoding depends on the installed OpenCV backends and codecs.
+RF-DETR supports many sources and controls that Ultralytics supports. `RFDETRInference.predict()` is not a drop-in Ultralytics API. It returns Supervision objects. Video decoding depends on the installed OpenCV backends and codecs.
 
 ## Include source images
 

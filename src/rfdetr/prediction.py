@@ -6,6 +6,7 @@
 """Public input types shared by native and exported prediction."""
 
 import os
+from collections.abc import Iterable
 from typing import Any, TypeAlias
 
 import numpy as np
@@ -16,5 +17,5 @@ from PIL import Image
 ImageInput: TypeAlias = str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor
 #: One prediction source, including a camera index.
 PredictionSource: TypeAlias = ImageInput | int
-#: Accepted scalar and sequence inputs to both public prediction APIs.
-PredictionInput: TypeAlias = PredictionSource | list[PredictionSource] | tuple[PredictionSource, ...]
+#: Accepted scalar and iterable inputs to ``RFDETRInference.predict``; iterables are read into a list first.
+PredictionInput: TypeAlias = PredictionSource | Iterable[PredictionSource]
