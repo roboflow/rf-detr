@@ -1004,6 +1004,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
+      <a href="../../learn/run/videos-and-streams/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Videos and Streams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../learn/pretrained/" class="md-nav__link">
         
   
@@ -2256,6 +2284,50 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(stream)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;stream
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(batch)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(vid_stride)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;vid_stride
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(stream_buffer)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;stream_buffer
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3404,6 +3476,50 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(stream)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;stream
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(batch)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(vid_stride)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;vid_stride
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(stream_buffer)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;stream_buffer
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3572,7 +3688,7 @@ batching request. The returned dictionary is independent of the source.</p>
 </tr>
 <tr>
 <td>CoreML</td>
-<td><code>auto</code> (all compute units), <code>cpu</code> (CPU only)</td>
+<td><code>auto</code> (all compute units), <code>cpu</code> (CPU only), <code>cpu_and_gpu</code>, <code>cpu_and_ne</code> (preferences)</td>
 </tr>
 <tr>
 <td>Core AI</td>
@@ -3584,6 +3700,7 @@ batching request. The returned dictionary is independent of the source.</p>
 </tr>
 </tbody>
 </table>
+<p>The CoreML <code>cpu_and_gpu</code> and <code>cpu_and_ne</code> values are preferences; Core ML may still run on the CPU.</p>
 <p>A live model owns its device policy. Omit <code>device</code> for that source;
 configure the native model itself to select its device.</p>
 
@@ -3765,14 +3882,14 @@ refuses a device or runtime option.</p>
 
 
 <h3 id="rfdetr.inference.RFDETRInference.predict" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">vid_stride</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">stream_buffer</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
 
 <a href="#rfdetr.inference.RFDETRInference.predict" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
 
-        <p>Run prediction with the shared native and exported inference pipeline.</p>
+        <p>Predict images, video, and live sources through the shared prediction pipeline.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3791,15 +3908,16 @@ refuses a device or runtime option.</p>
 <h4 id="rfdetr.inference.RFDETRInference.predict(images)" class="doc doc-heading doc-heading-parameter">                  <code>images</code>
 <a href="#rfdetr.inference.RFDETRInference.predict(images)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="rfdetr._prediction._PredictionImages">_PredictionImages</span></code>
+                  <code><span title="rfdetr._prediction.types._PredictionInput">_PredictionInput</span></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>A file path, URL string, PIL image, HWC NumPy array, CHW tensor, or list or tuple of those inputs.
-HTTP(S) URL strings are downloaded with <code>requests</code> using a 30-second connect and read timeout,
-which does not bound the total download time. Redirects are followed, and the whole response body is
-read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
-URLs, download and validate the image yourself and pass the decoded image instead.</p>
+                <p>An image, directory, glob, video, webcam index, stream URL, manifest, or an iterable of these.
+Images can be paths, HTTP URLs, PIL images, NumPy arrays, or tensors. Iterables other than lists and
+tuples are read into a list first. TXT/CSV manifests list sources; <code>.streams</code> files capture streams
+concurrently. YouTube URLs and <code>screen</code> capture require the optional <code>rfdetr[stream]</code>
+dependencies. String sources are downloaded, opened or expanded without size or host limits, so pass
+only trusted strings.</p>
               </div>
             </td>
             <td>
@@ -3815,7 +3933,7 @@ URLs, download and validate the image yourself and pass the decoded image instea
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Minimum confidence score for a prediction.</p>
+                <p>Minimum confidence for a result.</p>
               </div>
             </td>
             <td>
@@ -3831,7 +3949,7 @@ URLs, download and validate the image yourself and pass the decoded image instea
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Optional input height and width.</p>
+                <p>Input height and width; exports require their recorded shape.</p>
               </div>
             </td>
             <td>
@@ -3847,7 +3965,7 @@ URLs, download and validate the image yourself and pass the decoded image instea
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Advanced override for shape divisibility validation; it does not change the backbone.</p>
+                <p>Backbone patch size for shape validation.</p>
               </div>
             </td>
             <td>
@@ -3863,7 +3981,7 @@ URLs, download and validate the image yourself and pass the decoded image instea
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Include each source image in prediction metadata.</p>
+                <p>Store RGB source pixels in each result.</p>
               </div>
             </td>
             <td>
@@ -3879,13 +3997,79 @@ URLs, download and validate the image yourself and pass the decoded image instea
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Use antialiasing during image resize. None uses the artifact metadata's resize_antialias
-for exported sources and False for native sources. An explicit boolean overrides the default;
-match the checkpoint training resize.</p>
+                <p>Override resize antialiasing. None uses artifact metadata for exports
+and False for native models.</p>
               </div>
             </td>
             <td>
                   <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.inference.RFDETRInference.predict(stream)" class="doc doc-heading doc-heading-parameter">                  <code>stream</code>
+<a href="#rfdetr.inference.RFDETRInference.predict(stream)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Yield results lazily. Close the generator on early exit.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.inference.RFDETRInference.predict(batch)" class="doc doc-heading doc-heading-parameter">                  <code>batch</code>
+<a href="#rfdetr.inference.RFDETRInference.predict(batch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Maximum finite-source batch size. None runs a bare BCHW tensor or an eager image-only list as
+one batch and other expanded sources one image or frame at a time. An integer bounds every batch,
+including eager image lists. Each batch must satisfy the runtime limits.
+Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.inference.RFDETRInference.predict(vid_stride)" class="doc doc-heading doc-heading-parameter">                  <code>vid_stride</code>
+<a href="#rfdetr.inference.RFDETRInference.predict(vid_stride)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Read every Nth video frame.</p>
+              </div>
+            </td>
+            <td>
+                  <code>1</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.inference.RFDETRInference.predict(stream_buffer)" class="doc doc-heading doc-heading-parameter">                  <code>stream_buffer</code>
+<a href="#rfdetr.inference.RFDETRInference.predict(stream_buffer)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Queue live frames instead of keeping the latest frame.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
             </td>
           </tr>
       </tbody>
@@ -3903,11 +4087,11 @@ match the checkpoint training resize.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="supervision.Detections">Detections</span> | <span title="supervision.KeyPoints">KeyPoints</span> | <span title="list">list</span>[<span title="supervision.Detections">Detections</span> | <span title="supervision.KeyPoints">KeyPoints</span>]</code>
+                  <code><span title="rfdetr._prediction.types._PredictionOutput">_PredictionOutput</span> | <span title="collections.abc.Generator">Generator</span>[<span title="rfdetr._prediction.types._PredictionResult">_PredictionResult</span>, None, None]</code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>A Supervision prediction object or a list of prediction objects.</p>
+                <p>A generator with stream enabled, otherwise a scalar image result or a list.</p>
               </div>
             </td>
           </tr>
@@ -3926,22 +4110,31 @@ match the checkpoint training resize.</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="TypeError">TypeError</span></code>
+                  <code><span title="ValueError">ValueError</span></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>If an unknown prediction keyword is supplied.</p>
+                <p>If shape, batch, stride, buffer, capture, or runtime limits are violated.</p>
               </div>
             </td>
           </tr>
           <tr class="doc-section-item">
             <td>
-                  <code><span title="ValueError">ValueError</span></code>
+                  <code><span title="FileNotFoundError">FileNotFoundError</span></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>If shape or patch_size is invalid, or the source cannot accept the channel count, batch size
-or input shape.</p>
+                <p>If a local file is missing or a directory/glob contains no supported media.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ImportError">ImportError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If a source needs the optional <code>rfdetr[stream]</code> dependencies and they are not installed.</p>
               </div>
             </td>
           </tr>
