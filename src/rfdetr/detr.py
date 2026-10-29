@@ -58,7 +58,7 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
+    from rfdetr._prediction_types import _PredictionOutput
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -3053,7 +3053,7 @@ class RFDETR:
         *,
         antialias: bool = False,
         **kwargs: Any,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+    ) -> _PredictionOutput:
         """Performs model inference on the input images.
 
         This method accepts a single image or an iterable of images (string or path-like file path, image URL string,

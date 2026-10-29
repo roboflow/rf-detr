@@ -7,7 +7,7 @@
 
 import os
 from collections.abc import Iterable
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
 import torch
@@ -19,3 +19,12 @@ _ImageInput: TypeAlias = str | os.PathLike[str] | Image.Image | np.ndarray[Any, 
 _PredictionSource: TypeAlias = _ImageInput | int
 #: Accepted scalar and iterable inputs to ``RFDETRInference.predict``; iterables are read into a list first.
 _PredictionInput: TypeAlias = _PredictionSource | Iterable[_PredictionSource]
+
+if TYPE_CHECKING:
+    # Supervision loads lazily at runtime, so the output aliases exist for type checkers only.
+    from supervision import Detections, KeyPoints
+
+    #: The result for one image or video frame.
+    _PredictionResult: TypeAlias = Detections | KeyPoints
+    #: Eager result of both prediction APIs: one result for a single image, or a list for a collection.
+    _PredictionOutput: TypeAlias = _PredictionResult | list[_PredictionResult]

@@ -240,7 +240,7 @@ uv run twine check --strict dist/*
 
 **Prediction:**
 
-- Keep prediction input type aliases private in `src/rfdetr/_prediction_types.py` (`_ImageInput`, `_PredictionSource`, `_PredictionInput`); they are annotations, not exported API, so never re-export them from `rfdetr`. Import OpenCV lazily. Preserve RGB inputs and copy arrays used for source-image outputs. Store source images in `sv.Detections` metadata or `sv.KeyPoints` per-object data.
+- Keep prediction input type aliases private in `src/rfdetr/_prediction_types.py` (`_ImageInput`, `_PredictionSource`, `_PredictionInput`, plus the `TYPE_CHECKING`-only `_PredictionResult` and `_PredictionOutput`); they are annotations, not exported API, so never re-export them from `rfdetr`. Import OpenCV lazily. Preserve RGB inputs and copy arrays used for source-image outputs. Store source images in `sv.Detections` metadata or `sv.KeyPoints` per-object data.
 
 - Keep source parsing in `src/rfdetr/_prediction_sources.py`. Only `RFDETRInference.predict()` uses it, through the shared pipeline in `src/rfdetr/_prediction.py`; runtime adapters never parse sources. Keep `RFDETR.predict()` images-only (one image, an iterable of images, or a BCHW tensor as one batch) so the research model stays light: it calls the single-batch path directly and raises `TypeError` for `stream`, `batch`, `vid_stride` and `stream_buffer`. Type collection inputs as `Iterable` and read non-list iterables into a list at the entry point; do not add `@overload` stubs just to narrow the return type. Classify sources with the `_SourceKind` enum, never bare strings. Distinguish live sources by explicit schemes and media suffixes. Treat extensionless HTTP URLs as images. Reject screen capture inside `.streams` manifests with a clear error.
 

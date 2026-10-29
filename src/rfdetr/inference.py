@@ -27,8 +27,7 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
-
+    from rfdetr._prediction_types import _PredictionOutput, _PredictionResult
     from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
 
@@ -195,7 +194,7 @@ class RFDETRInference:
         batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
+    ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
         """Predict images, video, and live sources through the shared prediction pipeline.
 
         Args:

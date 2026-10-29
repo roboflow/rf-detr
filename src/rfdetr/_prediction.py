@@ -39,7 +39,7 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_t
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
+    from rfdetr._prediction_types import _PredictionOutput, _PredictionResult
 
 logger = get_logger()
 
@@ -383,7 +383,7 @@ def predict(
     batch: int | None = None,
     vid_stride: int = 1,
     stream_buffer: bool = False,
-) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
+) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
 
     Empty sources follow one policy (details in :mod:`rfdetr._prediction_sources`). An empty collection holds no
@@ -451,7 +451,7 @@ def _predict_stream(
     vid_stride: int,
     stream_buffer: bool,
     warn_on_live: bool,
-) -> Generator[Detections | KeyPoints, None, None]:
+) -> Generator[_PredictionResult, None, None]:
     """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
 
     The model's channel count is read once from the first context so captured frames convert to grayscale for
@@ -491,7 +491,7 @@ def _predict_stream(
             results = _predict_batch(
                 context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias
             )
-            yield from cast("list[Detections | KeyPoints]", results)
+            yield from cast("list[_PredictionResult]", results)
     finally:
         source_batches.close()
 
@@ -505,7 +505,7 @@ def _predict_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
-) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
     Args:
@@ -767,7 +767,7 @@ def _predict_batch(
     _class_id_to_name = context.class_id_to_name
     num_logit_slots = context.num_classes
     _is_legacy_bgfirst_keypoint = _is_bg_first_schema(context.num_keypoints_per_class)
-    predictions_list: list[Detections | KeyPoints] = []
+    predictions_list: list[_PredictionResult] = []
     for i, result in enumerate(results):
         scores = result["scores"]
         labels = result["labels"]
