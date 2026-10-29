@@ -23,8 +23,10 @@ from typing import Any
 
 try:
     import albumentations as alb
+    from albumentations.core.bbox_utils import bboxes_from_masks
 except ImportError:
     alb = None
+    bboxes_from_masks = None
 import numpy as np
 import PIL
 import torch
@@ -928,7 +930,29 @@ class AlbumentationsWrapper:
         augmented = self.transform(**transform_kwargs)
         target_out: dict[str, Any] = target.copy()
         bboxes_aug = augmented["bboxes"]
+        category_ids = augmented["category_ids"]
         kept_idxs = [int(idx) for idx in augmented.get("idxs", idxs)]
+
+        # Synchronize segmentation masks and bounding boxes:
+        # Albumentations transforms bboxes purely from their 4 corners, which causes boxes
+        # to desynchronize from transformed masks after rotations or non-rigid warps.
+        # Furthermore, geometric transforms may push masks outside the visible canvas while
+        # keeping partial corner bounds under min_visibility=0.0.
+        # When masks are present, drop instances whose transformed masks became empty and
+        # recompute tight bounding boxes directly from the surviving masks.
+        if masks_list is not None and "masks" in augmented:
+            masks_aug = augmented["masks"]
+            masks_aug = [masks_aug[int(i)] for i in kept_idxs]
+            survived_mask_indices = [i for i, m in enumerate(masks_aug) if m.any()]
+            if len(survived_mask_indices) < len(masks_aug):
+                kept_idxs = [kept_idxs[i] for i in survived_mask_indices]
+                masks_aug = [masks_aug[i] for i in survived_mask_indices]
+                category_ids = [category_ids[i] for i in survived_mask_indices]
+            if len(masks_aug) > 0:
+                bboxes_aug = bboxes_from_masks(np.stack(masks_aug)).astype(np.float32)
+            else:
+                bboxes_aug = np.zeros((0, 4), dtype=np.float32)
+
         # Update target with transformed boxes and labels
         if len(bboxes_aug) == 0:
             target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
@@ -940,7 +964,7 @@ class AlbumentationsWrapper:
                 target_out["masks"] = torch.zeros((0, aug_height, aug_width), dtype=torch.bool)
         else:
             target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
-            target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
+            target_out["labels"] = torch.tensor(category_ids, dtype=torch.long)
             target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
             # Recompute area from the transformed box coordinates so it stays consistent with
             # the new image scale (e.g. after resize the original COCO area values are stale).
@@ -949,15 +973,9 @@ class AlbumentationsWrapper:
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             if keypoints_np is not None:
                 target_out["keypoints"] = self._resolve_keypoint_swap(augmented, kept_idxs, keypoints_np)
-        image_out = Image.fromarray(augmented["image"])
-        if masks_list is not None and "masks" in augmented:
-            height, width = augmented["image"].shape[:2]
-            masks_aug = augmented["masks"]
-            masks_aug = [masks_aug[int(i)] for i in kept_idxs]
-            if len(masks_aug) == 0:
-                target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
-            else:
+            if masks_list is not None and "masks" in augmented:
                 target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
+        image_out = Image.fromarray(augmented["image"])
         return image_out, target_out
 
     def __call__(
