@@ -4116,7 +4116,7 @@ class TestEagerRewritesOnTheProductionModel:
         [pytest.param(None, 1e-4, id="fp32"), pytest.param(torch.bfloat16, 1e-2, id="bf16")],
     )
     def test_nano_loss_terms_are_bitwise_and_gradients_match_with_the_eager_rewrites_on_and_off(
-        self, autocast_dtype: torch.dtype | None, grad_rtol: float, monkeypatch: pytest.MonkeyPatch
+        self, autocast_dtype: torch.dtype | None, grad_rtol: float, monkeypatch: pytest.MonkeyPatch, tf32_disabled: None
     ) -> None:
         """A real Nano forward plus criterion gives the same outputs and loss terms with the eager rewrites on or off.
 
@@ -4137,10 +4137,6 @@ class TestEagerRewritesOnTheProductionModel:
         differently and their gradients stop being comparable. ``_sineembed_interleaved`` still computes the angles on
         the rewrites-off side; only its sin/cos kernel is replaced. This test needs a GPU and was written without one.
         """
-        # ``monkeypatch`` restores by assignment; ``patch.object`` undoes with ``delattr``, which torch's
-        # property-backed ``allow_tf32`` flags reject, so the flags would stay off for the rest of the worker.
-        monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", False)
-        monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", False)
         torch.manual_seed(0)
         model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")
         train_config = TrainConfig(dataset_dir="unused", drop_path=0.0)
