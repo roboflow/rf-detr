@@ -212,11 +212,26 @@ class TestSkippedDinov2WeightsWarning:
 
     @pytest.fixture(autouse=True)
     def _propagate_rfdetr_logs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Let `caplog` see the `rf-detr` logger, which does not propagate to the root logger."""
+        """Let `caplog` see the `rf-detr` logger, which does not propagate to the root logger.
+
+        Examples:
+            Pytest fixtures cannot be called directly, so this runs only through the tests below.
+
+            >>> TestSkippedDinov2WeightsWarning()._propagate_rfdetr_logs(monkeypatch)  # doctest: +SKIP
+        """
         monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
 
     def _skipped_weights_messages(self, caplog: pytest.LogCaptureFixture) -> list[str]:
-        """Return the captured messages that report skipped DINOv2 weights."""
+        """Return the captured messages that report skipped DINOv2 weights.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> def record(msg):
+            ...     return logging.LogRecord("rf-detr", logging.WARNING, __file__, 0, msg, None, None)
+            >>> caplog = SimpleNamespace(records=[record("not loading DINOv2 backbone weights"), record("unrelated")])
+            >>> TestSkippedDinov2WeightsWarning()._skipped_weights_messages(caplog)
+            ['not loading DINOv2 backbone weights']
+        """
         return [record.getMessage() for record in caplog.records if self._SKIPPED_WEIGHTS in record.getMessage()]
 
     @pytest.mark.parametrize(
