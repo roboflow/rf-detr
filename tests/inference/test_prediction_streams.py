@@ -322,8 +322,8 @@ class TestLivePredictions:
     def test_network_sources_open_concurrently(self, tmp_path: Path) -> None:
         """Slow network opens overlap instead of adding up before the first batch.
 
-        Each fake open blocks until the other source is opening too; with serial opens the first
-        would wait out the barrier timeout and fail, as a dead host does in the real world.
+        Each fake open blocks until the other source is opening too; with serial opens the first would wait out the
+        barrier timeout and fail, as a dead host does in the real world.
         """
         urls = ["rtsp://camera.example/a", "rtsp://camera.example/b"]
         source = tmp_path / "cameras.streams"
@@ -342,8 +342,7 @@ class TestLivePredictions:
     def test_cameras_open_on_the_caller_thread(self, tmp_path: Path) -> None:
         """Cameras open in order on the caller's thread while network streams open elsewhere.
 
-        Camera backends can require the thread that started them, so only network sources move to
-        worker threads.
+        Camera backends can require the thread that started them, so only network sources move to worker threads.
         """
         url = "rtsp://camera.example/a"
         source = tmp_path / "mixed.streams"
@@ -364,9 +363,9 @@ class TestLivePredictions:
     def test_failed_open_waits_for_in_flight_opens_and_releases_every_capture(self, tmp_path: Path) -> None:
         """A source that cannot open releases the sibling capture that was still opening.
 
-        The healthy stream finishes opening only after its sibling has failed, so it is already
-        in flight when the error arises. It must still be closed instead of leaking its device
-        and worker thread, and the sibling's error must reach the caller.
+        The healthy stream finishes opening only after its sibling has failed, so it is already in flight when the error
+        arises. It must still be closed instead of leaking its device and worker thread, and the sibling's error must
+        reach the caller.
         """
         slow_url, bad_url = "rtsp://camera.example/slow", "rtsp://camera.example/bad"
         source = tmp_path / "cameras.streams"

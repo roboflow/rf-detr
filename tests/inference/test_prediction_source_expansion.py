@@ -384,8 +384,8 @@ class TestOptionalSources:
     def test_stream_manifest_resolves_youtube_pages_concurrently(self, tmp_path: Path) -> None:
         """YouTube entries of a stream manifest resolve together instead of one after another.
 
-        Each lookup blocks until the other is running, so a serial resolver would wait out the
-        barrier timeout; results must still follow the manifest order.
+        Each lookup blocks until the other is running, so a serial resolver would wait out the barrier timeout; results
+        must still follow the manifest order.
         """
         pages = {
             "https://youtu.be/one": "https://video.example/one.mp4",
