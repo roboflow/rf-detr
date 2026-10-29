@@ -30,7 +30,11 @@ import torch.nn.functional as F  # noqa: N812
 from rfdetr import RFDETRSegNano
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 
-pytestmark = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.e2e_coreml,
+    pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools"),
+]
 coreml_runtime_only = pytest.mark.skipif(sys.platform != "darwin", reason="needs the macOS Core ML runtime")
 
 # Core ML runs smaller resizes on the CPU, where the Neural Engine's offset never shows.
