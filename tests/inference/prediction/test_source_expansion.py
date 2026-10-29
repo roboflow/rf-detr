@@ -20,7 +20,7 @@ from PIL import Image
 
 from rfdetr.inference import RFDETRInference
 
-from .helpers import _DummyRFDETR, _requires_opencv
+from ..helpers import _DummyRFDETR, _requires_opencv
 
 
 class TestManifestPrediction:
@@ -574,7 +574,7 @@ class TestSourceRouting:
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))] * 2 + [(False, None)]
         with (
             patch("cv2.VideoCapture", return_value=capture),
-            patch("rfdetr._prediction_sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3),
+            patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3),
         ):
             with pytest.warns(UserWarning, match="include_source_image=False"):
                 results = RFDETRInference(_DummyRFDETR()).predict(source)
@@ -584,7 +584,7 @@ class TestSourceRouting:
         """An eager directory estimates retained pixels from its image count and first image size."""
         for index in range(2):
             Image.new("RGB", (32, 24)).save(tmp_path / f"{index}.png")
-        with patch("rfdetr._prediction_sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3):
+        with patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3):
             with pytest.warns(UserWarning, match="include_source_image=False"):
                 results = RFDETRInference(_DummyRFDETR()).predict(tmp_path)
         assert len(results) == 2
@@ -601,7 +601,7 @@ class TestSourceRouting:
         """Streamed runs, runs without source images, and sources below the threshold do not warn."""
         for index in range(2):
             Image.new("RGB", (32, 24)).save(tmp_path / f"{index}.png")
-        with patch("rfdetr._prediction_sources._RETAINED_FRAME_WARNING_BYTES", threshold):
+        with patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", threshold):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 results = list(RFDETRInference(_DummyRFDETR()).predict(tmp_path, **options))

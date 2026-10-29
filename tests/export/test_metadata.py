@@ -582,7 +582,7 @@ class TestResizeAntialias:
         )
         monkeypatch.setattr("rfdetr.export._runtime.context.load_runtime", Mock(return_value=runtime))
         resize = Mock(wraps=functional.resize)
-        monkeypatch.setattr("rfdetr._prediction.F.resize", resize)
+        monkeypatch.setattr("rfdetr._prediction.core.F.resize", resize)
         predictor = RFDETRInference(artifact, metadata=metadata)
         image = np.zeros((32, 32, 3), dtype=np.uint8)
 

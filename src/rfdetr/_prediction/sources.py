@@ -39,8 +39,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from rfdetr._prediction_streams import LIVE_STREAM_SCHEMES, _capture_args, _import_cv2, iter_live_frames
-from rfdetr._prediction_types import _ImageInput, _PredictionInput
+from rfdetr._prediction.streams import LIVE_STREAM_SCHEMES, _capture_args, _import_cv2, iter_live_frames
+from rfdetr._prediction.types import _ImageInput, _PredictionInput
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()

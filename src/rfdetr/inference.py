@@ -16,9 +16,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
-from rfdetr import _prediction
-from rfdetr._prediction import PredictionContext
-from rfdetr._prediction_types import _PredictionInput
+from rfdetr._prediction.core import PredictionContext, predict
+from rfdetr._prediction.types import _PredictionInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -27,7 +26,7 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
-    from rfdetr._prediction_types import _PredictionOutput, _PredictionResult
+    from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
     from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
 
@@ -235,7 +234,7 @@ class RFDETRInference:
             >>> len(results)  # doctest: +SKIP
             2
         """
-        return _prediction.predict(
+        return predict(
             self._prediction_context,
             images,
             threshold,

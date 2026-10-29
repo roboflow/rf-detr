@@ -18,7 +18,7 @@ from PIL import Image, UnidentifiedImageError
 
 from rfdetr.inference import RFDETRInference
 
-from .helpers import _DummyModel, _DummyRFDETR, _requires_opencv, _scripted_capture
+from ..helpers import _DummyModel, _DummyRFDETR, _requires_opencv, _scripted_capture
 
 if TYPE_CHECKING:
     from rfdetr.inference import ModelContext
@@ -302,7 +302,7 @@ class TestPredictSources:
         capture = _scripted_capture([(True, np.zeros((24, 32, 3), dtype=np.uint8))])
         with (
             patch("cv2.VideoCapture", return_value=capture),
-            patch("rfdetr._prediction_sources.logger") as logger,
+            patch("rfdetr._prediction.sources.logger") as logger,
         ):
             results = list(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
         assert len(results) == 1

@@ -32,14 +32,14 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
-from rfdetr._prediction_sources import is_expanded_source, iter_source_batches
-from rfdetr._prediction_types import _ImageInput, _PredictionInput
+from rfdetr._prediction.sources import is_expanded_source, iter_source_batches
+from rfdetr._prediction.types import _ImageInput, _PredictionInput
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    from rfdetr._prediction_types import _PredictionOutput, _PredictionResult
+    from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
 
 logger = get_logger()
 
@@ -386,7 +386,7 @@ def predict(
 ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
 
-    Empty sources follow one policy (details in :mod:`rfdetr._prediction_sources`). An empty collection holds no
+    Empty sources follow one policy (details in :mod:`rfdetr._prediction.sources`). An empty collection holds no
     inputs: ``stream=True`` yields nothing, and an eager call returns ``[]`` for an empty manifest but raises
     ``ValueError`` for an empty list or tuple. A location that must hold media or sources raises in both modes: a
     directory or glob without supported files raises ``FileNotFoundError``, and a ``.streams`` manifest without sources

@@ -28,14 +28,14 @@ import torch
 from deprecate.deprecation import deprecation_warning
 from pydantic import ValidationError
 
-from rfdetr import _prediction
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr._prediction import (
+from rfdetr._prediction.core import (
     PredictionContext,
+    _predict_batch,
     _resolve_patch_size,
     _validate_shape_dims,
 )
-from rfdetr._prediction_types import _ImageInput
+from rfdetr._prediction.types import _ImageInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -58,7 +58,7 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    from rfdetr._prediction_types import _PredictionOutput
+    from rfdetr._prediction.types import _PredictionOutput
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -3181,7 +3181,7 @@ class RFDETR:
             )
         if isinstance(images, torch.Tensor) and images.ndim == 4:
             images = list(images.unbind(0))
-        return _prediction._predict_batch(
+        return _predict_batch(
             self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias
         )
 
