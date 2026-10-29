@@ -26,6 +26,8 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 > Benchmark evaluated on COCO val2017 person keypoints (AP<sub>50:95</sub>) with the standard COCO 17-keypoint OKS sigmas; latency on NVIDIA T4, TensorRT FP16, batch size 1.
 
+--8<-- "docs/snippets/license-yolo-note.md"
+
 ## Run on an Image
 
 Perform inference on an image using the `rfdetr` package. `model.predict()` returns an [`sv.KeyPoints`](https://supervision.roboflow.com/latest/keypoint/core/) object containing skeleton coordinates and per-keypoint confidence scores for each detected person.
