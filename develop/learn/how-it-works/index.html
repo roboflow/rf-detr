@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
+        <meta name="description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks and keypoints, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
       
       
         <meta name="author" content="Roboflow">
@@ -87,7 +87,7 @@
   
   
   <meta property="og:title" content="How It Works - RF-DETR">
-  <meta property="og:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
+  <meta property="og:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks and keypoints, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/learn/how-it-works/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
@@ -98,21 +98,21 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
   <meta name="twitter:title" content="How It Works - RF-DETR">
-  <meta name="twitter:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
+  <meta name="twitter:description" content="A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks and keypoints, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-10-29T20:25:23">
+  <meta property="article:modified_time" content="2026-10-29T20:26:28">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "How It Works",
-    "description": "A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.",
+    "description": "A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks and keypoints, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.",
     "url": "https://rfdetr.roboflow.com/develop/learn/how-it-works/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-29T20:25:23",
+    "dateModified": "2026-10-29T20:26:28",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -930,6 +930,67 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Reading the masks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-boxes-to-keypoints-pose-estimation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From boxes to keypoints: pose estimation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="From boxes to keypoints: pose estimation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-team-of-queries-for-every-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A team of queries for every object
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-each-keypoint-predicts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each keypoint predicts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-keypoints-are-learned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How keypoints are learned
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-keypoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the keypoints
       
     </span>
   </a>
@@ -3381,6 +3442,67 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#from-boxes-to-keypoints-pose-estimation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From boxes to keypoints: pose estimation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="From boxes to keypoints: pose estimation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-team-of-queries-for-every-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A team of queries for every object
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-each-keypoint-predicts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each keypoint predicts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-keypoints-are-learned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How keypoints are learned
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-the-keypoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the keypoints
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#one-training-run-a-whole-family-of-models" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3453,6 +3575,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Windowed attention keeps the backbone cheap, and deformable attention lets each query read only a few points of the image instead of all of them</li>
 <li>Training uses one-to-one Hungarian matching, which is what teaches the model not to produce duplicates</li>
 <li>For instance segmentation, each query also paints its own mask: a dot product between the query and a shared map of pixel features, so mask, box and class always describe the same object</li>
+<li>For keypoints, each object query brings its own team of keypoint queries through every decoder layer; each keypoint predicts where it is, whether it can be found and seen, and how uncertain its location is</li>
 <li>In the RF-DETR paper, one training run covers the Nano through Large sizes as points on a single accuracy–latency curve</li>
 </ul>
 </div>
@@ -3569,7 +3692,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"https://media.roboflow.com/dog.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Segmentation and keypoint models add a head that turns each query into a mask or a set of keypoints. The rest of the pipeline is the same. <a href="#from-boxes-to-masks-instance-segmentation">From boxes to masks</a> below shows how the segmentation head works.</p>
+<p>Segmentation models add a head that turns each query into a mask; the rest of the pipeline is the same. Keypoint models go one step further and give every query a team of keypoint queries that runs through the decoder with it. <a href="#from-boxes-to-masks-instance-segmentation">From boxes to masks</a> and <a href="#from-boxes-to-keypoints-pose-estimation">From boxes to keypoints</a> below show how each works.</p>
 <h2 id="how-it-learns-matching-not-sorting">How it learns: matching, not sorting<a class="headerlink" href="#how-it-learns-matching-not-sorting" title="Permanent link">&para;</a></h2>
 <p>Training is where the "one answer per object" behavior comes from. For each training image, RF-DETR has 300 predictions and, say, 3 ground-truth objects. Which prediction should be compared with which object?</p>
 <p><img alt="A cost matrix scores every pair of predicted query and ground-truth object. The Hungarian algorithm picks the cheapest assignment in which each object gets exactly one query. Query 3 is close to object A but loses to query 2, so it is trained to predict no object." loading="lazy" src="../../assets/how-it-works/matching.svg" /></p>
@@ -3661,6 +3784,80 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">5</td>
 <td style="text-align: center;">200</td>
 <td style="text-align: center;">126 × 126</td>
+</tr>
+</tbody>
+</table>
+<h2 id="from-boxes-to-keypoints-pose-estimation">From boxes to keypoints: pose estimation<a class="headerlink" href="#from-boxes-to-keypoints-pose-estimation" title="Permanent link">&para;</a></h2>
+<p>Keypoint detection, also called pose estimation, asks for a fixed list of named points on every object. For a person in COCO that is 17 points: nose, eyes, ears, shoulders, elbows, wrists, hips, knees and ankles. Each point needs a location, and also an answer to a second question: is it there at all? A wrist behind someone's back still has a place you could guess, but you cannot see it.</p>
+<p>RF-DETR Keypoint keeps the backbone, the projector, the object queries, the matching, and the absence of NMS. What changes is the decoder. The mask head reads each query once, after the decoder has finished. Keypoints get queries of their own, which travel through every decoder layer next to the object query they belong to. The design follows <a href="https://arxiv.org/abs/2308.07313">Group Pose</a>.</p>
+<p><img alt="Every object query is joined by 17 keypoint queries, one per keypoint type, which start from learned vectors adjusted by that object query. In each of the 4 decoder layers the group first runs self-attention among the object query and its own keypoint queries only, then every keypoint query reads a second memory with deformable attention around the object's reference box, then a feed-forward layer updates it. After every layer a small MLP reads the keypoint queries and places 17 keypoints inside the object's box." loading="lazy" src="../../assets/how-it-works/keypoints.svg" /></p>
+<h3 id="a-team-of-queries-for-every-object">A team of queries for every object<a class="headerlink" href="#a-team-of-queries-for-every-object" title="Permanent link">&para;</a></h3>
+<p>Each object query is joined by one keypoint query per keypoint type, so 17 for a COCO person. They start from 17 learned vectors shared by every object, and each object query scales and shifts them for its own object. That adjustment starts switched off, so early in training the keypoint queries are plain learned "nose", "left eye", "right eye" vectors. A learned position embedding per keypoint type keeps the left wrist apart from the right wrist even where the image looks symmetric.</p>
+<p>In every decoder layer, once the object query has done its own self-attention, cross-attention and feed-forward steps from Step 5, the keypoint queries take three steps of their own:</p>
+<ol>
+<li><strong>Group self-attention.</strong> An object query and its 17 keypoint queries attend to each other, and to nobody else. A wrist query can consult the elbow and the shoulder of the same person, never those of another person. The object query hears back from its keypoints too, through a learned scale that starts near zero, so detection is left undisturbed early in training.</li>
+<li><strong>Deformable cross-attention into a second memory.</strong> Keypoint queries read the image the same way object queries do, a few learned sampling points each, but from a separate feature map built by a second projector, so boxes and keypoints do not have to share one set of features. Every keypoint query samples around its object's reference box from Step 4 and learns where inside that box to look.</li>
+<li><strong>A feed-forward layer</strong>, applied to each keypoint query on its own.</li>
+</ol>
+<p>Group Pose also lets keypoint queries of the same type attend across people, all left wrists together. The preview model leaves that step out, so information flows between people only through the object queries' own self-attention.</p>
+<p>A custom dataset can define several object classes, each with its own list of keypoints. Every object query then carries keypoint queries for every class, keypoints of different classes never attend to each other, and only the list belonging to the predicted class is used.</p>
+<h3 id="what-each-keypoint-predicts">What each keypoint predicts<a class="headerlink" href="#what-each-keypoint-predicts" title="Permanent link">&para;</a></h3>
+<p><img alt="A person inside its dashed reference box, with 17 keypoints. Each keypoint query predicts its location as an offset from the box center in units of the box size; a findable probability, whether an annotator could place the point at all; a visible probability, whether it is in plain sight, so a hidden ankle is findable but not visible; three numbers for an uncertainty ellipse, small around the shoulders and large around the hidden ankle; and a class vote that is summed over the keypoints and added to the object's class score. At inference, wide ellipses lower the object's score." loading="lazy" src="../../assets/how-it-works/keypoint-output.svg" /></p>
+<p>After every decoder layer, a small MLP reads each keypoint query and predicts eight numbers:</p>
+<ul>
+<li><strong>Location (2).</strong> An offset from the center of the object's reference box, measured in units of the box's width and height. Keypoints are placed relative to their object, so the same offsets describe a person close to the camera and one far away.</li>
+<li><strong>Findable (1).</strong> The probability that an annotator could place this point at all. In COCO terms, the point is labeled, whether it is in plain sight or occluded (visibility flag above 0).</li>
+<li><strong>Visible (1).</strong> The probability that the point is in plain sight (visibility flag 2). A hidden ankle is findable but not visible.</li>
+<li><strong>Uncertainty (3).</strong> A 2D Gaussian around the location, drawn as an ellipse: its size says how sure the model is, and its tilt says in which direction it is unsure. The three numbers define a triangular factor of the Gaussian's inverse covariance, with the diagonal stored as logarithms so every prediction is a valid ellipse.</li>
+<li><strong>Class vote (1).</strong> Summed over the object's keypoints and added to its class logit. A query whose keypoints line up like a person becomes a more confident "person".</li>
+</ul>
+<div class="admonition question">
+<p class="admonition-title">Pause and ponder</p>
+<p>No annotation says how uncertain a keypoint is; datasets only give its position. So how can the model learn to draw a wide ellipse around a hidden ankle and a tight one around a shoulder? The answer is in the loss below.</p>
+</div>
+<h3 id="how-keypoints-are-learned">How keypoints are learned<a class="headerlink" href="#how-keypoints-are-learned" title="Permanent link">&para;</a></h3>
+<p>The matching cost of a (query, object) pair keeps the class, L1 and GIoU terms and gains four keypoint terms. The loss uses the same four:</p>
+<ul>
+<li><strong>L1 distance</strong> between the predicted and the true locations, divided by the square root of the object's box area and averaged over labeled keypoints. A 5 pixel miss counts for more on a small person than on a large one.</li>
+<li><strong>Binary cross-entropy on findable</strong> and <strong>on visible</strong>, against the dataset's visibility flags.</li>
+<li><strong>Gaussian negative log-likelihood</strong> of the true location under the predicted ellipse.</li>
+</ul>
+<p>The last term is how the model learns its uncertainty without labels. A tight ellipse around the right spot is cheap. A tight ellipse around the wrong spot is very expensive. Widening the ellipse reduces the penalty for a location error, but increases a separate penalty for being vague; the total still depends on how far the prediction is from the true point. Over many images, the cheapest strategy is to draw tight ellipses where the model is reliably right and wide ones where it tends to miss.</p>
+<p>Points that were not labeled (visibility flag 0) still train findable and visible, as points that cannot be found, but they do not train location or uncertainty. As with boxes and masks, the keypoints of every decoder layer are supervised directly.</p>
+<h3 id="reading-the-keypoints">Reading the keypoints<a class="headerlink" href="#reading-the-keypoints" title="Permanent link">&para;</a></h3>
+<p>At inference, the object score goes through one extra step before your threshold sees it: it is combined with the keypoint uncertainty. RF-DETR averages the size of the object's ellipses, weighting each by its findable probability so that a point that is probably not there counts less. Objects with wide ellipses then lose score, and objects with tight ones keep it. With the default strength of 0.2, a score <code>s</code> and a mean ellipse size <code>T</code> become <code>s · T^-0.2 / (1 + s · T^-0.2)</code>, which stays below 1.</p>
+<p>That transformation puts keypoint scores on a different scale from detection scores, so choose the threshold for a keypoint model separately. To turn the fusion off and get the plain object score, pass <code>postprocess_trace_alpha=0.0</code> when you create the model.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRKeypointPreview</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRKeypointPreview</span><span class="p">()</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">key_points</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"/path/to/people.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">key_points</span><span class="o">.</span><span class="n">xy</span>  <span class="c1"># (N, 17, 2) pixel coordinates, one row per person</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">key_points</span><span class="o">.</span><span class="n">keypoint_confidence</span>  <span class="c1"># (N, 17) probability that each point is findable</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">key_points</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s2">"covariance"</span><span class="p">]</span>  <span class="c1"># (N, 17, 2, 2) uncertainty ellipses in pixels</span>
+</span></code></pre></div>
+<p>Keypoint accuracy is measured with object keypoint similarity (OKS), the keypoint counterpart of box IoU: each predicted point scores by a Gaussian of its distance to the true point, scaled by the object's size and by a per-keypoint tolerance, since an eye must be placed more precisely than a hip. On COCO val2017 person keypoints, the preview model scores 71.8 AP50:95 at 9.7 ms on an NVIDIA T4 (TensorRT FP16, batch size 1); see <a href="../run/keypoints/">Run Keypoints</a> for the comparison with YOLO pose models.</p>
+<p>The keypoint model uses 12 pixel patches like the segmentation models, at a larger resolution:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Model</th>
+<th style="text-align: center;">Resolution [px]</th>
+<th style="text-align: center;">Patch size [px]</th>
+<th style="text-align: center;">Tokens [-]</th>
+<th style="text-align: center;">Decoder layers [-]</th>
+<th style="text-align: center;">Queries [-]</th>
+<th style="text-align: center;">Keypoints [-]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">RF-DETR Keypoint Preview</td>
+<td style="text-align: center;">576</td>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">2,304</td>
+<td style="text-align: center;">4</td>
+<td style="text-align: center;">100</td>
+<td style="text-align: center;">17</td>
 </tr>
 </tbody>
 </table>
@@ -3784,6 +3981,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><a href="../benchmarks/">Benchmarks</a>: the full accuracy and latency tables behind the numbers on this page</li>
 <li><a href="../run/detection/">Run Model</a>: use a pretrained model in a few lines</li>
 <li><a href="../run/segmentation/">Run Segmentation</a>: predict instance masks with RF-DETR-Seg</li>
+<li><a href="../run/keypoints/">Run Keypoints</a>: predict person keypoints with RF-DETR Keypoint</li>
 <li><a href="../train/">Train Model</a>: fine-tune on your own dataset</li>
 <li><a href="../../exports/">Export Model</a>: deploy to ONNX, TensorRT, CoreML, and other runtimes</li>
 <li><a href="https://arxiv.org/abs/2511.09554">RF-DETR paper</a>: the full method and ablations</li>
@@ -3808,7 +4006,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 29, 2026 20:25:23 UTC">2026-10-29 20:25:23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 29, 2026 20:26:28 UTC">2026-10-29 20:26:28</span>
   </span>
 
     
