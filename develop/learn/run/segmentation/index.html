@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-26T17:28:12">
+  <meta property="article:modified_time" content="2026-10-29T20:25:23">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-26T17:28:12",
+    "dateModified": "2026-10-29T20:25:23",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3115,7 +3115,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h1 id="run-an-rf-detr-instance-segmentation-model">Run an RF-DETR Instance Segmentation Model<a class="headerlink" href="#run-an-rf-detr-instance-segmentation-model" title="Permanent link">&para;</a></h1>
 <p>RF-DETR is a real-time transformer architecture for instance segmentation, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve strong accuracy and latency trade-offs.</p>
 <h2 id="pre-trained-checkpoints">Pre-trained Checkpoints<a class="headerlink" href="#pre-trained-checkpoints" title="Permanent link">&para;</a></h2>
-<p>RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1.</p>
+<p>RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Every RF-DETR-Seg size, including XLarge and 2XLarge, is part of the core <code>rfdetr</code> package under Apache 2.0, so it's commercially usable out of the box: you can ship it in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. No <code>rfdetr[plus]</code> install is needed.</p>
 <table>
 <thead>
 <tr>
@@ -3127,6 +3127,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <th style="text-align: center;">Latency (ms)</th>
 <th style="text-align: center;">Params (M)</th>
 <th style="text-align: center;">Resolution</th>
+<th style="text-align: center;">License</th>
 </tr>
 </thead>
 <tbody>
@@ -3139,6 +3140,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.4</td>
 <td style="text-align: center;">33.6</td>
 <td style="text-align: center;">312x312</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">S</td>
@@ -3149,6 +3151,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.4</td>
 <td style="text-align: center;">33.7</td>
 <td style="text-align: center;">384x384</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">M</td>
@@ -3159,6 +3162,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">5.9</td>
 <td style="text-align: center;">35.7</td>
 <td style="text-align: center;">432x432</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">L</td>
@@ -3169,6 +3173,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">8.8</td>
 <td style="text-align: center;">36.2</td>
 <td style="text-align: center;">504x504</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">XL</td>
@@ -3179,6 +3184,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">13.5</td>
 <td style="text-align: center;">38.1</td>
 <td style="text-align: center;">624x624</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">2XL</td>
@@ -3189,6 +3195,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">21.8</td>
 <td style="text-align: center;">38.6</td>
 <td style="text-align: center;">768x768</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 </tbody>
 </table>
@@ -3387,7 +3394,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 26, 2026 17:28:12 UTC">2026-10-26 17:28:12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 29, 2026 20:25:23 UTC">2026-10-29 20:25:23</span>
   </span>
 
     

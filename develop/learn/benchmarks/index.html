@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T14:04:05">
+  <meta property="article:modified_time" content="2026-10-29T20:25:23">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T14:04:05",
+    "dateModified": "2026-10-29T20:25:23",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3088,6 +3088,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>All latency measured on NVIDIA T4 with TensorRT 10.4, CUDA 12.4, FP16, batch size 1</li>
 <li>RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets</li>
 <li>RF-DETR Keypoint (Preview) achieves 71.8 AP50:95 on COCO person keypoints at 9.7 ms (T4, TensorRT FP16)</li>
+<li>RF-DETR Nano–Large detection, every segmentation size and Keypoint are Apache 2.0, so they're commercially usable out of the box. The YOLOv8, YOLO11 and YOLO26 baselines are AGPL-3.0: using them in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a <a href="https://roboflow.com/ultralytics">commercial license</a></li>
 </ul>
 </div>
 <p>This page reports RF-DETR benchmark results for object detection, instance segmentation, and keypoint detection on Microsoft COCO and RF100-VL (detection only). All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.</p>
@@ -3099,6 +3100,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Metric definitions</p>
 <p><strong>AP50</strong>: Detection accuracy at IoU threshold &gt;= 0.50. <strong>AP50:95</strong>: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric. <strong>Params (M)</strong>: Deployment (fused) <code>nn.Module</code> parameter count (<code>model.parameters()</code>) in millions, excluding training-only branches and folded normalization layers, and counting model parameters rather than the raw tensor count of the saved checkpoint. Rows marked † use the authors' reported counts rather than SAB-measured values. Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1, with 200 ms thermal buffer between passes to reduce GPU thermal variance.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">License note</p>
+<p>YOLOv8, YOLO11 and YOLO26 are released under AGPL-3.0. In practice, using them in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a commercial license. Deploying on Roboflow includes a commercial license for these models for every user; commercial self-hosting is an Enterprise add-on (<a href="https://roboflow.com/ultralytics">details</a>). Need a permissive license? RF-DETR Nano to Large detection, every RF-DETR-Seg size and RF-DETR Keypoint are Apache 2.0.</p>
+</div>
+<p>RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on. LW-DETR and D-FINE are Apache 2.0.</p>
 <h2 id="detection">Detection<a class="headerlink" href="#detection" title="Permanent link">&para;</a></h2>
 <p><img alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" /></p>
 <table>
@@ -3112,6 +3118,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <th style="text-align: center;">Latency (ms)</th>
 <th style="text-align: center;">Params (M)</th>
 <th style="text-align: center;">Resolution</th>
+<th style="text-align: center;">License</th>
 </tr>
 </thead>
 <tbody>
@@ -3124,6 +3131,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1.0</td>
 <td style="text-align: center;">7.4</td>
 <td style="text-align: center;">380x380</td>
+<td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-F</td>
@@ -3134,6 +3142,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1.4</td>
 <td style="text-align: center;">7.9</td>
 <td style="text-align: center;">384x384</td>
+<td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-P</td>
@@ -3144,6 +3153,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1.7</td>
 <td style="text-align: center;">8.4</td>
 <td style="text-align: center;">560x560</td>
+<td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-N</td>
@@ -3154,6 +3164,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">2.3</td>
 <td style="text-align: center;">30.5</td>
 <td style="text-align: center;">384x384</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-S</td>
@@ -3164,6 +3175,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.5</td>
 <td style="text-align: center;">32.1</td>
 <td style="text-align: center;">512x512</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-M</td>
@@ -3174,6 +3186,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.4</td>
 <td style="text-align: center;">33.7</td>
 <td style="text-align: center;">576x576</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-L</td>
@@ -3184,6 +3197,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">6.8</td>
 <td style="text-align: center;">33.9</td>
 <td style="text-align: center;">704x704</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-XL</td>
@@ -3194,6 +3208,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">11.5</td>
 <td style="text-align: center;">126.4</td>
 <td style="text-align: center;">700x700</td>
+<td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-2XL</td>
@@ -3204,6 +3219,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">17.2</td>
 <td style="text-align: center;">126.9</td>
 <td style="text-align: center;">880x880</td>
+<td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-N</td>
@@ -3214,6 +3230,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">2.5</td>
 <td style="text-align: center;">2.6</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-S</td>
@@ -3224,6 +3241,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.2</td>
 <td style="text-align: center;">9.4</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-M</td>
@@ -3234,6 +3252,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">5.1</td>
 <td style="text-align: center;">20.1</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-L</td>
@@ -3244,6 +3263,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">6.5</td>
 <td style="text-align: center;">25.3</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-X</td>
@@ -3254,6 +3274,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">10.5</td>
 <td style="text-align: center;">56.9</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-N</td>
@@ -3264,6 +3285,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1.7</td>
 <td style="text-align: center;">2.6</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-S</td>
@@ -3274,6 +3296,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">2.6</td>
 <td style="text-align: center;">9.4</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-M</td>
@@ -3284,6 +3307,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.4</td>
 <td style="text-align: center;">20.1</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-L</td>
@@ -3294,6 +3318,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">5.7</td>
 <td style="text-align: center;">25.3</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-X</td>
@@ -3304,6 +3329,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">9.6</td>
 <td style="text-align: center;">56.9</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-T</td>
@@ -3314,6 +3340,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1.9</td>
 <td style="text-align: center;">12.1</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-S</td>
@@ -3324,6 +3351,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">2.6</td>
 <td style="text-align: center;">14.6</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-M</td>
@@ -3334,6 +3362,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.4</td>
 <td style="text-align: center;">28.2</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-L</td>
@@ -3344,6 +3373,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">6.9</td>
 <td style="text-align: center;">46.8</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-X</td>
@@ -3354,6 +3384,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">13.0</td>
 <td style="text-align: center;">118.0</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-N</td>
@@ -3364,6 +3395,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">2.1</td>
 <td style="text-align: center;">3.8</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-S</td>
@@ -3374,6 +3406,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.5</td>
 <td style="text-align: center;">10.2</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-M</td>
@@ -3384,6 +3417,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">5.4</td>
 <td style="text-align: center;">19.2</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-L</td>
@@ -3394,6 +3428,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">7.5</td>
 <td style="text-align: center;">31.0</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-X</td>
@@ -3404,6 +3439,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">11.5</td>
 <td style="text-align: center;">62.0</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">SAM 3 †</td>
@@ -3414,6 +3450,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">—</td>
 <td style="text-align: center;">~850</td>
 <td style="text-align: center;">1008x1008</td>
+<td style="text-align: center;">N/A</td>
 </tr>
 </tbody>
 </table>
@@ -3431,6 +3468,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <th style="text-align: center;">Latency (ms)</th>
 <th style="text-align: center;">Params (M)</th>
 <th style="text-align: center;">Resolution</th>
+<th style="text-align: center;">License</th>
 </tr>
 </thead>
 <tbody>
@@ -3441,6 +3479,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.4</td>
 <td style="text-align: center;">33.6</td>
 <td style="text-align: center;">312x312</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-Seg-S</td>
@@ -3449,6 +3488,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.4</td>
 <td style="text-align: center;">33.7</td>
 <td style="text-align: center;">384x384</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-Seg-M</td>
@@ -3457,6 +3497,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">5.9</td>
 <td style="text-align: center;">35.7</td>
 <td style="text-align: center;">432x432</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-Seg-L</td>
@@ -3465,6 +3506,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">8.8</td>
 <td style="text-align: center;">36.2</td>
 <td style="text-align: center;">504x504</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-Seg-XL</td>
@@ -3473,6 +3515,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">13.5</td>
 <td style="text-align: center;">38.1</td>
 <td style="text-align: center;">624x624</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-Seg-2XL</td>
@@ -3481,6 +3524,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">21.8</td>
 <td style="text-align: center;">38.6</td>
 <td style="text-align: center;">768x768</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv8-N-Seg</td>
@@ -3489,6 +3533,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.5</td>
 <td style="text-align: center;">3.4</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv8-S-Seg</td>
@@ -3497,6 +3542,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.2</td>
 <td style="text-align: center;">11.8</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv8-M-Seg</td>
@@ -3505,6 +3551,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">7.0</td>
 <td style="text-align: center;">27.3</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv8-L-Seg</td>
@@ -3513,6 +3560,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">9.7</td>
 <td style="text-align: center;">46.0</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv8-XL-Seg</td>
@@ -3521,6 +3569,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">14.0</td>
 <td style="text-align: center;">71.8</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv11-N-Seg</td>
@@ -3529,6 +3578,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.6</td>
 <td style="text-align: center;">2.9</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv11-S-Seg</td>
@@ -3537,6 +3587,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">4.6</td>
 <td style="text-align: center;">10.1</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv11-M-Seg</td>
@@ -3545,6 +3596,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">6.9</td>
 <td style="text-align: center;">22.4</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv11-L-Seg</td>
@@ -3553,6 +3605,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">8.3</td>
 <td style="text-align: center;">27.6</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLOv11-XL-Seg</td>
@@ -3561,6 +3614,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">13.7</td>
 <td style="text-align: center;">62.1</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-N-Seg</td>
@@ -3569,6 +3623,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">2.31</td>
 <td style="text-align: center;">2.7</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-S-Seg</td>
@@ -3577,6 +3632,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">3.47</td>
 <td style="text-align: center;">10.4</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-M-Seg</td>
@@ -3585,6 +3641,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">6.32</td>
 <td style="text-align: center;">23.6</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-L-Seg</td>
@@ -3593,6 +3650,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">7.58</td>
 <td style="text-align: center;">28.0</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-X-Seg</td>
@@ -3601,6 +3659,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">12.92</td>
 <td style="text-align: center;">62.8</td>
 <td style="text-align: center;">640x640</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 </tbody>
 </table>
@@ -3613,6 +3672,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <th style="text-align: center;">COCO AP<sub>50:95</sub></th>
 <th style="text-align: center;">Latency (ms)</th>
 <th style="text-align: center;">Params (M)</th>
+<th style="text-align: center;">License</th>
 </tr>
 </thead>
 <tbody>
@@ -3621,66 +3681,77 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">71.8</td>
 <td style="text-align: center;">9.7</td>
 <td style="text-align: center;">40.7</td>
+<td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-pose N</td>
 <td style="text-align: center;">48.9</td>
 <td style="text-align: center;">3.2</td>
 <td style="text-align: center;">2.9</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-pose S</td>
 <td style="text-align: center;">57.5</td>
 <td style="text-align: center;">3.4</td>
 <td style="text-align: center;">9.9</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-pose M</td>
 <td style="text-align: center;">64.2</td>
 <td style="text-align: center;">5.2</td>
 <td style="text-align: center;">20.9</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-pose L</td>
 <td style="text-align: center;">65.2</td>
 <td style="text-align: center;">6.6</td>
 <td style="text-align: center;">26.2</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-pose X</td>
 <td style="text-align: center;">68.6</td>
 <td style="text-align: center;">10.6</td>
 <td style="text-align: center;">58.8</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-pose N</td>
 <td style="text-align: center;">55.9</td>
 <td style="text-align: center;">1.9</td>
 <td style="text-align: center;">2.9</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-pose S</td>
 <td style="text-align: center;">62.0</td>
 <td style="text-align: center;">2.7</td>
 <td style="text-align: center;">10.4</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-pose M</td>
 <td style="text-align: center;">68.0</td>
 <td style="text-align: center;">4.6</td>
 <td style="text-align: center;">21.5</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-pose L</td>
 <td style="text-align: center;">69.2</td>
 <td style="text-align: center;">5.9</td>
 <td style="text-align: center;">25.9</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO26-pose X</td>
 <td style="text-align: center;">71.0</td>
 <td style="text-align: center;">9.8</td>
 <td style="text-align: center;">57.6</td>
+<td style="text-align: center;">AGPL-3.0</td>
 </tr>
 </tbody>
 </table>
@@ -3707,7 +3778,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:04:05 UTC">2026-10-06 14:04:05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 29, 2026 20:25:23 UTC">2026-10-29 20:25:23</span>
   </span>
 
     
