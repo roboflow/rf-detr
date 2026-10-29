@@ -6791,8 +6791,8 @@ precedence over the model's variant name (<code>self.size</code>) and the export
 detail suffix that would otherwise be appended to encode the resolved precision/backend/SoC
 (see <em>format</em> / <em>coreml_precision</em> / <em>backend</em> / <em>soc</em> / <em>fp16</em> above), and the TensorRT
 portability suffixes (<code>_ampere_plus</code>, <code>_same_compute_capability</code>, <code>_version_compatible</code>).
-Sanitized against path
-traversal (only the basename, extension stripped, is used). Exception: <code>format="tflite"</code>
+Sanitized against path traversal: only the basename is used, with an export file extension such
+as <code>.onnx</code> stripped; other dots, as in <code>"my-model-v1.2"</code>, are kept. Exception: <code>format="tflite"</code>
 always writes multiple files (one per precision/quantization mode), so the <code>_fp32</code>/<code>_fp16</code>/
 <code>_dynamic_range_quant</code> suffix is unavoidable even with
 <em>output_name</em> set — it becomes the stem
@@ -7745,8 +7745,8 @@ model has been cleared; instantiate a new :class:<code>RFDETR</code> to export).
 </span><span id="__span-0-2227"><a id="__codelineno-0-2227" name="__codelineno-0-2227"></a><span class="sd">            detail suffix that would otherwise be appended to encode the resolved precision/backend/SoC</span>
 </span><span id="__span-0-2228"><a id="__codelineno-0-2228" name="__codelineno-0-2228"></a><span class="sd">            (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above), and the TensorRT</span>
 </span><span id="__span-0-2229"><a id="__codelineno-0-2229" name="__codelineno-0-2229"></a><span class="sd">            portability suffixes (``_ampere_plus``, ``_same_compute_capability``, ``_version_compatible``).</span>
-</span><span id="__span-0-2230"><a id="__codelineno-0-2230" name="__codelineno-0-2230"></a><span class="sd">            Sanitized against path</span>
-</span><span id="__span-0-2231"><a id="__codelineno-0-2231" name="__codelineno-0-2231"></a><span class="sd">            traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``</span>
+</span><span id="__span-0-2230"><a id="__codelineno-0-2230" name="__codelineno-0-2230"></a><span class="sd">            Sanitized against path traversal: only the basename is used, with an export file extension such</span>
+</span><span id="__span-0-2231"><a id="__codelineno-0-2231" name="__codelineno-0-2231"></a><span class="sd">            as ``.onnx`` stripped; other dots, as in ``"my-model-v1.2"``, are kept. Exception: ``format="tflite"``</span>
 </span><span id="__span-0-2232"><a id="__codelineno-0-2232" name="__codelineno-0-2232"></a><span class="sd">            always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/</span>
 </span><span id="__span-0-2233"><a id="__codelineno-0-2233" name="__codelineno-0-2233"></a><span class="sd">            ``_dynamic_range_quant`` suffix is unavoidable even with</span>
 </span><span id="__span-0-2234"><a id="__codelineno-0-2234" name="__codelineno-0-2234"></a><span class="sd">            *output_name* set — it becomes the stem</span>
