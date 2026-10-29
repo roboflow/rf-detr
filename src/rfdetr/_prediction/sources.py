@@ -495,6 +495,8 @@ def _manifest_entries(path: Path) -> list[str | int]:
     with path.open(encoding="utf-8-sig", newline="") as manifest:
         is_csv = path.suffix.lower() == ".csv"
         rows = list(csv.reader(manifest)) if is_csv else [[line] for line in manifest]
+    if is_csv:
+        rows = [row for row in rows if any(cell.strip() and not cell.strip().startswith("#") for cell in row)]
     if is_csv and rows:
         header = [cell.strip().lower() for cell in rows[0]]
         column = next((index for index, cell in enumerate(header) if cell in _MANIFEST_HEADERS), None)
