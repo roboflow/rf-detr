@@ -244,7 +244,7 @@ The matching cost of a (query, object) pair keeps the class, L1 and GIoU terms a
 - **Binary cross-entropy on findable** and **on visible**, against the dataset's visibility flags.
 - **Gaussian negative log-likelihood** of the true location under the predicted ellipse.
 
-The last term is how the model learns its uncertainty without labels. A tight ellipse around the right spot is cheap. A tight ellipse around the wrong spot is very expensive. A wide ellipse costs a fixed amount for being vague, whether it is right or wrong. Over many images, the cheapest strategy is to draw tight ellipses where the model is reliably right and wide ones where it tends to miss.
+The last term is how the model learns its uncertainty without labels. A tight ellipse around the right spot is cheap. A tight ellipse around the wrong spot is very expensive. Widening the ellipse reduces the penalty for a location error, but increases a separate penalty for being vague; the total still depends on how far the prediction is from the true point. Over many images, the cheapest strategy is to draw tight ellipses where the model is reliably right and wide ones where it tends to miss.
 
 Points that were not labeled (visibility flag 0) still train findable and visible, as points that cannot be found, but they do not train location or uncertainty. As with boxes and masks, the keypoints of every decoder layer are supervised directly.
 
