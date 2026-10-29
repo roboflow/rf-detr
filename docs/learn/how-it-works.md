@@ -1,5 +1,5 @@
 ---
-description: A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.
+description: A visual, intuition-first explanation of how RF-DETR works, why it needs no NMS, how the same queries predict instance segmentation masks and keypoints, and how it compares to convolutional detectors such as YOLO and to other detection transformers such as DETR, Deformable DETR, RT-DETR, LW-DETR, and D-FINE.
 ---
 
 # How RF-DETR Works
@@ -11,6 +11,7 @@ description: A visual, intuition-first explanation of how RF-DETR works, why it 
     - Windowed attention keeps the backbone cheap, and deformable attention lets each query read only a few points of the image instead of all of them
     - Training uses one-to-one Hungarian matching, which is what teaches the model not to produce duplicates
     - For instance segmentation, each query also paints its own mask: a dot product between the query and a shared map of pixel features, so mask, box and class always describe the same object
+    - For keypoints, each object query brings its own team of keypoint queries through every decoder layer; each keypoint predicts where it is, whether it can be found and seen, and how uncertain its location is
     - In the RF-DETR paper, one training run covers the Nano through Large sizes as points on a single accuracy–latency curve
 
 This page builds the idea up from scratch, one picture at a time. No prior knowledge of transformers is assumed. If you only want numbers, go to [Benchmarks](benchmarks.md); if you want to train, go to [Train Model](train/index.md).
@@ -126,7 +127,7 @@ model = RFDETRSmall()
 detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 ```
 
-Segmentation and keypoint models add a head that turns each query into a mask or a set of keypoints. The rest of the pipeline is the same. [From boxes to masks](#from-boxes-to-masks-instance-segmentation) below shows how the segmentation head works.
+Segmentation models add a head that turns each query into a mask; the rest of the pipeline is the same. Keypoint models go one step further and give every query a team of keypoint queries that runs through the decoder with it. [From boxes to masks](#from-boxes-to-masks-instance-segmentation) and [From boxes to keypoints](#from-boxes-to-keypoints-pose-estimation) below show how each works.
 
 ## How it learns: matching, not sorting
 
@@ -197,6 +198,80 @@ The segmentation models use 12 pixel patches instead of 16, so their memory is f
 | RF-DETR-Seg Medium |       432       |       12        |   1,296    |         5          |     200     |   108 × 108   |
 | RF-DETR-Seg Large  |       504       |       12        |   1,764    |         5          |     200     |   126 × 126   |
 
+## From boxes to keypoints: pose estimation
+
+Keypoint detection, also called pose estimation, asks for a fixed list of named points on every object. For a person in COCO that is 17 points: nose, eyes, ears, shoulders, elbows, wrists, hips, knees and ankles. Each point needs a location, and also an answer to a second question: is it there at all? A wrist behind someone's back still has a place you could guess, but you cannot see it.
+
+RF-DETR Keypoint keeps the backbone, the projector, the object queries, the matching, and the absence of NMS. What changes is the decoder. The mask head reads each query once, after the decoder has finished. Keypoints get queries of their own, which travel through every decoder layer next to the object query they belong to. The design follows [Group Pose](https://arxiv.org/abs/2308.07313).
+
+![Every object query is joined by 17 keypoint queries, one per keypoint type, which start from learned vectors adjusted by that object query. In each of the 4 decoder layers the group first runs self-attention among the object query and its own keypoint queries only, then every keypoint query reads a second memory with deformable attention around the object's reference box, then a feed-forward layer updates it. After every layer a small MLP reads the keypoint queries and places 17 keypoints inside the object's box.](../assets/how-it-works/keypoints.svg){ loading=lazy }
+
+### A team of queries for every object
+
+Each object query is joined by one keypoint query per keypoint type, so 17 for a COCO person. They start from 17 learned vectors shared by every object, and each object query scales and shifts them for its own object. That adjustment starts switched off, so early in training the keypoint queries are plain learned "nose", "left eye", "right eye" vectors. A learned position embedding per keypoint type keeps the left wrist apart from the right wrist even where the image looks symmetric.
+
+In every decoder layer, once the object query has done its own self-attention, cross-attention and feed-forward steps from Step 5, the keypoint queries take three steps of their own:
+
+1. **Group self-attention.** An object query and its 17 keypoint queries attend to each other, and to nobody else. A wrist query can consult the elbow and the shoulder of the same person, never those of another person. The object query hears back from its keypoints too, through a learned scale that starts near zero, so detection is left undisturbed early in training.
+2. **Deformable cross-attention into a second memory.** Keypoint queries read the image the same way object queries do, a few learned sampling points each, but from a separate feature map built by a second projector, so boxes and keypoints do not have to share one set of features. Every keypoint query samples around its object's reference box from Step 4 and learns where inside that box to look.
+3. **A feed-forward layer**, applied to each keypoint query on its own.
+
+Group Pose also lets keypoint queries of the same type attend across people, all left wrists together. The preview model leaves that step out, so information flows between people only through the object queries' own self-attention.
+
+A custom dataset can define several object classes, each with its own list of keypoints. Every object query then carries keypoint queries for every class, keypoints of different classes never attend to each other, and only the list belonging to the predicted class is used.
+
+### What each keypoint predicts
+
+![A person inside its dashed reference box, with 17 keypoints. Each keypoint query predicts its location as an offset from the box center in units of the box size; a findable probability, whether an annotator could place the point at all; a visible probability, whether it is in plain sight, so a hidden ankle is findable but not visible; three numbers for an uncertainty ellipse, small around the shoulders and large around the hidden ankle; and a class vote that is summed over the keypoints and added to the object's class score. At inference, wide ellipses lower the object's score.](../assets/how-it-works/keypoint-output.svg){ loading=lazy }
+
+After every decoder layer, a small MLP reads each keypoint query and predicts eight numbers:
+
+- **Location (2).** An offset from the center of the object's reference box, measured in units of the box's width and height. Keypoints are placed relative to their object, so the same offsets describe a person close to the camera and one far away.
+- **Findable (1).** The probability that an annotator could place this point at all. In COCO terms, the point is labeled, whether it is in plain sight or occluded (visibility flag above 0).
+- **Visible (1).** The probability that the point is in plain sight (visibility flag 2). A hidden ankle is findable but not visible.
+- **Uncertainty (3).** A 2D Gaussian around the location, drawn as an ellipse: its size says how sure the model is, and its tilt says in which direction it is unsure. The three numbers define a triangular factor of the Gaussian's inverse covariance, with the diagonal stored as logarithms so every prediction is a valid ellipse.
+- **Class vote (1).** Summed over the object's keypoints and added to its class logit. A query whose keypoints line up like a person becomes a more confident "person".
+
+!!! question "Pause and ponder"
+
+    No annotation says how uncertain a keypoint is; datasets only give its position. So how can the model learn to draw a wide ellipse around a hidden ankle and a tight one around a shoulder? The answer is in the loss below.
+
+### How keypoints are learned
+
+The matching cost of a (query, object) pair keeps the class, L1 and GIoU terms and gains four keypoint terms. The loss uses the same four:
+
+- **L1 distance** between the predicted and the true locations, divided by the square root of the object's box area and averaged over labeled keypoints. A 5 pixel miss counts for more on a small person than on a large one.
+- **Binary cross-entropy on findable** and **on visible**, against the dataset's visibility flags.
+- **Gaussian negative log-likelihood** of the true location under the predicted ellipse.
+
+The last term is how the model learns its uncertainty without labels. A tight ellipse around the right spot is cheap. A tight ellipse around the wrong spot is very expensive. Widening the ellipse reduces the penalty for a location error, but increases a separate penalty for being vague; the total still depends on how far the prediction is from the true point. Over many images, the cheapest strategy is to draw tight ellipses where the model is reliably right and wide ones where it tends to miss.
+
+Points that were not labeled (visibility flag 0) still train findable and visible, as points that cannot be found, but they do not train location or uncertainty. As with boxes and masks, the keypoints of every decoder layer are supervised directly.
+
+### Reading the keypoints
+
+At inference, the object score goes through one extra step before your threshold sees it: it is combined with the keypoint uncertainty. RF-DETR averages the size of the object's ellipses, weighting each by its findable probability so that a point that is probably not there counts less. Objects with wide ellipses then lose score, and objects with tight ones keep it. With the default strength of 0.2, a score `s` and a mean ellipse size `T` become `s · T^-0.2 / (1 + s · T^-0.2)`, which stays below 1.
+
+That transformation puts keypoint scores on a different scale from detection scores, so choose the threshold for a keypoint model separately. To turn the fusion off and get the plain object score, pass `postprocess_trace_alpha=0.0` when you create the model.
+
+```python
+from rfdetr import RFDETRKeypointPreview
+
+model = RFDETRKeypointPreview()
+key_points = model.predict("/path/to/people.jpg", threshold=0.5)
+key_points.xy  # (N, 17, 2) pixel coordinates, one row per person
+key_points.keypoint_confidence  # (N, 17) probability that each point is findable
+key_points.data["covariance"]  # (N, 17, 2, 2) uncertainty ellipses in pixels
+```
+
+Keypoint accuracy is measured with object keypoint similarity (OKS), the keypoint counterpart of box IoU: each predicted point scores by a Gaussian of its distance to the true point, scaled by the object's size and by a per-keypoint tolerance, since an eye must be placed more precisely than a hip. On COCO val2017 person keypoints, the preview model scores 71.8 AP50:95 at 9.7 ms on an NVIDIA T4 (TensorRT FP16, batch size 1); see [Run Keypoints](run/keypoints.md) for the comparison with YOLO pose models.
+
+The keypoint model uses 12 pixel patches like the segmentation models, at a larger resolution:
+
+| Model                    | Resolution [px] | Patch size [px] | Tokens [-] | Decoder layers [-] | Queries [-] | Keypoints [-] |
+| :----------------------- | :-------------: | :-------------: | :--------: | :----------------: | :---------: | :-----------: |
+| RF-DETR Keypoint Preview |       576       |       12        |   2,304    |         4          |     100     |      17       |
+
 ## One training run, a whole family of models
 
 Most detector families are trained once per size. In the RF-DETR paper, the Nano through Large sizes come from a single training run, using weight-sharing neural architecture search (NAS). The Atto, Femto, and Pico models use a different backbone (PE-Core-T), and the XL and 2XL models have about 126 M parameters, so they cannot share weights with that family.
@@ -258,6 +333,7 @@ The closest relative is **LW-DETR**, which RF-DETR builds on. The paper lists wh
 - [Benchmarks](benchmarks.md): the full accuracy and latency tables behind the numbers on this page
 - [Run Model](run/detection.md): use a pretrained model in a few lines
 - [Run Segmentation](run/segmentation.md): predict instance masks with RF-DETR-Seg
+- [Run Keypoints](run/keypoints.md): predict person keypoints with RF-DETR Keypoint
 - [Train Model](train/index.md): fine-tune on your own dataset
 - [Export Model](../exports/index.md): deploy to ONNX, TensorRT, CoreML, and other runtimes
 - [RF-DETR paper](https://arxiv.org/abs/2511.09554): the full method and ablations
