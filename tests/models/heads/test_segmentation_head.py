@@ -8,6 +8,7 @@
 import inspect
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -17,6 +18,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from rfdetr.models.heads import segmentation as segmentation_module
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead, point_sample
 from rfdetr.utilities.tensors import _nearest_grid_sample
 from tests._markers import onnx_only
@@ -26,6 +28,19 @@ from tests._markers import onnx_only
 def _reset_random_seeds() -> None:
     """Reset random seeds before each test for reproducibility."""
     torch.manual_seed(42)
+
+
+@pytest.fixture
+def force_depthwise_workaround(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Route the depthwise conv through the issue #731 workaround on every CUDA device.
+
+    Ampere and newer GPUs take the plain cuDNN convolution by default, so tests of the workaround itself pin the route
+    with ``RFDETR_DEPTHWISE_CUDNN=0`` and clear the per-device cache on both sides.
+    """
+    monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", "0")
+    segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+    yield
+    segmentation_module._cudnn_depthwise_is_safe.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -55,6 +70,7 @@ def test_depthwise_conv_block_forward(device: str) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@pytest.mark.usefixtures("force_depthwise_workaround")
 def test_depthwise_conv_forward_disables_cudnn_on_cuda(monkeypatch) -> None:
     """On CUDA, forward must run with cuDNN disabled.
 
@@ -108,6 +124,7 @@ def test_depthwise_conv_forward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@pytest.mark.usefixtures("force_depthwise_workaround")
 def test_depthwise_conv_backward_disables_cudnn_on_cuda(monkeypatch) -> None:
     """Backward pass must also run with cuDNN disabled on CUDA (issue #731).
 
@@ -521,6 +538,75 @@ def test_depthwise_conv_block_layer_scale(layer_scale_init_value: float) -> None
         assert block.gamma.grad is not None
 
 
+class TestCudnnDepthwiseGate:
+    """The issue #731 workaround is limited to the GPUs where cuDNN depthwise selection fails."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_gate_cache(self) -> Iterator[None]:
+        segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+        yield
+        segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+
+    @pytest.mark.parametrize(
+        ("capability", "expected"), [((6, 0), False), ((7, 5), False), ((8, 0), True), ((12, 0), True)]
+    )
+    def test_auto_decides_by_compute_capability(
+        self, monkeypatch: pytest.MonkeyPatch, capability: tuple[int, int], expected: bool
+    ) -> None:
+        """Pre-Ampere devices (P100, T4) keep the workaround; Ampere and newer use cuDNN."""
+        monkeypatch.delenv("RFDETR_DEPTHWISE_CUDNN", raising=False)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _index: capability)
+
+        assert segmentation_module._cudnn_depthwise_is_safe(0) is expected
+
+    @pytest.mark.parametrize(("value", "expected"), [("1", True), ("0", False), (" AUTO ", True)])
+    def test_environment_overrides_detection(self, monkeypatch: pytest.MonkeyPatch, value: str, expected: bool) -> None:
+        """``RFDETR_DEPTHWISE_CUDNN`` forces either route regardless of the device."""
+        monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", value)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _index: (8, 6))
+
+        assert segmentation_module._cudnn_depthwise_is_safe(0) is expected
+
+    def test_invalid_environment_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A typo in the override fails loudly instead of silently picking a route."""
+        monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", "yes")
+
+        with pytest.raises(ValueError, match="RFDETR_DEPTHWISE_CUDNN"):
+            segmentation_module._cudnn_depthwise_is_safe(0)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+    def test_cudnn_route_matches_workaround(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Both routes compute the same forward output and gradients."""
+        block = DepthwiseConvBlock(dim=16).cuda()
+        x = torch.randn(1, 16, 24, 24, device="cuda")
+        results = {}
+        for mode in ("0", "1"):
+            segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+            monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", mode)
+            block.zero_grad()
+            inputs = x.clone().requires_grad_()
+            out = block(inputs)
+            out.square().sum().backward()
+            results[mode] = (out.detach(), inputs.grad, block.dwconv.weight.grad.clone())
+
+        for workaround, cudnn in zip(results["0"], results["1"]):
+            torch.testing.assert_close(cudnn, workaround, rtol=1e-4, atol=1e-4)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+    def test_cudnn_route_skips_the_workaround(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With cuDNN allowed, the depthwise conv runs as the plain module, without toggling cuDNN."""
+        monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", "1")
+        workaround = mock.MagicMock(wraps=segmentation_module._DepthwiseConvWithoutCuDNN.apply)
+        monkeypatch.setattr(segmentation_module._DepthwiseConvWithoutCuDNN, "apply", workaround)
+        block = DepthwiseConvBlock(dim=8).cuda()
+
+        block(torch.randn(1, 8, 4, 4, device="cuda"))
+
+        workaround.assert_not_called()
+
+
 class TestSegmentationHeadSkipBlocksAppliesProjection:
     """``skip_blocks=True`` must run ``spatial_features_proj`` on the spatial features, exactly like the
     ``skip_blocks=False`` branch and ``forward_export()`` both already do — the two-stage encoder-only mask path
@@ -734,6 +820,41 @@ class TestSegmentationHeadForwardExport:
         )
 
         assert "Einsum" not in {node.op_type for node in onnx.load(str(out)).graph.node}
+
+
+class TestSegmentationHeadFinalLayerOnly:
+    """``forward(final_layer_only=True)`` must return exactly the last layer ``forward()`` returns, and nothing else.
+
+    Eval-mode ``LWDETR`` uses it so ``predict()`` and validation skip the dense einsum for every auxiliary decoder
+    layer; the kept mask must not change by a single bit.
+    """
+
+    @pytest.mark.parametrize(
+        ("num_blocks", "num_layers", "bottleneck_ratio"),
+        [
+            pytest.param(3, 3, 1, id="one_block_per_layer"),
+            pytest.param(3, 3, 2, id="projected_channels"),
+            pytest.param(3, 2, 1, id="fewer_layers_than_blocks"),
+            pytest.param(2, 3, 1, id="fewer_blocks_than_layers"),
+            pytest.param(1, 1, 1, id="single_layer"),
+        ],
+    )
+    def test_final_layer_only_matches_last_layer_bit_exactly(
+        self, num_blocks: int, num_layers: int, bottleneck_ratio: int
+    ) -> None:
+        """The single returned mask equals the last element of the all-layer output, bit for bit."""
+        torch.manual_seed(0)
+        head = SegmentationHead(in_dim=8, num_blocks=num_blocks, bottleneck_ratio=bottleneck_ratio, downsample_ratio=2)
+        spatial_features = torch.randn(2, 8, 5, 5)
+        query_features = list(torch.randn(num_layers, 2, 3, 8))
+        image_size = (20, 20)
+
+        with torch.no_grad():
+            all_layers = head.forward(spatial_features, query_features, image_size)
+            final_only = head.forward(spatial_features, query_features, image_size, final_layer_only=True)
+
+        assert (len(all_layers), len(final_only)) == (min(num_blocks, num_layers), 1)
+        assert torch.equal(final_only[0], all_layers[-1]), "final_layer_only changed the last layer's mask logits"
 
 
 class TestPointSampleNearestRouting:

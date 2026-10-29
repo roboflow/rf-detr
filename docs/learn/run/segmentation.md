@@ -58,10 +58,53 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
 
-For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference. This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
+!!! note "Using COCO classes vs. fine-tuned model classes"
+
+    `COCO_CLASSES` maps sparse COCO category IDs (1–90, with gaps) to names. COCO-pretrained models return those sparse IDs as `class_id`; for fine-tuned models, use `detections.data["class_name"]` to get names from the checkpoint.
+
+### Read the masks
+
+Segmentation models return one binary mask per instance in addition to the box, score and class. The masks are stored in `detections.mask`, a boolean array of shape `(N, H, W)` for `N` instances, which `supervision` annotators and utilities consume directly:
 
 ```python
-model.inference(compile=False, inplace=True, dtype="float16")
+import supervision as sv
+from rfdetr import RFDETRSegMedium
+
+model = RFDETRSegMedium()
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
+
+print(detections.mask.shape)  # (N, H, W)
+print(sv.mask_to_polygons(detections.mask[0]))  # polygon outline of the first instance
+print(detections.area)  # per-instance pixel area, computed from the masks
+```
+
+Instances scoring below `threshold` are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. Use `sv.MaskAnnotator` to draw filled masks, `sv.PolygonAnnotator` to draw outlines only, or `sv.BoxAnnotator` to overlay the boxes as well.
+
+### Preprocessing and inference backends
+
+`predict()` resizes without antialiasing by default (`antialias=False`), which matches checkpoints trained with the default CPU augmentation backend when `rfdetr[augment]` is installed (Albumentations). Pass `antialias=True` for checkpoints trained with torchvision resizing: the Kornia/GPU augmentation backend, the CPU backend without `rfdetr[augment]`, or older RF-DETR releases. Antialiasing costs a little extra preprocessing time per image. `RFDETRInference` uses the artifact metadata's `resize_antialias` by default for exported models; pass an explicit `antialias=True` or `antialias=False` to override it. The lower-level `rfdetr.export` runtime preprocessing helpers always resize without antialiasing.
+
+For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. Capture allocates a graph-private memory pool that persists for the graph's lifetime and scales with batch size, resolution and model. Segmentation models also carry the mask outputs in that pool, so expect higher memory cost than for detection. The backend was measured on detection RF-DETR Nano at batch size 1; segmentation models use the same path but are unmeasured. The default stays `"torchscript"`:
+
+```python
+predictor = model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
+detections = predictor.predict("image.jpg")
+```
+
+An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
+
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. Inductor compiles with `torch.compile` on a device supported by the installed PyTorch version and its operators; it does not require CUDA. `dtype="float16"` also requires FP16 support on that device. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+
+```python
+predictor = model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
+detections = predictor.predict("image.jpg")
+```
+
+The native factory returns a predictor that owns one independent copy of the current model weights. The source model remains unchanged; deleting the predictor releases its runtime when no other references remain. Use the same pattern for CPU inference without compilation:
+
+```python
+predictor = model.inference(compile=False, dtype="float16")
+detections = predictor.predict("image.jpg")
 ```
 
 ## Run on video, webcam, or RTSP stream

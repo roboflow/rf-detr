@@ -48,5 +48,10 @@ jobs:
         timeout-minutes: 5
         run: uv pip install --group tests
 
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
+
       - name: 🧪 Run script tests and doctests
         run: uv run --no-sync pytest .github/_tests .github/scripts -n 1 --timeout=120

@@ -49,31 +49,36 @@ class TestPixelTranslatedAffineInverse:
         torch.testing.assert_close(restored_masks, masks, rtol=0, atol=0)
         torch.testing.assert_close(restored_boxes, boxes, rtol=0, atol=1e-5)
 
-    def test_round_trip_with_partial_selection_restores_each_image(self) -> None:
-        """With ``p=0.5`` only the selected images are shifted back, each by its own forward offset.
-
-        Kornia samples offsets only for the images it selects and inverts just that subset, so the stored offsets must
-        line up with the selected rows. Unselected images were never shifted and must come back untouched; selected ones
-        lose only the column band the forward shift pushed out of frame.
-        """
+    @pytest.mark.parametrize("p", [0.0, 0.5, 1.0])
+    def test_round_trip_restores_each_image_with_its_own_offset(self, p: float) -> None:
+        """Inverse images and masks stay aligned with boxes for empty, partial, and full selections."""
         from kornia.augmentation import AugmentationSequential
 
         from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
 
-        transform = PixelTranslatedAffine(((2, 2), (0, 0)), p=0.5, padding_mode="zeros")
-        pipeline = AugmentationSequential(transform, data_keys=["input", "bbox_xyxy"])
-        image = torch.arange(1, 6 * 8 + 1, dtype=torch.float32).reshape(1, 1, 6, 8).repeat(16, 1, 1, 1)
-        boxes = torch.tensor([[[1.0, 1.0, 3.0, 3.0]]]).repeat(16, 1, 1)
+        transform = PixelTranslatedAffine(((-2, 2), (-1, 1)), p=p, padding_mode="zeros")
+        pipeline = AugmentationSequential(transform, data_keys=["input", "bbox_xyxy", "mask"])
+        image = torch.arange(1, 16 * 6 * 8 + 1, dtype=torch.float32).reshape(16, 1, 6, 8)
+        boxes = torch.tensor([[[2.0, 2.0, 4.0, 4.0]]]).repeat(16, 1, 1)
+        masks = torch.zeros_like(image)
+        masks[:, :, 2:4, 2:4] = 1.0
 
-        shifted_image, shifted_boxes = pipeline(image, boxes)
-        restored_image, restored_boxes = pipeline.inverse(shifted_image, shifted_boxes)
+        shifted_image, shifted_boxes, shifted_masks = pipeline(image, boxes, masks)
+        restored_image, restored_boxes, restored_masks = pipeline.inverse(shifted_image, shifted_boxes, shifted_masks)
 
         selected = shifted_boxes[:, 0, 0] != boxes[:, 0, 0]
-        cropped = image.clone()
-        cropped[:, :, :, 6:] = 0.0
-        expected_image = torch.where(selected[:, None, None, None], cropped, image)
-        assert selected.any() and (~selected).any()
+        expected_image = torch.zeros_like(image)
+        # Box displacements independently identify the original pixels that survived each forward shift.
+        offsets = (shifted_boxes[:, 0, :2] - boxes[:, 0, :2]).to(torch.long)
+        for row, (dx, dy) in enumerate(offsets.tolist()):
+            rows = slice(max(0, -dy), min(6, 6 - dy))
+            columns = slice(max(0, -dx), min(8, 8 - dx))
+            expected_image[row, :, rows, columns] = image[row, :, rows, columns]
+        if p == 0.5:
+            assert selected.any() and (~selected).any()
+            assert offsets.unique(dim=0).shape[0] > 2
         torch.testing.assert_close(restored_image, expected_image, rtol=0, atol=0)
+        torch.testing.assert_close(restored_masks, masks, rtol=0, atol=0)
         torch.testing.assert_close(restored_boxes, boxes, rtol=0, atol=1e-5)
 
 

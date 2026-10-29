@@ -494,7 +494,8 @@ class PostProcess(nn.Module):
             if num_keypoint_classes > 1 and not class_mask.any():
                 continue
             active_keypoints = selected_keypoints[class_mask, :num_active_keypoints]
-            log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints)
+            # The helper promotes half inputs; vector indexed assignment requires the destination dtype.
+            log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints).to(log_mean_traces.dtype)
 
         scores_i = scores_i.clone()
         log_fused_scores = torch.log(scores_i[valid_indices]) - self.trace_alpha * log_mean_traces
@@ -525,8 +526,11 @@ class PostProcess(nn.Module):
             (scalar when called on a single detection). Each entry is the log of
             the findability-weighted arithmetic mean trace of the covariance
             matrix. The computation stays in log space for numerical stability
-            with very sharp or very uncertain predictions.
+            with very sharp or very uncertain predictions. Half-precision inputs
+            use float32 to preserve the clamp floor and reduction precision.
         """
+        if active_keypoints.dtype in (torch.float16, torch.bfloat16):
+            active_keypoints = active_keypoints.float()
         log_l11 = active_keypoints[..., 4]
         l21 = active_keypoints[..., 5]
         log_l22 = active_keypoints[..., 6]

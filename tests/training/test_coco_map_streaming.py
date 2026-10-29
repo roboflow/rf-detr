@@ -223,6 +223,74 @@ def test_empty_side_state_matches_batch_hotcoco(iou_type: Any, predicted: int, a
 
 
 @_requires_hotcoco
+@pytest.mark.parametrize("class_metrics", [True, False])
+def test_float_detection_labels_are_refused_while_streaming(class_metrics: bool) -> None:
+    """A whole-valued float detection label raises the batch path's ``ValueError`` as the batch is streamed.
+
+    hotcoco 1.2.1 rejects only a fractional id, so ``1.0`` would otherwise reach ``compute()``: an ``IndexError`` with
+    per-class metrics, a silently accepted label without them.
+    """
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    predictions[0]["labels"] = predictions[0]["labels"].float()
+    metric = OnePassCocoMeanAveragePrecision(
+        iou_type="bbox", backend="hotcoco_streaming", class_metrics=class_metrics, num_classes=2
+    )
+
+    with pytest.raises(ValueError, match="expected integer labels"):
+        metric.update(predictions, targets)
+
+
+@_requires_hotcoco
+def test_float_detection_labels_are_refused_by_the_batch_backend() -> None:
+    """The batch backend raises the same ``ValueError`` at ``compute()``, so both paths agree on the message."""
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    predictions[0]["labels"] = predictions[0]["labels"].float()
+    metric = OnePassCocoMeanAveragePrecision(iou_type="bbox", backend="hotcoco", class_metrics=True, num_classes=2)
+    metric.update(predictions, targets)
+
+    with pytest.raises(ValueError, match="expected integer labels"):
+        metric.compute()
+
+
+@_requires_hotcoco
+def test_float_detection_labels_in_a_later_batch_name_their_epoch_wide_sample() -> None:
+    """A float label arriving after a valid batch is refused with its index in the whole epoch, as on the batch path.
+
+    The second batch's image is sample ``1`` of the epoch; a batch-local count would call it sample ``0``.
+    """
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    metric = OnePassCocoMeanAveragePrecision(
+        iou_type="bbox", backend="hotcoco_streaming", class_metrics=False, num_classes=2
+    )
+    metric.update(predictions[:1], targets[:1])
+    predictions[1]["labels"] = predictions[1]["labels"].float()
+
+    with pytest.raises(ValueError, match=r"sample 1 \(expected integer labels"):
+        metric.update(predictions[1:2], targets[1:2])
+
+
+@_requires_hotcoco
+@pytest.mark.parametrize("label", [1.0, 5.0])
+def test_float_ground_truth_labels_are_refused_while_streaming(label: float) -> None:
+    """A float target label in dictionary-backed ground truth raises, and streaming stays on.
+
+    ``5.0`` lies outside the two declared categories: without the check it would take the range fallback and abandon
+    streaming silently instead of raising, which is the behavior the check changes. ``1.0`` is in range, where
+    TorchMetrics' own conversion error would otherwise name the label instead.
+    """
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    targets[0]["labels"] = torch.tensor([label])
+    metric = OnePassCocoMeanAveragePrecision(
+        iou_type="bbox", backend="hotcoco_streaming", class_metrics=False, num_classes=2
+    )
+
+    with pytest.raises(ValueError, match="expected integer labels"):
+        metric.update(predictions, targets)
+
+    assert not metric._stream_stopped
+
+
+@_requires_hotcoco
 def test_callback_streams_validation_only_not_the_train_split() -> None:
     """``hotcoco_streaming`` streams validation only; the train-split metric evaluates in one batch on ``hotcoco``.
 

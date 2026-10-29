@@ -149,6 +149,19 @@ class TestCLIHelp:
         assert "train_config" in buf.getvalue()
 
 
+class TestShippedConfigsParse:
+    """Every shipped config parses through the CLI, as ``rfdetr fit --config configs/<name>.yaml`` documents."""
+
+    @pytest.mark.parametrize("name", ALL_CONFIGS)
+    def test_fit_parses_the_shipped_config(self, name: str, capsys: pytest.CaptureFixture[str]) -> None:
+        """``--print_config`` exits 0 and keeps the config's own ``ModelConfig`` subclass."""
+        exit_code = _run_cli("fit", "--config", str(CONFIGS_DIR / f"{name}.yaml"), "--print_config")
+
+        printed = capsys.readouterr()
+        assert exit_code == 0, printed.err[-600:]
+        assert f"class_path: {_load(name)['model']['model_config']['class_path']}" in printed.out
+
+
 # ---------------------------------------------------------------------------
 # YAML roundtrip — model_config
 # ---------------------------------------------------------------------------

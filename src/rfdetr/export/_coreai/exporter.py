@@ -39,6 +39,7 @@ import torch
 from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
 from rfdetr.export._coreai.decompositions import coreai_decomposition_table
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.base import ExportConfig, Exporter, serialize_notes
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -296,3 +297,7 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
         if self.config.notes is not None:
             metadata.set_custom("rfdetr_notes", serialize_notes(self.config.notes))
         return metadata
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Record the dtype used by the saved Core AI asset."""
+        return metadata.model_copy(update={"input_dtype": self.config.precision or "float32"})

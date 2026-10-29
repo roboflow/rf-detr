@@ -1020,14 +1020,13 @@ class RFDETRDataModule(LightningDataModule):
         kornia_pipeline.to(img.device)
         kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
+        # Kornia's geometric kernels use pixel-index coordinates (a horizontal flip maps x to width - 1 - x), while
+        # RF-DETR boxes and keypoints use continuous coordinates (width - x), as the CPU transforms do. Shift boxes
+        # for every model, including detection and segmentation, then shift back before unpack_boxes clips edges.
+        boxes_padded = boxes_padded - 0.5
         points_padded = visibility = None
         if self.model_config.use_grouppose_keypoints:
             points_padded, visibility = collate_keypoints(targets, img.device, valid.shape[1])
-            # Kornia's geometric kernels use pixel-index coordinates (a horizontal flip maps x to width - 1 - x), while
-            # RF-DETR boxes and keypoints use continuous coordinates (width - x), as the CPU transforms do. Shift both
-            # into the pixel-index frame here and back right after the pipeline, before unpack_boxes clamps boxes and
-            # zeroes out-of-image joints, so a zeroed joint stays exactly 0.
-            boxes_padded = boxes_padded - 0.5
             points_padded = points_padded - 0.5
         # Kornia's keypoint transformer cannot reshape a [B, 0, 2] input.
         # Carry one disposable point through an all-empty batch; target unpacking
@@ -1058,8 +1057,7 @@ class RFDETRDataModule(LightningDataModule):
         if self.model_config.segmentation_head:
             masks_aug = auxiliary_masks_aug[:, : valid.shape[1]]
         padding_mask_aug = auxiliary_masks_aug[:, -1] > 0.5
-        if points_padded is not None:
-            boxes_aug = boxes_aug + 0.5
+        boxes_aug = boxes_aug + 0.5
         if points_aug is not None:
             points_aug = points_aug + 0.5
         img_aug = kornia_normalize(img_aug)

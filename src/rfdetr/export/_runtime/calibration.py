@@ -220,7 +220,9 @@ def calibration_batches(
     Raises:
         ValueError: If *calibration_data* names a path that does not exist or holds no usable image, if a ``.npy`` file
             holds pickled objects rather than a numeric array, or if a directory entry with an image suffix cannot be
-            identified as an image by Pillow (the message names the file).
+            identified as an image by Pillow (the message names the file). Being a generator, it raises when the first
+            batch is drawn, not at the call; an array or ``.npy`` file is also checked there for rank, dtype, channel
+            count and spatial size.
 
     Examples:
         >>> import numpy as np
