@@ -59,7 +59,7 @@ jobs:
               echo "::error::git fetch failed for $METRICS_BRANCH"
               exit 1
             }
-            # The commit step anchors its push lease to the tip restored here.
+            # The commit step builds its commit on the tip restored here.
             echo "METRICS_BASE_SHA=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_ENV"
             # The shell truncates a redirect target before the command on its left runs, so writing
             # straight onto the tracked path would leave an empty SVG behind whenever git show fails.
@@ -93,13 +93,20 @@ jobs:
             echo "No changes to commit."
             exit 0
           fi
+          # Build the update on the tip the restore step read the SVG from (METRICS_BASE_SHA, via GITHUB_ENV)
+          # so the push below is a plain fast-forward and never needs a force. Unset means the branch was
+          # absent at restore, and the commit then starts the branch from the default branch checkout.
+          if [ -n "${METRICS_BASE_SHA:-}" ]; then
+            generated_svg="$(mktemp)"
+            cp -- docs/assets/weekly-metrics.svg "$generated_svg"
+            git switch --detach --force "$METRICS_BASE_SHA"
+            cp -- "$generated_svg" docs/assets/weekly-metrics.svg
+          fi
           git add -- docs/assets/weekly-metrics.svg
           git commit -m "docs: update weekly project metrics"
-          # The lease expects the tip the restore step read the SVG from (METRICS_BASE_SHA, via GITHUB_ENV),
-          # never a tip looked up now: a lease read at push time matches whatever the branch holds and so
-          # degrades to an unconditional force that can drop a checkpoint. Unset means the branch was
-          # absent at restore, and the empty expected value makes the push fail if it appeared since.
-          git push --force-with-lease="refs/heads/$METRICS_BRANCH:${METRICS_BASE_SHA:-}" origin HEAD:"$METRICS_BRANCH"
+          # No force: a branch that moved since the restore, or one created meanwhile, makes git reject this
+          # push as non-fast-forward and fail the run instead of dropping a checkpoint.
+          git push origin HEAD:"$METRICS_BRANCH"
           # Nothing here opens the pull request (see the header), so hand a maintainer the link to open one.
           compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${DEFAULT_BRANCH}...${METRICS_BRANCH}?expand=1"
           echo "::notice title=Weekly metrics pushed::Open a PR to publish: $compare_url"

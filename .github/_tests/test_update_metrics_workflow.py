@@ -153,7 +153,7 @@ def _commit_env(workspace: Path, branch_exists: bool, svg_changed: bool, push_fa
         branch_exists: Whether the automation branch existed on the remote when the run started. When it did,
             the restore step has exported its tip as `METRICS_BASE_SHA`; otherwise that variable is unset.
         svg_changed: Whether the `git diff --quiet` guard reports a tracked SVG change.
-        push_fails: Whether the `git` stub rejects the publishing call the way a lost lease or a refused ref does.
+        push_fails: Whether the `git` stub rejects the publishing call the way a non-fast-forward or a refused ref does.
 
     Returns:
         Environment overlay handed to `_run_step`.
@@ -396,7 +396,7 @@ class TestUpdateMetricsWorkflow:
         self,
         metrics_steps: dict[str, dict[str, Any]],
     ) -> None:
-        """Commit step must write only the generated SVG and force-update the fixed branch."""
+        """Commit step must write only the generated SVG and publish it to the fixed branch."""
         commit_step = metrics_steps[COMMIT_STEP]
         run = commit_step["run"]
 
@@ -561,15 +561,15 @@ class TestRestoreUnmergedHistoryStep:
         assert "::error::git fetch failed for automation/update-weekly-metrics" in result.stdout
         assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
 
-    def test_existing_branch_exports_its_tip_as_the_push_lease_base(
+    def test_existing_branch_exports_its_tip_as_the_commit_base(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         restore_sandbox: tuple[Path, Path],
     ) -> None:
         """The restored branch tip must reach the commit step through `GITHUB_ENV`.
 
-        The push lease is anchored to the tip the SVG was restored from; a tip looked up at push time would match
-        whatever the branch holds and degrade the lease into an unconditional force.
+        The commit step builds its commit on the tip the SVG was restored from, so the push stays a fast-forward; a tip
+        looked up at push time could differ from the SVG that was restored and hide a moved branch.
         """
         workspace, stubs = restore_sandbox
 
@@ -615,15 +615,25 @@ class TestCommitAndPushStep:
         assert "commit -m" not in logged
         assert "push " not in logged
 
-    def test_first_push_expects_the_branch_to_be_absent(
+    def test_commit_step_never_forces_a_push(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
+        """The commit step must never force or lease a push.
+
+        A forced push can drop a checkpoint another run has just published, so a branch that moved must fail the run as
+        a non-fast-forward rejection instead.
+        """
+        assert (
+            re.search(r"git push[^\n]*(--force|--force-with-lease|\s-f\b)", metrics_steps[COMMIT_STEP]["run"]) is None
+        )
+
+    def test_first_push_creates_the_branch_without_force(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         commit_sandbox: tuple[Path, Path],
     ) -> None:
-        """A first run must create the automation branch behind an empty-expectation lease.
+        """A first run must create the automation branch with a plain push and no tip switch.
 
-        An empty expected value makes git refuse the push when the branch has appeared since the restore step looked, so
-        a concurrent creator is never overwritten.
+        With no restored tip there is nothing to build on, and a branch that appeared since the restore step looked is
+        refused by git as non-fast-forward rather than overwritten.
         """
         workspace, stubs = commit_sandbox
 
@@ -636,17 +646,15 @@ class TestCommitAndPushStep:
 
         assert result.returncode == 0, result.stderr
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
-        assert (
-            "push --force-with-lease=refs/heads/automation/update-weekly-metrics: "
-            "origin HEAD:automation/update-weekly-metrics" in logged
-        )
+        assert "git switch" not in logged
+        assert f"git push origin HEAD:{METRICS_BRANCH}" in logged.splitlines()
 
-    def test_existing_branch_updates_with_force_with_lease(
+    def test_existing_branch_gets_a_fast_forward_on_its_restored_tip(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         commit_sandbox: tuple[Path, Path],
     ) -> None:
-        """An existing automation branch must still be force-updated behind a lease."""
+        """An existing automation branch must be updated by a plain push of a commit built on its restored tip."""
         workspace, stubs = commit_sandbox
 
         result = _run_step(
@@ -658,9 +666,9 @@ class TestCommitAndPushStep:
 
         assert result.returncode == 0, result.stderr
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
-        assert (
-            f"push --force-with-lease=refs/heads/automation/update-weekly-metrics:{STUB_BRANCH_SHA} "
-            "origin HEAD:automation/update-weekly-metrics" in logged
+        lines = logged.splitlines()
+        assert lines.index(f"git switch --detach --force {STUB_BRANCH_SHA}") < lines.index(
+            f"git push origin HEAD:{METRICS_BRANCH}"
         )
 
     @pytest.mark.parametrize("branch_exists", [True, False])
@@ -670,9 +678,9 @@ class TestCommitAndPushStep:
         commit_sandbox: tuple[Path, Path],
         branch_exists: bool,
     ) -> None:
-        """A push the remote refuses must turn the step red on both the lease and the first-push path.
+        """A push the remote refuses must turn the step red on both the existing-branch and first-push path.
 
-        Losing the lease race (or hitting a protected branch) is exactly the signal that the branch did not receive the
+        A non-fast-forward rejection (or a protected branch) is exactly the signal that the branch did not receive the
         update; swallowing it, for example with `|| true`, would report a green run while the chart goes stale.
         """
         workspace, stubs = commit_sandbox
@@ -710,9 +718,10 @@ class TestCommitAndPushStep:
             "git config user.name github-actions[bot]",
             "git config user.email 41898282+github-actions[bot]@users.noreply.github.com",
             "git diff --quiet -- docs/assets/weekly-metrics.svg",
+            f"git switch --detach --force {STUB_BRANCH_SHA}",
             "git add -- docs/assets/weekly-metrics.svg",
             "git commit -m docs: update weekly project metrics",
-            f"git push --force-with-lease=refs/heads/{METRICS_BRANCH}:{STUB_BRANCH_SHA} origin HEAD:{METRICS_BRANCH}",
+            f"git push origin HEAD:{METRICS_BRANCH}",
         ]
 
     def test_pushed_update_prints_the_compare_link_for_a_maintainer(
@@ -815,7 +824,7 @@ class TestRestoreStepAgainstRealGit:
         metrics_steps: dict[str, dict[str, Any]],
         real_remote: tuple[Path, Path, str],
     ) -> None:
-        """The branch's SVG must land staged in the workspace and its tip must be exported for the lease."""
+        """The branch's SVG must land staged in the workspace and its tip must be exported as the commit base."""
         workspace, _, tip = real_remote
 
         result = self._restore(metrics_steps, workspace)
