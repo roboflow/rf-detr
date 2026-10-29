@@ -218,10 +218,15 @@ class TestManifestEdgeCases:
         """
         manifest = tmp_path / "sources.streams"
         manifest.write_text(content)
-        with patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")) as capture:
+        # Guard the package capture boundary so this validation also runs without OpenCV.
+        with (
+            patch("rfdetr._prediction.sources._import_cv2") as video_import,
+            patch("rfdetr._prediction.streams._import_cv2") as live_import,
+        ):
             with pytest.raises(ValueError, match="no sources"):
                 list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream))
-            capture.assert_not_called()
+        video_import.assert_not_called()
+        live_import.assert_not_called()
 
     @pytest.mark.parametrize(
         "suffix,content",
@@ -265,6 +270,7 @@ class TestManifestEdgeCases:
         with pytest.raises(ValueError, match=r"manifest cycle: .*sources\.txt\."):
             RFDETRInference(_DummyRFDETR()).predict(manifest)
 
+    @_requires_opencv
     @pytest.mark.parametrize("stream", [False, True])
     def test_streams_manifest_nested_in_text_manifest_opens_its_captures(self, tmp_path: Path, stream: bool) -> None:
         """A ``.streams`` file listed by a ``.txt`` manifest is read relative to the outer manifest.
@@ -383,6 +389,7 @@ class TestOptionalSources:
         assert open_capture.call_args.args[0] == "https://video.example/frames.mp4"
         capture.release.assert_called_once()
 
+    @_requires_opencv
     def test_stream_manifest_resolves_youtube_pages_concurrently(self, tmp_path: Path) -> None:
         """YouTube entries of a stream manifest resolve together instead of one after another.
 
@@ -410,6 +417,7 @@ class TestOptionalSources:
             results = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True))
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [1, 2]
 
+    @_requires_opencv
     def test_youtube_resolution_caps_height_and_bounds_the_wait(self) -> None:
         """Resolution passes yt-dlp a height-capped format chain and an explicit socket timeout.
 
@@ -559,6 +567,7 @@ class TestSourceRouting:
         assert len(results) == 1
         assert not any("Live results accumulate" in str(warning.message) for warning in caught)
 
+    @_requires_opencv
     def test_large_eager_video_warns_about_retained_frames(self, tmp_path: Path) -> None:
         """An eager video whose frame count and size exceed the threshold warns before frames are decoded.
 

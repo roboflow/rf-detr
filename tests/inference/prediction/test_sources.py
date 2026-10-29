@@ -57,7 +57,9 @@ class TestPredictSources:
 
         with (
             patch.dict("sys.modules", {"mss": None}),
-            patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")),
+            # Guard the package capture boundary so these image-only cases also run without OpenCV.
+            patch("rfdetr._prediction.sources._import_cv2", side_effect=AssertionError("unexpected capture")),
+            patch("rfdetr._prediction.streams._import_cv2", side_effect=AssertionError("unexpected capture")),
         ):
             result = RFDETRInference(_DummyRFDETR()).predict(source, stream=source_kind == "stream")
             if source_kind != "file":
@@ -83,7 +85,9 @@ class TestPredictSources:
 
         with (
             patch.dict("sys.modules", {"mss": None}),
-            patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")),
+            # Guard the package capture boundary so these image-only cases also run without OpenCV.
+            patch("rfdetr._prediction.sources._import_cv2", side_effect=AssertionError("unexpected capture")),
+            patch("rfdetr._prediction.streams._import_cv2", side_effect=AssertionError("unexpected capture")),
         ):
             results = RFDETRInference(_DummyRFDETR()).predict(dirname)
 
@@ -267,6 +271,7 @@ class TestPredictSources:
         assert capture.read.call_count == 5
         capture.release.assert_called_once()
 
+    @_requires_opencv
     def test_unreadable_first_video_frame_raises(self, tmp_path: Path) -> None:
         """A video that opens but cannot decode its first frame raises instead of yielding no results.
 
@@ -282,6 +287,7 @@ class TestPredictSources:
                 next(results)
         capture.release.assert_called_once()
 
+    @_requires_opencv
     @pytest.mark.parametrize(
         ("source", "warnings_logged"),
         [
@@ -308,6 +314,7 @@ class TestPredictSources:
         assert len(results) == 1
         assert logger.warning.call_count == warnings_logged
 
+    @_requires_opencv
     @pytest.mark.parametrize("source", [0, "clip.avi"])
     def test_one_channel_model_receives_grayscale_frames(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: int | str

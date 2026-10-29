@@ -72,6 +72,10 @@ For fine-tuning on a custom keypoint dataset, see [Keypoint preview custom datas
 
 ## Run on video, webcam, or RTSP stream
 
+!!! tip "Built-in video and stream sources"
+
+    `RFDETRInference(model).predict()` reads video files, video URLs, webcams, RTSP streams, and YouTube directly and can yield results lazily with `stream=True`. See [Run on Videos and Streams](videos-and-streams.md). The examples below keep full control of decoding and display with OpenCV.
+
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.
 
 === "video"

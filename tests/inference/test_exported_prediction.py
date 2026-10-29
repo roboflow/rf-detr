@@ -609,6 +609,7 @@ class TestExportedStreaming:
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
             np.testing.assert_array_equal(result.metadata["source_image"], image)
 
+    @_requires_opencv
     @pytest.mark.parametrize("stream", [False, True])
     def test_video_stride(
         self, exported_detection: tuple[Path, dict[str, object]], prediction_video: Path, stream: bool

@@ -176,63 +176,7 @@ detections = model.predict("https://media.roboflow.com/dog.jpeg", threshold=0.5)
 
 One image returns one `sv.Detections` or `sv.KeyPoints` object. An iterable of images, such as a list, tuple, or generator, returns a list of results from one batched forward pass. A BCHW tensor returns one result per image.
 
-The model's `predict()` handles images only. Use `RFDETRInference` for videos, folders, globs, manifests, cameras, network streams, and lazy results. `RFDETRInference(model)` borrows a loaded model without copying its weights. It also loads checkpoints and exported models, and accepts every image input above.
-
-## Predict on files and folders
-
-Pass a directory or glob pattern to predict on supported image and video files. RF-DETR sorts matches. Directory searches are not recursive. A glob can use `**` for recursive matching.
-
-```python
-from pathlib import Path
-from rfdetr import RFDETRInference, RFDETRSmall
-
-predictor = RFDETRInference(RFDETRSmall())
-results = predictor.predict(Path("images"), threshold=0.5)
-results = predictor.predict("images/*.jpg", threshold=0.5)
-```
-
-Directories, globs, manifests, and video files return a flat list by default (`stream=False`). Use `stream=True` to process one image or video frame at a time.
-
-The flat list keeps every result in memory. With the default `include_source_image=True`, each result also holds its full RGB source image, so one minute of 1080p video at 30 fps keeps about 11 GB. RF-DETR warns before a video, directory, or glob whose estimated source images exceed 1 GiB. It estimates a video from its reported frame count and frame size, and a directory or glob from its image count and the size of its first image. Use `stream=True` or `include_source_image=False` to keep memory use bounded. A scalar still image returns one result. A list or tuple of images uses one batched forward pass unless you pass `batch`.
-
-Use `batch` to set the number of finite images or frames per forward pass. The default, `batch=None`, runs a BCHW tensor or a list of images as one forward pass and predicts other expanded sources one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass. RF-DETR predicts the final partial batch when the source length is not divisible by `batch`. An inference-compiled model may require the batch size used during compilation.
-
-Text manifests list one source per line. CSV manifests list one source per cell; when the first row has a `source` or `path` cell, that row is a header and only its column is read. Manifests can contain images, videos, and live sources. Relative paths are resolved from the manifest directory. A `.streams` file lists cameras, network streams, and local video files for concurrent reading. Each result batch follows the source order in that file. The stream stops when a source with a known frame count ends. Screen capture is not supported inside a `.streams` file.
-
-An empty collection of sources is quiet; an empty location is loud. A text or CSV manifest with no entries, and a tensor batch with no frames, return `[]` with `stream=False` and yield nothing with `stream=True`. An empty list or tuple yields nothing with `stream=True` and raises `ValueError` with `stream=False`. A directory or glob without supported files raises `FileNotFoundError`, and a `.streams` file without sources raises `ValueError`, in both modes.
-
-## Stream a video, camera, network, or screen source
-
-Set `stream=True` to get a lazy generator. Each item is a `sv.Detections` or `sv.KeyPoints` result for one image or video frame. By default, a single source predicts one frame at a time.
-
-```python
-from rfdetr import RFDETRInference, RFDETRSmall
-
-predictor = RFDETRInference(RFDETRSmall())
-stream = predictor.predict("video.mp4", threshold=0.5, stream=True)
-
-try:
-    for frame_detections in stream:
-        print(len(frame_detections))
-finally:
-    stream.close()
-```
-
-Pass an integer webcam index, a numeric camera index as text, or an explicit live stream URL as the source. RF-DETR treats RTSP, RTSPS, RTMP, TCP, UDP, and SRT URLs as live streams. When the installed OpenCV cannot open the URL, for example because it lacks support for the protocol, RF-DETR raises `ValueError: Could not open the video source.` For HTTP URLs, use `.m3u8`, `.mjpg`, or `.mjpeg` to identify a live stream. An extensionless HTTP URL is treated as an image by default. Put an extensionless live HTTP URL in a `.streams` file.
-
-Live sources also run with `stream=False`. This call stores every result in memory and warns after source resolution identifies a live input. This includes live sources inside text and CSV manifests. Recorded YouTube videos are finite and do not trigger this warning. Use `stream=True` to keep memory use bounded. Capture keeps the first frame. By default, it replaces pending frames with the latest frame. This policy can skip frames when prediction is slower than capture. Set `stream_buffer=True` to queue up to 30 pending frames per source. If a stream read fails, RF-DETR tries to reconnect three times, then raises an error.
-
-Finite videos in `.streams` always use the bounded buffer, even with `stream_buffer=False`, so prediction speed does not discard frames.
-
-Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. For live sources, the latest-frame policy can still skip frames when prediction is slower than capture.
-
-Video, camera, network stream, and screen capture require `uv pip install "rfdetr[stream]"`. Use `screen` to capture the desktop. Add an optional monitor index, or a monitor index and crop rectangle. For example, use `screen 1 100 100 640 480`. YouTube page URLs also require this optional extra for `yt-dlp` URL resolution. Recorded YouTube videos end at the final frame. Live YouTube URLs continue as live sources.
-
-The generator closes its capture at the end, on error, or when you call `close()`. If an OpenCV backend blocks while it reads, capture cleanup waits for that read to return. Network read timeouts depend on backend support. When a finite network stream stops, RF-DETR logs a warning because OpenCV cannot distinguish EOF from a read failure.
-
-OpenCV converts captured video frames from BGR to RGB before prediction.
-
-RF-DETR supports many sources and controls that Ultralytics supports. `RFDETRInference.predict()` is not a drop-in Ultralytics API. It returns Supervision objects. Video decoding depends on the installed OpenCV backends and codecs.
+The model's `predict()` handles images only. Use `RFDETRInference` for videos, folders, globs, manifests, cameras, network streams, and lazy results. `RFDETRInference(model)` borrows a loaded model without copying its weights. It also loads checkpoints and exported models, and accepts every image input above. See [Run on Videos and Streams](run/videos-and-streams.md) for each source, with example clips.
 
 ## Include source images
 
