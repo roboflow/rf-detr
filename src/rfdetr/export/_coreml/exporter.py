@@ -82,12 +82,14 @@ class _CoreMLApi:
         target: ``coremltools.target``, the deployment-target enum.
         float32: ``coremltools.precision.FLOAT32``.
         float16: ``coremltools.precision.FLOAT16``.
+        pass_pipeline: The default ``coremltools.PassPipeline`` plus RF-DETR's graph passes.
     """
 
     convert: Callable[..., Any]
     target: Any
     float32: ct_precision
     float16: ct_precision
+    pass_pipeline: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,11 +214,14 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         from coremltools import precision as ct_precision
         from coremltools import target as ct_target
 
+        from rfdetr.export._coreml.passes import rfdetr_pass_pipeline
+
         return _CoreMLApi(
             convert=ct_convert,
             target=ct_target,
             float32=ct_precision.FLOAT32,
             float16=ct_precision.FLOAT16,
+            pass_pipeline=rfdetr_pass_pipeline(),
         )
 
     def _prepare_output_dir(self) -> Path:
@@ -367,6 +372,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                     # `resample` fp32 via FP16ComputePrecision(op_selector=...) (measured 48.04 AP at iOS16, #1604).
                     minimum_deployment_target=api.target.iOS15,
                     compute_precision=compute_precision,
+                    # Resizes masks with matmuls: the Neural Engine's 3x upsample_bilinear samples half a cell off.
+                    pass_pipeline=api.pass_pipeline,
                 )
         except (ImportError, NotImplementedError, ValueError):
             # ImportError here is not dead code even though _check_coremltools_available() already

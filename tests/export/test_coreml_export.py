@@ -398,7 +398,9 @@ class TestResolveComputePrecision:
         self, tmp_path: Path, precision: object, expected: object
     ) -> None:
         """Each name reaches its own member, no precision means float32, and a member is passed through."""
-        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member", pass_pipeline=None
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=precision))
 
         assert exporter._resolve_compute_precision(api) is expected
@@ -411,7 +413,7 @@ class TestConvertDeploymentTarget:
     def test_converts_for_ios15_so_the_neural_engine_runs_a_spec_6_program(
         self, tmp_path: Path, precision_member: str
     ) -> None:
-        """The whole convert call is pinned: mlprogram, the iOS15 target, and the resolved precision member.
+        """The whole convert call is pinned: mlprogram, the iOS15 target, the precision member, and the pass pipeline.
 
         The target selects the program generation; spec 7 (iOS16) loses ~3 box AP on the Neural Engine. Measured on an
         M3 Pro: pretrained RFDETRNano at fp16 under ``CPU_AND_NE`` scores 45.06 AP on all 5000 COCO val2017 images at
@@ -420,7 +422,10 @@ class TestConvertDeploymentTarget:
         """
         target = mock.Mock()
         convert = mock.Mock(return_value="mlmodel")
-        api = _CoreMLApi(convert=convert, target=target, float32="fp32-member", float16="fp16-member")
+        pass_pipeline = mock.Mock()
+        api = _CoreMLApi(
+            convert=convert, target=target, float32="fp32-member", float16="fp16-member", pass_pipeline=pass_pipeline
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
 
         with (
@@ -434,6 +439,7 @@ class TestConvertDeploymentTarget:
             convert_to="mlprogram",
             minimum_deployment_target=target.iOS15,
             compute_precision=precision_member,
+            pass_pipeline=pass_pipeline,
         )
 
 
