@@ -121,13 +121,15 @@ _IS_FP16_CASTER_AVAILABLE = all(is_installed(name) for name in ("onnx", "onnxcon
 _STRONG_TYPING_MAJOR = 11
 
 #: Oldest TensorRT major an INT8 engine is built on. INT8 engines are strongly typed builds of an explicitly quantized
-#: graph; 10.16, 11.3 and 11.4 are the only releases this was measured on (issue #1024). Earlier majors are refused
-#: rather than assumed to work; the 10.x releases before 10.16 are admitted but untested.
+#: graph (issue #1024). Earlier majors are refused rather than assumed to work; the releases from 10 on that were not
+#: measured with every step of the export are admitted with a warning (:data:`_INT8_OLDEST_MEASURED_TENSORRT`).
 _INT8_MIN_TENSORRT_MAJOR = 10
 
-#: The oldest measured TensorRT release: an INT8 build on a 10.x release before ``(10, 16)`` is warned about rather
-#: than refused.
-_INT8_OLDEST_MEASURED_TENSORRT = (10, 16)
+#: The oldest TensorRT release the whole INT8 export was measured on. The detection placement was also measured on
+#: 10.16 and 11.3, but the norm smoothing and MLP bias correction every detection export applies, and the segmentation
+#: and keypoint models, only on 11.4, so an INT8 build on any release before ``(11, 4)`` is warned about rather than
+#: refused.
+_INT8_OLDEST_MEASURED_TENSORRT = (11, 4)
 
 #: The newest measured TensorRT major: an INT8 build on a major above 11 is warned about rather than refused.
 _INT8_NEWEST_MEASURED_TENSORRT_MAJOR = 11
@@ -1022,9 +1024,11 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     def _warn_if_int8_is_unmeasured(self) -> None:
         """Warn when an INT8 build leaves the TensorRT releases and settings its accuracy and speed were measured with.
 
-        Those are TensorRT 10.16, 11.3 and 11.4, with neither ``version_compatible`` nor ``hardware_compatibility``.
-        Outside them the engine still builds and runs, and the failures the measurements turned up built cleanly too, so
-        the request is honoured with a warning rather than refused.
+        Those are TensorRT 11.4, with neither ``version_compatible`` nor ``hardware_compatibility``; a later 11.x
+        release is not warned about. The detection placement was also measured on 10.16 and 11.3, but the norm smoothing
+        and MLP bias correction, and the segmentation and keypoint models, only on 11.4. Outside them the engine still
+        builds and runs, and the failures the measurements turned up built cleanly too, so the request is honoured with
+        a warning rather than refused.
         """
         try:
             import tensorrt as trt_module
@@ -1048,11 +1052,11 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             reasons.append(f"trt_hardware_compatibility={self.config.hardware_compatibility!r}")
         if reasons:
             logger.warning(
-                "TensorRT quantization='int8' was measured on TensorRT 10.16, 11.3 and 11.4 without "
+                "TensorRT quantization='int8' was measured on TensorRT 11.4 (on 10.16 and 11.3 only the detection "
+                "placement, without the norm smoothing and MLP bias correction) and without "
                 f"trt_version_compatible or trt_hardware_compatibility; this build uses {' and '.join(reasons)}. The "
-                "engine may build and "
-                "still lose accuracy or speed: compare its COCO AP and latency with the FP16 engine before relying on "
-                "it."
+                "engine may build and still lose accuracy or speed: compare its COCO AP and latency with the FP16 "
+                "engine before relying on it."
             )
 
     def _check_portability(self) -> None:

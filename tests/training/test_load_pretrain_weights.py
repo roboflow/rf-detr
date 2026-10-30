@@ -19,6 +19,7 @@ replaced the two prior separate implementations (``detr.py:_load_pretrain_weight
 ``module_model.py:RFDETRModelModule._load_pretrain_weights``).
 """
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
@@ -42,6 +43,7 @@ from rfdetr.config import (
     TrainConfig,
 )
 from rfdetr.models.weights import load_pretrain_weights
+from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -191,6 +193,31 @@ class TestLoadPretrainWeightsSecondReinit:
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
         assert mc.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
+
+    def test_keep_and_resize_warning_agrees_with_loader_behaviour(self, monkeypatch, caplog):
+        """The real validator's "Keeping num_classes" warning matches the head the loader leaves behind.
+
+        Every other loader test stubs the validator, so the message and the loader's keep-and-resize decision are
+        otherwise pinned only separately. Here a 91-row checkpoint is loaded with an explicit ``num_classes=93`` through
+        the real validator: if the loader's decision ever changes without the message, one of the two assertions fails.
+        """
+        mc = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=93)
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["args"].patch_size = mc.patch_size
+        monkeypatch.setattr(
+            "rfdetr.models.weights.validate_checkpoint_compatibility", validate_checkpoint_compatibility
+        )
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        fake_model = MagicMock()
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            load_pretrain_weights(fake_model, mc)
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr"]
+        assert any("Keeping num_classes=93" in msg for msg in warning_msgs), warning_msgs
+        assert fake_model.reinitialize_detection_head.call_args_list == [call(91), call(94)]
+        assert mc.num_classes == 93
 
     # All non-deprecated model configs (RFDETRLargeDeprecatedConfig and
     # RFDETRBaseConfig are excluded; the former is deprecated, the latter

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 import torch
 
 from rfdetr._prediction.core import PredictionContext, predict
-from rfdetr._prediction.types import _PredictionInput
+from rfdetr._prediction.types import _PredictionInput, _ThresholdInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -90,7 +90,7 @@ class RFDETRInference:
             runtime_options: Settings for an exported artifact's runtime. Each format reads only its own keys and
                 raises ``ValueError`` for any other: TensorRT takes ``cuda_graph``, ``engine_host_code_allowed`` and
                 ``verbose`` (each a ``bool``); OpenVINO takes ``cache_dir``, ``inference_precision`` and ``config``;
-                the other formats take none.
+                TFLite and LiteRT take ``num_threads`` (a positive ``int``); the other formats take none.
 
         Raises:
             FileNotFoundError: If the artifact or metadata file is missing.
@@ -183,7 +183,7 @@ class RFDETRInference:
     def predict(
         self,
         images: _PredictionInput,
-        threshold: float = 0.5,
+        threshold: _ThresholdInput = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
@@ -203,7 +203,13 @@ class RFDETRInference:
                 concurrently. YouTube URLs and ``screen`` capture require the optional ``rfdetr[stream]``
                 dependencies. String sources are downloaded, opened or expanded without size or host limits, so pass
                 only trusted strings.
-            threshold: Minimum confidence for a result.
+            threshold: The confidence score a detection must exceed to be kept. A single float applies to every class.
+                A :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies
+                each class's own threshold to its detections, so that a class the model finds less reliably can be
+                held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:
+                the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection
+                of that class.
             shape: Input height and width; exports require their recorded shape.
             patch_size: Backbone patch size for shape validation.
             include_source_image: Store RGB source pixels in each result.
@@ -221,7 +227,9 @@ class RFDETRInference:
             A generator with stream enabled, otherwise a scalar image result or a list.
 
         Raises:
-            ValueError: If shape, batch, stride, buffer, capture, or runtime limits are violated.
+            TypeError: If ``threshold`` is neither a number nor a sequence of numbers.
+            ValueError: If shape, batch, stride, buffer, capture, or runtime limits are violated, or if a ``threshold``
+                sequence is not one-dimensional, differs in length from ``class_names`` or holds a NaN.
             FileNotFoundError: If a local file is missing or a directory/glob contains no supported media.
             ImportError: If a source needs the optional ``rfdetr[stream]`` dependencies and they are not installed.
 

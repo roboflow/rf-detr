@@ -33,7 +33,8 @@ except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
 from rfdetr._prediction.sources import is_expanded_source, iter_source_batches
-from rfdetr._prediction.types import _ImageInput, _PredictionInput
+from rfdetr._prediction.thresholds import _class_thresholds
+from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
@@ -373,7 +374,7 @@ def _as_collection(images: _PredictionInput) -> _PredictionInput:
 def predict(
     context_factory: Callable[[], PredictionContext],
     images: _PredictionInput,
-    threshold: float = 0.5,
+    threshold: _ThresholdInput = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,
     include_source_image: bool = True,
@@ -395,7 +396,9 @@ def predict(
     Args:
         context_factory: Read current execution rules when an inference batch starts.
         images: Image data, paths, collections, videos, or live sources.
-        threshold: Minimum confidence for a result.
+        threshold: The confidence score a detection must exceed to be kept. A single float applies to every class. A
+            :class:`~rfdetr.ClassThresholds` applies each class's own threshold to its detections and leaves out every
+            detection that belongs to no entry of ``class_names``.
         shape: Input height and width.
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store source pixels in each result.
@@ -418,6 +421,10 @@ def predict(
     # An explicit batch splits an eager image list; an empty list keeps its single-batch error below.
     bounded_image_list = batch is not None and isinstance(images, (list, tuple)) and len(images) > 0
     if stream or bounded_image_list or is_expanded_source(images):
+        # The generator below starts only at its first `next()`, after it has opened its source and decoded a batch, so
+        # a threshold the model cannot apply is refused here, when `predict` is called. Every batch checks it again
+        # against its own context, which a live model may have changed in between.
+        _class_thresholds(threshold, context_factory())
         if batch is None:
             # A BCHW tensor already is one batch; split it only when the caller bounds the batch size.
             batch = max(images.shape[0], 1) if isinstance(images, torch.Tensor) and images.ndim == 4 else 1
@@ -441,7 +448,7 @@ def predict(
 def _predict_stream(
     context_factory: Callable[[], PredictionContext],
     images: _PredictionInput,
-    threshold: float,
+    threshold: _ThresholdInput,
     shape: tuple[int, int] | None,
     patch_size: int | None,
     include_source_image: bool,
@@ -461,7 +468,7 @@ def _predict_stream(
     Args:
         context_factory: Read current execution rules when a batch starts.
         images: Image data, paths, collections, videos, or live sources.
-        threshold: Minimum confidence for a result.
+        threshold: A single confidence threshold, or a ``ClassThresholds``; see :func:`predict`.
         shape: Input height and width.
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store source pixels in each result.
@@ -500,7 +507,7 @@ def _predict_stream(
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
     images: _PredictionInput | list[_ImageInput],
-    threshold: float,
+    threshold: _ThresholdInput,
     shape: tuple[int, int] | None,
     patch_size: int | None,
     include_source_image: bool,
@@ -512,7 +519,11 @@ def _predict_batch(
         context_factory: Read execution and decoding rules for this batch.
         images: An image, file path, URL string, or list or tuple of those inputs. PIL and file inputs convert to
             grayscale for one-channel models and RGB for three-channel models; arrays and tensors supply their channels.
-        threshold: Minimum confidence for a result.
+        threshold: The confidence score a detection must exceed to be kept. A single float applies to every class. A
+            :class:`~rfdetr.ClassThresholds` applies each class's own threshold to its detections, so that a class the
+            model finds less reliably can be held to a different bar. It leaves out every detection that belongs to no
+            entry of ``class_names``: the no-object slot of a fine-tuned model, the background slot of a legacy keypoint
+            checkpoint, and the unused category IDs of a pretrained COCO model.
         shape: Input height and width.
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
@@ -522,9 +533,14 @@ def _predict_batch(
         One Supervision result or a list matching the input container.
 
     Raises:
+        TypeError: If ``threshold`` is neither a number nor a ``ClassThresholds``, such as a list or a ``dict``.
         ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
-            or patch size is invalid or conflicts with an export's fixed shape, or an input fails range or channel
-            validation.
+            or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
+            validation, ``threshold`` is NaN, or a ``ClassThresholds`` does not fit the model: it names a class that
+            ``class_names`` does not hold, has a different number of entries than ``class_names``, or is given to a
+            model without classes. A ``ClassThresholds`` also raises when the export's ``class_id_to_name`` does not
+            match ``class_names`` (more ids than names, names in another order, or an id outside
+            ``0..num_classes``).
     """
     from supervision import Detections, KeyPoints
 
@@ -560,6 +576,9 @@ def _predict_batch(
         shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
         if context.fixed_shape and shape != context.default_shape:
             raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
+
+    # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused.
+    score_floor, threshold_by_class_id = _class_thresholds(threshold, context)
 
     if context.prepare is not None:
         context.prepare()
@@ -762,28 +781,49 @@ def _predict_batch(
 
     predictions = context.run(batch_tensor)
     target_sizes = torch.tensor(orig_sizes, device=context.device)
-    results = context.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
+    # `score_floor` is the single threshold, or the lowest per-class one, the loosest bound: the pre-filter in
+    # ``postprocess`` then never drops a row that the per-class filter below keeps.
+    results = context.postprocess(predictions, target_sizes=target_sizes, score_threshold=score_floor)
 
     _class_id_to_name = context.class_id_to_name
     num_logit_slots = context.num_classes
     _is_legacy_bgfirst_keypoint = _is_bg_first_schema(context.num_keypoints_per_class)
+    # Rounded to the score dtype on the CPU, once: the float form rounds `t` to the score dtype, so `[t] * n` then
+    # compares exactly as `t` does, where a float32 table would compare a float16 score at float32 precision (or a
+    # float64 score at float32 precision). On CUDA the copy is non-blocking, so it adds no stream synchronization;
+    # other accelerators copy synchronously, as the images do.
+    label_thresholds = (
+        None
+        if threshold_by_class_id is None
+        else threshold_by_class_id.to(results[0]["scores"].dtype).to(
+            context.device, non_blocking=context.device.type == "cuda"
+        )
+    )
     predictions_list: list[_PredictionResult] = []
     for i, result in enumerate(results):
         scores = result["scores"]
         labels = result["labels"]
         boxes = result["boxes"]
 
-        # INVARIANT: this predicate must stay identical (same operator and threshold) to the
-        # pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`), which is
-        # fed `score_threshold=threshold` above. The seg path drops below-threshold masks before
-        # upsampling on the strength of that match; diverging here (e.g. `>=`, per-class, top-k)
-        # would make it silently drop rows this filter keeps — a behaviour change with no failing test.
+        # INVARIANT: the pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`) must keep
+        # every row this predicate may keep, and use the same operator: it is fed `score_threshold=score_floor`
+        # above, which is the single threshold, or the lowest per-class threshold. With per-class thresholds this
+        # predicate can drop rows that the lowest-threshold pre-filter admits, never the reverse, so the pre-filter may
+        # be looser but never stricter. The seg path drops below-threshold masks before upsampling on the strength of
+        # that match; a stricter pre-filter, or a different operator here (e.g. `>=`, top-k), would make it
+        # silently drop rows this filter keeps — a behaviour change with no failing test.
         # Materialized as an index vector (not a bool mask) so the bool-mask advanced-indexing
         # sync below runs once per image instead of once per kept tensor: `t[bool_mask]` re-derives
         # its output size via `nonzero(bool_mask)` on every call (a documented CUDA host-device
         # sync), while `t[int64_index]` is index_select-shaped and needs no further sync. Row order
         # is unaffected — `nonzero` returns ascending indices, identical to bool-mask selection order.
-        keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
+        if label_thresholds is None:
+            keep_idx = (scores > score_floor).nonzero(as_tuple=True)[0]
+        else:
+            # -1 and every id past the table read the trailing inf sentinel. Clamping only the top would let an
+            # id below -1 wrap around in Python indexing and read another class's threshold.
+            row_thresholds = label_thresholds[labels.clamp(min=-1, max=label_thresholds.numel() - 1)]
+            keep_idx = (scores > row_thresholds).nonzero(as_tuple=True)[0]
         scores = scores[keep_idx]
         labels = labels[keep_idx]
         boxes = boxes[keep_idx]
