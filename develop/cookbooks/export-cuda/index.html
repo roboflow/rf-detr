@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T15:06:27">
+  <meta property="article:modified_time" content="2026-10-30T16:47:43">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T15:06:27",
+    "dateModified": "2026-10-30T16:47:43",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -6047,7 +6047,8 @@ display(
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="8-tensorrt-int8">8. TensorRT INT8<a class="anchor-link" href="#8-tensorrt-int8">¶</a></h2><p><code>quantization="int8"</code> builds an engine that runs most of the backbone and decoder matrix multiplies in INT8 and the rest in
 FP16. It is <em>static</em> quantization: the export runs <code>calibration_data</code> through the FP32 graph with onnxruntime and records each
-quantized tensor's largest absolute value, so the calibration images decide the engine's accuracy and must look like
+quantized tensor's largest absolute value (for a detection model it also smooths the backbone norms and corrects the
+backbone MLP biases on the same images), so the calibration images decide the engine's accuracy and must look like
 what the model will see in deployment. Out-of-domain images give an engine that loads, runs and is quietly less accurate.
 Detection, segmentation and keypoint models; the batch is static (<code>dynamic_batch=True</code> is refused) and <code>fp16=True</code>. See the
 <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#int8">INT8 section of the TensorRT export docs</a> for what stays FP16 and why.</p>
@@ -6628,7 +6629,7 @@ batch-8 row is the cost of one image. AP is scored at batch 1 only. Set <code>BE
 as the docs tables do (delete <code>int8_bench/engines</code> first if you built engines with another setting, because a rerun reuses them): it parses the 450 MB <code>instances_train2017.json</code> that Section 7 already extracted and downloads
 <code>N_CALIB</code> images from <code>train2017</code>. Nine models at three batches build 54 engines, and the INT8 builds calibrate on the
 CPU, which takes minutes each on Colab's two vCPUs and host memory that grows with the batch. The numbers depend on
-the GPU and the TensorRT version, which are printed with the results; the docs tables used TensorRT 11.4.0.106, except the Tesla T4 detection rows (10.16.1.11).</p>
+the GPU and the TensorRT version, which are printed with the results; the docs tables used TensorRT 11.4.0.106.</p>
 </div>
 </div>
 </div>
@@ -7878,7 +7879,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 15:06:27 UTC">2026-10-30 15:06:27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 16:47:43 UTC">2026-10-30 16:47:43</span>
   </span>
 
     
