@@ -78,7 +78,7 @@ print(sv.mask_to_polygons(detections.mask[0]))  # polygon outline of the first i
 print(detections.area)  # per-instance pixel area, computed from the masks
 ```
 
-Instances scoring below `threshold` are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. With a list of per-class thresholds (see [Set a confidence threshold for each class](detection.md#set-a-confidence-threshold-for-each-class)), the lowest entry sets only the mask pre-filter cut-off before upsampling; each instance is then filtered by its own class's threshold. Use `sv.MaskAnnotator` to draw filled masks, `sv.PolygonAnnotator` to draw outlines only, or `sv.BoxAnnotator` to overlay the boxes as well.
+Instances scoring below `threshold` are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. With per-class thresholds (a `ClassThresholds`, see [Set a confidence threshold for each class](detection.md#set-a-confidence-threshold-for-each-class)), the lowest of them sets only the mask pre-filter cut-off before upsampling; each instance is then filtered by its own class's threshold. Use `sv.MaskAnnotator` to draw filled masks, `sv.PolygonAnnotator` to draw outlines only, or `sv.BoxAnnotator` to overlay the boxes as well.
 
 ### Preprocessing and inference backends
 

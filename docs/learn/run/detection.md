@@ -94,24 +94,23 @@ detections = predictor.predict("image.jpg")
 
 ## Set a confidence threshold for each class
 
-One `threshold` holds every class to the same bar, but a trained model rarely finds all classes equally well: for some classes the scores of correct detections and of false positives overlap more than for others. Pass a sequence with one threshold per entry of `model.class_names`, in the same order, and `predict()` keeps a detection when its score exceeds the threshold of its own class:
+One `threshold` holds every class to the same bar, but a trained model rarely finds all classes equally well: for some classes the scores of correct detections and of false positives overlap more than for others. Pass a `ClassThresholds` instead, and `predict()` keeps a detection when its score exceeds the threshold of its own class. Name the classes that need their own bar; every other class takes `default`:
 
 ```python
-from rfdetr import RFDETRSmall
+from rfdetr import ClassThresholds, RFDETRSmall
 
 model = RFDETRSmall()
 
-# One threshold per entry of `model.class_names`, in the same order.
-thresholds = [0.5] * len(model.class_names)
-thresholds[model.class_names.index("person")] = 0.35
-thresholds[model.class_names.index("traffic light")] = 0.6
+thresholds = ClassThresholds({"person": 0.35, "traffic light": 0.6}, default=0.5)
 
 detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=thresholds)
 ```
 
-- The sequence must hold exactly `len(model.class_names)` entries, otherwise `predict()` raises a `ValueError` before it runs the model. It raises the same error for a NaN entry; use `float("inf")` to drop a class. A list, tuple, [NumPy](https://pypi.org/project/numpy/) array or tensor works, and a `dict` keyed by class name is refused with a `TypeError`.
-- The comparison is strict, like the single-float form, so `[t] * len(model.class_names)` keeps exactly the detections of the listed classes that `t` keeps.
-- A sequence drops detections that belong to no entry of `model.class_names`: the no-object slot of a fine-tuned model and the unused category IDs of a pretrained COCO model. A single float keeps them.
+- A name that is not in `model.class_names` raises a `ValueError` that lists the valid names, before the model runs. A NaN raises a `ValueError` when the `ClassThresholds` is built; use `float("inf")` to drop a class.
+- `ClassThresholds` also takes one threshold per entry of `model.class_names`, in the same order, as a list, tuple, [NumPy](https://pypi.org/project/numpy/) array or tensor: `ClassThresholds([0.4, 0.55, 0.45])`. It must hold exactly `len(model.class_names)` entries.
+- `threshold` takes a single number or a `ClassThresholds`. A plain list or `dict` raises a `TypeError` that points to `ClassThresholds`, since a `dict` alone says nothing about the classes it leaves out.
+- The comparison is strict, like the single-number form, so a `ClassThresholds` that gives every class `t` keeps exactly the detections of the listed classes that `t` keeps.
+- A `ClassThresholds` drops detections that belong to no entry of `model.class_names`: the no-object slot of a fine-tuned model and the unused category IDs of a pretrained COCO model. A single number keeps them.
 - Segmentation and keypoint models take the same argument. For keypoint models the thresholds apply to `key_points.detection_confidence`.
 
 The [per-class confidence thresholds cookbook](../../../cookbooks/per-class-confidence-thresholds/) shows how to choose the values from held-out images, and measures when a list of thresholds beats a single one and when it does not.

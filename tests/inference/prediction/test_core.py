@@ -23,7 +23,7 @@ import supervision as sv
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-from rfdetr import RFDETRInference, RFDETRNano, RFDETRSegNano
+from rfdetr import ClassThresholds, RFDETRInference, RFDETRNano, RFDETRSegNano
 from rfdetr._prediction import core
 from rfdetr.detr import RFDETR
 from rfdetr.models.postprocess import PostProcess
@@ -321,7 +321,7 @@ class TestPerClassThresholdValidation:
         context = replace(model._prediction_context(), class_id_to_name=class_id_to_name, num_classes=3)
 
         with pytest.raises(ValueError, match=message):
-            core.predict(lambda: context, _PER_CLASS_IMAGE, threshold=[0.5, 0.5, 0.5])
+            core.predict(lambda: context, _PER_CLASS_IMAGE, threshold=ClassThresholds([0.5, 0.5, 0.5]))
 
         assert batches == []
 
@@ -330,8 +330,8 @@ class TestPerClassThresholdValidation:
     ) -> None:
         """A single float never reads the class-id map, so the check cannot regress scalar-threshold artifacts.
 
-        The same unordered, out-of-range map that refuses a list is harmless to the float form, which compares every
-        score with one number. An export that predicts today with ``threshold=0.5`` must keep doing so.
+        The same unordered, out-of-range map that refuses a ``ClassThresholds`` is harmless to the float form, which
+        compares every score with one number. An export that predicts today with ``threshold=0.5`` must keep doing so.
         """
         model, batches = scored_model
         context = replace(model._prediction_context(), class_id_to_name={0: "b", 1: "a", 10**9: "c"}, num_classes=3)
@@ -352,10 +352,9 @@ class TestPerClassThresholdValidation:
     def test_nan_single_threshold_raises_before_inference(
         self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]], threshold: Any
     ) -> None:
-        """A NaN single threshold is refused, as a NaN entry of a list is, instead of silently emptying every result.
+        """A NaN single threshold is refused, as a NaN in ``ClassThresholds`` is, instead of silently emptying results.
 
-        No score is above NaN, so ``scores > nan`` kept nothing and said nothing. The list form already raises for the
-        same value; the float form now does too, before the model runs.
+        No score is above NaN, so ``scores > nan`` kept nothing and said nothing.
         """
         model, batches = scored_model
 
@@ -364,41 +363,29 @@ class TestPerClassThresholdValidation:
 
         assert batches == []
 
-    @pytest.mark.parametrize(
-        "threshold",
-        [
-            pytest.param(["0.5", "0.5", "0.5"], id="str-entries"),
-            pytest.param([None, 0.5, 0.5], id="none-entry"),
-            pytest.param([b"0.5", 0.5, 0.5], id="bytes-entry"),
-            pytest.param(np.array(["0.5", "0.5", "0.5"]), id="str-ndarray"),
-            pytest.param([np.array("0.5"), 0.5, 0.5], id="0-d-str-ndarray-entry"),
-        ],
-    )
-    def test_non_numeric_entry_raises_before_inference(
-        self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]], threshold: Any
-    ) -> None:
-        """An entry that is not a number is refused with the single threshold's message, not coerced or leaked.
-
-        ``float("0.5")`` used to turn a list of strings into thresholds although the string ``"0.5"`` alone is refused,
-        and ``None`` surfaced as ``float()``'s own ``TypeError``.
-        """
-        model, batches = scored_model
-
-        with pytest.raises(TypeError, match="float or a one-dimensional sequence of floats"):
-            model.predict(_PER_CLASS_IMAGE, threshold=threshold)
-
-        assert batches == []
-
-    def test_ragged_threshold_raises_before_inference(
+    def test_unknown_class_name_raises_before_inference(
         self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]]
     ) -> None:
-        """A ragged list is refused with the project's message instead of NumPy's inhomogeneous-shape error."""
+        """A class name the model does not have is refused before the network runs, with the model's class names."""
         model, batches = scored_model
 
-        with pytest.raises(ValueError, match="ragged"):
-            model.predict(_PER_CLASS_IMAGE, threshold=[[0.5, 0.5], [0.5]])
+        with pytest.raises(ValueError, match=r"names \['d'\], which the model does not have"):
+            model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds({"d": 0.5}))
 
         assert batches == []
+
+    def test_named_classes_keep_their_own_threshold_and_others_take_the_default(
+        self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]]
+    ) -> None:
+        """Class ``"b"`` needs > 0.4 and the unnamed classes ``"a"`` and ``"c"`` take the default 0.65.
+
+        That keeps the two detections of class ``"b"`` and the class ``"a"`` and ``"c"`` detections scored 0.9 and 0.7.
+        """
+        model, _ = scored_model
+
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds({"b": 0.4}, default=0.65))
+
+        assert detections.class_id.tolist() == [0, 1, 2, 1]
 
     @pytest.mark.parametrize(
         "entries",
@@ -415,56 +402,42 @@ class TestPerClassThresholdValidation:
     def test_entries_may_be_any_number_a_single_threshold_may_be(
         self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]], entries: list[Any]
     ) -> None:
-        """The entries of a list are held to the types the single threshold takes, so those types all work."""
+        """``ClassThresholds`` entries take every type the single threshold takes."""
         model, _ = scored_model
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=entries)
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds(entries))
 
         assert detections.class_id.tolist() == [0, 1, 2, 1]
 
     def test_bool_entries_count_as_numbers_like_a_bool_single_threshold(
         self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]]
     ) -> None:
-        """``False`` is the threshold 0.0 and ``True`` is 1.0, in a list as in the single form.
+        """``False`` is the threshold 0.0 and ``True`` is 1.0, per class as in the single form.
 
-        The single threshold accepts a bool, so rejecting it only inside a list would make the two forms disagree.
-        ``True`` drops class 1 (no score reaches 1.0) and ``False`` keeps every detection of classes 0 and 2.
+        The single threshold accepts a bool, so rejecting it only per class would make the two forms disagree. ``True``
+        drops class 1 (no score reaches 1.0) and ``False`` keeps every detection of classes 0 and 2.
         """
         model, _ = scored_model
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=[False, True, False])
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([False, True, False]))
 
         assert detections.class_id.tolist() == [0, 2, 0, 2]
 
-    def test_sequence_for_a_model_without_classes_raises_before_inference(
+    def test_class_thresholds_for_a_model_without_classes_raises_before_inference(
         self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]]
     ) -> None:
-        """An empty list for a model without classes is refused up front, not by ``min()`` after the forward pass.
+        """Per-class thresholds for a model without classes are refused before the network runs.
 
-        ``[]`` has as many entries as the zero classes, so the length check passes; the lowest threshold, which the mask
-        pre-filter needs, is then the minimum of nothing.
+        ``ClassThresholds([])`` has as many entries as the zero classes; the lowest threshold, which the mask pre-filter
+        needs, would then be the minimum of nothing.
         """
         model, batches = scored_model
         context = replace(model._prediction_context(), class_names=[], class_id_to_name={}, num_classes=0)
 
         with pytest.raises(ValueError, match="no classes"):
-            core.predict(lambda: context, _PER_CLASS_IMAGE, threshold=[])
+            core.predict(lambda: context, _PER_CLASS_IMAGE, threshold=ClassThresholds([]))
 
         assert batches == []
-
-    def test_tensor_that_requires_grad_is_read_without_a_warning(self) -> None:
-        """A tensor of thresholds that requires grad is converted to floats without PyTorch's scalar warning.
-
-        Reading it one element at a time with ``float()`` warned once per class; a single ``detach().cpu().tolist()``
-        does not, and on CUDA it is one device-to-host copy instead of one per class.
-        """
-        threshold = torch.tensor([0.7, 0.4, 0.6], requires_grad=True)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            values = core._per_class_thresholds(threshold, 3)
-
-        assert values == pytest.approx([0.7, 0.4, 0.6])
 
     def test_integer_tensor_is_read_as_thresholds(self, scored_model: tuple[_DummyRFDETR, list[torch.Tensor]]) -> None:
         """A tensor of integers converts to integers, which are numbers like any other threshold.
@@ -473,41 +446,13 @@ class TestPerClassThresholdValidation:
         """
         model, _ = scored_model
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=torch.tensor([1, 0, 1]))
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds(torch.tensor([1, 0, 1])))
 
         assert detections.class_id.tolist() == [1, 1]
 
-    @pytest.mark.parametrize(
-        "to_array",
-        [
-            pytest.param(np.array, id="ndarray"),
-            pytest.param(torch.tensor, id="tensor"),
-            pytest.param(
-                lambda rows: [[torch.tensor(value, requires_grad=True) for value in row] for row in rows],
-                id="nested-list-of-tensors-requiring-grad",
-            ),
-        ],
-    )
-    def test_two_dimensional_array_is_refused_before_conversion(
-        self,
-        scored_model: tuple[_DummyRFDETR, list[torch.Tensor]],
-        to_array: Callable[[list[list[float]]], Any],
-    ) -> None:
-        """A nested array is refused before it is turned into a list, as a nested list is.
-
-        ``tolist()`` of a two-dimensional array is a list of lists; the dimension check has to run first so that the
-        conversion never hides a shape that is not one threshold per class.
-        """
-        model, batches = scored_model
-
-        with pytest.raises(ValueError, match="one-dimensional"):
-            model.predict(_PER_CLASS_IMAGE, threshold=to_array([[0.5, 0.5, 0.5]]))
-
-        assert batches == []
-
 
 class TestPredictPerClassThreshold:
-    """``predict(threshold=[...])`` keeps a detection when its score exceeds the threshold of its own class (#1626)."""
+    """``predict(threshold=ClassThresholds(...))`` keeps a detection whose score exceeds its own class threshold."""
 
     #: Two detections of every class, scored 0.9 .. 0.4 in label order, so a threshold looked up for the wrong
     #: class changes which rows survive.
@@ -518,7 +463,7 @@ class TestPredictPerClassThreshold:
         """Class 0 needs > 0.7, class 1 > 0.4 and class 2 > 0.6, which keeps four of the six detections."""
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=[0.7, 0.4, 0.6])
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.7, 0.4, 0.6]))
 
         assert detections.class_id.tolist() == [0, 1, 2, 1]
         np.testing.assert_allclose(detections.confidence, [0.9, 0.8, 0.7, 0.5])
@@ -527,7 +472,7 @@ class TestPredictPerClassThreshold:
         """The comparison is strict, like the float form's ``score > threshold``."""
         model = _make_scored_model([0, 1], [0.5, 0.75], class_names=["a", "b"])
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=[0.5, 0.5])
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.5, 0.5]))
 
         assert detections.class_id.tolist() == [1]
 
@@ -535,7 +480,7 @@ class TestPredictPerClassThreshold:
         """``[t] * n`` selects exactly the rows ``t`` selects."""
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
-        from_list = model.predict(_PER_CLASS_IMAGE, threshold=[0.55] * 3)
+        from_list = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.55] * 3))
         from_float = model.predict(_PER_CLASS_IMAGE, threshold=0.55)
 
         assert from_list.class_id.tolist() == from_float.class_id.tolist() == [0, 1, 2, 0]
@@ -549,7 +494,7 @@ class TestPredictPerClassThreshold:
         would be created on it instead of on the CPU.
         """
         with torch.device("meta"):
-            table = core._threshold_by_class_id([0.25, 0.75], {3: "b", 1: "a"})
+            table = ClassThresholds._by_class_id([0.25, 0.75], {3: "b", 1: "a"})
 
         assert (table.device.type, table.dtype) == ("cpu", torch.float64)
 
@@ -576,7 +521,7 @@ class TestPredictPerClassThreshold:
         """
         model = _make_scored_model([0], [score], class_names=["a"], score_dtype=score_dtype)
 
-        from_list = model.predict(_PER_CLASS_IMAGE, threshold=[0.4001])
+        from_list = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.4001]))
         from_float = model.predict(_PER_CLASS_IMAGE, threshold=0.4001)
 
         assert len(from_float) == expected_kept
@@ -594,7 +539,7 @@ class TestPredictPerClassThreshold:
         """A tuple, array or tensor of thresholds behaves like the list."""
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=to_array([0.7, 0.4, 0.6]))
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds(to_array([0.7, 0.4, 0.6])))
 
         assert detections.class_id.tolist() == [0, 1, 2, 1]
 
@@ -613,23 +558,9 @@ class TestPredictPerClassThreshold:
 
         with model.model.model.register_forward_pre_hook(_record_model_inputs(batches)):
             with pytest.raises(ValueError, match=rf"{len(threshold)} entries.*3 classes"):
-                model.predict(_PER_CLASS_IMAGE, threshold=threshold)
+                model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds(threshold))
 
         assert batches == []
-
-    @pytest.mark.parametrize(
-        "threshold",
-        [
-            pytest.param([float("nan"), 0.1, 0.1], id="first"),
-            pytest.param([0.1, 0.1, float("nan")], id="last"),
-        ],
-    )
-    def test_nan_threshold_raises(self, threshold: list[float]) -> None:
-        """A NaN would silently drop its class, and as the lowest entry it would empty a segmentation result."""
-        model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
-
-        with pytest.raises(ValueError, match="NaN"):
-            model.predict(_PER_CLASS_IMAGE, threshold=threshold)
 
     @pytest.mark.parametrize(
         ("threshold", "expected_class_ids"),
@@ -644,7 +575,7 @@ class TestPredictPerClassThreshold:
         """``inf`` is the documented way to drop a class, and ``-inf`` keeps every detection of one."""
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=threshold)
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds(threshold))
 
         assert detections.class_id.tolist() == expected_class_ids
 
@@ -657,33 +588,37 @@ class TestPredictPerClassThreshold:
         ]
 
         with patch.object(model.model, "postprocess", return_value=per_image):
-            first, second = model.predict([_PER_CLASS_IMAGE, _PER_CLASS_IMAGE], threshold=[0.5, 0.5, 0.95])
+            first, second = model.predict(
+                [_PER_CLASS_IMAGE, _PER_CLASS_IMAGE], threshold=ClassThresholds([0.5, 0.5, 0.95])
+            )
 
         assert (first.class_id.tolist(), second.class_id.tolist()) == ([0], [1])
-
-    def test_nested_thresholds_raise(self) -> None:
-        """A list of lists is not one threshold per class."""
-        model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
-
-        with pytest.raises(ValueError, match="one-dimensional"):
-            model.predict(_PER_CLASS_IMAGE, threshold=[[0.5, 0.5, 0.5]])
 
     @pytest.mark.parametrize(
         "threshold",
         [
             pytest.param({"a": 0.5}, id="dict-by-class-name"),
+            pytest.param([0.5, 0.5, 0.5], id="list"),
+            pytest.param(np.array([0.5, 0.5, 0.5]), id="1-d-ndarray"),
+            pytest.param(torch.tensor([0.5, 0.5, 0.5]), id="1-d-tensor"),
             "0.5",
             pytest.param({0.5}, id="set"),
             pytest.param(np.array("0.5"), id="0-d-str-ndarray"),
         ],
     )
-    def test_threshold_that_is_neither_a_number_nor_a_sequence_raises_before_inference(self, threshold: object) -> None:
-        """A dict keyed by class name is the natural wrong guess, and it must not fail inside the keep-filter."""
+    def test_threshold_that_is_neither_a_number_nor_class_thresholds_raises_before_inference(
+        self, threshold: object
+    ) -> None:
+        """A plain dict or list is refused with a pointer to ``ClassThresholds``, before the network runs.
+
+        A dict keyed by class name is the natural guess, but it says nothing about the classes it leaves out, so per-
+        class values go through ``ClassThresholds``, which carries that ``default``.
+        """
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
         batches: list[torch.Tensor] = []
 
         with model.model.model.register_forward_pre_hook(_record_model_inputs(batches)):
-            with pytest.raises(TypeError, match="float or a one-dimensional sequence of floats"):
+            with pytest.raises(TypeError, match="a number or a ClassThresholds"):
                 model.predict(_PER_CLASS_IMAGE, threshold=threshold)  # type: ignore[arg-type]
 
         assert batches == []
@@ -724,7 +659,7 @@ class TestPredictPerClassThreshold:
         lowest, highest = np.quantile(low.confidence, [0.1, 0.9])
         thresholds = np.random.default_rng(0).uniform(lowest, highest, len(model.class_names)).astype(np.float32)
 
-        kept = model.predict(_PER_CLASS_IMAGE, threshold=thresholds)
+        kept = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds(thresholds))
 
         expected = low[(indexes >= 0) & (low.confidence > thresholds[indexes])]
         assert 0 < len(kept) < len(low)
@@ -742,21 +677,19 @@ class TestPredictPerClassThreshold:
         """
         model = _make_scored_model([0, label_without_entry], [0.9, 0.9], class_names=["a", "b", "c"])
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=[0.1, 0.1, 0.1])
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.1, 0.1, 0.1]))
 
         assert detections.class_id.tolist() == [0]
 
     def test_pretrained_coco_thresholds_are_indexed_by_class_name_position(self) -> None:
-        """For COCO checkpoints the raw ids are sparse category ids, so the list is still indexed like ``class_names``.
+        """For COCO checkpoints the raw ids are sparse category ids, so thresholds still follow ``class_names``.
 
-        Category 18 is ``"dog"``, ``class_names[17]``. Reading the list by raw id would use ``class_names[18]``'s
-        threshold for it and keep the dog.
+        Category 18 is ``"dog"``, ``class_names[17]``. Laying the thresholds out by raw id would give the dog
+        ``class_names[18]``'s threshold and keep it.
         """
         model = _make_scored_model([1, 18, 3], [0.9, 0.9, 0.9], num_classes=90)
-        thresholds = [0.1] * len(model.class_names)
-        thresholds[model.class_names.index("dog")] = 0.95
 
-        detections = model.predict(_PER_CLASS_IMAGE, threshold=thresholds)
+        detections = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds({"dog": 0.95}, default=0.1))
 
         assert detections.data["class_name"].tolist() == ["person", "car"]
 
@@ -766,7 +699,7 @@ class TestPredictPerClassThreshold:
         model.model = _DummyModel(class_names=["person"], labels=[0, 1], include_keypoints=True)
         model.model.args = SimpleNamespace(num_classes=1, num_keypoints_per_class=[0, 17])
 
-        key_points = model.predict(_PER_CLASS_IMAGE, threshold=[0.5])
+        key_points = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.5]))
 
         assert key_points.data["class_name"].tolist() == ["person"]
 
@@ -775,7 +708,7 @@ class TestPredictPerClassThreshold:
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
         with patch.object(model.model, "postprocess", wraps=model.model.postprocess) as spy:
-            model.predict(_PER_CLASS_IMAGE, threshold=[0.7, 0.4, 0.6])
+            model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.7, 0.4, 0.6]))
 
         assert spy.call_args.kwargs["score_threshold"] == 0.4
 
@@ -788,7 +721,7 @@ class TestPredictPerClassThreshold:
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
         results = RFDETRInference(model).predict(
-            [_PER_CLASS_IMAGE, _PER_CLASS_IMAGE], threshold=[0.7, 0.4, 0.6], stream=True
+            [_PER_CLASS_IMAGE, _PER_CLASS_IMAGE], threshold=ClassThresholds([0.7, 0.4, 0.6]), stream=True
         )
 
         assert [result.class_id.tolist() for result in results] == [[0, 1, 2, 1], [0, 1, 2, 1]]
@@ -803,7 +736,9 @@ class TestPredictPerClassThreshold:
         batches: list[torch.Tensor] = []
 
         with model.model.model.register_forward_pre_hook(_record_model_inputs(batches)):
-            results = RFDETRInference(model).predict([_PER_CLASS_IMAGE] * 3, threshold=[0.7, 0.4, 0.6], batch=2)
+            results = RFDETRInference(model).predict(
+                [_PER_CLASS_IMAGE] * 3, threshold=ClassThresholds([0.7, 0.4, 0.6]), batch=2
+            )
 
         assert [len(batch) for batch in batches] == [2, 1]
         assert [result.class_id.tolist() for result in results] == [[0, 1, 2, 1]] * 3
@@ -818,7 +753,7 @@ class TestPredictPerClassThreshold:
         predictor = RFDETRInference(model)
 
         with pytest.raises(ValueError, match=r"1 entries.*3 classes"):
-            predictor.predict([_PER_CLASS_IMAGE], threshold=[0.5], stream=True)
+            predictor.predict([_PER_CLASS_IMAGE], threshold=ClassThresholds([0.5]), stream=True)
 
     def test_bad_threshold_with_stream_never_opens_the_source(self) -> None:
         """A NaN threshold with ``stream=True`` is refused before the source reader is created or a frame decoded."""
@@ -3375,7 +3310,7 @@ class TestPredictKeypointClassNameMapping:
         )
         model.model.args = SimpleNamespace(num_classes=2, num_keypoints_per_class=[17, 17])
 
-        key_points = model.predict(_PER_CLASS_IMAGE, threshold=[0.5, 0.95])
+        key_points = model.predict(_PER_CLASS_IMAGE, threshold=ClassThresholds([0.5, 0.95]))
 
         assert isinstance(key_points, sv.KeyPoints)
         assert key_points.data["class_name"].tolist() == ["person"]

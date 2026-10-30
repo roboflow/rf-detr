@@ -15,7 +15,7 @@ import torch
 from PIL import Image
 from supervision import Detections
 
-from rfdetr import RFDETRInference
+from rfdetr import ClassThresholds, RFDETRInference
 from rfdetr.detr import RFDETR
 from tests._markers import onnx_and_onnxruntime_only
 
@@ -281,7 +281,7 @@ class TestExportedPrediction:
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
 
-        result = model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=threshold)
+        result = model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=ClassThresholds(threshold))
 
         assert len(result) == kept
 
@@ -293,7 +293,7 @@ class TestExportedPrediction:
         model = RFDETRInference(path, metadata=metadata, device="cpu")
 
         with pytest.raises(ValueError, match="2 entries but the model has 1 classes"):
-            model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=[0.5, 0.5])
+            model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=ClassThresholds([0.5, 0.5]))
 
     @pytest.mark.parametrize(
         ("threshold", "expected_class_id", "expected_class_name"),
@@ -319,7 +319,7 @@ class TestExportedPrediction:
         path, metadata = exported_sparse_classes
         model = RFDETRInference(path, metadata=metadata, device="cpu")
 
-        result = model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=threshold)
+        result = model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=ClassThresholds(threshold))
 
         assert result.class_id.tolist() == [expected_class_id]
         assert list(result.data["class_name"]) == [expected_class_name]
@@ -332,7 +332,7 @@ class TestExportedPrediction:
         path, metadata = exported_segmentation
         model = RFDETRInference(path, metadata=metadata, device="cpu")
 
-        result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8), threshold=threshold)
+        result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8), threshold=ClassThresholds(threshold))
 
         assert (len(result), np.asarray(result.mask).shape) == (kept, (kept, 64, 96))
 

@@ -204,10 +204,10 @@ class RFDETRInference:
                 dependencies. String sources are downloaded, opened or expanded without size or host limits, so pass
                 only trusted strings.
             threshold: The confidence score a detection must exceed to be kept. A single float applies to every class.
-                A sequence of floats, one per entry of ``class_names`` and in the same order, applies each threshold to
-                the detections of its own class, so that a class the model finds less reliably can be held to a
-                different bar. A sequence leaves out every detection that belongs to no entry of ``class_names``: the
-                no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                A :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies
+                each class's own threshold to its detections, so that a class the model finds less reliably can be
+                held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:
+                the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
                 unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection
                 of that class.
             shape: Input height and width; exports require their recorded shape.

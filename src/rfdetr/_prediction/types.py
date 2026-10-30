@@ -6,12 +6,14 @@
 """Private type aliases for native and exported prediction inputs; annotations only, not exported API."""
 
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
 import torch
 from PIL import Image
+
+from rfdetr._prediction.thresholds import ClassThresholds
 
 #: Image data or a path to an image or expandable media source.
 _ImageInput: TypeAlias = str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor
@@ -19,8 +21,8 @@ _ImageInput: TypeAlias = str | os.PathLike[str] | Image.Image | np.ndarray[Any, 
 _PredictionSource: TypeAlias = _ImageInput | int
 #: Accepted scalar and iterable inputs to ``RFDETRInference.predict``; iterables are read into a list first.
 _PredictionInput: TypeAlias = _PredictionSource | Iterable[_PredictionSource]
-#: A single confidence threshold, or one threshold per class as a sequence, array or tensor.
-_ThresholdInput: TypeAlias = float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor
+#: A single confidence threshold for every class, or thresholds for individual classes.
+_ThresholdInput: TypeAlias = float | ClassThresholds
 
 if TYPE_CHECKING:
     # Supervision loads lazily at runtime, so the output aliases exist for type checkers only.

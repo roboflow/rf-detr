@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 import torch
 
+from rfdetr import ClassThresholds
+
 from .helpers import _BaseFakeRFDETR, _DummyModel
 
 pytestmark = [
@@ -102,7 +104,7 @@ class TestPredictCudaTransfer:
         thresholds = [0.5] * len(model.class_names)
         thresholds[2] = _TORN_READ_FILL + 1
 
-        detections = model.predict(img, threshold=thresholds)
+        detections = model.predict(img, threshold=ClassThresholds(thresholds))
 
         assert detections.class_id.tolist() == [1, 3]
 
