@@ -42,9 +42,12 @@ def script_or_eager(fn: Callable[..., Any]) -> Callable[..., Any]:
     """
     if sys.version_info >= (3, 14):
         return fn
+    # Import-time boundary: scripting a loss that reaches a replaced ``warnings.warn`` raises ``RuntimeError``,
+    # ``OSError`` (no retrievable source), ``TypeError`` (``functools.wraps`` wrapper) or ``SyntaxError`` (lambda
+    # wrapper). Eager is the documented equivalent, so any failure falls back instead of failing ``import rfdetr``.
     try:
         scripted: Callable[..., Any] = torch.jit.script(fn)
-    except (RuntimeError, torch.jit.frontend.FrontendError) as error:
+    except Exception as error:
         logger.debug("TorchScript compilation of %s failed, using the eager function: %s", fn.__qualname__, error)
         return fn
     return scripted
