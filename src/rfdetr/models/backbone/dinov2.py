@@ -161,15 +161,16 @@ class DinoV2(nn.Module):
 
             implied_resolution = positional_encoding_size * patch_size
             # `load_dinov2_weights` is False when RF-DETR pretrained weights overwrite the backbone or pretraining
-            # is disabled, so only warn when DINOv2 weights were requested.
+            # is disabled, so only warn when DINOv2 weights were requested. Snapshot before the checks below clear
+            # `load_dinov2_weights`, so each check sees the caller's request.
             dinov2_weights_requested = load_dinov2_weights
 
             if implied_resolution != dino_config["image_size"]:
                 if dinov2_weights_requested:
                     logger.warning(
                         "Using a different number of positional encodings than DINOv2, which means"
-                        " we're not loading DINOv2 backbone weights. This is not a problem if"
-                        " finetuning a pretrained RF-DETR model."
+                        " we're not loading DINOv2 backbone weights and the backbone starts from random"
+                        " initialization. Load pretrained RF-DETR weights or a checkpoint to initialize it."
                     )
                 dino_config["image_size"] = implied_resolution
                 load_dinov2_weights = False
@@ -178,8 +179,8 @@ class DinoV2(nn.Module):
                 if dinov2_weights_requested:
                     logger.warning(
                         f"Using patch size {patch_size} instead of 14, which means we're not loading"
-                        " DINOv2 backbone weights. This is not a problem if finetuning a pretrained"
-                        " RF-DETR model."
+                        " DINOv2 backbone weights and the backbone starts from random initialization."
+                        " Load pretrained RF-DETR weights or a checkpoint to initialize it."
                     )
                 dino_config["patch_size"] = patch_size
                 load_dinov2_weights = False
