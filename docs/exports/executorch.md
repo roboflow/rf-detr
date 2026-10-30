@@ -101,6 +101,31 @@ The `soc` parameter is required for QNN and must be a `QcomChipset` name matchin
 - **`dynamic_batch=True` is not supported.** The ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size. Export one `.pte` file per batch size instead (e.g. `batch_size=1` for single-image inference).
 - **QNN requires a source build.** The QNN backend is not available via the pip wheel; see the ExecuTorch documentation for source-build instructions against the QAIRT SDK.
 
+## Measured Latency on a Laptop CPU
+
+XNNPACK backend, Apple M4 Max CPU (arm64), `RFDETRSmall`, 5 warmup + 30 timed runs per row, `executorch==1.3.1`, one `.pte` per batch size, from the [mobile cookbook](../../cookbooks/export-mobile/). The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline). For the CoreML backend see [below](#measured-latency-on-apple-silicon).
+
+| Runtime | Precision | Quantization | Batch | forward [ms]  | end2end [ms]  | FPS [img/s] (end2end) | Memory [MB] |
+| ------- | --------- | ------------ | ----- | ------------- | ------------- | --------------------- | ----------- |
+| XNNPACK | fp32      | —            | 1     | 81.68 ± 3.31  | 80.74 ± 1.90  | 12.4                  | 140.2       |
+| XNNPACK | fp32      | —            | 4     | 313.56 ± 3.24 | 318.27 ± 6.67 | 12.6                  | 1075.7      |
+
+!!! warning "Earlier measurement, pending a rerun"
+
+    These rows were measured before the cookbook pinned one thread count for every runtime. Treat each row as a same-machine ratio, never as a phone latency: a phone's own delegate (NNAPI, Hexagon, Core ML) is not exercised.
+
+The XNNPACK program does not beat eager PyTorch on the machine that exported it (80.74 against 54.54 ms at batch 1): export formats exist for portability and on-device deployment without a Python runtime. The memory jump at batch 4 (1075.7 against 140.2 MB) is a full second program load in the same process, not a leak.
+
+## Measured Latency on Apple Silicon
+
+CoreML backend, Apple M4 Max, macOS 26.7.1, `RFDETRSmall`, 5 warmup + 30 timed runs per row, from the [Apple cookbook](../../cookbooks/export-apple/). Every latency is the end-to-end `predict()` call through `RFDETRInference`; `FPS` is images per second at that batch size. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed. The backend exports fp16 only.
+
+| Backend | Precision | b1 latency [ms] | Size [MB] | mAP@50:95 [%] | FPS b1 | FPS b4 | FPS b8 |
+| ------- | --------- | --------------- | --------- | ------------- | ------ | ------ | ------ |
+| CoreML  | fp16      | 24.4            | 58.2      | 56.5          | 41.0   | 49.1   | 83.0   |
+
+It matches [native CoreML fp16](coreml.md#measured-latency-on-apple-silicon) at batch 1 (24.4 ms) and is slower than native CoreML fp32 (12.7 ms). Another job ran on the machine during this measurement, so the batch-8 deviation is large (± 16.3 ms).
+
 ## Predict with RFDETRInference
 
 ```python
