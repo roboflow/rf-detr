@@ -275,7 +275,7 @@ def test_cuda_graph_replay_matches_eager_outputs_and_accumulated_gradients() -> 
 
 @pytest.mark.gpu
 @pytest.mark.skipif(sdpa_kernel is None, reason="torch.nn.attention.sdpa_kernel needs torch>=2.3")
-def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(tf32_disabled: None) -> None:
     """Real Nano capture must compose with its eager criterion, accumulation, and parameter updates.
 
     Parity is checked in strict fp32: capture changes kernel selection and reduction order against eager
@@ -284,8 +284,6 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(mon
     ``enc_out_bbox_embed`` head) well past bf16 precision, so a bf16 bound cannot separate a capture bug
     from rounding. TF32 is pinned off for the same reason. bf16 replay is covered by the tiny-model test.
     """
-    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", False)
-    monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", False)
     torch.manual_seed(0)
     model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")
     train_config = TrainConfig(dataset_dir="unused", drop_path=0.0)

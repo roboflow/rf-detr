@@ -26,6 +26,8 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 > Benchmark evaluated on COCO val2017 person keypoints (AP<sub>50:95</sub>) with the standard COCO 17-keypoint OKS sigmas; latency on NVIDIA T4, TensorRT FP16, batch size 1.
 
+--8<-- "docs/snippets/license-yolo-note.md"
+
 ## Run on an Image
 
 Perform inference on an image using the `rfdetr` package. `model.predict()` returns an [`sv.KeyPoints`](https://supervision.roboflow.com/latest/keypoint/core/) object containing skeleton coordinates and per-keypoint confidence scores for each detected person.
@@ -69,6 +71,10 @@ Keypoints with `visible=False` are skipped by supervision annotators. To hide lo
 For fine-tuning on a custom keypoint dataset, see [Keypoint preview custom datasets](../train/index.md#keypoint-preview-custom-datasets).
 
 ## Run on video, webcam, or RTSP stream
+
+!!! tip "Built-in video and stream sources"
+
+    `RFDETRInference(model).predict()` reads video files, video URLs, webcams, RTSP streams, and YouTube directly and can yield results lazily with `stream=True`. See [Run on Videos and Streams](videos-and-streams.md). The examples below keep full control of decoding and display with OpenCV.
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.
 
