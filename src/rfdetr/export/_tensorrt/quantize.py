@@ -10,7 +10,9 @@ carries its own ``QuantizeLinear``/``DequantizeLinear`` pairs. Where those pairs
 faster than FP16 at all, so the placement here is not "quantize every matrix multiply". It follows what was measured
 on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), for the attention token limit on Small to Large (TensorRT
 11.3), for the segmentation and keypoint models on an RTX 5070 with TensorRT 11.4, and for the patch-embedding matrix
-multiply on Nano to Large with TensorRT 11.4 only; issue #1024:
+multiply on Nano to Large, Seg Nano, Seg Small and Keypoint Preview with TensorRT 11.4 (Nano to Large also 10.16 on a
+Tesla T4). The FP16 matrix multiply of the segmentation and keypoint models' patch embedding was built for Seg Nano
+to Seg Large and Keypoint Preview on an RTX 5070 and a Tesla T4 with TensorRT 11.4; issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -19,29 +21,52 @@ multiply on Nano to Large with TensorRT 11.4 only; issue #1024:
   multiplies of a block whose attention runs in INT8, below). The output of
   each quantized operation stays in floating point, so TensorRT fuses the bias, LayerScale and residual add into the
   INT8 kernel's epilogue and the quantize step into the preceding LayerNorm or GELU. The projector, the two-stage
-  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing. The mask and
-  keypoint heads sit outside the quantized regions and stay FP16 too; quantizing them was not measured.
-* **No convolution whose input channels TensorRT would pad.** TensorRT ran the INT8 patch embedding on the 3-channel
-  image padded to 32 channels and stored the 29 added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant,
-  read on every run: at batch 8 the engine was about twice as large and INT8 clearly less far ahead of FP16. Only that
-  convolution was measured; any convolution whose input channels are not a multiple of 32 is kept FP16 as a
-  precaution. (The FP16 convolution pads too, to 4 or 8 channels picked per build, so an engine whose patch embedding
-  stays a convolution still stores 1 or 5 zero channels per image.) The 16-pixel patch embedding of the detection
-  models is rewritten instead: :func:`_patch_embedding_as_matmul` turns it into a matrix multiply over ``3 * 16 * 16``
-  values per patch, which has no channels to pad and takes INT8 with the rest of the backbone. The 12-pixel patches of
-  the segmentation and keypoint models are 432 values, not a multiple of 32, and stay a convolution.
+  proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing (on Seg Nano,
+  Seg Small, Seg Large and Keypoint Preview the projector was no faster in INT8 either). The mask head stays FP16
+  too: quantized as a whole (Seg Nano, Seg Small, Seg Large) it made the engine slower, and its matrix multiplies alone
+  were no faster. The keypoint heads sit outside the quantized regions and stay FP16: quantizing the keypoint
+  embedding of Keypoint Preview was no faster and lowered its keypoint AP.
+* **The patch embedding is a matrix multiply, quantized only when its patch is a multiple of 32 values.** TensorRT ran
+  the INT8 patch embedding, a ``Conv`` over the 3-channel image, on the image padded to 32 channels and stored the 29
+  added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant, read on every run: at batch 8 the engine was
+  about twice as large and INT8 clearly less far ahead of FP16. Only that convolution was measured; any convolution
+  whose input channels are not a multiple of 32 is kept FP16 as a precaution. An FP16 convolution can pad too: the Tesla
+  T4 segmentation and keypoint INT8 engines, whose patch embedding was an FP16 convolution, grew with the batch by about
+  the image padded to 32 channels (inferred from the engine sizes, not read from an engine).
+  :func:`_patch_embedding_as_matmul` therefore turns each backbone patch embedding it can (see the function) into a
+  matrix multiply over ``3 * 16 * 16`` values per patch (``3 * 12 * 12`` for the segmentation and keypoint models),
+  which has no channels to pad. The detection models' 768 values take INT8 with the rest of the backbone. The 432
+  values of the 12-pixel patches are not a multiple of 32: on Seg Small and Keypoint Preview their INT8 matrix
+  multiply ran no faster than the FP16 one and lowered the AP, so it stays FP16.
 * **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
-  that was measured to run faster for it (head size 16, 32 or 64 and at most 325 tokens: the windowed backbone blocks
-  of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both batched matrix
-  multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other block (the
-  windowed blocks of detection Large, Seg Nano, Seg Large and Keypoint Preview, the global backbone blocks, the decoder
-  self-attention and the keypoint decoder's ``kp_inst_self_attn``) keeps its projections and batched multiplies in
-  FP16: quantizing only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the
-  fused FP16 kernel, and a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output
-  into that kernel, which returns wrong values.
+  that was measured to pay for it (faster at a small cost in AP; head size 16, 32 or 64 and at most 325 tokens: the
+  windowed backbone blocks of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both
+  batched matrix multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other
+  block (the windowed blocks of detection Large, Seg Nano, Seg Large and Keypoint Preview, the global backbone blocks,
+  the decoder self-attention and the keypoint decoder's ``kp_inst_self_attn``) keeps its projections and batched
+  multiplies in FP16: quantizing only the projections makes TensorRT emit FP32 projections plus reshape kernels in
+  front of the fused FP16 kernel, and a quantized output projection behind FP16 attention makes TensorRT 11 fuse an
+  INT8 output into that kernel, which returns wrong values.
 * **A GELU never feeds an FP16 consumer from an INT8 multiply.** TensorRT 10.16 and 11.3 return NaN for an INT8
   ``MatMul`` -> bias -> GELU -> FP16 consumer chain, so an MLP's first projection is quantized only when its second one
   is.
+* **A detection model's backbone norms are smoothed.** A backbone ``LayerNormalization`` output is quantized per
+  tensor, and its widest channels, several times wider than its median one, set the one INT8 step of every channel.
+  SmoothQuant (:func:`measure_smoothing_scales`) divides each channel of the norm's scale and bias by a per-channel
+  factor and multiplies the matching rows of the projections that read the norm by it, moving range from the
+  activation into the weights, which are quantized per output channel. Every output is unchanged but for rounding, and
+  no op is added.
+* **A detection model's backbone MLPs get their bias corrected.** Rounding an activation to INT8 shifts its mean per
+  channel, most of all for the one-sided GELU output an MLP's second projection reads, and each projection passes that
+  shift on to its output channels. :func:`measure_mlp_bias_shifts` measures the shift on the calibration images
+  (``E[Q(x) Q(W)] - E[x W]`` per output channel, with the engine's scales and per-channel INT8 weights, up to one FP16
+  rounding of a smoothed weight) and the shift is subtracted from the layer's bias. Again only constants change; a new
+  op on the GELU path would not be safe: a no-op ``Sub`` there moved ``fc1``'s GELU and quantize out of the GEMM's own
+  epilogue and cost Nano more box AP than the whole INT8 plan does (TensorRT 11.4).
+  Together the two lowered the box AP lost on COCO val2017 for Nano to Large on every calibration set measured (RTX
+  5070, TensorRT 11.4). On Nano, correcting the attention and decoder layers' biases too, correcting each layer for
+  the drift of the layers before it, and fitting a gain per channel measured no better. The segmentation and keypoint
+  models share the backbone but were not measured with either, so their norms and biases are left alone.
 
 Activation ranges come from calibration images run through the FP32 graph on onnxruntime's CPU provider: the absolute
 maximum of each quantized tensor, which measured better than percentile, MSE and entropy clipping on this model.
@@ -53,7 +78,7 @@ import contextlib
 import os
 import tempfile
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -80,6 +105,15 @@ INT8 = "int8"
 #: model's keypoints. The heads that produce them sit outside the quantized regions and stay FP16. Any other set (a
 #: backbone-only export, a graph with both outputs) is refused.
 _INT8_OUTPUT_NAMES = (("dets", "labels"), ("dets", "labels", "masks"), ("dets", "labels", "keypoints"))
+
+#: A detection model's graph outputs: only these models get their backbone norms smoothed and their backbone MLP biases
+#: corrected, as the segmentation and keypoint models were not measured with either.
+_DETECTION_OUTPUT_NAMES = _INT8_OUTPUT_NAMES[0]
+
+#: SmoothQuant's migration strength: the share of each LayerNorm output channel's range moved into the weights that read
+#: it (0.5 balances the two). Measured on Nano at 0.5 and 0.75, which gave the same AP; 0.5 is what the bias correction
+#: was measured on top of.
+_SMOOTHING_ALPHA = 0.5
 
 #: Largest magnitude a symmetric INT8 value takes; TensorRT requires a zero point of 0.
 _INT8_MAX = 127
@@ -130,8 +164,10 @@ _FUSED_INT8_HEAD_SIZES = frozenset({16, 32, 64})
 
 #: Longest query/key sequence that gets INT8 attention. TensorRT's INT8 fused-attention kernel accepts up to 512; this
 #: is the largest window measured to pay (Medium: a little faster from a CUDA graph, about equal with a plain call, at a
-#: small cost in AP). Large's 485-token windows ran no faster than with FP16 attention and lost more AP; 326-484 is not
-#: measured (RTX 5070, TensorRT 11.3, COCO val2017).
+#: small cost in AP). Large's 485-token windows ran no faster than with FP16 attention and lost more AP. Seg Large's
+#: 442-token windows ran a little faster and lost more AP than the speedup justifies; Keypoint Preview's 577 and Seg
+#: Nano's 677 tokens are above the kernel's 512 and ran much slower. Other lengths from 326 to 484 are not measured (RTX
+#: 5070, TensorRT 11.3 and 11.4, COCO val2017).
 _INT8_ATTENTION_MAX_TOKENS = 325
 
 #: Node-name prefixes of the regions whose weight-bearing operations are quantized: backbone encoder and decoder. They
@@ -156,8 +192,8 @@ _PROJECTION_PASSTHROUGH = frozenset(
 _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
 
 #: TensorRT padded the INT8 patch embedding's input channels to a multiple of this and stored the padding in the engine.
-#: A patch embedding is also rewritten as a matrix multiply only when its flattened patch is a multiple of this, a
-#: precaution that Seg Small's 432-value patches back: as a matrix multiply they ran about 1% faster, with a lower AP.
+#: A patch embedding is quantized as a matrix multiply only when its flattened patch is a multiple of this; one that is
+#: not (the segmentation and keypoint models' 432 values) is a matrix multiply that stays FP16.
 _INT8_CONV_CHANNEL_MULTIPLE = 32
 
 #: Ops that make a path a GELU.
@@ -224,6 +260,27 @@ def _constant_weights(graph: Any) -> dict[str, Any]:
         elif node.op_type == "Constant" and node.attribute and node.attribute[0].name == "value":
             constants[node.output[0]] = node.attribute[0].t
     return constants
+
+
+def _consumers(graph: Any) -> dict[str, list[Any]]:
+    """Map every tensor that a node of *graph* reads to those nodes, in graph order.
+
+    Only the top-level nodes are read: a tensor read inside an ``If``/``Loop`` subgraph is not listed for that read. A
+    node that reads one tensor through two of its inputs is listed twice.
+
+    Examples:
+        >>> from onnx import helper
+        >>> graph = helper.make_graph(
+        ...     [helper.make_node("Relu", ["x"], ["y"], "relu"), helper.make_node("Add", ["x", "y"], ["z"], "add")],
+        ...     "g", [], [])
+        >>> {name: [node.name for node in nodes] for name, nodes in _consumers(graph).items()}
+        {'x': ['relu', 'add'], 'y': ['add']}
+    """
+    consumers: dict[str, list[Any]] = {}
+    for node in graph.node:
+        for name in node.input:
+            consumers.setdefault(name, []).append(node)
+    return consumers
 
 
 def _weight_name(node: Any, initializers: Mapping[str, Any]) -> str | None:
@@ -314,10 +371,9 @@ class _PatchEmbedding(NamedTuple):
 def _patch_kernel(node: Any, initializers: Mapping[str, Any]) -> tuple[int, int, int] | None:
     """Return ``(patch, channels, out_channels)`` when *node*'s kernel cuts non-overlapping patches, else ``None``.
 
-    A patch embedding is an undilated ``Conv`` whose square kernel equals its stride and which has no padding. The
-    flattened patch of ``channels * patch * patch`` values must also be a multiple of
-    :data:`_INT8_CONV_CHANNEL_MULTIPLE`, so that its matrix multiply needs no padding either. Whether the kernel spans
-    every input channel (it does not in a grouped convolution) is for :func:`_patch_image`, which sees the image.
+    A patch embedding is an undilated ``Conv`` whose square kernel equals its stride and which has no padding. Whether
+    the kernel spans every input channel (it does not in a grouped convolution) is for :func:`_patch_image`, which sees
+    the image.
 
     Examples:
         >>> from onnx import helper, numpy_helper
@@ -340,7 +396,7 @@ def _patch_kernel(node: Any, initializers: Mapping[str, Any]) -> tuple[int, int,
         and not any(attributes.get("pads", [0]))
         and attributes.get("auto_pad", b"NOTSET") in (b"NOTSET", "NOTSET")
     )
-    if not plain or (channels * patch * patch) % _INT8_CONV_CHANNEL_MULTIPLE:
+    if not plain:
         return None
     return patch, channels, out_channels
 
@@ -460,31 +516,41 @@ def _drop_unread_initializers(graph: Any, names: Iterable[str]) -> None:
         graph.initializer.remove(initializer)
 
 
-def _patch_embedding_as_matmul(model: Any) -> int:
+def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
     """Rewrite the backbone's patch-embedding ``Conv`` as a ``MatMul`` over flattened patches, in place.
 
-    TensorRT pads a convolution's 3 input channels, and stores the padding in the engine (see
-    :func:`_pads_input_channels`), so the patch embedding is the one backbone layer that has to stay FP16 as a ``Conv``.
-    As a matrix multiply over ``channels * patch * patch`` values per patch (768 for an RGB image and 16-pixel patches)
-    it has nothing to pad and runs in INT8 like the other backbone layers. The two compute the same sum.
+    TensorRT pads a convolution's 3 input channels (to 32 for an INT8 convolution; an FP16 one may pad too, inferred
+    from Tesla T4 engine sizes) and stores the padding in the engine as a constant that grows with the batch (see
+    :func:`_pads_input_channels`). As a matrix multiply over ``channels * patch * patch`` values per patch (768 for an
+    RGB image and 16-pixel patches, 432 for 12-pixel ones) it has no channels to pad, and an INT8 build can quantize it
+    like the other backbone layers. The two compute the same sum.
 
-    Only a ``Conv`` inside the backbone encoder that :func:`_pads_input_channels` would keep FP16 and that
-    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten: RF-DETR's detection models (16-pixel patches),
-    not its segmentation and keypoint models (12-pixel patches, 432 values per patch). The shape inference that finds
-    the image size runs only when such a ``Conv`` exists. A kernel that is also a graph input is left alone, since it
-    can be replaced at run time. The kernel of a replaced ``Conv`` is dropped when nothing else reads it (one reached
-    through an ``Identity`` alias is kept). The rewrite is deterministic for a given name, so applying it to the FP32
-    graph that is planned and calibrated and to the FP16 graph that is quantized yields the same ``MatMul`` name.
+    Only a ``Conv`` inside the backbone encoder that :func:`_pads_input_channels` would flag and that
+    :func:`_patch_kernel` and :func:`_patch_image` accept is rewritten, unless its ``<parent>/MatMul`` name is already
+    taken, in which case it is left as it is. The shape inference that finds the image size
+    runs only when such a ``Conv`` exists. A kernel that is also a graph input is left alone, since it can be replaced
+    at run time. The kernel of a replaced ``Conv`` is dropped when nothing else reads it (one reached through an
+    ``Identity`` alias is kept). The rewrite is deterministic for a given name, so applying it to the FP32 graph that is
+    planned and calibrated and to the FP16 graph that is quantized yields the same ``MatMul`` name.
 
     Args:
         model: ``ModelProto`` to rewrite; left untouched when it holds no such layer.
+        multiple_of: At least 1. Rewrite only a patch whose flattened ``channels * patch * patch`` values are a
+            multiple of this. The INT8 plan passes :data:`_INT8_CONV_CHANNEL_MULTIPLE`, which keeps the 768 values of a
+            16-pixel patch and leaves out the 432 of a 12-pixel one: on Seg Small and Keypoint Preview that INT8 matrix
+            multiply ran no faster than the FP16 one and lowered the AP. The default rewrites every patch embedding.
 
     Returns:
         The number of layers rewritten.
+
+    Raises:
+        ValueError: If *multiple_of* is below 1.
     """
     import onnx
     from onnx import numpy_helper
 
+    if multiple_of < 1:
+        raise ValueError(f"multiple_of must be at least 1, got {multiple_of}.")
     graph = model.graph
     initializers = _constant_weights(graph)
     counts = Counter(node.name for node in graph.node)
@@ -499,6 +565,7 @@ def _patch_embedding_as_matmul(model: Any) -> int:
         and _weight_name(node, initializers)
         and _pads_input_channels(node, initializers)
         and (kernel := _patch_kernel(node, initializers))
+        and (kernel[1] * kernel[0] ** 2) % multiple_of == 0
     ]
     if not candidates:
         return 0
@@ -680,10 +747,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
     shapes = {v.name: v for v in (*inferred.graph.value_info, *inferred.graph.input, *inferred.graph.output)}
     initializers = _constant_weights(graph)
     producers = {output: node for node in graph.node for output in node.output}
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
 
     blocks = []
     for softmax in (node for node in graph.node if node.op_type == "Softmax"):
@@ -760,10 +824,7 @@ def plan_int8(model: Any) -> Int8Plan:
     """
     graph = model.graph
     initializers = _constant_weights(graph)
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
     names = [node.name for node in graph.node]
     duplicated = {name for name, count in Counter(names).items() if count > 1}
 
@@ -835,26 +896,29 @@ def _input_tensor(graph: Any, node_name: str, index: int) -> str:
     return str(node.input[index])
 
 
-def _graph_batches(batches: Iterable[NDArray[np.float32]], batch: int | None) -> Iterator[NDArray[np.float32]]:
+def _graph_batches(
+    batches: Iterable[NDArray[np.float32]], batch: int | None
+) -> Iterator[tuple[NDArray[np.float32], int]]:
     """Group single-image calibration batches into the batch size a static graph was exported at.
 
-    A short final group is padded by repeating its last image: calibration keeps each tensor's absolute maximum, which
-    a repeated image cannot change.
+    A short final group is padded by repeating its last image, and each group comes with the number of real images it
+    holds, first in the group. A maximum is not changed by a repeated image; a mean must leave the copies out.
 
     Examples:
         >>> singles = [np.full((1, 1, 1, 1), v, np.float32) for v in range(3)]
-        >>> [b[:, 0, 0, 0].tolist() for b in _graph_batches(singles, 2)]
-        [[0.0, 1.0], [2.0, 2.0]]
+        >>> [(b[:, 0, 0, 0].tolist(), real) for b, real in _graph_batches(singles, 2)]
+        [([0.0, 1.0], 2), ([2.0, 2.0], 1)]
     """
     group: list[NDArray[np.float32]] = []
     for sample in batches:
         group.append(sample)
         if len(group) == (batch or 1):
-            yield np.concatenate(group)
+            yield np.concatenate(group), len(group)
             group = []
     if group:
-        group += [group[-1]] * ((batch or 1) - len(group))
-        yield np.concatenate(group)
+        real = len(group)
+        group += [group[-1]] * ((batch or 1) - real)
+        yield np.concatenate(group), real
 
 
 def _calibration_graph(model: Any, tensors: list[str]) -> Any:
@@ -878,24 +942,87 @@ def _calibration_graph(model: Any, tensors: list[str]) -> Any:
     probe = onnx.ModelProto()
     probe.CopyFrom(model)
     taken = _tensor_names(probe.graph)
-    # onnxruntime's ReduceMax skips a NaN anywhere but the first element, so NaN is swapped for +inf before reducing.
     infinity = _unique_name("calibration_infinity", taken)
-    value = numpy_helper.from_array(np.array(np.inf, np.float32))
-    probe.graph.node.append(helper.make_node("Constant", [], [infinity], value=value))
+    probe.graph.node.append(
+        helper.make_node("Constant", [], [infinity], value=numpy_helper.from_array(np.array(np.inf, np.float32)))
+    )
     for tensor in tensors:
-        absolute, nan, guarded, maximum = (
-            _unique_name(f"{tensor}__{suffix}", taken) for suffix in ("abs", "isnan", "guarded", "absmax")
-        )
-        probe.graph.node.extend(
-            [
-                helper.make_node("Abs", [tensor], [absolute]),
-                helper.make_node("IsNaN", [tensor], [nan]),
-                helper.make_node("Where", [nan, infinity, absolute], [guarded]),
-                helper.make_node("ReduceMax", [guarded], [maximum], keepdims=0),
-            ]
-        )
+        guarded = _absolute_with_nan_as_infinity(probe.graph, tensor, tensor, infinity, taken)
+        maximum = _unique_name(f"{tensor}__absmax", taken)
+        probe.graph.node.append(helper.make_node("ReduceMax", [guarded], [maximum], keepdims=0))
         probe.graph.output.append(helper.make_tensor_value_info(maximum, TensorProto.FLOAT, []))
     return probe
+
+
+def _absolute_with_nan_as_infinity(graph: Any, tensor: str, stem: str, infinity: str, taken: set[str]) -> str:
+    """Append the absolute value of *tensor*, with every NaN made ``+inf``, to *graph*; return the result's name.
+
+    onnxruntime's ``ReduceMax`` skips a NaN anywhere but the first element, so a maximum taken over this result reports
+    a NaN as an infinite value, which a refusal of non-finite values sees.
+
+    Args:
+        graph: The probe ``GraphProto`` to append the nodes to.
+        tensor: The tensor to read.
+        stem: The prefix of the new tensor names.
+        infinity: A scalar ``+inf`` FP32 tensor of *graph*.
+        taken: The names already used in *graph*; the new names are added to it.
+
+    Returns:
+        The name of the guarded absolute value.
+
+    Examples:
+        >>> from onnx import helper
+        >>> graph = helper.make_graph([], "g", [], [])
+        >>> _absolute_with_nan_as_infinity(graph, "x", "x", "inf", {"x", "inf"}), [n.op_type for n in graph.node]
+        ('x__guarded', ['Abs', 'IsNaN', 'Where'])
+    """
+    from onnx import helper
+
+    absolute, nan, guarded = (_unique_name(f"{stem}__{suffix}", taken) for suffix in ("abs", "isnan", "guarded"))
+    graph.node.extend(
+        [
+            helper.make_node("Abs", [tensor], [absolute]),
+            helper.make_node("IsNaN", [tensor], [nan]),
+            helper.make_node("Where", [nan, infinity, absolute], [guarded]),
+        ]
+    )
+    return guarded
+
+
+@contextlib.contextmanager
+def _probe_session(onnx_path: str, probe: Any) -> Iterator[Any]:
+    """Yield an onnxruntime CPU session of *probe*, saved to a temporary file beside *onnx_path* and deleted after.
+
+    The CPU, not CUDA: at batch 32 the FP32 graph needs about 9 GB of GPU memory under onnxruntime, more than a 12 GB
+    card has left beside the export, while the CPU runs one pass over 128 images in about 15 s. Priority-based order:
+    under the default one, the probe's added reductions raised peak host memory far above the plain graph's on an
+    RF-DETR Nano export, for the same ranges.
+
+    Args:
+        onnx_path: The FP32 ``.onnx`` file the probe was made from.
+        probe: The probe ``ModelProto``.
+
+    Yields:
+        The session.
+    """
+    import onnx
+    import onnxruntime as ort
+
+    stem = os.path.basename(os.path.splitext(onnx_path)[0])
+    handle, probe_path = tempfile.mkstemp(
+        prefix=f"{stem}.calibration-", suffix=".onnx", dir=os.path.dirname(onnx_path) or "."
+    )
+    os.close(handle)
+    try:
+        onnx.save(probe, probe_path)
+        options = ort.SessionOptions()
+        options.execution_order = ort.ExecutionOrder.PRIORITY_BASED
+        yield ort.InferenceSession(probe_path, sess_options=options, providers=["CPUExecutionProvider"])
+    finally:
+        try:
+            Path(probe_path).unlink(missing_ok=True)
+        except OSError as error:
+            logger.warning(f"Could not delete the calibration probe graph {probe_path!r}: {error}")
 
 
 def calibrate_ranges(
@@ -921,53 +1048,603 @@ def calibrate_ranges(
     if not tensors:
         # onnxruntime treats an empty output list as every output, so the slice below would measure the wrong tensors.
         raise ValueError("Calibration was given no tensor to measure.")
-    import onnx
-    import onnxruntime as ort
+    probe = _calibration_graph(model, tensors)
+    # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
+    outputs = [output.name for output in probe.graph.output][-len(tensors) :]
+    ranges: NDArray[np.float64] = np.zeros(len(tensors), dtype=np.float64)
+    count = images = 0
+    for values, real in _run_probe(onnx_path, probe, outputs, batches):
+        # A copy padding the last group repeats an image, which cannot change a maximum.
+        ranges = np.maximum(ranges, np.asarray(values, dtype=np.float64))
+        count += 1
+        images += real
+    warn_if_too_few_samples(images)
+    logger.info(f"Calibrated {len(tensors)} INT8 activation ranges over {count} batch(es)")
+    return dict(zip(tensors, ranges.tolist()))
 
-    stem = os.path.basename(os.path.splitext(onnx_path)[0])
-    handle, probe_path = tempfile.mkstemp(
-        prefix=f"{stem}.calibration-", suffix=".onnx", dir=os.path.dirname(onnx_path) or "."
-    )
-    os.close(handle)
-    try:
-        onnx.save(_calibration_graph(model, tensors), probe_path)
-        # The CPU, not CUDA: at batch 32 the FP32 graph needs about 9 GB of GPU memory under onnxruntime, more than a
-        # 12 GB card has left beside the export, while the CPU calibrates 128 images in about 15 s.
-        # Priority-based order: under the default one, the probe's added reductions raised peak host memory far above
-        # the plain graph's on an RF-DETR Nano export, for the same ranges.
-        options = ort.SessionOptions()
-        options.execution_order = ort.ExecutionOrder.PRIORITY_BASED
-        session = ort.InferenceSession(probe_path, sess_options=options, providers=["CPUExecutionProvider"])
+
+def _run_probe(
+    onnx_path: str, probe: Any, names: list[str], batches: Iterable[NDArray[np.float32]]
+) -> Iterator[tuple[list[NDArray[np.float64]], int]]:
+    """Run *batches* through *probe*, yielding its *names* outputs for each group with the number of real images in it.
+
+    The images are grouped into the probe's static batch as calibration groups them, so the last group may end in
+    copies of its last image (see :func:`_graph_batches`); an output with one row per image keeps only its first rows
+    for the real ones.
+
+    Args:
+        onnx_path: The FP32 ``.onnx`` file the probe was made from; the probe is written to a temporary file beside it.
+        probe: The probe ``ModelProto``.
+        names: The probe outputs to read.
+        batches: Preprocessed ``(1, C, H, W)`` images.
+
+    Yields:
+        The values of *names*, in order, and the number of real images in the group.
+
+    Raises:
+        ValueError: If *batches* is empty or holds a NaN or infinite value, which is refused before the group holding it
+            runs, on whichever pass over the images reads it first.
+    """
+    images = 0
+    with _probe_session(onnx_path, probe) as session:
         feed_name = session.get_inputs()[0].name
         dimension = session.get_inputs()[0].shape[0]
-        # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
-        outputs = [o.name for o in session.get_outputs()][-len(tensors) :]
-        ranges: NDArray[np.float64] = np.zeros(len(tensors), dtype=np.float64)
-        count = images = 0
-
-        def tally(source: Iterable[NDArray[np.float32]]) -> Iterator[NDArray[np.float32]]:
-            """Pass *source* through, adding up the images it holds (the groups below repeat the last one to pad)."""
-            nonlocal images
-            for image in source:
-                images += len(image)
-                yield image
-
-        for group in _graph_batches(tally(batches), dimension if isinstance(dimension, int) else None):
-            # Refused here rather than as a non-finite range afterwards, so the message names the batch.
+        groups = _graph_batches(batches, dimension if isinstance(dimension, int) else None)
+        for number, (group, real) in enumerate(groups, start=1):
+            # Refused here rather than as a non-finite result afterwards, so the message names the batch.
             if not np.isfinite(group).all():
-                raise ValueError(f"Calibration batch {count + 1} holds NaN or infinite values.")
-            ranges = np.maximum(ranges, np.asarray(session.run(outputs, {feed_name: group}), dtype=np.float64))
-            count += 1
-        if count == 0:
-            raise ValueError("Calibration data held no image.")
-        warn_if_too_few_samples(images)
-        logger.info(f"Calibrated {len(tensors)} INT8 activation ranges over {count} batch(es)")
-        return dict(zip(tensors, ranges.tolist()))
-    finally:
-        try:
-            Path(probe_path).unlink(missing_ok=True)
-        except OSError as error:
-            logger.warning(f"Could not delete the calibration probe graph {probe_path!r}: {error}")
+                raise ValueError(f"Calibration batch {number} holds NaN or infinite values.")
+            yield [np.asarray(value, dtype=np.float64) for value in session.run(names, {feed_name: group})], real
+            images += real
+    if images == 0:
+        raise ValueError("Calibration data held no image.")
+
+
+def _smoothable_norms(model: Any, plan: Int8Plan) -> dict[str, tuple[str, ...]]:
+    """Map each backbone ``LayerNormalization`` whose output only planned-style projections read to those projections.
+
+    A norm qualifies when it is in the backbone encoder, normalizes the last axis, has a constant scale and bias with
+    one value per channel, and every reader of its output is a ``MatMul`` that multiplies it by a constant 2-D weight,
+    at least one of them quantized by *plan*. Scaling such a norm's channels down and the matching weight rows up leaves
+    every output unchanged (:func:`_smooth_norms`). A norm read by any other op, such as the final backbone norm, or
+    whose output is a graph output or is read inside a subgraph, is left out.
+
+    Args:
+        model: The FP32 ``ModelProto`` *plan* was made from.
+        plan: Its INT8 plan.
+
+    Returns:
+        Norm name to the names of the projections reading it, in graph order.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> block = "/backbone/backbone.0/encoder/encoder/encoder/layer.0/"
+        >>> nodes = [helper.make_node("LayerNormalization", ["x", "g", "b"], ["n"], f"{block}norm2/LayerNormalization"),
+        ...          helper.make_node("MatMul", ["n", "w"], ["y"], f"{block}mlp/fc1/MatMul")]
+        >>> weights = [numpy_helper.from_array(np.ones(shape, np.float32), name)
+        ...            for name, shape in (("g", (2,)), ("b", (2,)), ("w", (2, 3)))]
+        >>> model = helper.make_model(helper.make_graph(nodes, "g", [], [], weights))
+        >>> plan = Int8Plan(weighted=(f"{block}mlp/fc1/MatMul",), activations=())
+        >>> [name.rsplit("/", 2)[-2] for name in _smoothable_norms(model, plan)]
+        ['norm2']
+    """
+    graph = model.graph
+    constants = _constant_weights(graph)
+    consumers = _consumers(graph)
+    names = Counter(node.name for node in graph.node)
+    planned = set(plan.weighted)
+    # Smoothing changes the norm's output, so only the projections that undo it may see that output.
+    exposed = {value.name for value in graph.output}
+    exposed |= {name for nested in list(_iter_graphs(graph))[1:] for node in nested.node for name in node.input}
+    norms = {}
+    for node in graph.node:
+        if node.op_type != "LayerNormalization" or not node.name.startswith(_BACKBONE_ENCODER) or names[node.name] != 1:
+            continue
+        if node.output[0] in exposed:
+            continue
+        axis = next((attribute.i for attribute in node.attribute if attribute.name == "axis"), -1)
+        readers = consumers.get(node.output[0], [])
+        if axis != -1 or len(node.input) != 3 or any(n not in constants for n in node.input[1:]):
+            continue
+        channels = [int(d) for d in constants[node.input[1]].dims]
+        if len(channels) != 1 or [int(d) for d in constants[node.input[2]].dims] != channels:
+            continue
+        output = str(node.output[0])
+        if all(
+            _projects(reader, output, channels[0], constants) and names[reader.name] == 1 for reader in readers
+        ) and any(reader.name in planned for reader in readers):
+            norms[str(node.name)] = tuple(str(reader.name) for reader in readers)
+    return norms
+
+
+def _projects(reader: Any, tensor: str, channels: int, constants: Mapping[str, Any]) -> bool:
+    """Return whether *reader* is a ``MatMul`` of *tensor* by a constant 2-D weight with one row per channel of it.
+
+    Such a reader undoes a per-channel scale of *tensor* when its weight rows are scaled back (:func:`_smooth_norms`).
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> constants = {"w": numpy_helper.from_array(np.zeros((4, 2), np.float32), "w")}
+        >>> _projects(helper.make_node("MatMul", ["n", "w"], ["y"]), "n", 4, constants)
+        True
+        >>> _projects(helper.make_node("MatMul", ["w", "n"], ["y"]), "n", 4, constants)
+        False
+        >>> _projects(helper.make_node("MatMul", ["m", "w"], ["y"]), "n", 4, constants)
+        False
+        >>> _projects(helper.make_node("MatMul", ["n", "w"], ["y"]), "n", 3, constants)
+        False
+    """
+    if reader.op_type != "MatMul" or len(reader.input) != 2 or reader.input[0] != tensor:
+        return False
+    weight = constants.get(reader.input[1])
+    return weight is not None and len(weight.dims) == 2 and int(weight.dims[0]) == channels
+
+
+def _unfit_smoothed_term(labels: list[str], terms: list[NDArray[np.float64]]) -> str | None:
+    """Say which smoothed constant of a norm does not fit FP16 and why, or return ``None`` when every one fits.
+
+    A term is left out of FP16 for one of two causes, worded apart: its largest magnitude reaches
+    :data:`_MAX_FP16`, or it is not finite (a NaN compares False, so it counts as not fitting too).
+
+    Args:
+        labels: One description per term, naming the constant it replaces.
+        terms: The smoothed constants, in the order of *labels*.
+
+    Returns:
+        The first term that does not fit and its cause, or ``None``.
+
+    Examples:
+        >>> _unfit_smoothed_term(["bias 'b'"], [np.array([1.0, -2.0])]) is None
+        True
+        >>> _unfit_smoothed_term(["bias 'b'"], [np.array([1e6])])
+        "its smoothed bias 'b' reaches 1e+06, past the FP16 maximum 6.55e+04"
+        >>> _unfit_smoothed_term(["bias 'b'"], [np.array([np.nan])])
+        "its smoothed bias 'b' is not finite"
+    """
+    for label, term in zip(labels, terms, strict=True):
+        peak = float(np.abs(term).max())
+        if peak < _MAX_FP16:
+            continue
+        if np.isfinite(peak):
+            return f"its smoothed {label} reaches {peak:.4g}, past the FP16 maximum {_MAX_FP16:.4g}"
+        return f"its smoothed {label} is not finite"
+    return None
+
+
+def measure_smoothing_scales(
+    onnx_path: str, model: Any, plan: Int8Plan, batches: Iterable[NDArray[np.float32]]
+) -> dict[str, NDArray[np.float64]]:
+    """Measure SmoothQuant's per-channel scale for each norm of :func:`_smoothable_norms`.
+
+    SmoothQuant (Xiao et al., 2023) divides a channel of the norm's output by ``s`` and multiplies the matching rows of
+    the projections that read it by ``s``, which moves range from the activation, quantized per tensor, into the
+    weights, quantized per output channel. With ``a`` the channel's absolute maximum over the calibration images run
+    through the FP32 graph and ``w`` the largest weight of its rows, ``s = a ** alpha / w ** (1 - alpha)`` with alpha
+    :data:`_SMOOTHING_ALPHA`, divided by the geometric mean of the norm's scales so that the norm keeps its overall
+    size. A channel whose ``a`` or ``w`` is 0 keeps ``s = 1``, and a norm whose scaled scale, bias or weights would not
+    fit FP16 is left out, logged at debug level with the constant that does not fit and why.
+
+    Args:
+        onnx_path: The FP32 ``.onnx`` file *model* was loaded from; the probe graph is written to a temporary file
+            beside it.
+        model: The loaded FP32 ``ModelProto``, lifted to the opset FP16 scales need and rewritten as it was for *plan*.
+        plan: The INT8 plan of *model*.
+        batches: Preprocessed ``(1, C, H, W)`` images.
+
+    Returns:
+        Norm name to its channel scales; empty when no norm qualifies.
+
+    Raises:
+        ValueError: If *batches* is empty or holds a NaN or infinite value, or a norm's output is not finite on it (a
+            NaN computed inside the graph included).
+    """
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    norms = _smoothable_norms(model, plan)
+    if not norms:
+        return {}
+    constants = _constant_weights(model.graph)
+    by_name = {
+        node.name: node
+        for node in model.graph.node
+        if node.name in norms or any(node.name in r for r in norms.values())
+    }
+    probe = onnx.ModelProto()
+    probe.CopyFrom(model)
+    taken = _tensor_names(probe.graph)
+    rows_axis, infinity = (_unique_name(name, taken) for name in ("channel_maxima_rows", "channel_maxima_infinity"))
+    probe.graph.initializer.extend(
+        [
+            numpy_helper.from_array(np.array([0], np.int64), rows_axis),
+            numpy_helper.from_array(np.array(np.inf, np.float32), infinity),
+        ]
+    )
+    names = []
+    for norm in norms:
+        tensor, channels = by_name[norm].output[0], int(constants[by_name[norm].input[1]].dims[0])
+        shape, rows = (_unique_name(f"{tensor}__{suffix}", taken) for suffix in ("rows_shape", "rows"))
+        probe.graph.initializer.append(numpy_helper.from_array(np.array([-1, channels], np.int64), shape))
+        probe.graph.node.append(helper.make_node("Reshape", [tensor, shape], [rows]))
+        guarded = _absolute_with_nan_as_infinity(probe.graph, rows, tensor, infinity, taken)
+        maximum = _unique_name(f"{tensor}__channel_max", taken)
+        probe.graph.node.append(helper.make_node("ReduceMax", [guarded, rows_axis], [maximum], keepdims=0))
+        probe.graph.output.append(helper.make_tensor_value_info(maximum, TensorProto.FLOAT, [channels]))
+        names.append(maximum)
+    maxima: list[NDArray[np.float64]] = []
+    for values, _ in _run_probe(onnx_path, probe, names, batches):
+        # A copy padding the last group repeats an image, which cannot change a maximum.
+        maxima = values if not maxima else [np.maximum(total, value) for total, value in zip(maxima, values)]
+    unusable = [norm for norm, activation in zip(norms, maxima) if not np.isfinite(activation).all()]
+    if unusable:
+        # Refused here: a norm left out of the smoothing for it would only be refused by the calibration pass after.
+        raise ValueError(
+            f"Calibration gave {len(unusable)} backbone norm output(s) a range that is not finite (the graph "
+            f"computed a NaN or infinite activation), e.g. {unusable[0]!r}. Check that calibration_data is normalized "
+            "as predict() normalizes and that the model's outputs on it are finite."
+        )
+    scales = {}
+    for (norm, readers), activation in zip(norms.items(), maxima):
+        weights = [numpy_helper.to_array(constants[by_name[reader].input[1]]).astype(np.float64) for reader in readers]
+        weight = np.max([np.abs(w).max(axis=1) for w in weights], axis=0)
+        alive = (activation > 0) & (weight > 0)
+        scale = np.ones_like(activation)
+        scale[alive] = activation[alive] ** _SMOOTHING_ALPHA / weight[alive] ** (1 - _SMOOTHING_ALPHA)
+        scale /= np.exp(np.log(scale).mean())
+        node = by_name[norm]
+        terms = [numpy_helper.to_array(constants[node.input[i]]).astype(np.float64) / scale for i in (1, 2)]
+        terms += [w * scale[:, None] for w in weights]
+        labels = [f"scale {node.input[1]!r}", f"bias {node.input[2]!r}"]
+        labels += [f"weight {by_name[reader].input[1]!r} of {reader!r}" for reader in readers]
+        cause = _unfit_smoothed_term(labels, terms)
+        if cause is None:
+            scales[norm] = scale
+        else:
+            logger.debug(f"Left backbone LayerNorm {norm!r} unsmoothed for INT8: {cause}.")
+    return scales
+
+
+def _smooth_norms(model: Any, scales: Mapping[str, NDArray[np.float64]]) -> None:
+    """Divide each norm's output channels by its scales and multiply the rows of the projections reading it, in place.
+
+    The norm's scale and bias and each projection's weight become new initializers of their own dtype, so a constant
+    that other nodes read as well (the exporter stores identical constants once) keeps its value for them, and one that
+    nothing reads any more is removed. The graph's outputs are unchanged but for rounding.
+
+    Args:
+        model: An FP32 or FP16 ``ModelProto``, with the norm and projection names of the graph *scales* was measured on.
+        scales: Norm name to its channel scales (see :func:`measure_smoothing_scales`).
+
+    Raises:
+        ValueError: If *model* has no single norm of one of the names, a norm has no constant scale and bias, or a
+            reader of a norm is not a projection multiplying it by a constant 2-D weight with a row per channel.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> nodes = [helper.make_node("LayerNormalization", ["x", "g", "b"], ["n"], "norm"),
+        ...          helper.make_node("MatMul", ["n", "w"], ["y"], "proj")]
+        >>> weights = [numpy_helper.from_array(np.full(shape, 2.0, np.float32), name)
+        ...            for name, shape in (("g", (2,)), ("b", (2,)), ("w", (2, 1)))]
+        >>> model = helper.make_model(helper.make_graph(nodes, "g", [], [], weights))
+        >>> _smooth_norms(model, {"norm": np.array([2.0, 0.5])})
+        >>> {init.name: numpy_helper.to_array(init).ravel().tolist() for init in model.graph.initializer}
+        {'g_smoothed': [1.0, 4.0], 'b_smoothed': [1.0, 4.0], 'w_smoothed': [4.0, 1.0]}
+    """
+    from onnx import numpy_helper
+
+    graph = model.graph
+    constants = _constant_weights(graph)
+    counts = Counter(node.name for node in graph.node)
+    consumers = _consumers(graph)
+    by_name = {node.name: node for node in graph.node if node.name in scales and counts[node.name] == 1}
+    taken = _tensor_names(graph)
+
+    replaced: list[str] = []
+
+    def replace(node: Any, index: int, values: NDArray[np.float64], dtype: Any) -> None:
+        """Point input *index* of *node* at a new initializer holding *values* as *dtype*."""
+        name = _unique_name(f"{node.input[index]}_smoothed", taken)
+        graph.initializer.append(numpy_helper.from_array(values.astype(dtype), name))
+        replaced.append(str(node.input[index]))
+        node.input[index] = name
+
+    for name, scale in scales.items():
+        norm = by_name.get(name)
+        output = str(norm.output[0]) if norm is not None else ""
+        readers = consumers.get(output, []) if norm is not None else []
+        projections = all(_projects(reader, output, len(scale), constants) for reader in readers)
+        if (
+            norm is None
+            or norm.op_type != "LayerNormalization"
+            or len(norm.input) != 3
+            or not set(norm.input[1:]) <= set(constants)
+            or not readers
+            or not projections
+        ):
+            raise ValueError(
+                f"The graph has no LayerNormalization {name!r} with constant scale, bias and projection weights to "
+                "smooth for INT8, which the FP16 cast cannot cause."
+            )
+        for index in (1, 2):
+            values = numpy_helper.to_array(constants[norm.input[index]])
+            replace(norm, index, values.astype(np.float64) / scale, values.dtype)
+        for reader in readers:
+            values = numpy_helper.to_array(constants[reader.input[1]])
+            replace(reader, 1, values.astype(np.float64) * scale[:, None], values.dtype)
+    _drop_unread_initializers(graph, replaced)
+
+
+def _mlp_biases(model: Any, plan: Int8Plan) -> dict[str, str]:
+    """Map each planned layer of a backbone MLP to the ``Add`` that adds its bias, for the layers whose bias is found.
+
+    A backbone MLP is a planned ``MatMul`` of the backbone encoder whose output reaches planned layers through a GELU,
+    together with those layers. A layer's bias ``Add`` is the only reader of its output and adds a constant (an
+    initializer, or one reached through an ``Identity``) with one value per output channel; a layer without one is left
+    out.
+
+    Args:
+        model: The FP32 ``ModelProto`` *plan* was made from.
+        plan: Its INT8 plan.
+
+    Returns:
+        Layer name to the name of its bias ``Add``, in graph order.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> f = lambda *shape: np.zeros(shape, np.float32)
+        >>> mlp = "/backbone/backbone.0/encoder/encoder/encoder/layer.0/mlp/"
+        >>> nodes = [helper.make_node("MatMul", ["x", "w1"], ["h"], f"{mlp}fc1/MatMul"),
+        ...          helper.make_node("Add", ["h", "b1"], ["hb"], f"{mlp}fc1/Add"),
+        ...          helper.make_node("Gelu", ["hb"], ["g"], f"{mlp}act/Gelu", domain=""),
+        ...          helper.make_node("MatMul", ["g", "w2"], ["y0"], f"{mlp}fc2/MatMul"),
+        ...          helper.make_node("Add", ["y0", "b2"], ["y"], f"{mlp}fc2/Add")]
+        >>> weights = [numpy_helper.from_array(v, n) for n, v in
+        ...            (("w1", f(2, 4)), ("b1", f(4)), ("w2", f(4, 2)), ("b2", f(2)))]
+        >>> graph = helper.make_graph(nodes, "g", [], [], weights)
+        >>> plan = Int8Plan(weighted=(f"{mlp}fc1/MatMul", f"{mlp}fc2/MatMul"), activations=())
+        >>> [add.rsplit("/", 2)[-2] for add in _mlp_biases(helper.make_model(graph), plan).values()]
+        ['fc1', 'fc2']
+    """
+    graph = model.graph
+    constants = _constant_weights(graph)
+    consumers = _consumers(graph)
+    names = Counter(node.name for node in graph.node)
+    planned = set(plan.weighted)
+    by_name = {node.name: node for node in graph.node if node.name in planned}
+    layers: set[str] = set()
+    for name in plan.weighted:
+        node = by_name[name]
+        second = _feeds_gelu_into(node, consumers, constants)
+        if node.op_type == "MatMul" and name.startswith(_BACKBONE_ENCODER) and second and second <= planned:
+            layers |= {name, *second}
+    biases = {}
+    for name in (name for name in plan.weighted if name in layers):
+        node = by_name[name]
+        adds = consumers.get(node.output[0], [])
+        if node.op_type != "MatMul" or len(adds) != 1 or adds[0].op_type != "Add" or names[adds[0].name] != 1:
+            continue
+        bias = _bias_input(adds[0], node.output[0], constants)
+        if bias is not None and list(constants[adds[0].input[bias]].dims) == [int(constants[node.input[1]].dims[1])]:
+            biases[name] = str(adds[0].name)
+    return biases
+
+
+def _bias_input(add: Any, product: str, constants: Mapping[str, Any]) -> int | None:
+    """Return the index of the constant input that the bias ``Add`` *add* adds to *product*, or ``None``.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> constants = {"b": numpy_helper.from_array(np.zeros(2, np.float32), "b")}
+        >>> _bias_input(helper.make_node("Add", ["b", "y0"], ["y"], "add"), "y0", constants)
+        0
+        >>> _bias_input(helper.make_node("Add", ["y0", "z"], ["y"], "add"), "y0", constants) is None
+        True
+    """
+    if len(add.input) != 2:
+        return None
+    index = 1 - list(add.input).index(product)
+    return index if add.input[index] in constants else None
+
+
+def _channel_means_graph(
+    model: Any, tensors: Mapping[str, tuple[int, float]], batch: int
+) -> tuple[Any, dict[str, tuple[str, str]]]:
+    """Return a copy of *model* that also outputs, per image and channel, the mean of each tensor and its INT8 rounding.
+
+    Each tensor of *tensors* is read as *batch* images, each a run of rows of its last axis, its ``channels``: the
+    tensor's leading axis must list the images one after another, as RF-DETR's backbone does when it splits each image
+    into windows. The mean of every channel is taken over the rows of each image, as is the mean of the tensor
+    quantized to INT8 with the given step and dequantized again, so each output has one row per image. *model* must be
+    at opset 18 or later, where ``ReduceMean`` takes its axes as an input.
+
+    Args:
+        model: The FP32 ``ModelProto``.
+        tensors: Tensor name to ``(channels, step)``.
+        batch: The number of images the graph runs at once.
+
+    Returns:
+        The probe, and per tensor the names of its two mean outputs (plain, then INT8).
+
+    Examples:
+        >>> from onnx import TensorProto, helper
+        >>> graph = helper.make_graph([helper.make_node("Relu", ["x"], ["y"])], "g",
+        ...     [helper.make_tensor_value_info("x", TensorProto.FLOAT, [3, 2])],
+        ...     [helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])])
+        >>> model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 19)])
+        >>> probe, outputs = _channel_means_graph(model, {"y": (2, 0.5)}, batch=3)
+        >>> outputs, [output.name for output in probe.graph.output]
+        ({'y': ('y__mean', 'y__int8_mean')}, ['y', 'y__mean', 'y__int8_mean'])
+    """
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    probe = onnx.ModelProto()
+    probe.CopyFrom(model)
+    taken = _tensor_names(probe.graph)
+    rows_axis, zero = _unique_name("channel_means_rows", taken), _unique_name("channel_means_zero_point", taken)
+    probe.graph.initializer.extend(
+        [
+            numpy_helper.from_array(np.array([1], np.int64), rows_axis),
+            numpy_helper.from_array(np.array(0, np.int8), zero),
+        ]
+    )
+    outputs = {}
+    for tensor, (channels, step) in tensors.items():
+        shape, rows, scale, quantized, dequantized, mean, int8_mean = (
+            _unique_name(f"{tensor}__{suffix}", taken)
+            for suffix in ("rows_shape", "rows", "int8_step", "int8", "dequantized", "mean", "int8_mean")
+        )
+        probe.graph.initializer.extend(
+            [
+                numpy_helper.from_array(np.array([batch, -1, channels], np.int64), shape),
+                numpy_helper.from_array(np.array(step, np.float32), scale),
+            ]
+        )
+        probe.graph.node.extend(
+            [
+                helper.make_node("Reshape", [tensor, shape], [rows]),
+                helper.make_node("ReduceMean", [rows, rows_axis], [mean], keepdims=0),
+                helper.make_node("QuantizeLinear", [rows, scale, zero], [quantized]),
+                helper.make_node("DequantizeLinear", [quantized, scale, zero], [dequantized]),
+                helper.make_node("ReduceMean", [dequantized, rows_axis], [int8_mean], keepdims=0),
+            ]
+        )
+        for name in (mean, int8_mean):
+            probe.graph.output.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, [batch, channels]))
+        outputs[tensor] = (mean, int8_mean)
+    return probe, outputs
+
+
+def measure_mlp_bias_shifts(
+    onnx_path: str,
+    model: Any,
+    plan: Int8Plan,
+    ranges: Mapping[tuple[str, int], float],
+    batches: Iterable[NDArray[np.float32]],
+) -> dict[str, NDArray[np.float64]]:
+    """Measure the shift INT8 adds to the mean output of each backbone MLP layer, per output channel.
+
+    An INT8 layer ``y = x W + b`` computes ``Q(x) Q(W) + b``, where ``Q(x)`` rounds the input to its INT8 step and
+    ``Q(W)`` is the per-channel INT8 rounding of the weight cast to FP16. That matches the weight :func:`insert_qdq`
+    stores for the FP16 copy up to one FP16 rounding of a smoothed weight: the copy scales the weight it already cast to
+    FP16 and rounds it again, ``fp16(fp16(W) s)``, while this casts the smoothed FP32 weight once, ``fp16(W s)``. Over
+    the calibration images run through the FP32 graph its mean output moves by ``E[Q(x)] Q(W) - E[x] W``, the means
+    taken per input channel over every token of every image, and subtracting that shift from ``b`` gives the INT8 layer
+    the FP32 layer's mean output. Each layer is measured on FP32 inputs, independently of the INT8 error of the layers
+    before it. A static batch larger than the images left over is padded with copies of the last image, as calibration
+    pads it; the means are taken per image and the copies left out, so every image weighs the same at any batch. The
+    layers are those of :func:`_mlp_biases`.
+
+    Args:
+        onnx_path: The FP32 ``.onnx`` file *model* was loaded from; the probe graph is written to a temporary file
+            beside it.
+        model: The loaded FP32 ``ModelProto``, lifted to the opset FP16 scales need and rewritten as it was for *plan*.
+        plan: The INT8 plan of *model*.
+        ranges: Calibrated absolute maximum per planned ``(node name, input index)``.
+        batches: Preprocessed ``(1, C, H, W)`` images, the ones *ranges* were calibrated on.
+
+    Returns:
+        Name of each layer's bias ``Add`` to the shift to subtract from its bias; empty when no backbone MLP layer has a
+        bias to correct.
+
+    Raises:
+        ValueError: If *batches* is empty or holds a NaN or infinite value.
+    """
+    from onnx import numpy_helper
+
+    layers = _mlp_biases(model, plan)
+    if not layers:
+        return {}
+    weights = _constant_weights(model.graph)
+    by_name = {node.name: node for node in model.graph.node if node.name in layers}
+    tensors = {
+        by_name[name].input[0]: (
+            int(weights[by_name[name].input[1]].dims[0]),
+            float(_activation_step(ranges[(name, 0)])),
+        )
+        for name in layers
+    }
+    # The batch _graph_batches groups the images into: the static one, or a single image for a dynamic batch.
+    batch = model.graph.input[0].type.tensor_type.shape.dim[0].dim_value or 1
+    probe, outputs = _channel_means_graph(model, tensors, batch)
+    names = [name for pair in outputs.values() for name in pair]
+    sums: list[NDArray[np.float64]] = []
+    images = 0
+    for measured, real in _run_probe(onnx_path, probe, names, batches):
+        # One row per image, so the copies that pad the last group are left out.
+        group = [value[:real].sum(axis=0) for value in measured]
+        sums = group if not sums else [total + value for total, value in zip(sums, group)]
+        images += real
+    means = dict(zip(names, (total / images for total in sums)))
+    shifts = {}
+    for name, add in layers.items():
+        node = by_name[name]
+        weight = numpy_helper.to_array(weights[node.input[1]]).astype(np.float64)
+        # The weight insert_qdq quantizes in the FP16 copy, up to one FP16 rounding of a smoothed weight: the copy holds
+        # fp16(fp16(W) * s), this is fp16(W * s).
+        values, scales = _quantized_weight(weight.astype(np.float16), axis=1)
+        mean, int8_mean = (means[output] for output in outputs[node.input[0]])
+        shifts[add] = int8_mean @ (values.astype(np.float64) * scales.astype(np.float64)) - mean @ weight
+    return shifts
+
+
+def _correct_biases(model: Any, shifts: Mapping[str, NDArray[np.float64]]) -> None:
+    """Give each bias ``Add`` named in *shifts* its own copy of its bias minus the shift, in place.
+
+    The ``Add`` reads a new initializer of the bias's dtype, so a bias that other nodes read as well (the exporter
+    stores identical biases once) or that is a graph output keeps its value for them, and one that nothing reads any
+    more is removed.
+
+    Args:
+        model: The FP16 ``ModelProto`` the engine is built from.
+        shifts: Name of a bias ``Add`` to the shift to subtract (see :func:`measure_mlp_bias_shifts`).
+
+    Raises:
+        ValueError: If *model* has no single node of one of the names, or that node adds no constant.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> bias = numpy_helper.from_array(np.array([1.0, 2.0], np.float16), "b")
+        >>> add = helper.make_node("Add", ["y0", "b"], ["y"], "add")
+        >>> model = helper.make_model(helper.make_graph([add], "g", [], [], [bias]))
+        >>> _correct_biases(model, {"add": np.array([0.5, -1.0])})
+        >>> list(model.graph.node[0].input), numpy_helper.to_array(model.graph.initializer[-1]).tolist()
+        (['y0', 'b_int8_corrected'], [0.5, 3.0])
+    """
+    from onnx import numpy_helper
+
+    graph = model.graph
+    constants = _constant_weights(graph)
+    counts = Counter(node.name for node in graph.node)
+    by_name = {node.name: node for node in graph.node if node.name in shifts and counts[node.name] == 1}
+    taken = _tensor_names(graph)
+    replaced: list[str] = []
+    for name, shift in shifts.items():
+        node = by_name.get(name)
+        index = next((i for i, tensor in enumerate(node.input) if tensor in constants), None) if node else None
+        if node is None or node.op_type != "Add" or index is None:
+            raise ValueError(
+                f"The FP16 copy has no bias Add {name!r} for the INT8 bias correction, which the FP16 cast cannot "
+                "cause."
+            )
+        bias = numpy_helper.to_array(constants[node.input[index]])
+        corrected = _unique_name(f"{node.input[index]}_int8_corrected", taken)
+        graph.initializer.append(
+            numpy_helper.from_array((bias.astype(np.float64) - shift).astype(bias.dtype), corrected)
+        )
+        replaced.append(str(node.input[index]))
+        node.input[index] = corrected
+    _drop_unread_initializers(graph, replaced)
+
+
+def _activation_step(value: float) -> np.float16:
+    """Return the FP16 INT8 step of an activation whose absolute maximum is *value*, at least :data:`_MIN_FP16_SCALE`.
+
+    Examples:
+        >>> float(_activation_step(12.7)), float(_activation_step(0.0)) > 0
+        (0.0999755859375, True)
+    """
+    return np.float16(max(float(value) / _INT8_MAX, _MIN_FP16_SCALE))
 
 
 def _quantized_weight(weight: NDArray[Any], axis: int) -> tuple[NDArray[np.int8], NDArray[np.float16]]:
@@ -1137,8 +1814,9 @@ def insert_qdq(model: Any, plan: Int8Plan, ranges: Mapping[tuple[str, int], floa
         if tensor not in shared:
             scale = _unique_name(f"{tensor}_int8_scale", taken)
             quantized, dequantized = _unique_name(f"{tensor}_int8", taken), _unique_name(f"{tensor}_dequantized", taken)
-            step = max(float(ranges[(node_name, index)]) / _INT8_MAX, _MIN_FP16_SCALE)
-            new_initializers.append(numpy_helper.from_array(np.array(step, np.float16), scale))
+            new_initializers.append(
+                numpy_helper.from_array(np.array(_activation_step(ranges[(node_name, index)])), scale)
+            )
             inserted.setdefault(node_name, []).extend(
                 [
                     helper.make_node(
@@ -1278,6 +1956,12 @@ def int8_source_graph(
 ) -> Iterator[str]:
     """Provide an INT8-quantized FP16 copy of *onnx_path* to build from, deleting it when the block exits.
 
+    A detection model's calibration images are read three times: for SmoothQuant's per-channel scales of the backbone
+    norms (:func:`measure_smoothing_scales`), applied to the FP32 graph before the ranges are calibrated and to the
+    FP16 copy before the Q/DQ nodes are inserted, for the activation ranges, and for the mean shift INT8 adds to the
+    backbone MLP layers, which is subtracted from their biases (:func:`measure_mlp_bias_shifts`). The other models'
+    images are read once, for the ranges.
+
     Args:
         onnx_path: The FP32 ``.onnx`` export.
         calibration_data: Directory of images, ``.npy`` path or array, as accepted by
@@ -1299,9 +1983,10 @@ def int8_source_graph(
             holds a NaN or infinite value, or gives a range that is not finite (a NaN computed inside the graph
             included) or does not fit an FP16 scale; or if a calibration
             image cannot be identified as an image (the message names the file); or if *fp16_graph* returns a copy
-            that lacks a node the plan quantizes, which the real FP16 cast cannot do. An image
-            Pillow identifies but cannot decode (a truncated file) raises Pillow's own ``OSError``, which does not
-            name the file.
+            that lacks a node the plan quantizes, a norm the smoothing scales (or reads it with other nodes than
+            the projections it scales), or a bias ``Add`` the correction changes, which the real FP16 cast cannot
+            do. An image Pillow identifies but cannot decode (a truncated file) raises Pillow's own ``OSError``,
+            which does not name the file.
         NotImplementedError: If the graph's outputs are not a detector's ``dets`` and ``labels``, optionally followed
             by ``masks`` or ``keypoints`` (so a backbone-only export or any other set is refused), the type
             :meth:`TensorRTExporter._convert` raises for the same set.
@@ -1315,8 +2000,10 @@ def int8_source_graph(
     _refuse_unquantizable_source(source, onnx_path)
     # Lifting the FP32 source too keeps its meaning and makes an unliftable graph fail here, before calibration.
     _lift_opset(source)
-    # Before the plan, so that the patch embedding is planned and calibrated as the matrix multiply it becomes.
-    rewritten = _patch_embedding_as_matmul(source)
+    # Before the plan, so that a patch embedding INT8 can quantize is planned and calibrated as the matrix multiply it
+    # becomes. One whose flattened patch is not a multiple of 32 values stays a convolution here, so it is not
+    # quantized.
+    _patch_embedding_as_matmul(source, multiple_of=_INT8_CONV_CHANNEL_MULTIPLE)
     plan = plan_int8(source)
     # A NaN or infinite weight gets a NaN or infinite FP16 scale that only TensorRT would notice, after calibration.
     weights = _constant_weights(source.graph)
@@ -1335,10 +2022,28 @@ def int8_source_graph(
     channels, height, width = (d.dim_value for d in dims[1:4])
     keys = list(plan.activations)
     tensors = sorted({_input_tensor(source.graph, name, index) for name, index in keys})
-    batches = calibration_batches(
-        calibration_data, height=height, width=width, channels=channels, max_images=max_images
-    )
-    with contextlib.closing(batches):  # releases a memory-mapped ``.npy`` even when calibration raises
+
+    def images(*, verbose: bool = True) -> contextlib.closing[Generator[NDArray[np.float32], None, None]]:
+        """A fresh pass over the calibration images, closed even when the pass raises (a memory-mapped ``.npy``).
+
+        *verbose* logs the per-sample range warnings; ``False`` for a pass after the first one to read the images.
+        """
+        return contextlib.closing(
+            calibration_batches(
+                calibration_data, height=height, width=width, channels=channels, max_images=max_images, verbose=verbose
+            )
+        )
+
+    detection = tuple(output.name for output in source.graph.output) == _DETECTION_OUTPUT_NAMES
+    scales: dict[str, NDArray[np.float64]] = {}
+    if detection:
+        # Before calibration, so that the ranges are those of the smoothed norms.
+        with images() as batches:
+            scales = measure_smoothing_scales(onnx_path, source, plan, batches)
+        _smooth_norms(source, scales)
+        logger.info(f"Smoothed {len(scales)} backbone LayerNorm output(s) for INT8")
+    # The first pass unless the smoothing pass read the images: with no norm to smooth it returns before reading any.
+    with images(verbose=not scales) as batches:
         by_tensor = calibrate_ranges(onnx_path, source, tensors, batches)
     unusable = sorted(t for t, r in by_tensor.items() if not np.isfinite(r) or r / _INT8_MAX > _MAX_FP16)
     if unusable:
@@ -1349,19 +2054,31 @@ def int8_source_graph(
             "are finite."
         )
     ranges = {key: by_tensor[_input_tensor(source.graph, *key)] for key in keys}
+    shifts: dict[str, NDArray[np.float64]] = {}
+    if detection:
+        # Measured at the steps just calibrated, on the smoothed graph.
+        with images(verbose=False) as batches:
+            shifts = measure_mlp_bias_shifts(onnx_path, source, plan, ranges, batches)
+        logger.info(f"Corrected the bias of {len(shifts)} backbone MLP layer(s) for the mean shift of INT8")
     del source
 
     with fp16_graph(onnx_path, dynamic_batch=dynamic_batch) as fp16_path:
         model = onnx.load(fp16_path)
     _lift_opset(model)  # as the FP32 source was, before the rewrite adds its nodes
-    if rewritten:
-        _patch_embedding_as_matmul(model)  # the same rewrite, so that the planned node names exist in this graph
+    # Every patch embedding becomes a matrix multiply here: the planned ones need the node names the plan holds, and
+    # none whose MatMul name is free is left as a 3-channel convolution for TensorRT to pad. The planned ones go first,
+    # as in the FP32 source, so that a patch the plan skipped cannot take a planned name when two patches share a
+    # parent; the one that loses the name stays a convolution. A patch the plan skipped stays FP16.
+    _patch_embedding_as_matmul(model, multiple_of=_INT8_CONV_CHANNEL_MULTIPLE)
+    _patch_embedding_as_matmul(model)
     missing = sorted({name for name, _ in plan.activations} - {node.name for node in model.graph.node})
     if missing:
         raise ValueError(
             f"The FP16 copy of '{onnx_path}' lacks {len(missing)} node(s) the INT8 plan quantizes, e.g. {missing[0]!r} "
-            "(the patch embedding is rewritten in both graphs), so the plan cannot be applied to it."
+            "(a planned patch embedding is rewritten in both graphs), so the plan cannot be applied to it."
         )
+    _smooth_norms(model, scales)
+    _correct_biases(model, shifts)
     insert_qdq(model, plan, ranges)
     stem = os.path.basename(os.path.splitext(onnx_path)[0])
     handle, int8_path = tempfile.mkstemp(prefix=f"{stem}.int8-", suffix=".onnx", dir=os.path.dirname(onnx_path) or ".")

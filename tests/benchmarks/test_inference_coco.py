@@ -27,7 +27,7 @@ PTL training-stack path (``RFDETR.evaluate()``)
 
 Both paths run on CPU (nano models) and GPU (small and larger models, ``@pytest.mark.gpu``).
 
-API contract tests (return type, shape) live in ``tests/models/test_predict.py`` and do not require a COCO
+API contract tests (return type, shape) live in ``tests/inference/prediction/test_core.py`` and do not require a COCO
 download.
 """
 
