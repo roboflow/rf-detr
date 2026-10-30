@@ -7,15 +7,19 @@
 
 import math
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
 import torch
 from PIL import Image
+from supervision import Detections
 
 from rfdetr import RFDETRInference
 from rfdetr.detr import RFDETR
 from tests._markers import onnx_and_onnxruntime_only
+
+from .helpers import _requires_opencv
 
 
 class TestInferenceLoading:
@@ -106,7 +110,7 @@ def _channel_readout_graph(path: Path, channels: int = 3) -> None:
     onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=8), path)
 
 
-def _expected_detection(rgb: tuple[int, int, int], height: int, width: int) -> tuple[list[float], float]:
+def _expected_detection(rgb: tuple[float, float, float], height: int, width: int) -> tuple[list[float], float]:
     """Compute the box and score the channel-readout graph gives a uniform image under native preprocessing.
 
     Each channel is normalized by hand as ``(pixel / 255 - mean) / std`` in RGB order; a uniform image keeps that value
@@ -435,6 +439,22 @@ class TestExportedPrediction:
         with pytest.raises(ValueError, match="Batch size mismatch"):
             model.predict([image, image])
 
+    def test_explicit_batch_splits_image_list(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        """A fixed batch-one artifact predicts an image list when the caller passes the export's batch size.
+
+        Without the explicit bound the list runs as one batch of two and the artifact rejects it.
+        """
+        import numpy as np
+
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        image = np.zeros((32, 48, 3), dtype=np.uint8)
+
+        results = model.predict([image, image], batch=1)
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+
     def test_shape_mismatch(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """A prediction shape cannot override the artifact's fixed shape."""
         import numpy as np
@@ -551,3 +571,239 @@ class TestExportedPrediction:
             assert result.keypoint_confidence is not None
             np.testing.assert_allclose(result.keypoint_confidence, [[0.880797]], rtol=1e-5)
             assert np.asarray(result.data["covariance"]).shape == (1, 1, 2, 2)
+
+
+@onnx_and_onnxruntime_only
+class TestExportedStreaming:
+    """Exported runtimes use the same source expansion as native models."""
+
+    @pytest.mark.parametrize("input_kind", ["directory", "glob", "bchw"])
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_expanded_sources(
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, input_kind: str, stream: bool
+    ) -> None:
+        """Expanded inputs preserve image order and boxes in eager and lazy modes."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        images = np.stack([np.full((64, 96, 3), value, dtype=np.uint8) for value in [40, 80, 120]])
+        source_dir = tmp_path / "images"
+        source_dir.mkdir()
+        for index in [2, 0, 1]:
+            Image.fromarray(images[index]).save(source_dir / f"{index}.png")
+        if input_kind == "directory":
+            source = source_dir
+        elif input_kind == "glob":
+            source = str(source_dir / "*.png")
+        else:
+            source = torch.from_numpy(images).permute(0, 3, 1, 2).float().div(255)
+
+        # The batch-one export needs an explicit batch to split the BCHW tensor; file sources already use one.
+        results = list(model.predict(source, stream=stream, batch=1))
+
+        assert len(results) == 3
+        for result, image, value in zip(results, images, [40, 80, 120]):
+            assert isinstance(result, Detections)
+            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+            np.testing.assert_array_equal(result.metadata["source_image"], image)
+
+    @_requires_opencv
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_bchw_default_batch_matches_fixed_export(
+        self, exported_batch_two: tuple[Path, dict[str, object]], stream: bool
+    ) -> None:
+        """A BCHW tensor runs as one batch by default, so a fixed batch-two export accepts its own B=2 tensor.
+
+        Splitting the tensor into single images would make the export reject every batch with a size mismatch, leaving
+        callers to discover the ``batch`` argument from an error.
+        """
+        path, metadata = exported_batch_two
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        images = np.stack([np.full((64, 96, 3), value, dtype=np.uint8) for value in [40, 120]])
+        source = torch.from_numpy(images).permute(0, 3, 1, 2).float().div(255)
+
+        results = list(model.predict(source, stream=stream))
+
+        assert len(results) == 2
+        for result, image, value in zip(results, images, [40, 120]):
+            assert isinstance(result, Detections)
+            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+            np.testing.assert_array_equal(result.metadata["source_image"], image)
+
+    @_requires_opencv
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_video_stride(
+        self, exported_detection: tuple[Path, dict[str, object]], prediction_video: Path, stream: bool
+    ) -> None:
+        """Video stride keeps every second frame from the first and stops at finite EOF."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+
+        results = list(model.predict(prediction_video, stream=stream, vid_stride=2))
+
+        assert len(results) == 3
+        for result, value in zip(results, [20, 60, 100]):
+            assert isinstance(result, Detections)
+            source_image = result.metadata["source_image"]
+            np.testing.assert_allclose(source_image, value, atol=2)
+            # MJPEG may shift decoded colors by a few levels across codec backends.
+            red, green, blue = source_image.mean(axis=(0, 1))
+            expected_box, _ = _expected_detection((red, green, blue), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+
+    @_requires_opencv
+    @pytest.mark.parametrize("ending", ["exhaustion", "close", "error"])
+    def test_video_capture_cleanup(
+        self,
+        exported_detection: tuple[Path, dict[str, object]],
+        prediction_video: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        ending: str,
+    ) -> None:
+        """Real video captures close on completion, early close, and a rejected batch."""
+        import cv2  # optional dependency, guarded by the test's skipif
+
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        capture = cv2.VideoCapture(str(prediction_video))
+        assert capture.isOpened()
+        capture_factory = Mock(return_value=capture)
+        monkeypatch.setattr(cv2, "VideoCapture", capture_factory)
+        results = model.predict(prediction_video, stream=True, batch=2 if ending == "error" else 1)
+        capture_factory.assert_not_called()
+        if ending == "error":
+            with pytest.raises(ValueError, match="Batch size mismatch"):
+                next(results)
+        elif ending == "close":
+            next(results)
+            results.close()
+        else:
+            assert len(list(results)) == 6
+
+        assert not capture.isOpened()
+
+    def test_partial_batch_rejected(self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path) -> None:
+        """A fixed batch-two export yields its full batch then rejects the final image."""
+        path, metadata = exported_batch_two
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        source = tmp_path / "images"
+        source.mkdir()
+        for index in range(3):
+            Image.fromarray(np.zeros((64, 96, 3), dtype=np.uint8)).save(source / f"{index}.png")
+        results = model.predict(source, stream=True, batch=2)
+
+        expected_box, _ = _expected_detection((0, 0, 0), height=64, width=96)
+        for _ in range(2):
+            result = next(results)
+            assert isinstance(result, Detections)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+        with pytest.raises(ValueError, match="Batch size mismatch"):
+            next(results)
+
+    def test_dynamic_batch_flushes_final_image(
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path
+    ) -> None:
+        """A dynamic export executes batches of two, two, then one without losing images."""
+        import onnxruntime as ort
+
+        path, metadata = exported_detection
+        metadata = dict(metadata, input_shape=[-1, 3, 32, 48])
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        source = tmp_path / "images"
+        source.mkdir()
+        for index, value in enumerate([20, 40, 60, 80, 100]):
+            Image.fromarray(np.full((64, 96, 3), value, dtype=np.uint8)).save(source / f"{index}.png")
+
+        with patch.object(ort.InferenceSession, "run", autospec=True, side_effect=ort.InferenceSession.run) as execute:
+            results = list(model.predict(source, stream=True, batch=2))
+
+        assert [call.args[2]["images"].shape[0] for call in execute.call_args_list] == [2, 2, 1]
+        assert len(results) == 5
+        for result, value in zip(results, [20, 40, 60, 80, 100]):
+            assert isinstance(result, Detections)
+            np.testing.assert_array_equal(result.metadata["source_image"], value)
+            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+
+    @_requires_opencv
+    def test_two_camera_streams_fill_a_batch_two_export(
+        self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path
+    ) -> None:
+        """A `.streams` manifest of two cameras feeds one batch-two export frame by frame, in source order."""
+        path, metadata = exported_batch_two
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        manifest = tmp_path / "cameras.streams"
+        manifest.write_text("0\n1\n")
+        cameras = [Mock(), Mock()]
+        for camera, value in zip(cameras, [40, 80]):
+            camera.read.return_value = (True, np.full((64, 96, 3), value, dtype=np.uint8))
+
+        with patch("cv2.VideoCapture", side_effect=cameras):
+            results = model.predict(manifest, stream=True, stream_buffer=True)
+            try:
+                first, second = next(results), next(results)
+            finally:
+                results.close()
+
+        for result, value in zip([first, second], [40, 80]):
+            assert isinstance(result, Detections)
+            expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
+            np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
+        for camera in cameras:
+            camera.release.assert_called_once()
+
+    @_requires_opencv
+    def test_eager_live_source_warns_about_memory(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        """Eager prediction on a live camera warns that results accumulate in memory before opening the device."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        camera = Mock()
+        camera.isOpened.return_value = False
+
+        with patch("cv2.VideoCapture", return_value=camera) as open_capture:
+            with pytest.warns(UserWarning, match="accumulate in memory"):
+                with pytest.raises(ValueError, match="Could not open"):
+                    model.predict(0)
+
+        open_capture.assert_called_once()
+
+
+@pytest.fixture
+def prediction_video(tmp_path: Path) -> Path:
+    """Create six grayscale frames with known pixel values.
+
+    Examples:
+        >>> prediction_video()  # doctest: +SKIP
+        # Pytest supplies the temporary directory and OpenCV codec support.
+    """
+    import cv2  # optional dependency, only requested by tests guarded with a skipif
+
+    path = tmp_path / "source.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter.fourcc(*"MJPG"), 10, (96, 64))
+    if not writer.isOpened():
+        pytest.skip("OpenCV MJPG video writer unavailable")
+    try:
+        for value in [20, 40, 60, 80, 100, 120]:
+            writer.write(np.full((64, 96, 3), value, dtype=np.uint8))
+    finally:
+        writer.release()
+    return path
+
+
+@pytest.fixture
+def exported_batch_two(exported_detection: tuple[Path, dict[str, object]]) -> tuple[Path, dict[str, object]]:
+    """Fix the channel-readout detector to a batch of two.
+
+    Examples:
+        >>> exported_batch_two()  # doctest: +SKIP
+        # Pytest supplies the ONNX artifact fixture.
+    """
+    import onnx
+
+    path, metadata = exported_detection
+    model = onnx.load(path)
+    for value in [*model.graph.input, *model.graph.output]:
+        value.type.tensor_type.shape.dim[0].dim_value = 2
+    onnx.save(model, path)
+    return path, dict(metadata, input_shape=[2, 3, 32, 48])

@@ -13,12 +13,19 @@ Import with a relative import::
 
 from __future__ import annotations
 
+from itertools import chain, repeat
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 from rfdetr.detr import RFDETR
+from rfdetr.utilities.imports import _IS_OPENCV_INSTALLED
+
+#: Gate for tests that import or patch ``cv2``; the package is optional and imported locally where used.
+_requires_opencv = pytest.mark.skipif(not _IS_OPENCV_INSTALLED, reason="requires the optional opencv package")
 
 
 class _BaseFakeRFDETR(RFDETR):
@@ -38,6 +45,50 @@ class _BaseFakeRFDETR(RFDETR):
     def get_model_config(self, **kwargs: object) -> SimpleNamespace:
         """Return a minimal config sufficient for most test scenarios."""
         return SimpleNamespace(num_channels=3)
+
+
+def _scripted_capture(script: list[tuple[bool, Any] | BaseException]) -> MagicMock:
+    """Fake an OpenCV capture whose ``read`` and ``grab`` consume one shared frame script.
+
+    ``read()`` returns the next ``(success, frame)`` entry and ``grab()`` returns only its success flag, so a
+    skipped frame advances the same position a real decoder would. Exception entries are raised. After the
+    script ends, every call reports a failed read.
+
+    Args:
+        script: Decoder results in frame order, or exceptions to raise at that position.
+
+    Returns:
+        A capture mock with ``read`` and ``grab`` bound to the script.
+
+    Examples:
+        >>> capture = _scripted_capture([(True, "frame-0"), (True, "frame-1"), (True, "frame-2")])
+        >>> capture.read()
+        (True, 'frame-0')
+        >>> capture.grab()
+        True
+        >>> capture.read()
+        (True, 'frame-2')
+        >>> capture.read()
+        (False, None)
+    """
+    entries = chain(script, repeat((False, None)))
+
+    def advance() -> tuple[bool, Any]:
+        """Return the next scripted decoder result.
+
+        Examples:
+            >>> _scripted_capture([(True, 1)]).read()  # doctest: +SKIP
+            # Bound to the enclosing script; exercised through the capture above.
+        """
+        entry = next(entries)
+        if isinstance(entry, BaseException):
+            raise entry
+        return entry
+
+    capture = MagicMock()
+    capture.read.side_effect = advance
+    capture.grab.side_effect = lambda: advance()[0]
+    return capture
 
 
 class _DummyModel:

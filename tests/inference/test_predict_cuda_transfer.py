@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Regression coverage for the coalesced GPU->CPU output transfer in ``predict()``.
 
-The existing ``predict()`` tests (``test_predict.py``) use ``_DummyModel``, whose ``postprocess()`` builds result
-tensors on CPU (``helpers.py``) — that path never exercises the CUDA branch added to batch the output transfers, so it
-cannot catch an incomplete device->host read or a synchronization call targeting the wrong device. These tests require
-CUDA and are skipped otherwise.
+The existing ``predict()`` tests (``prediction/test_core.py``) use ``_DummyModel``, whose ``postprocess()`` builds
+result tensors on CPU (``helpers.py``) — that path never exercises the CUDA branch added to batch the output transfers,
+so it cannot catch an incomplete device->host read or a synchronization call targeting the wrong device. These tests
+require CUDA and are skipped otherwise.
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ class TestPredictCudaTransfer:
         A regression that drops `non_blocking=True` from the output transfer would pass the value- and
         ordering-based tests above bit-identically — only the PR's entire perf gain would be lost, invisibly.
         This spies `torch.Tensor.to` (the same pattern used by `test_already_cuda_tensor_input_is_not_pinned`
-        and `test_cuda_tensor_input_to_cpu_model_is_not_non_blocking` in `test_predict.py` for the input side)
+        and `test_cuda_tensor_input_to_cpu_model_is_not_non_blocking` in `prediction/test_core.py` for the input side)
         and asserts every CPU-bound `.to()` call for the result tensors was issued with `non_blocking=True`.
         """
         img = torch.rand(3, 28, 28, device="cuda:0")

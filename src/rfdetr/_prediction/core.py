@@ -12,7 +12,7 @@ import math
 import operator
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -33,12 +33,14 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
+from rfdetr._prediction.sources import is_expanded_source, iter_source_batches
+from rfdetr._prediction.types import _ImageInput, _PredictionInput
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
+    from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
 
 logger = get_logger()
 
@@ -421,27 +423,175 @@ def _mps_lacks_antialiased_resize() -> bool:
     return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
 
 
-@torch.inference_mode()
+#: Iterable inputs that are one image or source, never a collection of them.
+_SCALAR_INPUTS = (str, bytes, os.PathLike, Image.Image, np.ndarray, torch.Tensor)
+
+
+def _as_collection(images: _PredictionInput) -> _PredictionInput:
+    """Read an iterable of inputs into a list so later steps can count and index it.
+
+    Lists, tuples and single inputs pass through unchanged, including strings, arrays and tensors, which are
+    iterable but name one image or source.
+
+    Args:
+        images: One input or an iterable of inputs.
+
+    Returns:
+        The input itself, or a list of the iterable's items.
+
+    Examples:
+        >>> _as_collection(iter(["a.jpg", "b.jpg"]))
+        ['a.jpg', 'b.jpg']
+        >>> _as_collection("a.jpg")
+        'a.jpg'
+    """
+    if isinstance(images, (list, tuple, *_SCALAR_INPUTS)) or not isinstance(images, Iterable):
+        return images
+    return list(images)
+
+
 def predict(
-    context: PredictionContext,
-    images: str
-    | os.PathLike[str]
-    | Image.Image
-    | np.ndarray[Any, Any]
-    | torch.Tensor
-    | list[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor]
-    | tuple[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor, ...],
+    context_factory: Callable[[], PredictionContext],
+    images: _PredictionInput,
     threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,
     include_source_image: bool = True,
     *,
-    antialias: bool = False,
-) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+    antialias: bool | None = None,
+    stream: bool = False,
+    batch: int | None = None,
+    vid_stride: int = 1,
+    stream_buffer: bool = False,
+) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
+    """Route both public prediction APIs through the same source and runtime pipeline.
+
+    Empty sources follow one policy (details in :mod:`rfdetr._prediction.sources`). An empty collection holds no
+    inputs: ``stream=True`` yields nothing, and an eager call returns ``[]`` for an empty manifest but raises
+    ``ValueError`` for an empty list or tuple. A location that must hold media or sources raises in both modes: a
+    directory or glob without supported files raises ``FileNotFoundError``, and a ``.streams`` manifest without sources
+    raises ``ValueError``.
+
+    Args:
+        context_factory: Read current execution rules when an inference batch starts.
+        images: Image data, paths, collections, videos, or live sources.
+        threshold: The confidence score a detection must exceed to be kept. A single float applies to every class. A
+            sequence of floats, one per entry of ``class_names`` and in the same order, applies each threshold to the
+            detections of its own class; it leaves out every detection that belongs to no entry of ``class_names``.
+        shape: Input height and width.
+        patch_size: Backbone patch size for shape validation.
+        include_source_image: Store source pixels in each result.
+        antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+        stream: Yield results on demand instead of collecting them.
+        batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch and
+            other expanded or streamed sources one image or frame at a time. An integer bounds every batch.
+        vid_stride: Read every Nth video frame.
+        stream_buffer: Queue live frames instead of retaining the latest frame.
+
+    Returns:
+        A lazy generator, a scalar image result, or a list of results.
+    """
+    for name, value in (("batch", 1 if batch is None else batch), ("vid_stride", vid_stride)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer.")
+    if not isinstance(stream_buffer, bool):
+        raise ValueError("stream_buffer must be a boolean.")
+    images = _as_collection(images)
+    # An explicit batch splits an eager image list; an empty list keeps its single-batch error below.
+    bounded_image_list = batch is not None and isinstance(images, (list, tuple)) and len(images) > 0
+    if stream or bounded_image_list or is_expanded_source(images):
+        if batch is None:
+            # A BCHW tensor already is one batch; split it only when the caller bounds the batch size.
+            batch = max(images.shape[0], 1) if isinstance(images, torch.Tensor) and images.ndim == 4 else 1
+        results = _predict_stream(
+            context_factory,
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias=antialias,
+            batch=batch,
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
+            warn_on_live=not stream,
+        )
+        return results if stream else list(results)
+    return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+
+
+def _predict_stream(
+    context_factory: Callable[[], PredictionContext],
+    images: _PredictionInput,
+    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    include_source_image: bool,
+    *,
+    antialias: bool | None,
+    batch: int,
+    vid_stride: int,
+    stream_buffer: bool,
+    warn_on_live: bool,
+) -> Generator[_PredictionResult, None, None]:
+    """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
+
+    The model's channel count is read once from the first context so captured frames convert to grayscale for
+    one-channel models. Each batch runs through :func:`_predict_batch`, which re-reads the context. Closing the
+    generator closes the source reader.
+
+    Args:
+        context_factory: Read current execution rules when a batch starts.
+        images: Image data, paths, collections, videos, or live sources.
+        threshold: A single confidence threshold, or one per entry of ``class_names``; see :func:`predict`.
+        shape: Input height and width.
+        patch_size: Backbone patch size for shape validation.
+        include_source_image: Store source pixels in each result.
+        antialias: Use antialiasing during image resize.
+        batch: Maximum number of images per batch.
+        vid_stride: Read every Nth video or live frame.
+        stream_buffer: Queue live frames instead of retaining the latest frame.
+        warn_on_live: Warn about memory growth from live sources and large finite sources; set for eager callers, whose
+            results accumulate.
+
+    Yields:
+        One result per input image or frame, in source order.
+    """
+    source_batches = iter_source_batches(
+        images,
+        batch=batch,
+        vid_stride=vid_stride,
+        stream_buffer=stream_buffer,
+        warn_on_live=warn_on_live,
+        # Frame sources decode RGB; the model's channel count decides whether they convert to grayscale.
+        num_channels=context_factory().config.num_channels,
+        # Eager results each keep a full source image, so large finite sources warn before decoding starts.
+        warn_on_retained_frames=warn_on_live and include_source_image,
+    )
+    try:
+        for image_batch in source_batches:
+            results = _predict_batch(
+                context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias
+            )
+            yield from cast("list[_PredictionResult]", results)
+    finally:
+        source_batches.close()
+
+
+@torch.inference_mode()
+def _predict_batch(
+    context_factory: Callable[[], PredictionContext],
+    images: _PredictionInput | list[_ImageInput],
+    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    include_source_image: bool,
+    antialias: bool | None,
+) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
     Args:
-        context: Execution and decoding rules for this call.
+        context_factory: Read execution and decoding rules for this batch.
         images: An image, file path, URL string, or list or tuple of those inputs. PIL and file inputs convert to
             grayscale for one-channel models and RGB for three-channel models; arrays and tensors supply their channels.
         threshold: The confidence score a detection must exceed to be kept. A single float applies to every class. A
@@ -461,14 +611,19 @@ def predict(
     Raises:
         TypeError: If ``threshold`` is neither a number nor a sequence of numbers, such as a ``dict`` keyed by class
             name.
-        ValueError: If ``threshold`` is a sequence that is not one-dimensional, whose length differs from
-            ``len(class_names)``, or that holds a NaN, or if the images, ``shape`` or ``patch_size`` are invalid.
+        ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
+            or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
+            validation, or ``threshold`` is a sequence that is not one-dimensional, whose length differs from
+            ``len(class_names)``, or that holds a NaN.
     """
     from supervision import Detections, KeyPoints
 
+    images = _as_collection(images)
     if isinstance(images, (list, tuple)) and not images:
         raise ValueError("At least one image is required.")
 
+    context = context_factory()
+    antialias = context.antialias if antialias is None else antialias
     if context.fixed_shape:
         shape = context.default_shape if shape is None else shape
         batch_size = len(images) if isinstance(images, (list, tuple)) else 1
@@ -506,7 +661,8 @@ def predict(
     # while a list/tuple always yields a list — even when it holds one image.
     single_input = not isinstance(images, (list, tuple))
     if not isinstance(images, (list, tuple)):
-        images = [images]
+        # ``_as_collection`` already read every other iterable into a list, so this is one image.
+        images = [cast("_ImageInput", images)]
 
     orig_sizes: list[Any] = []
     processed_images: list[Any] = []
@@ -717,7 +873,7 @@ def predict(
         .to(results[0]["scores"].dtype)
         .to(context.device, non_blocking=context.device.type == "cuda")
     )
-    predictions_list: list[Detections | KeyPoints] = []
+    predictions_list: list[_PredictionResult] = []
     for i, result in enumerate(results):
         scores = result["scores"]
         labels = result["labels"]
