@@ -3175,6 +3175,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>import rfdetr</code> no longer fails in Databricks notebooks, or on any host that replaces <code>warnings.warn</code>, with <code>RuntimeError: Python builtin &lt;built-in function warn&gt; is currently not supported in Torchscript</code>. TorchScript recognizes <code>warnings.warn</code> by object identity, so a replaced function broke compilation of the segmentation losses that rfdetr scripts at import. Those losses now fall back to their eager functions when TorchScript compilation fails, which compute the same result; on Python 3.14+ they already did. (<a href="https://github.com/roboflow/rf-detr/pull/1649">#1649</a>)</p>
+</li>
+<li>
 <p>FP16 logits decoded by the shared export decoder, used by <code>RFDETRInference</code> and the ONNX and TFLite reference helpers, now compute the sigmoid with float32 intermediates and round once to FP16 before top-k and the strict <code>&gt;</code> threshold, as PyTorch's FP16 sigmoid does. The decoder rounded every step in FP16 before: logit <code>1.1005859375</code> scored <code>0.75</code> instead of <code>0.75048828125</code> and was dropped at threshold <code>0.75</code>, logits <code>8</code> and <code>9</code> tied at <code>1.0</code> so top-k could pick the lower score, and negative logits such as <code>-12</code> overflowed the FP16 exponential. Some FP16 confidences and threshold or top-k outcomes therefore change; FP32 and FP64 scores keep their precision and the caller's logits are not modified. Integer and boolean logits, outside the annotated contract, keep floating-point confidences. (<a href="https://github.com/roboflow/rf-detr/issues/1647">#1647</a>) (<a href="https://github.com/roboflow/rf-detr/pull/1648">#1648</a>)</p>
 </li>
 <li>
