@@ -22,6 +22,8 @@ from rfdetr import detr as detr_module
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 
+from .helpers import _DummyRFDETR
+
 
 class _FakeModel(torch.nn.Module):
     """Minimal nn.Module that satisfies the inference contract."""
@@ -1148,3 +1150,21 @@ class TestModelContextClearedWeights:
             context.reinitialize_detection_head(5)
 
         assert context.args.num_classes == 2
+
+
+class TestExportInplaceOptimizeGuards:
+    """Roboflow export methods retain guards for legacy models whose base weights were cleared."""
+
+    def test_export_for_roboflow_raises_after_inplace_optimize(self, tmp_path) -> None:
+        """``export_for_roboflow`` raises ``RuntimeError`` once the model has been cleared."""
+        model = _DummyRFDETR()
+        model._optimized_inplace = True
+        with pytest.raises(RuntimeError, match="legacy inplace optimization"):
+            model.export_for_roboflow(str(tmp_path))
+
+    def test_deploy_to_roboflow_raises_after_inplace_optimize(self) -> None:
+        """``deploy_to_roboflow`` raises ``RuntimeError`` before any auth/network calls."""
+        model = _DummyRFDETR()
+        model._optimized_inplace = True
+        with pytest.raises(RuntimeError, match="legacy inplace optimization"):
+            model.deploy_to_roboflow("ws", "proj", 1)

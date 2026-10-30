@@ -107,6 +107,25 @@ Each TFLite artifact also has an inference metadata sidecar named `<artifact>.rf
 
 This private NumPy helper is kept for dependency-light numerical reference checks and shares raw interpreter execution with the common runtime adapter. Use `RFDETRInference` for normal image prediction.
 
+## Measured Latency on a Laptop CPU
+
+Apple M4 Max CPU (arm64), `RFDETRSmall`, 5 warmup + 30 timed runs per row, from the [mobile cookbook](../../cookbooks/export-mobile/). The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline). Every TFLite artifact is its own static per-batch export, because TFLite refuses `dynamic_batch=True`.
+
+| Runtime | Precision | Quantization  | Batch | forward [ms]    | end2end [ms]    | FPS [img/s] (end2end) | Memory [MB] |
+| ------- | --------- | ------------- | ----- | --------------- | --------------- | --------------------- | ----------- |
+| NHWC    | fp32      | —             | 1     | 797.93 ± 18.61  | 784.56 ± 5.09   | 1.3                   | 174.1       |
+| NHWC    | fp16      | —             | 1     | 787.83 ± 11.31  | 791.92 ± 3.38   | 1.3                   | 251.2       |
+| NHWC    | INT8      | dynamic range | 1     | 321.81 ± 2.85   | 328.72 ± 8.12   | 3.0                   | 135.5       |
+| NHWC    | fp32      | —             | 4     | 3178.63 ± 51.98 | 3178.26 ± 22.20 | 1.3                   | 768.1       |
+| NHWC    | fp16      | —             | 4     | 3225.73 ± 54.01 | 3177.77 ± 18.71 | 1.3                   | 442.6       |
+| NHWC    | INT8      | dynamic range | 4     | 1324.80 ± 14.17 | 1341.11 ± 20.03 | 3.0                   | 98.4        |
+
+!!! warning "Earlier measurement, pending a rerun"
+
+    These rows were measured before the cookbook pinned one thread count for every runtime: the interpreter ran at its own default thread count. Treat each row as a same-machine ratio, never as a phone latency: a phone's own delegate (NNAPI, Hexagon, Core ML) is not exercised.
+
+INT8 dynamic-range quantization ran 2.4 to 2.5 times faster than fp32 and fp16 at both batch sizes in these rows (328.72 against 784.56 ms at batch 1), and one detection dropped below the 0.5 threshold on the sample image (3 against 4).
+
 ## Predict with RFDETRInference
 
 ```python

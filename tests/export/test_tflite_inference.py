@@ -276,6 +276,22 @@ class TestCreateInterpreter:
         assert call_kwargs["model_path"] == "model.tflite"
         assert isinstance(call_kwargs["model_path"], str)
 
+    def test_passes_num_threads_to_interpreter(self, _mock_tflite_runtime) -> None:
+        """A requested thread count reaches the interpreter constructor.
+
+        The interpreter defaults to one thread, so a benchmark that wants every CPU runtime on the same pool has to be
+        able to set it through the loader instead of building its own interpreter.
+        """
+        interp_cls, _ = _mock_tflite_runtime
+        _create_interpreter("model.tflite", num_threads=4)
+        interp_cls.assert_called_once_with(model_path="model.tflite", num_threads=4)
+
+    def test_leaves_default_threads_when_unset(self, _mock_tflite_runtime) -> None:
+        """Without a thread count the interpreter is built exactly as before, on its own default."""
+        interp_cls, _ = _mock_tflite_runtime
+        _create_interpreter("model.tflite")
+        interp_cls.assert_called_once_with(model_path="model.tflite")
+
     @pytest.fixture()
     def _mock_ai_edge_litert(self):
         """Inject a fake ai_edge_litert.interpreter into sys.modules and mask lower-priority backends.

@@ -37,6 +37,9 @@ _ClassContribution: TypeAlias = tuple[
     int,
 ]
 
+#: True-positive flags, crowd-ignore flags, and the non-crowd ground-truth count.
+_MatchResult: TypeAlias = tuple[np.ndarray[Any, np.dtype[np.int64]], np.ndarray[Any, np.dtype[np.bool_]], int]
+
 #: Positions of one class inside an image's prediction and GT arrays: the rows and the columns it
 #: owns in the image-wide ``box_iou`` matrix. ``None`` instead means the image holds a single class,
 #: which owns the whole matrix and needs no positions at all.
@@ -173,11 +176,7 @@ def _match_sorted_iou_matrix(
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
     iou_threshold: float,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
+) -> _MatchResult:
     """Apply COCO greedy matching to score-ordered NumPy IoUs for one class.
 
     Dispatches on whether the class has any crowd GT. Both loops below are per-detection Python
@@ -204,11 +203,7 @@ def _match_sorted_iou_matrix(
 def _match_rows_without_crowd(
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     iou_threshold: float,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
+) -> _MatchResult:
     """Greedily match score-ordered IoUs for a class whose ground truths are all non-crowd.
 
     Behaviourally a special case of ``_match_rows_with_crowd()`` — every GT is claimable, none can
@@ -263,11 +258,7 @@ def _match_rows_with_crowd(
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
     iou_threshold: float,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
+) -> _MatchResult:
     """Greedily match score-ordered IoUs for a class that may have crowd ground truths.
 
     Handles crowd GTs in full generality, so it stays correct for an all-non-crowd input too — that

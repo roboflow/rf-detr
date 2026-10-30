@@ -746,9 +746,8 @@ class TestApplyConfiguredParamGroupSettings:
         """``None`` marks a group no explicit setting feeds; its weight decay may still be applied."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="lambda", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(None, 5e-4), (0.02, None)])
-        assert [(group["lr"], group["weight_decay"]) for group in optimizer.param_groups] == pytest.approx(
-            [(0.025, 5e-4), (0.005, 1e-4)]
-        )
+        assert [group["lr"] for group in optimizer.param_groups] == pytest.approx([0.025, 0.005])
+        assert [group["weight_decay"] for group in optimizer.param_groups] == pytest.approx([5e-4, 1e-4])
 
 
 @pytest.fixture(scope="module")

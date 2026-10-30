@@ -16,6 +16,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 import torch
+from torchvision.transforms import functional
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.detr import RFDETR
@@ -542,12 +543,14 @@ class TestResizeAntialias:
             pytest.param({"antialias": True}, id="explicit-true"),
         ],
     )
+    @pytest.mark.parametrize("stream", [False, True])
     def test_export_prediction_resolves_antialias(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         metadata_antialias: bool,
         prediction_kwargs: dict[str, bool | None],
+        stream: bool,
     ) -> None:
         """Legacy metadata supplies the default, while either explicit boolean wins."""
         artifact = tmp_path / "legacy.tflite"
@@ -567,29 +570,30 @@ class TestResizeAntialias:
             "num_windows": 1,
             "resize_antialias": metadata_antialias,
         }
-        runtime = SimpleNamespace(device=torch.device("cpu"), run=Mock(), info={"backend": "tflite"})
+        runtime = SimpleNamespace(
+            device=torch.device("cpu"),
+            run=Mock(
+                return_value={
+                    "pred_boxes": torch.tensor([[[0.5, 0.5, 0.5, 0.5]]]),
+                    "pred_logits": torch.tensor([[[4.0, -4.0]]]),
+                }
+            ),
+            info={"backend": "tflite"},
+        )
         monkeypatch.setattr("rfdetr.export._runtime.context.load_runtime", Mock(return_value=runtime))
-        shared_predict = Mock()
-        monkeypatch.setattr("rfdetr.inference.predict", shared_predict)
+        resize = Mock(wraps=functional.resize)
+        monkeypatch.setattr("rfdetr._prediction.core.F.resize", resize)
         predictor = RFDETRInference(artifact, metadata=metadata)
         image = np.zeros((32, 32, 3), dtype=np.uint8)
 
-        result = predictor.predict(image, **prediction_kwargs)
+        results = list(predictor.predict([image], stream=stream, **prediction_kwargs))
 
         expected_antialias = prediction_kwargs.get("antialias")
         if expected_antialias is None:
             expected_antialias = metadata_antialias
-        shared_predict.assert_called_once_with(
-            predictor._export_context,
-            image,
-            threshold=0.5,
-            shape=None,
-            patch_size=None,
-            include_source_image=True,
-            antialias=expected_antialias,
-        )
+        assert resize.call_args.kwargs["antialias"] is expected_antialias
+        assert len(results) == 1
         assert predictor._export_context.antialias is metadata_antialias
-        assert result is shared_predict.return_value
 
 
 class TestMetadataCapture:
