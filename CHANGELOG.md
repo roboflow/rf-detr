@@ -62,6 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `eval_backend="vernier"` (the default) requires `vernier>=0.6.0`, whose `compute()` on RF-DETR validation state is 2.6× faster than `"ufcoco"` for boxes and 5.3× for boxes and masks, with identical metrics.
+
 - The live loss values on the progress bar (`loss`, `loss_cls`, `loss_box`, `loss_giou`, and the mask and keypoint terms) show the mean of every step since the epoch started, weighted by batch size, instead of the latest batch. Each rank computes its own mean. The mean restarts each epoch. The mean applies to the default `train_log_on_step=False`; with `train_log_on_step=True` every progress term stays per batch, as before. The logged `train/` metrics and the logger output are unchanged, but `trainer.callback_metrics` now holds the mean for these keys, so a scheduler or callback that monitors one of them (for example `lr_scheduler_monitor` set to `loss`) sees the mean, not the latest batch. ([#1620](https://github.com/roboflow/rf-detr/issues/1620)) ([#1625](https://github.com/roboflow/rf-detr/pull/1625))
 
 - `format="coreml"` now validates `notes` before the forward pass, as the other formats that embed it do. A value JSON cannot encode used to export with a warning that `notes` was dropped; it now raises `ValueError` (`NaN`/`Infinity`, a circular reference) or `TypeError` (a non-JSON object such as a `pathlib.Path`). ([#1024](https://github.com/roboflow/rf-detr/issues/1024))

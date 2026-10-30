@@ -87,9 +87,9 @@ train = [
     # adapter's aggregate-AP override also calls CocoEval's private _summarize() method directly, so the ceiling
     # additionally guards against that private surface changing shape upstream.
     "ultrafast-pycocotools>=0.1.13,<0.2",
-    # Fourth COCO evaluation backend, selected with TrainConfig.eval_backend="vernier"; defaulting to
-    # "corrected" parity mode.
-    "vernier>=0.5.3,<0.6",
+    # Default COCO evaluation backend (TrainConfig.eval_backend="vernier"), run in "corrected" parity mode.
+    # 0.6 brings the columnar ingest that makes it faster than ufcoco; the ceiling keeps the tested line.
+    "vernier>=0.6.0,<0.7",
     "pycocotools",
     "scipy",
     "simplejpeg>=1.9,<2",  # libjpeg-turbo JPEG decoding straight into NumPy for the training dataset (#1391); wheels bundle the library, Pillow is the fallback
