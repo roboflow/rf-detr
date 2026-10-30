@@ -90,7 +90,7 @@ class RFDETRInference:
             runtime_options: Settings for an exported artifact's runtime. Each format reads only its own keys and
                 raises ``ValueError`` for any other: TensorRT takes ``cuda_graph``, ``engine_host_code_allowed`` and
                 ``verbose`` (each a ``bool``); OpenVINO takes ``cache_dir``, ``inference_precision`` and ``config``;
-                the other formats take none.
+                TFLite and LiteRT take ``num_threads`` (a positive ``int``); the other formats take none.
 
         Raises:
             FileNotFoundError: If the artifact or metadata file is missing.

@@ -176,3 +176,29 @@ NNCF is a separate install — `pip install nncf` — rather than part of the `r
 !!! warning "The transformer recipe matters"
 
     The export asks NNCF for `ModelType.TRANSFORMER` rather than its generic defaults. Measured on a 500-image COCO val2017 subset, plain `nncf.quantize(model, dataset)` cost **5.34 mAP on Nano and 6.18 on Small** — worse than a comparable ONNX Runtime configuration — because it quantizes normalization and the elementwise math around attention along with the matrix multiplies. The transformer recipe keeps those paths in float. Measure on your own data before deploying.
+
+On the Colab x86 host of the [measured table below](#measured-latency-on-an-x86-cpu), the INT8 IR cost 0.4 mAP against the fp32 IR (56.1 against 56.5) and ran at the same speed (274.2 against 274.6 ms at batch 1), for a file 3.6 times smaller (32.3 against 115.0 MB).
+
+## Measured Latency on an x86 CPU
+
+Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, `RFDETRSmall`, `rfdetr` 1.12.0.dev0, ONNX Runtime 1.31.1, OpenVINO 2026.4.1, NNCF 3.4.0, 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`; OpenVINO is pinned to the physical-core count. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed; the INT8 artifacts were calibrated on 100 other val2017 images held out of that subset. The INT8 artifacts are batch 1 only.
+
+| Runtime | Precision | Quantization | Batch | end2end [ms]    | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
+| ------- | --------- | ------------ | ----- | --------------- | ----------- | ------------- | --------- | ----------- |
+| CPU     | fp32      | —            | 1     | 274.63 ± 23.23  | 3.6         | 56.5          | 115.0     | 317.7       |
+| CPU     | fp16      | —            | 1     | 291.75 ± 25.47  | 3.4         | 56.5          | 58.2      | 212.9       |
+| CPU     | INT8      | static NNCF  | 1     | 274.17 ± 28.65  | 3.6         | 56.1          | 32.3      | 131.2       |
+| CPU     | fp32      | —            | 4     | 1045.49 ± 65.74 | 3.8         | —             | 115.0     | 637.5       |
+| CPU     | fp16      | —            | 4     | 1037.53 ± 81.16 | 3.9         | —             | 58.2      | 552.4       |
+
+What the table supports:
+
+- The fp32 IR is 1.26 times faster than eager PyTorch on the same host (274.6 against 345.4 ms at batch 1, a gap of about three standard deviations; see the [PyTorch baseline](index.md#pytorch-baseline)) and 1.38 times faster than [ONNX Runtime fp32](onnx.md#on-an-x86-cpu) (377.9 ms).
+- The fp16 IR (291.8 ms) is no faster than the fp32 IR (274.6 ms), within one standard deviation, and half the size. It saves disk and bandwidth, not arithmetic.
+- The INT8 IR runs at the same speed as the fp32 IR, costs 0.4 mAP, and is 3.6 times smaller.
+- Batching helps little on this CPU: 3.6 FPS at batch 1, 3.8 at batch 4 for fp32.
+- Standard deviations are 4 to 10% of the mean, so gaps under about 25 ms at batch 1 are noise, not a ranking.
+
+!!! note "Memory column"
+
+    `Memory [MB]` is host resident-memory growth across constructing the runtime plus its first call, in one shared process. Read it as a rough per-row indication.
