@@ -19,6 +19,7 @@ import torch
 
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.models.postprocess import PostProcess
+from tests._markers import cuda_marks
 
 
 class TestDecodeDetections:
@@ -67,16 +68,7 @@ class TestDecodeDetections:
 
     @pytest.mark.parametrize(
         "device",
-        [
-            "cpu",
-            pytest.param(
-                "cuda",
-                marks=[
-                    pytest.mark.gpu,
-                    pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for sigmoid parity"),
-                ],
-            ),
-        ],
+        ["cpu", pytest.param("cuda", marks=cuda_marks)],
     )
     def test_fp16_threshold_matches_torch_sigmoid(self, device: str) -> None:
         """An FP16 score just above 0.75 must survive like PyTorch's CPU and CUDA sigmoid.
@@ -113,7 +105,7 @@ class TestDecodeDetections:
 
     @pytest.mark.parametrize("logit", [-65504.0, -12.0, 12.0, 65504.0])
     def test_fp16_extreme_logits_do_not_overflow(self, logit: float) -> None:
-        """Finite FP16 inputs must decode without overflowing the exponential, even under strict NumPy settings."""
+        """Finite FP16 inputs must decode without overflowing the exponential, even with ``over="raise"``."""
         boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
         logits = np.array([[logit]], dtype=np.float16)
         expected = torch.from_numpy(logits).sigmoid().numpy().ravel()
@@ -124,6 +116,83 @@ class TestDecodeDetections:
         assert np.isfinite(decoded.confidence).all()
         assert decoded.confidence.dtype == logits.dtype
         np.testing.assert_array_equal(decoded.confidence, expected)
+
+    def test_fp16_threshold_applies_to_the_rounded_score(self) -> None:
+        """A score that only exceeds the threshold before FP16 rounding is dropped, like PyTorch's FP16 sigmoid.
+
+        ``sigmoid(0.0005)`` is just above 0.5 in float32 but rounds to exactly 0.5 in FP16, and the strict ``>``
+        comparison must see the rounded value.
+        """
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[0.0005]], dtype=np.float16)
+
+        decoded = decode_detections(boxes, logits, (10, 10), threshold=0.5)
+
+        assert torch.from_numpy(logits).sigmoid().item() == 0.5
+        assert decoded.confidence.size == 0
+
+    def test_fp16_excluded_background_slot_keeps_original_class_ids(self) -> None:
+        """Dropping the background slot from FP16 scores keeps the surviving class IDs and the FP16 dtype."""
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[-9.0, 3.0, 9.0]], dtype=np.float16)
+
+        decoded = decode_detections(boxes, logits, (10, 10), background_class_id=-1)
+
+        assert decoded.class_id.tolist() == [1]
+        assert decoded.confidence.dtype == logits.dtype
+        np.testing.assert_array_equal(decoded.confidence, torch.from_numpy(logits[:, 1:2]).sigmoid().numpy().ravel())
+
+    def test_fp16_empty_logits_return_empty_fp16_confidence(self) -> None:
+        """Zero queries decode to empty arrays that still carry the FP16 score dtype."""
+        boxes = np.zeros((0, 4), dtype=np.float32)
+        logits = np.zeros((0, 3), dtype=np.float16)
+
+        decoded = decode_detections(boxes, logits, (10, 10))
+
+        assert decoded.confidence.shape == (0,)
+        assert decoded.confidence.dtype == logits.dtype
+        assert decoded.xyxy.shape == (0, 4)
+
+    def test_fp16_non_finite_logits_match_torch_sigmoid(self) -> None:
+        """NaN is never selected, while infinite logits score 1.0 and 0.0 exactly as PyTorch's FP16 sigmoid does."""
+        boxes = np.full((3, 4), 0.5, dtype=np.float32)
+        logits = np.array([[np.nan], [np.inf], [-np.inf]], dtype=np.float16)
+
+        decoded = decode_detections(boxes, logits, (10, 10), threshold=-1.0)
+
+        assert decoded.query_index.tolist() == [1, 2]
+        np.testing.assert_array_equal(decoded.confidence, torch.from_numpy(logits[1:]).sigmoid().numpy().ravel())
+
+    @pytest.mark.parametrize("dtype", ["int8", "int32", "bool"])
+    def test_non_floating_logits_keep_floating_confidence(self, dtype: str) -> None:
+        """Integer and boolean logits decode to floating probabilities instead of truncating them to 0 or 1.
+
+        Such inputs are outside the annotated contract, but the decoder returned floating scores for them before the
+        single rounding to the logits dtype, and casting a probability to an integer dtype silently drops detections.
+        """
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2], [0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[0], [1]]).astype(dtype)
+
+        decoded = decode_detections(boxes, logits, (10, 10))
+
+        assert decoded.query_index.tolist() == [1, 0]
+        assert np.issubdtype(decoded.confidence.dtype, np.floating)
+        np.testing.assert_allclose(decoded.confidence, [1.0 / (1.0 + np.exp(-1.0)), 0.5], rtol=1e-6)
+
+    @pytest.mark.parametrize("width", ["f2", "f4", "f8"])
+    def test_non_native_byte_order_logits_give_native_confidence(self, width: str) -> None:
+        """Big-endian logits produce native-byte-order confidence.
+
+        A non-native score array would skip the float32 fast top-k path and be rejected by ``torch.from_numpy``.
+        """
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        logits = np.array([[1.1005859375]], dtype=np.dtype(f">{width}"))
+
+        decoded = decode_detections(boxes, logits, (10, 10), threshold=0.75)
+
+        assert decoded.confidence.dtype.isnative
+        assert decoded.confidence.dtype == np.dtype(width)
+        assert decoded.confidence.size == 1
 
     @pytest.mark.parametrize("dtype", ["float16", "float32", "float64"])
     def test_threshold_remains_strict(self, dtype: str) -> None:
@@ -224,14 +293,16 @@ class TestDecodeDetections:
 
         assert decoded.query_index.tolist() == [0]
 
-    def test_default_keeps_final_coco_slot_like_predict(self) -> None:
+    @pytest.mark.parametrize("dtype", ["float32", "float16"])
+    def test_default_keeps_final_coco_slot_like_predict(self, dtype: str) -> None:
         """With the default, slot 90 of a 91-slot COCO head survives and matches ``PostProcess`` (``predict()``).
 
         Official COCO checkpoints keep every slot, and the final one is the real class 90. Excluding it by default would
-        silently drop those detections, so the decoder must agree with ``PostProcess`` on labels, scores and boxes.
+        silently drop those detections, so the decoder must agree with ``PostProcess`` on labels, scores and boxes. FP16
+        logits must agree exactly on scores, since both sides round once from higher-precision arithmetic.
         """
         boxes = np.array([[0.5, 0.5, 0.2, 0.2], [0.3, 0.3, 0.1, 0.1]], dtype=np.float32)
-        logits = np.full((2, 91), -9.0, dtype=np.float32)
+        logits = np.full((2, 91), -9.0, dtype=dtype)
         logits[0, 90] = 9.0  # slot 90 is the top score
         logits[1, 5] = 3.0
 
@@ -243,7 +314,9 @@ class TestDecodeDetections:
         )[0]
         keep = expected["scores"] > 0.3
         assert decoded.class_id.tolist() == expected["labels"][keep].tolist() == [90, 5]
-        np.testing.assert_allclose(decoded.confidence, expected["scores"][keep].numpy(), rtol=1e-5)
+        np.testing.assert_allclose(
+            decoded.confidence, expected["scores"][keep].numpy(), rtol=1e-5 if dtype == "float32" else 0.0
+        )
         np.testing.assert_allclose(decoded.xyxy, expected["boxes"][keep].numpy(), rtol=1e-5, atol=1e-4)
 
     def test_returns_empty_arrays_when_nothing_clears_threshold(self) -> None:
