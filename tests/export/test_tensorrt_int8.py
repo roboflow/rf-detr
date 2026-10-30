@@ -3884,24 +3884,31 @@ class TestBiasCorrectionInInt8Source:
         assert (norm.input[1] != "gamma") == smoothed
 
     @pytest.mark.parametrize(
-        ("outputs", "quiet"),
+        ("outputs", "norm", "quiet"),
         [
-            pytest.param(("dets", "labels"), [False, True, True], id="detection"),
-            pytest.param(("dets", "labels", "masks"), [False], id="segmentation"),
-            pytest.param(("dets", "labels", "keypoints"), [False], id="keypoints"),
+            pytest.param(("dets", "labels"), True, [False, True, True], id="detection"),
+            pytest.param(("dets", "labels"), False, [False, False, True], id="detection-without-a-norm"),
+            pytest.param(("dets", "labels", "masks"), True, [False], id="segmentation"),
+            pytest.param(("dets", "labels", "keypoints"), True, [False], id="keypoints"),
         ],
     )
     def test_only_the_first_pass_reports_the_calibration_images(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outputs: tuple[str, ...], quiet: list[bool]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        outputs: tuple[str, ...],
+        norm: bool,
+        quiet: list[bool],
     ) -> None:
-        """Only the first pass over the calibration images logs their per-sample range warnings.
+        """Only the first pass that reads the calibration images logs their per-sample range warnings.
 
         A detection export reads the images three times, so each warning about an unnormalized sample would otherwise be
-        logged three times; a model whose images are read once keeps its warnings.
+        logged three times; a model whose images are read once keeps its warnings. With no norm to smooth, the smoothing
+        pass reads no image, so the calibration pass is the first to read them and keeps the warnings.
         """
         reads = Mock(wraps=calibration.calibration_batches)
         monkeypatch.setattr(calibration, "calibration_batches", reads)
-        _int8_source(tmp_path, outputs=outputs, norm=True)
+        _int8_source(tmp_path, outputs=outputs, norm=norm)
         assert [call.kwargs.get("quiet", False) for call in reads.call_args_list] == quiet
 
     @pytest.mark.parametrize(

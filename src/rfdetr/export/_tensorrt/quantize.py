@@ -1548,7 +1548,7 @@ def measure_mlp_bias_shifts(
         bias to correct.
 
     Raises:
-        ValueError: If *batches* is empty.
+        ValueError: If *batches* is empty or holds a NaN or infinite value.
     """
     from onnx import numpy_helper
 
@@ -2042,7 +2042,8 @@ def int8_source_graph(
             scales = measure_smoothing_scales(onnx_path, source, plan, batches)
         _smooth_norms(source, scales)
         logger.info(f"Smoothed {len(scales)} backbone LayerNorm output(s) for INT8")
-    with images(quiet=detection) as batches:  # the first pass unless the smoothing pass came before
+    # The first pass unless the smoothing pass read the images: with no norm to smooth it returns before reading any.
+    with images(quiet=bool(scales)) as batches:
         by_tensor = calibrate_ranges(onnx_path, source, tensors, batches)
     unusable = sorted(t for t, r in by_tensor.items() if not np.isfinite(r) or r / _INT8_MAX > _MAX_FP16)
     if unusable:
