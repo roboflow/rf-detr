@@ -13,12 +13,23 @@ Import with a relative import::
 
 from __future__ import annotations
 
+import io
+from collections.abc import Callable
+from itertools import chain, repeat
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
+import PIL.Image
+import pytest
+import requests
 import torch
 
 from rfdetr.detr import RFDETR
+from rfdetr.utilities.imports import _IS_OPENCV_INSTALLED
+
+#: Gate for tests that import or patch ``cv2``; the package is optional and imported locally where used.
+_requires_opencv = pytest.mark.skipif(not _IS_OPENCV_INSTALLED, reason="requires the optional opencv package")
 
 
 class _BaseFakeRFDETR(RFDETR):
@@ -40,6 +51,50 @@ class _BaseFakeRFDETR(RFDETR):
         return SimpleNamespace(num_channels=3)
 
 
+def _scripted_capture(script: list[tuple[bool, Any] | BaseException]) -> MagicMock:
+    """Fake an OpenCV capture whose ``read`` and ``grab`` consume one shared frame script.
+
+    ``read()`` returns the next ``(success, frame)`` entry and ``grab()`` returns only its success flag, so a
+    skipped frame advances the same position a real decoder would. Exception entries are raised. After the
+    script ends, every call reports a failed read.
+
+    Args:
+        script: Decoder results in frame order, or exceptions to raise at that position.
+
+    Returns:
+        A capture mock with ``read`` and ``grab`` bound to the script.
+
+    Examples:
+        >>> capture = _scripted_capture([(True, "frame-0"), (True, "frame-1"), (True, "frame-2")])
+        >>> capture.read()
+        (True, 'frame-0')
+        >>> capture.grab()
+        True
+        >>> capture.read()
+        (True, 'frame-2')
+        >>> capture.read()
+        (False, None)
+    """
+    entries = chain(script, repeat((False, None)))
+
+    def advance() -> tuple[bool, Any]:
+        """Return the next scripted decoder result.
+
+        Examples:
+            >>> _scripted_capture([(True, 1)]).read()  # doctest: +SKIP
+            # Bound to the enclosing script; exercised through the capture above.
+        """
+        entry = next(entries)
+        if isinstance(entry, BaseException):
+            raise entry
+        return entry
+
+    capture = MagicMock()
+    capture.read.side_effect = advance
+    capture.grab.side_effect = lambda: advance()[0]
+    return capture
+
+
 class _DummyModel:
     """Minimal model stub that returns deterministic postprocessed results.
 
@@ -47,6 +102,12 @@ class _DummyModel:
         >>> m = _DummyModel(labels=[0, 1])
         >>> len(m._labels)
         2
+        >>> scored = _DummyModel(labels=[0, 1], scores=[0.25, 0.75])
+        >>> scored.postprocess(None, torch.tensor([[4, 4]]))[0]["scores"].tolist()
+        [0.25, 0.75]
+        >>> half = _DummyModel(labels=[0], scores=[0.5], score_dtype=torch.float16)
+        >>> half.postprocess(None, torch.tensor([[4, 4]]))[0]["scores"].dtype
+        torch.float16
     """
 
     def __init__(
@@ -59,6 +120,8 @@ class _DummyModel:
         include_masks: bool = False,
         mask_size: int = 4,
         fill_value: float | None = None,
+        scores: list[float] | None = None,
+        score_dtype: torch.dtype = torch.float32,
     ) -> None:
         """Initialise stub with optional class names, label list, device, mask flag, and keypoint flag.
 
@@ -79,6 +142,10 @@ class _DummyModel:
                 async device-to-host copy, where a stale zero would otherwise be indistinguishable
                 from a genuine one. ``None`` preserves the original fixed values every existing
                 caller already asserts on.
+            scores: Per-detection scores returned by ``postprocess``, one per entry of ``labels``. ``None`` keeps
+                the single fill value for every detection, which is what existing callers rely on.
+            score_dtype: Dtype of the ``scores`` tensor, e.g. ``torch.float16`` for a model run with
+                ``inference(dtype=torch.float16)``. Only applies when ``scores`` is given.
         """
         self.device = torch.device(device)
         self.resolution = 28
@@ -90,6 +157,8 @@ class _DummyModel:
         self._include_masks = include_masks
         self._mask_size = mask_size
         self._fill_value = fill_value
+        self._scores = scores
+        self._score_dtype = score_dtype
         # Captured once, independent of `self.device`: some tests reassign `self.device` after
         # construction to simulate a model "declared" on CUDA while every tensor op stays mocked
         # CPU-side — `postprocess` must keep allocating on the device it was actually built for.
@@ -112,7 +181,9 @@ class _DummyModel:
         results = []
         for _ in range(batch):
             result: dict[str, torch.Tensor] = {
-                "scores": torch.full((n,), score_value, device=device),
+                "scores": torch.tensor(self._scores, device=device, dtype=self._score_dtype)
+                if self._scores is not None
+                else torch.full((n,), score_value, device=device),
                 "labels": torch.tensor(self._labels, device=device),
                 "boxes": torch.tensor([box_value] * n, device=device),
             }
@@ -149,3 +220,48 @@ class _DummyRFDETR(RFDETR):
     def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _DummyModel:
         """Return a fresh ``_DummyModel`` instance."""
         return _DummyModel()
+
+
+def _record_model_inputs(sink: list[torch.Tensor]) -> Callable[[torch.nn.Module, tuple[torch.Tensor, ...]], None]:
+    """Return a forward pre-hook that appends a detached copy of each batch the model receives to ``sink``.
+
+    Args:
+        sink: List collecting one batch per forward call.
+
+    Returns:
+        A hook for ``torch.nn.Module.register_forward_pre_hook`` that leaves the module's inputs unchanged.
+
+    Examples:
+        >>> batches: list[torch.Tensor] = []
+        >>> _record_model_inputs(batches)(torch.nn.Identity(), (torch.zeros(1, 3, 2, 2),))
+        >>> [tuple(batch.shape) for batch in batches]
+        [(1, 3, 2, 2)]
+    """
+    return lambda _module, args: sink.append(args[0].detach().clone())
+
+
+def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
+    """Return the PNG-encoded bytes of a solid grey image.
+
+    Examples:
+        >>> data = _png_bytes((8, 8))
+        >>> data[:4]
+        b'\\x89PNG'
+    """
+    buf = io.BytesIO()
+    PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _FakeResponse:
+    """Minimal stand-in for ``requests.Response`` used by ``predict()`` URL tests."""
+
+    def __init__(self, content: bytes = b"", status_code: int = 200) -> None:
+        """Store the response body and status code."""
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        """Raise ``requests.HTTPError`` for 4xx/5xx status codes, mirroring requests."""
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error")

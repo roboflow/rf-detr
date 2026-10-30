@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Regression coverage for the coalesced GPU->CPU output transfer in ``predict()``.
 
-The existing ``predict()`` tests (``test_predict.py``) use ``_DummyModel``, whose ``postprocess()`` builds result
-tensors on CPU (``helpers.py``) — that path never exercises the CUDA branch added to batch the output transfers, so it
-cannot catch an incomplete device->host read or a synchronization call targeting the wrong device. These tests require
-CUDA and are skipped otherwise.
+The existing ``predict()`` tests (``prediction/test_core.py``) use ``_DummyModel``, whose ``postprocess()`` builds
+result tensors on CPU (``helpers.py``) — that path never exercises the CUDA branch added to batch the output transfers,
+so it cannot catch an incomplete device->host read or a synchronization call targeting the wrong device. These tests
+require CUDA and are skipped otherwise.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import torch
+
+from rfdetr import ClassThresholds
 
 from .helpers import _BaseFakeRFDETR, _DummyModel
 
@@ -95,6 +97,17 @@ class TestPredictCudaTransfer:
         assert detections.mask is not None
         assert detections.mask.all(), "mask transfer is incomplete or torn"
 
+    def test_per_class_thresholds_are_applied_on_the_model_device(self) -> None:
+        """A threshold list is looked up on the device the labels live on, so the class-2 detection alone is dropped."""
+        img = torch.rand(3, 28, 28, device="cuda:0")
+        model = _CudaDummyRFDETR(pretrain_weights=None)
+        thresholds = [0.5] * len(model.class_names)
+        thresholds[2] = _TORN_READ_FILL + 1
+
+        detections = model.predict(img, threshold=ClassThresholds(thresholds))
+
+        assert detections.class_id.tolist() == [1, 3]
+
     def test_keypoint_precision_is_complete_after_async_transfer(self) -> None:
         """Every ``KeyPoints`` field — including keypoint precision — is fully populated after the batched transfer.
 
@@ -167,7 +180,7 @@ class TestPredictCudaTransfer:
         A regression that drops `non_blocking=True` from the output transfer would pass the value- and
         ordering-based tests above bit-identically — only the PR's entire perf gain would be lost, invisibly.
         This spies `torch.Tensor.to` (the same pattern used by `test_already_cuda_tensor_input_is_not_pinned`
-        and `test_cuda_tensor_input_to_cpu_model_is_not_non_blocking` in `test_predict.py` for the input side)
+        and `test_cuda_tensor_input_to_cpu_model_is_not_non_blocking` in `prediction/test_core.py` for the input side)
         and asserts every CPU-bound `.to()` call for the result tensors was issued with `non_blocking=True`.
         """
         img = torch.rand(3, 28, 28, device="cuda:0")

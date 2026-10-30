@@ -39,6 +39,7 @@ from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
+from tests.inference.helpers import _DummyRFDETR
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -2943,3 +2944,24 @@ class TestSharedCocoCategoryParse:
         with patch.object(RFDETR, "_filtered_coco_categories", side_effect=AssertionError("re-parsed")):
             second = RFDETR._memoized_coco_categories(cache, str(dataset_dir))
         assert second is first
+
+
+class TestTrainAlreadyTrainedWarning:
+    """Calling ``train()`` on an already-trained/loaded model emits a loud warning."""
+
+    def test_second_train_warns(self, monkeypatch) -> None:
+        """A model flagged as trained warns that training restarts from pretrain_weights."""
+        model = _DummyRFDETR()
+        model._has_been_trained = True
+
+        class _StopTrainError(Exception):
+            pass
+
+        def _stub_get_train_config(self, **kwargs: object) -> None:
+            raise _StopTrainError
+
+        # Short-circuit train() right after the warning so no real training runs.
+        monkeypatch.setattr(RFDETR, "get_train_config", _stub_get_train_config, raising=False)
+        with pytest.warns(UserWarning, match="already been trained"):
+            with pytest.raises(_StopTrainError):
+                model.train()

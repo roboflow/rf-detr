@@ -12,10 +12,13 @@ DeepStream) cannot learn its input size, normalization, outputs or batch profile
 
 The engine and its sidecar are two files, replaced one after the other, so a reader can find an engine beside the
 description of another build: during an export, or after two exports of the same name ran at once. The sidecar records
-the engine file's size and SHA-256 so that a consumer can tell.
+the engine file's size and SHA-256 so that a consumer can tell. The digest comes from the serialized build bytes before
+the engine is written, rather than rereading a file that another export may already have replaced.
 
-Schema version 1 does not record class names or the background class slot: how a logit slot maps to a class name
-depends on the checkpoint and is decided inside ``RFDETR.predict``, not by anything this package can read.
+Schema version 1 of this ``<engine>.json`` omits class names and the background class slot. Prediction metadata is
+stored separately in ``<engine>.trt.rfdetr.json`` by :mod:`rfdetr.export._runtime.metadata`, including class names in
+``ExportMetadata.class_id_to_name``. That sidecar hashes the artifact on disk with SHA-256; this description remains
+the consumer contract for services that do not import RF-DETR.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import hashlib
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -318,7 +322,7 @@ def _follow_engine_permissions(descriptor: int, engine_path: str | os.PathLike[s
         ...     os.name == "nt" or stat.S_IMODE(os.stat(temporary).st_mode) == 0o640
         True
     """
-    if os.name == "nt":
+    if sys.platform == "win32":
         return
     try:
         engine = os.stat(engine_path)

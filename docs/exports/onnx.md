@@ -4,7 +4,22 @@ description: Run inference with exported RF-DETR ONNX models using ONNX Runtime.
 
 # ONNX Inference
 
-The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). Nothing is decoded inside the graph, so your inference code must apply sigmoid, exclude the checkpoint's background slot when it has one, and convert box format yourself.
+For the common prediction API, load the ONNX file with `RFDETRInference`. The exported graph itself returns raw tensors; the advanced ONNX Runtime example below shows how to run and decode those tensors directly.
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns `supervision.Detections` for detection and segmentation models, or `supervision.KeyPoints` for keypoint models. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, batch behavior, and runtime settings.
+
+## Advanced: Run ONNX Runtime directly
+
+The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). The code below shows direct ONNX Runtime execution and NumPy decoding for low-level inspection. The private `_run_inference` helper remains a dependency-light numerical reference and shares raw execution with the `RFDETRInference` adapter; use `RFDETRInference` for normal image prediction.
 
 !!! warning "Match outputs by name, not by shape"
 
@@ -112,3 +127,33 @@ model.export(format="onnx", quantization="int8", calibration_data="calibration_i
     On the same subset, INT8 cost 2.65 mAP (Nano) and 2.67 (Small) against each model's own FP32 baseline, for roughly 3x smaller files and ~1.4x faster CPU inference at batch 1. That is a real trade, not a rounding error — **measure on your own data and task before deploying**. Published INT8 RF-DETR models built with other tooling land closer to 0.5 mAP, so this gap is a property of the current configuration rather than of the architecture.
 
 Quantization runs on CPU via ONNX Runtime, which the `rfdetr[onnx]` extra already installs.
+
+In the [CPU cookbook](../../cookbooks/export-cpu/) run on a Colab x86 host (`RFDETRSmall`, batch 1, 100 calibration images held out of a 500-image val2017 subset), the INT8 model ran at 251.5 ms against 378.0 ms for the fp32 model, 1.5 times faster, at 54.7 mAP@50:95 against 56.5, a cost of 1.8 mAP. The full table is [below](#on-an-x86-cpu).
+
+## Measured Latency
+
+Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`, `RFDETRSmall`. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed. The PyTorch baseline of each machine is on the [export overview](index.md#pytorch-baseline).
+
+### On an NVIDIA L4
+
+Colab NVIDIA L4, `rfdetr` 1.12.0.dev0, CUDA execution provider, 20 warmup + 100 timed runs per row, from the [CUDA cookbook](../../cookbooks/export-cuda/). `Memory [MB]` is device-memory growth.
+
+| Runtime | Precision | Batch | end2end [ms]  | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
+| ------- | --------- | ----- | ------------- | ----------- | ------------- | --------- | ----------- |
+| CUDA EP | fp32      | 1     | 15.45 ± 0.48  | 64.7        | 56.5          | 127.5     | 293.6       |
+| CUDA EP | fp32      | 4     | 44.04 ± 1.24  | 90.8        | —             | 127.5     | 268.4       |
+| CUDA EP | fp32      | 8     | 101.39 ± 2.71 | 78.9        | —             | 127.5     | 536.9       |
+
+ONNX Runtime on CUDA does not scale with batch: batch 8 is slower per image than batch 4. On this GPU a [TensorRT engine](tensorrt.md#measured-latency-on-an-nvidia-l4) is the faster route.
+
+### On an x86 CPU
+
+Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, `rfdetr` 1.12.0.dev0, ONNX Runtime 1.31.1, CPU execution provider at its default intra-op pool (one thread per physical core), 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). The INT8 model was calibrated on 100 val2017 images held out of the scored subset and is batch 1 only. `Memory [MB]` is host resident-memory growth, a rough per-row indication.
+
+| Runtime | Precision | Quantization | Batch | end2end [ms]    | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
+| ------- | --------- | ------------ | ----- | --------------- | ----------- | ------------- | --------- | ----------- |
+| CPU EP  | fp32      | —            | 1     | 377.95 ± 20.14  | 2.6         | 56.5          | 127.5     | 47.2        |
+| CPU EP  | INT8      | static QDQ   | 1     | 251.47 ± 10.81  | 4.0         | 54.7          | 39.1      | 1.2         |
+| CPU EP  | fp32      | —            | 4     | 1205.38 ± 68.19 | 3.3         | —             | 127.5     | 253.9       |
+
+Static INT8 is 1.5 times faster than fp32 and 3.3 times smaller, for 1.8 mAP. Standard deviations are 4 to 10% of the mean, so fp32 ONNX Runtime (377.9 ms) is no better than eager PyTorch on this host (345.4 ms); [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is the faster full-accuracy route on an Intel CPU.

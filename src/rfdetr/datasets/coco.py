@@ -396,6 +396,53 @@ def scale_coco_annotation(annotation: dict[str, Any], x_scale: float, y_scale: f
     return scaled
 
 
+def _enclosing_polygons(segmentation: list[Any]) -> list[Any]:
+    """Return the parts of a COCO polygon segmentation that have at least three points.
+
+    ``pycocotools.mask.frPyObjects`` picks the input format from the length of the first part alone: four values are
+    read as an ``[x, y, w, h]`` box, which raises a ``TypeError`` for a list, and an empty part raises ``Exception``. A
+    part with fewer than three points encloses no area, so dropping it leaves the rasterised mask unchanged. Only a flat
+    list of numbers is judged by its length: any other part, such as an uncompressed-RLE dict or a nested list of
+    ``[x, y]`` pairs, is kept so ``pycocotools`` handles or rejects it exactly as it did before.
+
+    Args:
+        segmentation: A polygon segmentation, one flat ``[x1, y1, x2, y2, ...]`` list per part.
+
+    Returns:
+        The parts that are not a flat list of fewer than six coordinates, in their original order.
+
+    Examples:
+        >>> _enclosing_polygons([[1, 1, 8, 8], [0, 0, 5, 0, 5, 5], []])
+        [[0, 0, 5, 0, 5, 5]]
+        >>> _enclosing_polygons([{"counts": [4, 2], "size": [2, 3]}])
+        [{'counts': [4, 2], 'size': [2, 3]}]
+    """
+    return [part for part in segmentation if not _is_degenerate_part(part)]
+
+
+def _is_degenerate_part(part: Any) -> bool:
+    """Check whether a polygon part is a flat list of numbers that holds fewer than three points.
+
+    Args:
+        part: One element of a COCO polygon segmentation.
+
+    Returns:
+        ``True`` for a flat list or tuple of fewer than six values; ``False`` for a longer one and for any part that
+        is not a flat list of numbers.
+
+    Examples:
+        >>> _is_degenerate_part([30, 20, 70, 50])
+        True
+        >>> _is_degenerate_part([[0, 0], [5, 0], [5, 5]])
+        False
+    """
+    return (
+        isinstance(part, (list, tuple))
+        and len(part) < 6
+        and not any(isinstance(value, (list, tuple, dict)) for value in part)
+    )
+
+
 def _is_rle(segmentation: Any) -> bool:
     """Check whether a COCO segmentation entry is in RLE format.
 
@@ -419,6 +466,9 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     arrays) are rasterised via ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with ``"counts"`` and
     ``"size"`` keys; ``counts`` may be str or bytes for compressed RLE, or list of ints for uncompressed RLE) are
     decoded directly, skipping the polygon-to-RLE conversion step.
+
+    A flat polygon part with fewer than three points encloses no area and is skipped before rasterisation. An instance
+    left with no part, like one with an empty or ``None`` segmentation, gets an all-zero mask and keeps its row.
 
     Args:
         segmentations: Per-instance segmentation annotations.  Each element is
@@ -454,6 +504,12 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
                 # Uncompressed RLE (counts is a list of ints) — compress first
                 rles = [coco_mask.frPyObjects(segmentation, height, width)]
         else:
+            if isinstance(segmentation, list):
+                segmentation = _enclosing_polygons(segmentation)
+                if not segmentation:
+                    # every part is shorter than three points, so the instance has no mask area
+                    masks.append(torch.zeros((height, width), dtype=torch.uint8))
+                    continue
             rles = coco_mask.frPyObjects(segmentation, height, width)
         mask = coco_mask.decode(rles)
         if mask.ndim < 3:
@@ -500,7 +556,7 @@ def _compressed_crowd_segmentation(
 
     Returns:
         A compressed RLE dict; *segmentation* itself when it is already compressed or cannot be compressed; ``None``
-        for a missing or empty payload.
+        for a missing or empty payload, or a polygon payload with no part of at least three points.
 
     Examples:
         >>> _compressed_crowd_segmentation(None, 4, 4) is None
@@ -512,6 +568,10 @@ def _compressed_crowd_segmentation(
     """
     if segmentation is None or (not isinstance(segmentation, dict) and len(segmentation) == 0):
         return None
+    if isinstance(segmentation, list):
+        segmentation = _enclosing_polygons(segmentation)
+        if not segmentation:
+            return None
     raw = cast("list[Any] | dict[str, Any]", segmentation)
     is_rle = _is_rle(segmentation)
     if is_rle and isinstance(segmentation.get("counts"), (str, bytes)):

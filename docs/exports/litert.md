@@ -47,7 +47,31 @@ pip install "rfdetr[litert]"
 
 This writes one float32 file named after the model's variant, `output/<model-variant>.tflite` (for example `output/rfdetr-small.tflite`; `-backbone` is appended with `backbone_only=True`, and `output_name` overrides the stem). `shape=(H, W)` picks a custom resolution exactly as for the other formats.
 
-## LiteRT Inference Example
+## Measured Latency on a Laptop CPU
+
+Apple M4 Max CPU (arm64), `RFDETRSmall`, 5 warmup + 30 timed runs per row, `.tflite` exported per batch size, from the [mobile cookbook](../../cookbooks/export-mobile/). The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline).
+
+| Runtime | Precision | Quantization | Batch | forward [ms]   | end2end [ms]  | FPS [img/s] (end2end) | Memory [MB] |
+| ------- | --------- | ------------ | ----- | -------------- | ------------- | --------------------- | ----------- |
+| NCHW    | fp32      | —            | 1     | 137.14 ± 3.00  | 138.04 ± 2.72 | 7.2                   | 213.2       |
+| NCHW    | fp32      | —            | 4     | 557.56 ± 10.95 | 557.93 ± 9.50 | 7.2                   | 387.4       |
+
+!!! warning "Earlier measurement, pending a rerun"
+
+    These rows were measured before the cookbook pinned one thread count for every runtime: the interpreter ran at its own default thread count. Treat each row as a same-machine ratio, never as a phone latency: a phone's own delegate (NNAPI, Hexagon, Core ML) is not exercised.
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-small.tflite")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+LiteRT artifacts use their metadata to identify the NCHW input layout. The shared API returns the same Supervision result types as the native model. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use the LiteRT interpreter directly
 
 The file has one input (NCHW float32, ImageNet-normalized like `predict()`) and positional outputs: boxes `[batch, 300, 4]` in normalized `cxcywh`, class logits `[batch, 300, num_classes]`, and — for segmentation models — mask logits as a third output. Output tensor names are litert-torch's own (`serving_default_output_<i>_output`), so match outputs by position, as for the CoreML and OpenVINO exports.
 
