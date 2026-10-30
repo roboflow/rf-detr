@@ -239,6 +239,25 @@ class TestTrainExtraIsMinimal:
 class TestCropFunction:
     """Crop() correctly filters degenerate boxes and synchronises per-instance fields."""
 
+    def test_instance_with_mask_outside_crop_is_dropped_but_box_only_instance_kept(self) -> None:
+        """A partly visible box whose mask lies outside the crop is dropped; a box-only instance stays."""
+        image = Image.new("RGB", (100, 100))
+        masks = torch.zeros((3, 100, 100), dtype=torch.bool)
+        masks[0, 10:20, 60:70] = True  # box reaches into the crop, mask does not
+        masks[1, 10:30, 10:30] = True
+        target = {
+            "boxes": torch.tensor([[40.0, 10.0, 70.0, 20.0], [10.0, 10.0, 30.0, 30.0], [5.0, 5.0, 25.0, 25.0]]),
+            "labels": torch.tensor([1, 2, 3]),
+            "masks": masks,
+        }
+
+        _, out = crop(image, target, top=0, left=0, height=50, width=50)
+
+        assert out["labels"].tolist() == [2, 3]
+        assert out["masks"].shape == (2, 50, 50)
+        assert out["masks"][0].any()
+        assert not out["masks"][1].any()
+
     def test_all_boxes_outside_crop_produces_empty_target(self) -> None:
         """Boxes fully outside the crop are removed and every per-instance field is filtered to match.
 
