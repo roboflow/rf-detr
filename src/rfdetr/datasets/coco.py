@@ -467,6 +467,9 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     ``"size"`` keys; ``counts`` may be str or bytes for compressed RLE, or list of ints for uncompressed RLE) are
     decoded directly, skipping the polygon-to-RLE conversion step.
 
+    A flat polygon part with fewer than three points encloses no area and is skipped before rasterisation. An instance
+    left with no part, like one with an empty or ``None`` segmentation, gets an all-zero mask and keeps its row.
+
     Args:
         segmentations: Per-instance segmentation annotations.  Each element is
             either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE dict (``{"counts": ..., "size": [H, W]}``),
