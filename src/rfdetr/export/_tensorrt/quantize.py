@@ -1592,7 +1592,8 @@ def _correct_biases(model: Any, shifts: Mapping[str, NDArray[np.float64]]) -> No
     """Give each bias ``Add`` named in *shifts* its own copy of its bias minus the shift, in place.
 
     The ``Add`` reads a new initializer of the bias's dtype, so a bias that other nodes read as well (the exporter
-    stores identical biases once) or that is a graph output keeps its value for them.
+    stores identical biases once) or that is a graph output keeps its value for them, and one that nothing reads any
+    more is removed.
 
     Args:
         model: The FP16 ``ModelProto`` the engine is built from.
@@ -1617,6 +1618,7 @@ def _correct_biases(model: Any, shifts: Mapping[str, NDArray[np.float64]]) -> No
     counts = Counter(node.name for node in graph.node)
     by_name = {node.name: node for node in graph.node if node.name in shifts and counts[node.name] == 1}
     taken = _tensor_names(graph)
+    replaced: list[str] = []
     for name, shift in shifts.items():
         node = by_name.get(name)
         index = next((i for i, tensor in enumerate(node.input) if tensor in constants), None) if node else None
@@ -1630,7 +1632,9 @@ def _correct_biases(model: Any, shifts: Mapping[str, NDArray[np.float64]]) -> No
         graph.initializer.append(
             numpy_helper.from_array((bias.astype(np.float64) - shift).astype(bias.dtype), corrected)
         )
+        replaced.append(str(node.input[index]))
         node.input[index] = corrected
+    _drop_unread_initializers(graph, replaced)
 
 
 def _activation_step(value: float) -> np.float16:

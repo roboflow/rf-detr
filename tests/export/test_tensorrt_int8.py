@@ -3694,6 +3694,25 @@ class TestCorrectBiases:
         constants = quantize._constant_weights(model.graph)
         assert numpy_helper.to_array(constants[model.graph.node[1].input[1]]).tolist() == [1.0, 2.0]
 
+    @pytest.mark.parametrize(
+        ("corrected", "initializers"),
+        [
+            pytest.param(("first",), ["b", "b_int8_corrected"], id="still-read-by-another-add"),
+            pytest.param(("first", "second"), ["b_int8_corrected", "b_int8_corrected_1"], id="read-by-no-node"),
+        ],
+    )
+    def test_the_original_bias_is_kept_only_while_a_node_reads_it(
+        self, corrected: tuple[str, ...], initializers: list[str]
+    ) -> None:
+        """The replaced bias leaves the graph once no node reads it, and stays while another ``Add`` still does.
+
+        The exporter stores identical biases once, so the shared case is the real one; leaving an unread original in the
+        graph would only grow the engine's source by a dead constant per corrected layer.
+        """
+        model = self._two_adds()
+        quantize._correct_biases(model, dict.fromkeys(corrected, np.array([0.5, -1.0])))
+        assert sorted(init.name for init in model.graph.initializer) == initializers
+
     @pytest.mark.parametrize("name", ["missing", "constant-free", "second", "not-an-add"])
     def test_an_add_the_fp16_copy_lacks_is_refused(self, name: str) -> None:
         model = self._two_adds()
