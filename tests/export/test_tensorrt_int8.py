@@ -3884,12 +3884,12 @@ class TestBiasCorrectionInInt8Source:
         assert (norm.input[1] != "gamma") == smoothed
 
     @pytest.mark.parametrize(
-        ("outputs", "norm", "quiet"),
+        ("outputs", "norm", "verbose"),
         [
-            pytest.param(("dets", "labels"), True, [False, True, True], id="detection"),
-            pytest.param(("dets", "labels"), False, [False, False, True], id="detection-without-a-norm"),
-            pytest.param(("dets", "labels", "masks"), True, [False], id="segmentation"),
-            pytest.param(("dets", "labels", "keypoints"), True, [False], id="keypoints"),
+            pytest.param(("dets", "labels"), True, [True, False, False], id="detection"),
+            pytest.param(("dets", "labels"), False, [True, True, False], id="detection-without-a-norm"),
+            pytest.param(("dets", "labels", "masks"), True, [True], id="segmentation"),
+            pytest.param(("dets", "labels", "keypoints"), True, [True], id="keypoints"),
         ],
     )
     def test_only_the_first_pass_reports_the_calibration_images(
@@ -3898,7 +3898,7 @@ class TestBiasCorrectionInInt8Source:
         tmp_path: Path,
         outputs: tuple[str, ...],
         norm: bool,
-        quiet: list[bool],
+        verbose: list[bool],
     ) -> None:
         """Only the first pass that reads the calibration images logs their per-sample range warnings.
 
@@ -3909,7 +3909,7 @@ class TestBiasCorrectionInInt8Source:
         reads = Mock(wraps=calibration.calibration_batches)
         monkeypatch.setattr(calibration, "calibration_batches", reads)
         _int8_source(tmp_path, outputs=outputs, norm=norm)
-        assert [call.kwargs.get("quiet", False) for call in reads.call_args_list] == quiet
+        assert [call.kwargs.get("verbose", True) for call in reads.call_args_list] == verbose
 
     @pytest.mark.parametrize(
         ("outputs", "passes"),

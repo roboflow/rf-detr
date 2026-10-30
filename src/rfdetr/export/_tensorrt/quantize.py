@@ -2023,14 +2023,14 @@ def int8_source_graph(
     keys = list(plan.activations)
     tensors = sorted({_input_tensor(source.graph, name, index) for name, index in keys})
 
-    def images(*, quiet: bool = False) -> contextlib.closing[Generator[NDArray[np.float32], None, None]]:
+    def images(*, verbose: bool = True) -> contextlib.closing[Generator[NDArray[np.float32], None, None]]:
         """A fresh pass over the calibration images, closed even when the pass raises (a memory-mapped ``.npy``).
 
-        *quiet* skips the per-sample range warnings, which the first pass over the images has already logged.
+        *verbose* logs the per-sample range warnings; ``False`` for a pass after the first one to read the images.
         """
         return contextlib.closing(
             calibration_batches(
-                calibration_data, height=height, width=width, channels=channels, max_images=max_images, quiet=quiet
+                calibration_data, height=height, width=width, channels=channels, max_images=max_images, verbose=verbose
             )
         )
 
@@ -2043,7 +2043,7 @@ def int8_source_graph(
         _smooth_norms(source, scales)
         logger.info(f"Smoothed {len(scales)} backbone LayerNorm output(s) for INT8")
     # The first pass unless the smoothing pass read the images: with no norm to smooth it returns before reading any.
-    with images(quiet=bool(scales)) as batches:
+    with images(verbose=not scales) as batches:
         by_tensor = calibrate_ranges(onnx_path, source, tensors, batches)
     unusable = sorted(t for t, r in by_tensor.items() if not np.isfinite(r) or r / _INT8_MAX > _MAX_FP16)
     if unusable:
@@ -2057,7 +2057,7 @@ def int8_source_graph(
     shifts: dict[str, NDArray[np.float64]] = {}
     if detection:
         # Measured at the steps just calibrated, on the smoothed graph.
-        with images(quiet=True) as batches:
+        with images(verbose=False) as batches:
             shifts = measure_mlp_bias_shifts(onnx_path, source, plan, ranges, batches)
         logger.info(f"Corrected the bias of {len(shifts)} backbone MLP layer(s) for the mean shift of INT8")
     del source
