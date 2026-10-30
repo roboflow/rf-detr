@@ -23,7 +23,17 @@ Raising `num_queries` above a variant's default adds new rows to the query embed
 
 ## Which model size should I use?
 
-Pick by the accuracy/latency trade-off in the [pre-trained checkpoints table](learn/run/detection.md#pre-trained-checkpoints): `RFDETRNano` through `RFDETR2XLarge`. `RFDETRSmall` is a good default. The older `RFDETRBase` is legacy — use `RFDETRSmall` instead.
+Pick by the accuracy/latency trade-off in the [pre-trained checkpoints table](learn/run/detection.md#pre-trained-checkpoints): `RFDETRNano` through `RFDETR2XLarge`. `RFDETRSmall` is a good default. The older `RFDETRBase` is legacy — use `RFDETRSmall` instead. Nano to Large are Apache 2.0 and commercially usable out of the box; XLarge and 2XLarge need `rfdetr[plus]` and use PML 1.0 (commercial use included on Roboflow; commercial self-hosting requires the Enterprise add-on). See [licensing](#can-i-use-rf-detr-in-a-commercial-product).
+
+## Can I use RF-DETR in a commercial product?
+
+Yes.
+
+--8<-- "docs/snippets/license-rfdetr.md"
+
+Coming from YOLO? The license terms differ:
+
+--8<-- "docs/snippets/license-yolo-note.md"
 
 ## Do I need to set `num_classes` when fine-tuning or loading a checkpoint?
 

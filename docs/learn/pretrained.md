@@ -2,7 +2,7 @@
 description: Run pre-trained RF-DETR models (Nano to 2XLarge) on images, video, webcam, and RTSP streams. COCO-trained with real-time DINOv2 backbone.
 ---
 
-You can run any of the four supported RF-DETR base models -- Nano, Small, Medium, Large -- with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco). XLarge and 2XLarge detection models are also available via `pip install rfdetr[plus]` and are provided under the PML 1.0 license.
+You can run any of the four supported RF-DETR base models -- Nano, Small, Medium, Large -- with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco). These base models are Apache 2.0, so they're commercially usable out of the box. XLarge and 2XLarge detection models are also available via `pip install rfdetr[plus]` under the Roboflow Platform Model License (PML 1.0): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
 === "Run on an Image"
 
@@ -160,6 +160,33 @@ You can change the RF-DETR model that the code snippet above uses. To do so, upd
 - `rfdetr-small`
 - `rfdetr-medium`
 - `rfdetr-large`
+
+## Predict with the Python package
+
+Use `RFDETRSmall` to run prediction with the RF-DETR Python package:
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+detections = model.predict("https://media.roboflow.com/dog.jpeg", threshold=0.5)
+```
+
+`predict()` accepts RGB PIL images and NumPy arrays. It accepts normalized CHW tensors and normalized BCHW tensor batches. It also accepts image paths, HTTP image URLs, `pathlib.Path` objects, and `os.PathLike` objects. An extensionless HTTP URL is treated as an image URL.
+
+One image returns one `sv.Detections` or `sv.KeyPoints` object. An iterable of images, such as a list, tuple, or generator, returns a list of results from one batched forward pass. A BCHW tensor returns one result per image.
+
+The model's `predict()` handles images only. Use `RFDETRInference` for videos, folders, globs, manifests, cameras, network streams, and lazy results. `RFDETRInference(model)` borrows a loaded model without copying its weights. It also loads checkpoints and exported models, and accepts every image input above. See [Run on Videos and Streams](run/videos-and-streams.md) for each source, with example clips.
+
+## Include source images
+
+`include_source_image=True` by default. For `sv.Detections`, the source image is stored in metadata. For `sv.KeyPoints`, it is stored in each object's data.
+
+RF-DETR copies source images for result storage. It converts them to `uint8` RGB arrays. Set `include_source_image=False` to omit source images.
+
+```python
+detections = model.predict("image.jpg", include_source_image=False)
+```
 
 ## Batch Inference
 

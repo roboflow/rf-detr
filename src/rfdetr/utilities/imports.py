@@ -49,6 +49,9 @@ _IS_UFCOCO_INSTALLED = is_installed("ultrafast_pycocotools")
 #: Whether the optional Vernier package is installed.
 _IS_VERNIER_INSTALLED = is_installed("vernier")
 
+#: Whether the optional OpenCV package (imported as ``cv2``) is installed.
+_IS_OPENCV_INSTALLED = is_installed("cv2")
+
 #: Whether the optional Matplotlib package is installed.
 _IS_MATPLOTLIB_INSTALLED = is_installed("matplotlib")
 #: Whether the optional pandas package is installed.
