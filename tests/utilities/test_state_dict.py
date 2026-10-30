@@ -16,6 +16,7 @@ import pytest
 import torch
 from pytorch_lightning import LightningModule, Trainer
 
+from rfdetr.config import RFDETRNanoConfig
 from rfdetr.utilities.state_dict import (
     _make_fit_loop_state,
     remap_projector_to_cross_attn,
@@ -409,8 +410,6 @@ class TestValidateCheckpointCompatibility:
         `load_pretrain_weights` honors a set `num_classes` and re-expands the head after loading; the warning must not
         claim the checkpoint class count is used.
         """
-        from rfdetr.config import RFDETRNanoConfig
-
         checkpoint = {"model": {"class_embed.bias": torch.randn(91)}}
         model_args = RFDETRNanoConfig(num_classes=93)
 
