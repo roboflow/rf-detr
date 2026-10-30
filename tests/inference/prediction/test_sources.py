@@ -12,16 +12,22 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import requests
 import supervision as sv
 import torch
 from PIL import Image, UnidentifiedImageError
 
 from rfdetr.inference import RFDETRInference
+from tests._online import is_online
 
-from ..helpers import _DummyModel, _DummyRFDETR, _requires_opencv, _scripted_capture
+from ..helpers import _DummyModel, _DummyRFDETR, _FakeResponse, _png_bytes, _requires_opencv, _scripted_capture
 
 if TYPE_CHECKING:
     from rfdetr.inference import ModelContext
+
+_HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
+_HTTP_HOST = "images.cocodataset.org"
+_HTTP_PORT = 80
 
 
 class _ExportableIdentity(torch.nn.Identity):
@@ -726,3 +732,54 @@ class TestPredictSources:
     def test_empty_stream_has_no_results(self) -> None:
         """An empty image sequence produces an empty stream."""
         assert list(RFDETRInference(_DummyRFDETR()).predict([], stream=True)) == []
+
+
+def test_predict_accepts_image_url() -> None:
+    if not is_online(_HTTP_HOST, _HTTP_PORT):
+        pytest.skip("Offline environment, skipping HTTP predict URL test.")
+    model = _DummyRFDETR()
+    detections = model.predict(_HTTP_IMAGE_URL)
+    assert isinstance(detections, sv.Detections)
+    assert detections.xyxy.shape == (1, 4)
+
+
+class TestPredictURLFetch:
+    """``predict()`` URL handling: robust HTTP fetch and correct local-path classification."""
+
+    def test_http_error_status_raises_httperror(self, monkeypatch) -> None:
+        """A 404 response surfaces as ``requests.HTTPError``, not an opaque PIL error."""
+        model = _DummyRFDETR()
+
+        def _fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            return _FakeResponse(content=b"not found", status_code=404)
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        with pytest.raises(requests.HTTPError):
+            model.predict("http://example.com/missing.jpg")
+
+    def test_timeout_is_passed_to_requests_get(self, monkeypatch) -> None:
+        """The HTTP fetch must pass an explicit ``timeout`` so it cannot hang forever."""
+        model = _DummyRFDETR()
+        captured: dict[str, object] = {}
+
+        def _fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            captured.update(kwargs)
+            return _FakeResponse(content=_png_bytes(), status_code=200)
+
+        monkeypatch.setattr(requests, "get", _fake_get)
+        detections = model.predict("http://example.com/image.png")
+        assert isinstance(detections, sv.Detections)
+        assert captured.get("timeout") == 30, "predict() must pass timeout=30 to requests.get"
+
+    def test_local_file_named_like_http_is_not_fetched(self, tmp_path, monkeypatch) -> None:
+        """A local file whose name starts with ``http`` must be opened, not fetched over HTTP."""
+        img_path = tmp_path / "httpcam_frame.png"
+        Image.new("RGB", (28, 28), (128, 128, 128)).save(str(img_path))
+        model = _DummyRFDETR()
+
+        def _fail_get(url: str, **kwargs: object) -> _FakeResponse:
+            raise AssertionError(f"requests.get must not be called for local path {url!r}")
+
+        monkeypatch.setattr(requests, "get", _fail_get)
+        detections = model.predict(str(img_path))
+        assert isinstance(detections, sv.Detections)

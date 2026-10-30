@@ -13,12 +13,16 @@ Import with a relative import::
 
 from __future__ import annotations
 
+import io
+from collections.abc import Callable
 from itertools import chain, repeat
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import PIL.Image
 import pytest
+import requests
 import torch
 
 from rfdetr.detr import RFDETR
@@ -216,3 +220,48 @@ class _DummyRFDETR(RFDETR):
     def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _DummyModel:
         """Return a fresh ``_DummyModel`` instance."""
         return _DummyModel()
+
+
+def _record_model_inputs(sink: list[torch.Tensor]) -> Callable[[torch.nn.Module, tuple[torch.Tensor, ...]], None]:
+    """Return a forward pre-hook that appends a detached copy of each batch the model receives to ``sink``.
+
+    Args:
+        sink: List collecting one batch per forward call.
+
+    Returns:
+        A hook for ``torch.nn.Module.register_forward_pre_hook`` that leaves the module's inputs unchanged.
+
+    Examples:
+        >>> batches: list[torch.Tensor] = []
+        >>> _record_model_inputs(batches)(torch.nn.Identity(), (torch.zeros(1, 3, 2, 2),))
+        >>> [tuple(batch.shape) for batch in batches]
+        [(1, 3, 2, 2)]
+    """
+    return lambda _module, args: sink.append(args[0].detach().clone())
+
+
+def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
+    """Return the PNG-encoded bytes of a solid grey image.
+
+    Examples:
+        >>> data = _png_bytes((8, 8))
+        >>> data[:4]
+        b'\\x89PNG'
+    """
+    buf = io.BytesIO()
+    PIL.Image.new("RGB", size, (128, 128, 128)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _FakeResponse:
+    """Minimal stand-in for ``requests.Response`` used by ``predict()`` URL tests."""
+
+    def __init__(self, content: bytes = b"", status_code: int = 200) -> None:
+        """Store the response body and status code."""
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        """Raise ``requests.HTTPError`` for 4xx/5xx status codes, mirroring requests."""
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error")
