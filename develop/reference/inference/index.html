@@ -3929,11 +3929,17 @@ only trusted strings.</p>
 <h4 id="rfdetr.inference.RFDETRInference.predict(threshold)" class="doc doc-heading doc-heading-parameter">                  <code>threshold</code>
 <a href="#rfdetr.inference.RFDETRInference.predict(threshold)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
-                  <code><span title="float">float</span></code>
+                  <code><span title="rfdetr._prediction.types._ThresholdInput">_ThresholdInput</span></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Minimum confidence for a result.</p>
+                <p>The confidence score a detection must exceed to be kept. A single float applies to every class.
+A :class:<code>~rfdetr.ClassThresholds</code>, such as <code>ClassThresholds({"person": 0.35}, default=0.5)</code>, applies
+each class's own threshold to its detections, so that a class the model finds less reliably can be
+held to a different bar. It leaves out every detection that belongs to no entry of <code>class_names</code>:
+the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+unused category IDs of a pretrained COCO model. A threshold of <code>float("inf")</code> drops every detection
+of that class.</p>
               </div>
             </td>
             <td>
@@ -4110,11 +4116,22 @@ Fixed-batch exports also reject a short final batch. Use batch-one or dynamic ex
       <tbody>
           <tr class="doc-section-item">
             <td>
+                  <code><span title="TypeError">TypeError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If <code>threshold</code> is neither a number nor a sequence of numbers.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
                   <code><span title="ValueError">ValueError</span></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>If shape, batch, stride, buffer, capture, or runtime limits are violated.</p>
+                <p>If shape, batch, stride, buffer, capture, or runtime limits are violated, or if a <code>threshold</code>
+sequence is not one-dimensional, differs in length from <code>class_names</code> or holds a NaN.</p>
               </div>
             </td>
           </tr>

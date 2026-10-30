@@ -57,6 +57,10 @@
          <lastmod>2026-10-30</lastmod>
     </url>
     <url>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/per-class-confidence-thresholds/</loc>
+         <lastmod>2026-10-30</lastmod>
+    </url>
+    <url>
          <loc>https://rfdetr.roboflow.com/develop/cookbooks/pytorch-lightning/</loc>
          <lastmod>2026-10-30</lastmod>
     </url>

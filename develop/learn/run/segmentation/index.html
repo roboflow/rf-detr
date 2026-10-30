@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-29T23:24:03">
+  <meta property="article:modified_time" content="2026-10-30T13:13:07">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-29T23:24:03",
+    "dateModified": "2026-10-30T13:13:07",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3280,7 +3280,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">sv</span><span class="o">.</span><span class="n">mask_to_polygons</span><span class="p">(</span><span class="n">detections</span><span class="o">.</span><span class="n">mask</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>  <span class="c1"># polygon outline of the first instance</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">detections</span><span class="o">.</span><span class="n">area</span><span class="p">)</span>  <span class="c1"># per-instance pixel area, computed from the masks</span>
 </span></code></pre></div>
-<p>Instances scoring below <code>threshold</code> are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. Use <code>sv.MaskAnnotator</code> to draw filled masks, <code>sv.PolygonAnnotator</code> to draw outlines only, or <code>sv.BoxAnnotator</code> to overlay the boxes as well.</p>
+<p>Instances scoring below <code>threshold</code> are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. With per-class thresholds (a <code>ClassThresholds</code>, see <a href="../detection/#set-a-confidence-threshold-for-each-class">Set a confidence threshold for each class</a>), the lowest of them sets only the mask pre-filter cut-off before upsampling; each instance is then filtered by its own class's threshold. Use <code>sv.MaskAnnotator</code> to draw filled masks, <code>sv.PolygonAnnotator</code> to draw outlines only, or <code>sv.BoxAnnotator</code> to overlay the boxes as well.</p>
 <h3 id="preprocessing-and-inference-backends">Preprocessing and inference backends<a class="headerlink" href="#preprocessing-and-inference-backends" title="Permanent link">&para;</a></h3>
 <p><code>predict()</code> resizes without antialiasing by default (<code>antialias=False</code>), which matches checkpoints trained with the default CPU augmentation backend when <code>rfdetr[augment]</code> is installed (Albumentations). Pass <code>antialias=True</code> for checkpoints trained with torchvision resizing: the Kornia/GPU augmentation backend, the CPU backend without <code>rfdetr[augment]</code>, or older RF-DETR releases. Antialiasing costs a little extra preprocessing time per image. <code>RFDETRInference</code> uses the artifact metadata's <code>resize_antialias</code> by default for exported models; pass an explicit <code>antialias=True</code> or <code>antialias=False</code> to override it. The lower-level <code>rfdetr.export</code> runtime preprocessing helpers always resize without antialiasing.</p>
 <p>For repeated inference with the <code>rfdetr</code> package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. Capture allocates a graph-private memory pool that persists for the graph's lifetime and scales with batch size, resolution and model. Segmentation models also carry the mask outputs in that pool, so expect higher memory cost than for detection. The backend was measured on detection RF-DETR Nano at batch size 1; segmentation models use the same path but are unmeasured. The default stays <code>"torchscript"</code>:</p>
@@ -3426,7 +3426,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 29, 2026 23:24:03 UTC">2026-10-29 23:24:03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 13:13:07 UTC">2026-10-30 13:13:07</span>
   </span>
 
     
