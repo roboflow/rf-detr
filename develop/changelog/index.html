@@ -3175,6 +3175,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>The class-count warning claimed the checkpoint's class count was used when a set <code>num_classes</code> larger than the checkpoint was kept. <code>load_pretrain_weights</code> keeps the set count and resizes the loaded classification head to it; the warning now says so instead of "Using checkpoint class count". (<a href="https://github.com/roboflow/rf-detr/pull/1654">#1654</a>)</p>
+</li>
+<li>
 <p>Loading a pretrained model no longer warns that DINOv2 backbone weights are skipped. Most variants differ from DINOv2 in patch size or positional encodings, so <code>RFDETRNano()</code> and similar default loads printed two such warnings even though RF-DETR pretrained weights replace the backbone. The warnings still appear when DINOv2 weights are requested, as with <code>pretrain_weights=None</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1653">#1653</a>)</p>
 </li>
 <li>
