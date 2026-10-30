@@ -18,14 +18,12 @@
 
 from __future__ import annotations
 
-import sys
-
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torchvision.ops.boxes import box_area
 
-from rfdetr.utilities.compiler import is_compiling
+from rfdetr.utilities.compiler import is_compiling, script_or_eager
 
 
 def box_cxcywh_to_xyxy(x: Tensor) -> Tensor:
@@ -351,9 +349,9 @@ def batch_dice_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     return loss
 
 
-#: Preserve the historical scripted alias until Python 3.14 makes TorchScript
-#: unsupported during import, where the eager function is the safe fallback.
-batch_dice_loss_jit = batch_dice_loss if sys.version_info >= (3, 14) else torch.jit.script(batch_dice_loss)
+#: Preserve the historical scripted alias; ``script_or_eager`` returns the eager function
+#: where TorchScript is unsupported (Python 3.14+) or fails to compile on the host.
+batch_dice_loss_jit = script_or_eager(batch_dice_loss)
 
 
 def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
@@ -378,6 +376,4 @@ def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
 
 
 #: Backward-compatible alias; see ``batch_dice_loss_jit``.
-batch_sigmoid_ce_loss_jit = (
-    batch_sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(batch_sigmoid_ce_loss)
-)
+batch_sigmoid_ce_loss_jit = script_or_eager(batch_sigmoid_ce_loss)

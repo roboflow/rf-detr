@@ -92,6 +92,40 @@ class TestResolveExportStemCrossPlatformPathComponents:
         assert resolve_export_stem(None, output_name) == (expected, True)
 
 
+class TestResolveExportStemDotsInName:
+    """Only an export artifact extension is stripped; any other dot is part of the name and survives."""
+
+    @pytest.mark.parametrize(
+        "output_name",
+        ["rfdetr-nano-v1.2", "detector_2026.10.17", "model.final", "rfdetr-nano-v1.2-backbone"],
+    )
+    def test_dot_that_is_not_an_artifact_extension_is_kept(self, output_name: str) -> None:
+        """A version, date or other dotted name is used verbatim, as ``RFDETR.export(output_name=...)`` documents."""
+        assert resolve_export_stem(None, output_name) == (output_name, True)
+
+    @pytest.mark.parametrize(
+        ("output_name", "expected"),
+        [
+            ("rfdetr-nano-v1.2.onnx", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.trt", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.engine", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.tflite", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.mlpackage", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.pte", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.xml", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.aimodel", "rfdetr-nano-v1.2"),
+            ("rfdetr-nano-v1.2.ONNX", "rfdetr-nano-v1.2"),
+        ],
+    )
+    def test_artifact_extension_is_stripped_from_a_dotted_name(self, output_name: str, expected: str) -> None:
+        """An artifact extension the caller appended is still removed, leaving the dots before it alone."""
+        assert resolve_export_stem(None, output_name) == (expected, True)
+
+    def test_dotted_variant_name_is_kept(self) -> None:
+        """``variant_name`` goes through the same sanitizer as ``output_name``."""
+        assert resolve_export_stem("rfdetr-nano-v1.2", None) == ("rfdetr-nano-v1.2", False)
+
+
 class TestResolveExportStemEmptyAndWhitespace:
     """Empty / whitespace-only / all-separator ``output_name`` values."""
 

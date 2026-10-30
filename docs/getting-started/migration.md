@@ -34,6 +34,20 @@ The defaults remain TorchScript compilation, batch size 1 and float32. Pass `com
 
 For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.
 
+### Removed in v1.12
+
+!!! warning "Removed: `rfdetr.datasets.aug_config`"
+
+    The `rfdetr.datasets.aug_config` compatibility module, deprecated since v1.9.0, is gone. Importing it raises `ModuleNotFoundError`. The preset constants are unchanged; only the module path moves.
+
+    ```python
+    # Before (removed)
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
+    ```
+
 ### Deprecated in v1.12 → Remove in v1.15
 
 !!! note "Deprecated: raw TensorRT and OpenVINO inference"
@@ -433,22 +447,6 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
     # After
     TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
-    ```
-
-### Deprecated in v1.9 → Remove in v1.12
-
-!!! note "`rfdetr.datasets.aug_config` is deprecated"
-
-    The module was renamed to `rfdetr.datasets.aug_configs` (plural) in v1.8.0 — see the "Upgrade 1.7 → 1.8" section below, where it is listed as a breaking change because that rename shipped with no compatibility shim. A shim was added in v1.9.0, so the singular path imports again and emits a `FutureWarning`. It is scheduled for removal in **v1.12.0**; migrate before then.
-
-    The preset constants are unchanged — only the module path moves.
-
-    ```python
-    # Before (deprecated, warns since v1.9.0)
-    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
-
-    # After
-    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
     ```
 
 ---

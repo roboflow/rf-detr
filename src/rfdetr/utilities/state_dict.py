@@ -306,7 +306,9 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
         checkpoint: Loaded checkpoint dictionary, expected to contain an optional
             ``"args"`` key with training namespace attributes or a plain dict.
         model_args: Namespace (e.g. ``types.SimpleNamespace``) with at least
-            ``segmentation_head`` and ``patch_size`` attributes describing the current model.
+            ``segmentation_head`` and ``patch_size`` attributes describing the current model. The class-count check also
+            reads the optional ``num_classes`` and ``model_fields_set`` (the names of fields set explicitly, as on a
+            pydantic config); a namespace without ``model_fields_set`` is treated as having ``num_classes`` unset.
 
     Raises:
         ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
@@ -326,15 +328,19 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
         would otherwise fire. For all other attributes (e.g. ``segmentation_head``), if either side is missing, that
         check is skipped silently — preserving backward compatibility.
 
-        Two class-count scenarios are distinguished:
+        Three class-count scenarios are distinguished:
 
         * Backbone pretrain: the checkpoint head was trained with more classes
           than the current ``model_args.num_classes``. In this case the detection head is typically reinitialized or
           trimmed externally to match the configured number of classes.
-        * Fine-tuned checkpoint: the checkpoint head was trained with fewer
-          classes than the current ``model_args.num_classes``. If you intend to reuse the checkpoint's classification
-          head as-is, set ``model_args.num_classes`` to ``ckpt_num_classes - 1`` (the value reported in the warning)
-          before loading the state dict to align the configuration and silence the warning.
+        * Fine-tuned checkpoint, ``num_classes`` not set: the checkpoint head was trained with fewer classes than the
+          default ``model_args.num_classes``. The checkpoint class count is used. If you intend to reuse the
+          checkpoint's classification head as-is, set ``model_args.num_classes`` to ``ckpt_num_classes - 1`` (the value
+          reported in the warning) before loading the state dict to align the configuration and silence the warning.
+        * Fine-tuned checkpoint, ``num_classes`` set: the checkpoint head was trained with fewer classes than a
+          ``model_args.num_classes`` that is in ``model_args.model_fields_set`` (any explicit value or later
+          assignment, such as by the caller, dataset alignment or a reloaded config). The warning says the configured
+          count is kept and the loaded head is resized to it, matching what ``load_pretrain_weights`` does.
     """
     # Emit actionable class-count mismatch warning early, before any reinit happens.
     ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)
@@ -350,6 +356,21 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
                     ckpt_num_classes - 1,
                     model_num_classes,
                     model_num_classes,
+                )
+            elif "num_classes" in getattr(model_args, "model_fields_set", set()):
+                # A num_classes in `model_fields_set` (any explicit value or later assignment) wins:
+                # `load_pretrain_weights` loads the checkpoint head, then resizes it to the configured size by
+                # tiling existing rows.
+                logger.warning(
+                    "Checkpoint has %d classes but model is configured for %d. "
+                    "Keeping num_classes=%d; the classification head grows from %d to %d classes, "
+                    "and the %d added class(es) start as copies of existing ones until fine-tuned.",
+                    ckpt_num_classes - 1,
+                    model_num_classes,
+                    model_num_classes,
+                    ckpt_num_classes - 1,
+                    model_num_classes,
+                    model_num_classes + 1 - ckpt_num_classes,
                 )
             else:
                 # Fine-tuned checkpoint loaded with wrong (larger) num_classes.
