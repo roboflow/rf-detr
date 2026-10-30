@@ -33,11 +33,11 @@ to Seg Large and Keypoint Preview on an RTX 5070 and a Tesla T4 with TensorRT 11
   whose input channels are not a multiple of 32 is kept FP16 as a precaution. An FP16 convolution can pad too: the Tesla
   T4 segmentation and keypoint INT8 engines, whose patch embedding was an FP16 convolution, grew with the batch by about
   the image padded to 32 channels (inferred from the engine sizes, not read from an engine).
-  :func:`_patch_embedding_as_matmul` therefore turns every patch embedding into a matrix multiply over ``3 * 16 * 16``
-  values per patch (``3 * 12 * 12`` for the segmentation and keypoint models), which has no channels to pad. The
-  detection models' 768 values take INT8 with the rest of the backbone. The 432 values of the 12-pixel patches are not
-  a multiple of 32: on Seg Small and Keypoint Preview their INT8 matrix multiply ran no faster than the FP16 one
-  and lowered the AP, so it stays FP16.
+  :func:`_patch_embedding_as_matmul` therefore turns each backbone patch embedding it can (see the function) into a
+  matrix multiply over ``3 * 16 * 16`` values per patch (``3 * 12 * 12`` for the segmentation and keypoint models),
+  which has no channels to pad. The detection models' 768 values take INT8 with the rest of the backbone. The 432
+  values of the 12-pixel patches are not a multiple of 32: on Seg Small and Keypoint Preview their INT8 matrix
+  multiply ran no faster than the FP16 one and lowered the AP, so it stays FP16.
 * **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
   that was measured to pay for it (faster at a small cost in AP; head size 16, 32 or 64 and at most 325 tokens: the
   windowed backbone blocks of detection Nano, Small and Medium and of segmentation Small and Medium) gets Q/DQ on both
