@@ -109,6 +109,13 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         # The Neural Engine aborts float16 keypoint inference; CPU execution preserves a usable artifact.
         logger.warning("Core AI float16 keypoint inference can abort on the Neural Engine; using CPU for auto.")
         device = "cpu"
+    is_supported = getattr(SpecializationOptions, "is_supported", None)
+    if device == "auto" and callable(is_supported) and not is_supported():
+        # Before macOS 27 the package loads and runs, but only on the CPU, whatever compute units are allowed.
+        logger.warning(
+            "Core AI reports no GPU or Neural Engine support on this host (its runtime ships with macOS 27), "
+            "so inference runs on the CPU and is far slower than on a supported OS."
+        )
     specialization = SpecializationOptions.cpu_only() if device == "cpu" else SpecializationOptions.default()
 
     async def load_coreai() -> Any:

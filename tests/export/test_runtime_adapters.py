@@ -164,6 +164,59 @@ class TestRuntimePolicies:
         with pytest.raises(ValueError, match="preferred compute unit"):
             load_runtime(artifact, contract, device=device)
 
+    @pytest.mark.parametrize(
+        ("supported", "device", "warns"),
+        [
+            pytest.param(False, "auto", True, id="unsupported-auto"),
+            pytest.param(True, "auto", False, id="supported-auto"),
+            pytest.param(False, "cpu", False, id="unsupported-explicit-cpu"),
+        ],
+    )
+    def test_coreai_warns_when_auto_falls_back_to_cpu(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, supported: bool, device: str, warns: bool
+    ) -> None:
+        """Core AI's runtime runs on the CPU only when its accelerators are unsupported; `auto` must say so."""
+        artifact = tmp_path / "model.aimodel"
+        artifact.write_bytes(b"coreai")
+        contract = ExportMetadata(
+            format="coreai",
+            task="detect",
+            input_shape=(1, 3, 2, 2),
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=1,
+            num_windows=1,
+        )
+
+        class AIModel:
+            """Expose a loader whose model is never run."""
+
+            @staticmethod
+            async def load(_path: Path, _options: object) -> types.SimpleNamespace:
+                """Return a model exposing its entry point."""
+                return types.SimpleNamespace(load_function=lambda _name: object())
+
+        runtime_module = types.ModuleType("coreai.runtime")
+        runtime_module.AIModel = AIModel
+        runtime_module.SpecializationOptions = types.SimpleNamespace(
+            default=lambda: object(), cpu_only=lambda: object(), is_supported=lambda: supported
+        )
+        monkeypatch.setitem(sys.modules, "coreai", types.ModuleType("coreai"))
+        monkeypatch.setitem(sys.modules, "coreai.runtime", runtime_module)
+        monkeypatch.setattr("rfdetr.export._runtime.adapters.platform.system", lambda: "Darwin")
+        logged: list[str] = []
+        monkeypatch.setattr("rfdetr.export._coreai.inference.logger.warning", logged.append)
+
+        runtime = load_runtime(artifact, contract, device=device)
+        del runtime
+
+        assert any("CPU" in message for message in logged) is warns
+
     def test_openvino_accepts_family_alias_but_checks_numbered_device(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
