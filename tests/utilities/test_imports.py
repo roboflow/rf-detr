@@ -23,6 +23,9 @@ _PYPROJECT_TEXT = Path(__file__).resolve().parents[2].joinpath("pyproject.toml")
 #: Probed packages that no pyproject extra declares, because users or CI install them by hand.
 _UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer"})
 
+#: Probed import names whose distribution is spelled differently, so pyproject.toml declares the distribution.
+_DISTRIBUTION_NAMES = {"cv2": "opencv-python"}
+
 
 def _probed_packages(module: ModuleType) -> dict[str, str]:
     """Map each flag a module assigns from ``is_installed("<package>")`` to its literal package name.
@@ -105,4 +108,8 @@ class TestInstallFlags:
         A mistyped import name makes the flag permanently false, so every test it gates is skipped on every host and the
         typo never fails anything. Reading the name from pyproject.toml checks it independently of the flag.
         """
-        assert _is_declared_in_pyproject(package), f"{flag} probes {package!r}, which pyproject.toml does not declare"
+        distribution = _DISTRIBUTION_NAMES.get(package, package)
+
+        assert _is_declared_in_pyproject(distribution), (
+            f"{flag} probes {package!r}, which pyproject.toml does not declare"
+        )

@@ -412,7 +412,9 @@ class TestRuntimePolicies:
             )
         )
         coreml = types.SimpleNamespace(
-            ComputeUnit=types.SimpleNamespace(ALL="all", CPU_ONLY="cpu"),
+            ComputeUnit=types.SimpleNamespace(
+                ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu", CPU_AND_NE="cpu_and_ne"
+            ),
             models=types.SimpleNamespace(MLModel=Mock(return_value=session)),
         )
         monkeypatch.setitem(sys.modules, "coremltools", coreml)

@@ -77,6 +77,29 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
 
+For video with GPU compute enabled, select the CPU-and-GPU policy:
+
+```python
+model = RFDETRInference("output/rfdetr-small_fp16.mlpackage", device="cpu_and_gpu")
+results = model.predict("video.mp4", stream=True)
+try:
+    for detections in results:
+        frame = detections.metadata["source_image"]
+finally:
+    results.close()
+```
+
+The loader supports all four [Core ML compute policies](https://apple.github.io/coremltools/source/coremltools.models.html):
+
+| `device`      | Core ML compute units     | Allowed processors          |
+| ------------- | ------------------------- | --------------------------- |
+| `auto`        | `ComputeUnit.ALL`         | CPU, GPU, and Neural Engine |
+| `cpu`         | `ComputeUnit.CPU_ONLY`    | CPU                         |
+| `cpu_and_gpu` | `ComputeUnit.CPU_AND_GPU` | CPU and GPU                 |
+| `cpu_and_ne`  | `ComputeUnit.CPU_AND_NE`  | CPU and Neural Engine       |
+
+`cpu_and_ne` requires macOS 13 or later. Core ML chooses among the allowed processors; these policies do not guarantee GPU-only or Neural-Engine-only execution. `runtime_info` reports the selected policy.
+
 ## Advanced: Use Core ML directly
 
 The shared `RFDETRInference` loader also uses Core ML's `coremltools` API directly; this example shows that vendor API for callers who need raw outputs.
