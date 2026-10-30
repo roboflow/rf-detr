@@ -69,6 +69,11 @@ def _convert_upsample(
 
     Returns:
         The converted ``coremltools.models.MLModel``.
+
+    Examples:
+        Conversion needs coremltools, and prediction needs the macOS Core ML runtime, so the example is not run:
+
+        >>> _convert_upsample("float16", align_corners=False, compute_units="CPU_AND_NE")  # doctest: +SKIP
     """
     import coremltools as ct
     from coremltools.converters.mil.mil import Builder as mb  # noqa: N813 — standard coremltools MIL alias
