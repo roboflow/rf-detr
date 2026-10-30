@@ -41,7 +41,8 @@ class DecodedDetections:
 
     #: Pixel-space boxes, shape ``(N, 4)`` in ``xyxy`` order.
     xyxy: NDArray[np.float32]
-    #: Sigmoid confidence per detection, shape ``(N,)``.
+    #: Sigmoid confidence per detection, shape ``(N,)``. It has the logits' floating dtype in native byte order: the
+    #: sigmoid runs with at least float32 intermediates and is rounded once to that dtype before selection.
     confidence: NDArray[np.floating[Any]]
     #: Exported class slot per detection, shape ``(N,)``.
     class_id: NDArray[np.int64]
@@ -80,7 +81,8 @@ def decode_detections(
             background-first keypoint checkpoints.
 
     Returns:
-        The decoded detections, ordered by descending confidence.
+        The decoded detections, ordered by descending confidence. ``confidence`` keeps the logits' floating dtype (FP16
+        logits give FP16 scores, matching ``PostProcess``) after a single rounding from at least float32 intermediates.
 
     Examples:
         >>> import numpy as np
@@ -105,14 +107,18 @@ def decode_detections(
         logger.debug("Logits stats: empty shape=%s", logits.shape)
     # Use at least float32 intermediates, then round once to the original score dtype, as PyTorch sigmoid does.
     # Copy even FP32/FP64 inputs so the reusable work buffer never modifies caller-owned logits.
-    scores_all = logits.astype(np.result_type(logits.dtype, np.float32), copy=True)
+    work_dtype = np.result_type(logits.dtype, np.float32)
+    scores_all = logits.astype(work_dtype, copy=True)
     one = np.asarray(1, dtype=scores_all.dtype)
     np.clip(scores_all, -88, 88, out=scores_all)
     np.negative(scores_all, out=scores_all)
     np.exp(scores_all, out=scores_all)
     np.add(scores_all, one, out=scores_all)
     np.divide(one, scores_all, out=scores_all)
-    scores_all = scores_all.astype(logits.dtype, copy=False)
+    # Round back only for floating logits, in native byte order; integer or boolean logits keep the floating work dtype,
+    # since casting probabilities to an integer dtype would truncate every score to 0 or 1.
+    score_dtype = logits.dtype.newbyteorder("=") if np.issubdtype(logits.dtype, np.floating) else work_dtype
+    scores_all = scores_all.astype(score_dtype, copy=False)
     scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
     # The query count is read off the logits rather than the boxes; a valid RF-DETR export gives both the same Q.
     selection_cap = logits.shape[0] if num_select is None else num_select
