@@ -429,6 +429,81 @@ class TestValidateCheckpointCompatibility:
         ), f"Expected a 'Keeping num_classes=93' resize warning, got: {warning_msgs}"
         assert not any("Using checkpoint class count" in msg for msg in warning_msgs), warning_msgs
 
+    @pytest.fixture
+    def rf_detr_warnings(self, caplog, monkeypatch):
+        """Capture ``rf-detr`` logger records, which do not propagate to the root logger by default."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            yield caplog
+
+    @pytest.mark.parametrize(
+        ("model_args", "ckpt_rows", "expected", "forbidden"),
+        [
+            pytest.param(
+                RFDETRNanoConfig(num_classes=10),
+                91,
+                ("re-initialized to 10 classes",),
+                ("Keeping num_classes", "Using checkpoint class count"),
+                id="set-smaller-trims-head",
+            ),
+            pytest.param(
+                RFDETRNanoConfig(),
+                4,
+                ("Using checkpoint class count (3)", "Pass num_classes=3"),
+                ("Keeping num_classes",),
+                id="unset-larger-uses-checkpoint",
+            ),
+            pytest.param(
+                RFDETRNanoConfig(num_classes=90),
+                4,
+                ("Keeping num_classes=90",),
+                ("Using checkpoint class count",),
+                id="set-to-class-default-is-kept",
+            ),
+            pytest.param(
+                RFDETRNanoConfig(num_classes=3),
+                4,
+                (),
+                ("Checkpoint has",),
+                id="set-matching-rows-is-silent",
+            ),
+        ],
+    )
+    def test_class_count_warning_with_pydantic_config(
+        self, rf_detr_warnings, model_args, ckpt_rows, expected, forbidden
+    ):
+        """The class-count warning follows whether a pydantic config has ``num_classes`` set, not its value.
+
+        The sibling class-count tests pass a ``SimpleNamespace``, which has no ``model_fields_set`` and so always takes
+        the unset branch. A real config distinguishes a set ``num_classes`` (even one equal to the class default) from
+        an unset one, and that decides whether the warning says the configured count is kept or the checkpoint's is
+        used.
+        """
+        checkpoint = {"model": {"class_embed.bias": torch.randn(ckpt_rows)}}
+
+        validate_checkpoint_compatibility(checkpoint, model_args)
+
+        warning_msgs = [r.getMessage() for r in rf_detr_warnings.records if r.name == "rf-detr"]
+        assert all(any(text in msg for msg in warning_msgs) for text in expected), warning_msgs
+        assert not any(text in msg for text in forbidden for msg in warning_msgs), warning_msgs
+
+    def test_class_count_warning_for_num_classes_assigned_after_construction(self, rf_detr_warnings):
+        """A ``num_classes`` assigned after the config is built counts as set and is kept.
+
+        Dataset alignment assigns ``num_classes`` on an existing config instead of passing it to the constructor; the
+        assignment adds the field to ``model_fields_set``, so a checkpoint with fewer classes gets the keep-and-resize
+        warning rather than "Using checkpoint class count".
+        """
+        checkpoint = {"model": {"class_embed.bias": torch.randn(91)}}
+        model_args = RFDETRNanoConfig()
+        model_args.num_classes = 93
+
+        validate_checkpoint_compatibility(checkpoint, model_args)
+
+        warning_msgs = [r.getMessage() for r in rf_detr_warnings.records if r.name == "rf-detr"]
+        assert any("Keeping num_classes=93" in msg for msg in warning_msgs), warning_msgs
+        assert not any("Using checkpoint class count" in msg for msg in warning_msgs), warning_msgs
+
 
 class TestRemapProjectorToCrossAttn:
     """Tests for dual-projector checkpoint key remapping."""
