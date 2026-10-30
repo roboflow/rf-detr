@@ -16,7 +16,7 @@ import tempfile
 import threading
 import warnings
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
@@ -35,7 +35,7 @@ from rfdetr._prediction.core import (
     _resolve_patch_size,
     _validate_shape_dims,
 )
-from rfdetr._prediction.types import _ImageInput
+from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -3046,7 +3046,7 @@ class RFDETR:
     def predict(
         self,
         images: _ImageInput | Iterable[_ImageInput],
-        threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor = 0.5,
+        threshold: _ThresholdInput = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
@@ -3078,7 +3078,8 @@ class RFDETR:
                 the detections of its own class, so that a class the model finds less reliably can be held to a
                 different bar. A sequence leaves out every detection that belongs to no entry of ``class_names``: the
                 no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
-                unused category IDs of a pretrained COCO model.
+                unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection of
+                that class.
             shape:
                 Resize to ``(height, width)``; defaults to the model resolution. Both dimensions must be positive
                 integers divisible by ``patch_size * num_windows``. Use the model's export resolution when applicable.

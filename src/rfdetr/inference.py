@@ -10,14 +10,14 @@ from __future__ import annotations
 __all__ = ["ModelContext", "RFDETRInference"]
 
 import os
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
 from rfdetr._prediction.core import PredictionContext, predict
-from rfdetr._prediction.types import _PredictionInput
+from rfdetr._prediction.types import _PredictionInput, _ThresholdInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -26,8 +26,6 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
     from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
@@ -185,7 +183,7 @@ class RFDETRInference:
     def predict(
         self,
         images: _PredictionInput,
-        threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor = 0.5,
+        threshold: _ThresholdInput = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
@@ -207,8 +205,11 @@ class RFDETRInference:
                 only trusted strings.
             threshold: The confidence score a detection must exceed to be kept. A single float applies to every class.
                 A sequence of floats, one per entry of ``class_names`` and in the same order, applies each threshold to
-                the detections of its own class; it leaves out every detection that belongs to no entry of
-                ``class_names``.
+                the detections of its own class, so that a class the model finds less reliably can be held to a
+                different bar. A sequence leaves out every detection that belongs to no entry of ``class_names``: the
+                no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection
+                of that class.
             shape: Input height and width; exports require their recorded shape.
             patch_size: Backbone patch size for shape validation.
             include_source_image: Store RGB source pixels in each result.

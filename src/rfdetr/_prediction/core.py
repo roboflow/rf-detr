@@ -34,7 +34,7 @@ except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
 from rfdetr._prediction.sources import is_expanded_source, iter_source_batches
-from rfdetr._prediction.types import _ImageInput, _PredictionInput
+from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
@@ -324,9 +324,56 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-def _per_class_thresholds(
-    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor, num_classes: int
-) -> list[float] | None:
+#: The scalars that ``scores > threshold`` takes. A single threshold and every entry of a per-class sequence must be one
+#: of them, so a bool, for instance, counts as a number in both forms and a string counts in neither.
+_THRESHOLD_NUMBER_TYPES = (int, float, np.integer, np.floating, np.bool_, torch.Tensor)
+
+
+def _as_float(value: float | np.generic | torch.Tensor) -> float:
+    """Read one threshold number as a Python float.
+
+    Args:
+        value: A number accepted as a threshold, see ``_THRESHOLD_NUMBER_TYPES``.
+
+    Returns:
+        The value as a float. A tensor is detached first, so that one that requires grad does not warn.
+
+    Examples:
+        >>> _as_float(np.float32(0.5)), _as_float(True), _as_float(torch.tensor(0.25, requires_grad=True))
+        (0.5, 1.0, 0.25)
+    """
+    return float(value.detach() if isinstance(value, torch.Tensor) else value)
+
+
+def _threshold_entries(threshold: Sequence[Any] | np.ndarray[Any, Any] | torch.Tensor) -> list[Any]:
+    """List the entries of a one-dimensional threshold sequence, reading a tensor or array in one call.
+
+    Iterating a tensor and calling ``float()`` on each element costs one device-to-host copy per class on CUDA, once for
+    every batch, and warns for a tensor that requires grad. ``tolist()`` copies it once, and ``detach`` spares the
+    warning.
+
+    Args:
+        threshold: A tuple, list, one-dimensional array or one-dimensional tensor.
+
+    Returns:
+        The entries as a list. A tensor or array gives Python numbers; any other sequence keeps its own entries.
+
+    Examples:
+        >>> _threshold_entries(torch.tensor([1, 2], requires_grad=False))
+        [1, 2]
+        >>> _threshold_entries(np.array([0.5, 0.25]))
+        [0.5, 0.25]
+        >>> _threshold_entries((0.1, 0.2))
+        [0.1, 0.2]
+    """
+    if isinstance(threshold, torch.Tensor):
+        return threshold.detach().cpu().tolist()
+    if isinstance(threshold, np.ndarray):
+        return cast("list[Any]", threshold.tolist())
+    return list(threshold)
+
+
+def _per_class_thresholds(threshold: _ThresholdInput, num_classes: int) -> list[float] | None:
     """Split the ``threshold`` argument of :func:`predict` into its single-float and per-class forms.
 
     Args:
@@ -338,31 +385,62 @@ def _per_class_thresholds(
         ``class_names`` order.
 
     Raises:
-        TypeError: If ``threshold`` is a scalar that is not a number, such as a ``dict`` keyed by class name.
-        ValueError: If ``threshold`` is a sequence that is not one-dimensional, holds a number of entries other than
-            ``num_classes``, or holds a NaN.
+        TypeError: If ``threshold``, or an entry of a sequence, is not a number: a ``dict`` keyed by class name, a
+            string, or ``None``.
+        ValueError: If ``threshold`` is a NaN, or a sequence that is ragged or not one-dimensional, is given to a model
+            without classes, holds a number of entries other than ``num_classes``, or holds a NaN.
 
     Examples:
         >>> _per_class_thresholds(0.5, 3) is None
         True
         >>> _per_class_thresholds((0.1, 0.2, 0.3), 3)
         [0.1, 0.2, 0.3]
+        >>> _per_class_thresholds(float("nan"), 3)
+        Traceback (most recent call last):
+        ...
+        ValueError: threshold is NaN, so no detection can score above it; pass a number.
+        >>> _per_class_thresholds([], 0)
+        Traceback (most recent call last):
+        ...
+        ValueError: threshold is a sequence, but the model has no classes to give a threshold to; pass a single float.
     """
-    dimensions = np.ndim(threshold)
+    try:
+        dimensions = np.ndim(threshold)
+    except ValueError:
+        # NumPy cannot give a ragged sequence such as [[0.5, 0.5], [0.5]] one shape and says so in its own words.
+        raise ValueError(
+            "threshold must be a float or a one-dimensional sequence of floats, got a ragged sequence."
+        ) from None
     if dimensions == 0:
         # A dict, a string, a set or a 0-d array also has no dimensions. Left alone it would reach the keep-filter and
-        # fail there with a bare "'>' not supported between 'Tensor' and 'dict'", after the model ran. The accepted
-        # types are the scalars that `scores > threshold` takes.
-        if not isinstance(threshold, (int, float, np.integer, np.floating, np.bool_, torch.Tensor)):
+        # fail there with a bare "'>' not supported between 'Tensor' and 'dict'", after the model ran.
+        if not isinstance(threshold, _THRESHOLD_NUMBER_TYPES):
             raise TypeError(
                 f"threshold must be a float or a one-dimensional sequence of floats, got {type(threshold).__name__}."
             )
+        # No score is above NaN, so `scores > nan` would silently empty every result.
+        if math.isnan(_as_float(threshold)):
+            raise ValueError("threshold is NaN, so no detection can score above it; pass a number.")
         return None
     if dimensions != 1:
         raise ValueError(
             f"threshold must be a float or a one-dimensional sequence of floats, got {dimensions}-dimensional input."
         )
-    values = [float(value) for value in cast("Sequence[float]", threshold)]
+    if num_classes == 0:
+        # An empty list passes the length check below for a model without classes, and `min` of it would then raise a
+        # bare "min() arg is an empty sequence" after the forward pass.
+        raise ValueError(
+            "threshold is a sequence, but the model has no classes to give a threshold to; pass a single float."
+        )
+    entries = _threshold_entries(cast("Sequence[Any]", threshold))
+    for index, entry in enumerate(entries):
+        # `float()` would take "0.5" and refuse None with its own words; the single threshold takes neither.
+        if not isinstance(entry, _THRESHOLD_NUMBER_TYPES):
+            raise TypeError(
+                "threshold must be a float or a one-dimensional sequence of floats, "
+                f"got a {type(entry).__name__} entry at index {index}."
+            )
+    values = [_as_float(entry) for entry in entries]
     if len(values) != num_classes:
         raise ValueError(
             f"threshold has {len(values)} entries but the model has {num_classes} classes; "
@@ -381,7 +459,9 @@ def _threshold_by_class_id(class_thresholds: list[float], class_id_to_name: dict
     ``class_names`` lists the classes in ascending class-id order for every layout (plain, sparse COCO, legacy
     background-first keypoints, and the ``class_id_to_name`` of an export's metadata), so the *i*-th smallest id in
     ``class_id_to_name`` belongs to ``class_thresholds[i]``. Positions are taken from the sorted ids rather than from
-    the names, which two classes may share.
+    the names, which two classes may share. Call :func:`_check_class_id_layout` first: the layout above is checked
+    there, not here, and an id that is negative or far beyond the model's logit slots would index or size the table
+    wrongly.
 
     Args:
         class_thresholds: One threshold per entry of ``class_names``.
@@ -397,10 +477,63 @@ def _threshold_by_class_id(class_thresholds: list[float], class_id_to_name: dict
         >>> _threshold_by_class_id([0.25, 0.75], {3: "b", 1: "a"}).tolist()
         [inf, 0.25, inf, 0.75, inf]
     """
-    table = torch.full((max(class_id_to_name, default=-1) + 2,), float("inf"), dtype=torch.float64)
+    table = torch.full((max(class_id_to_name, default=-1) + 2,), float("inf"), dtype=torch.float64, device="cpu")
     for index, class_id in enumerate(sorted(class_id_to_name)):
         table[class_id] = class_thresholds[index]
     return table
+
+
+def _check_class_id_layout(class_names: list[str], class_id_to_name: dict[int, str], num_logit_slots: int) -> None:
+    """Refuse a class-id map that per-class thresholds cannot be laid out against.
+
+    A per-class threshold list is matched to raw class ids by position (see :func:`_threshold_by_class_id`), which is
+    only right when the *i*-th smallest id of ``class_id_to_name`` is named ``class_names[i]``. A native model always
+    satisfies that. An export's metadata does not have to: ``metadata=`` mappings and hand-edited sidecars are used as
+    written. A map that has fewer ids than ``class_names`` is accepted, because a model may have fewer active slots than
+    names (legacy background-first keypoints). Pretrained COCO is accepted too: its sparse ids 1..90 name 80 classes.
+
+    Args:
+        class_names: Class names in ascending class-id order, one per threshold.
+        class_id_to_name: Every raw class id the model emits, mapped to its name.
+        num_logit_slots: Number of class logits of the model; the largest raw class id a model can emit.
+
+    Raises:
+        ValueError: If the map has more ids than ``class_names`` has entries, if the names in ascending id order are not
+            the leading entries of ``class_names``, or if an id is negative or exceeds ``num_logit_slots``.
+
+    Examples:
+        >>> _check_class_id_layout(["a", "b", "c"], {5: "b", 1: "a"}, 5)
+        >>> _check_class_id_layout(["a", "b"], {0: "b", 1: "a"}, 2)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: class_id_to_name names ['b', 'a'] in ascending class-id order, but class_names starts ['a', ...
+        >>> _check_class_id_layout(["a", "b"], {0: "a", 1: "b", 2: "c"}, 2)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: class_id_to_name has 3 class ids but class_names has 2 entries. ...
+        >>> _check_class_id_layout(["a", "b"], {0: "a", 10**9: "b"}, 2)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: class_id_to_name holds class id 1000000000, outside 0..2 ...
+    """
+    hint = "Per-class thresholds are matched to class ids by position; pass a single float, or correct the metadata."
+    class_ids = sorted(class_id_to_name)
+    if len(class_ids) > len(class_names):
+        raise ValueError(
+            f"class_id_to_name has {len(class_ids)} class ids but class_names has {len(class_names)} entries. {hint}"
+        )
+    outside = [class_id for class_id in class_ids if not 0 <= class_id <= num_logit_slots]
+    if outside:
+        raise ValueError(
+            f"class_id_to_name holds class id {outside[0]}, outside 0..{num_logit_slots} (the model's class logits). "
+            f"{hint}"
+        )
+    mapped_names = [class_id_to_name[class_id] for class_id in class_ids]
+    if mapped_names != class_names[: len(class_ids)]:
+        raise ValueError(
+            f"class_id_to_name names {mapped_names} in ascending class-id order, "
+            f"but class_names starts {class_names[: len(class_ids)]}. {hint}"
+        )
 
 
 def _mps_lacks_antialiased_resize() -> bool:
@@ -453,7 +586,7 @@ def _as_collection(images: _PredictionInput) -> _PredictionInput:
 def predict(
     context_factory: Callable[[], PredictionContext],
     images: _PredictionInput,
-    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor = 0.5,
+    threshold: _ThresholdInput = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,
     include_source_image: bool = True,
@@ -523,7 +656,7 @@ def predict(
 def _predict_stream(
     context_factory: Callable[[], PredictionContext],
     images: _PredictionInput,
-    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor,
+    threshold: _ThresholdInput,
     shape: tuple[int, int] | None,
     patch_size: int | None,
     include_source_image: bool,
@@ -582,7 +715,7 @@ def _predict_stream(
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
     images: _PredictionInput | list[_ImageInput],
-    threshold: float | Sequence[float] | np.ndarray[Any, Any] | torch.Tensor,
+    threshold: _ThresholdInput,
     shape: tuple[int, int] | None,
     patch_size: int | None,
     include_source_image: bool,
@@ -610,11 +743,13 @@ def _predict_batch(
 
     Raises:
         TypeError: If ``threshold`` is neither a number nor a sequence of numbers, such as a ``dict`` keyed by class
-            name.
+            name, or a sequence holds an entry that is not a number, such as a string or ``None``.
         ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
             or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
-            validation, or ``threshold`` is a sequence that is not one-dimensional, whose length differs from
-            ``len(class_names)``, or that holds a NaN.
+            validation, ``threshold`` is NaN, or ``threshold`` is a sequence that is ragged or not one-dimensional,
+            whose length differs from ``len(class_names)``, that is given to a model without classes, or that holds a
+            NaN. A sequence ``threshold`` also raises when the export's ``class_id_to_name`` does not match
+            ``class_names`` (more ids than names, names in another order, or an id outside ``0..num_classes``).
     """
     from supervision import Detections, KeyPoints
 
@@ -652,6 +787,12 @@ def _predict_batch(
             raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
 
     class_thresholds = _per_class_thresholds(threshold, len(context.class_names))
+    # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused. An
+    # export's metadata is used as written, so the map is checked here and not assumed. A single float needs no map.
+    threshold_by_class_id: torch.Tensor | None = None
+    if class_thresholds is not None:
+        _check_class_id_layout(context.class_names, context.class_id_to_name, context.num_classes)
+        threshold_by_class_id = _threshold_by_class_id(class_thresholds, context.class_id_to_name)
 
     if context.prepare is not None:
         context.prepare()
@@ -868,10 +1009,10 @@ def _predict_batch(
     # other accelerators copy synchronously, as the images do.
     label_thresholds = (
         None
-        if class_thresholds is None
-        else _threshold_by_class_id(class_thresholds, _class_id_to_name)
-        .to(results[0]["scores"].dtype)
-        .to(context.device, non_blocking=context.device.type == "cuda")
+        if threshold_by_class_id is None
+        else threshold_by_class_id.to(results[0]["scores"].dtype).to(
+            context.device, non_blocking=context.device.type == "cuda"
+        )
     )
     predictions_list: list[_PredictionResult] = []
     for i, result in enumerate(results):
