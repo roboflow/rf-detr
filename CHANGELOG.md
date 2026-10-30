@@ -137,6 +137,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- The class-count warning claimed the checkpoint's class count was used when a set `num_classes` larger than the checkpoint was kept. `load_pretrain_weights` keeps the set count and resizes the loaded classification head to it; the warning now says so instead of "Using checkpoint class count". ([#1654](https://github.com/roboflow/rf-detr/pull/1654))
+
 - Loading a pretrained model no longer warns that DINOv2 backbone weights are skipped. Most variants differ from DINOv2 in patch size or positional encodings, so `RFDETRNano()` and similar default loads printed two such warnings even though RF-DETR pretrained weights replace the backbone. The warnings still appear when DINOv2 weights are requested, as with `pretrain_weights=None`. ([#1653](https://github.com/roboflow/rf-detr/pull/1653))
 
 - `import rfdetr` no longer fails in Databricks notebooks, or on any host that replaces `warnings.warn`, with `RuntimeError: Python builtin <built-in function warn> is currently not supported in Torchscript`. TorchScript recognizes `warnings.warn` by object identity, so a replaced function broke compilation of the segmentation losses that rfdetr scripts at import. Those losses now fall back to their eager functions when TorchScript compilation fails, which compute the same result; on Python 3.14+ they already did. ([#1649](https://github.com/roboflow/rf-detr/pull/1649))
