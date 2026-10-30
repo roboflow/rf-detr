@@ -9,13 +9,22 @@ Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco` correct
 RLE, and polygon segmentation formats — including mixed annotations within the same image.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pycocotools.mask as mask_util
 import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.coco import ConvertCoco, _compressed_crowd_segmentation, _is_rle, convert_coco_poly_to_mask
+from rfdetr.datasets.coco import (
+    ConvertCoco,
+    CrowdRegion,
+    _compressed_crowd_segmentation,
+    _is_rle,
+    convert_coco_poly_to_mask,
+    crowd_regions_from_coco,
+)
 
 # Shared test dimensions
 _H, _W = 100, 100
@@ -444,7 +453,47 @@ class TestDegeneratePolygonParts:
         result = convert_coco_poly_to_mask([segmentation], _H, _W)
 
         assert result.shape == (1, _H, _W)
+        assert result.dtype == torch.uint8
         assert result.sum() == 0
+
+    @pytest.mark.parametrize(
+        ("part", "expected_sum"),
+        [
+            pytest.param([0, 0, 10, 0, 10], 0, id="five-values"),
+            pytest.param([0, 0, 10, 0, 10, 10], 45, id="six-values"),
+            pytest.param([0, 0, 10, 0, 10, 10, 0], 45, id="seven-values"),
+        ],
+    )
+    def test_part_needs_three_points_to_enclose_an_area(self, part: list, expected_sum: int) -> None:
+        """A part is kept from six values up, so a five-value part is the longest one that is skipped."""
+        result = convert_coco_poly_to_mask([[part]], _H, _W)
+
+        assert result.sum() == expected_sum
+
+    def test_mixed_batch_keeps_row_order_and_dtype(self) -> None:
+        """An instance with no enclosing part keeps its row, so later rows stay aligned with their boxes."""
+        polygon = _make_polygon(_make_reference_mask())
+
+        result = convert_coco_poly_to_mask([[[]], polygon], _H, _W)
+
+        assert result.shape == (2, _H, _W)
+        assert result.dtype == torch.uint8
+        assert result[0].sum() == 0
+        assert torch.equal(result[1], convert_coco_poly_to_mask([polygon], _H, _W)[0])
+
+    def test_uncompressed_rle_dicts_in_a_list_are_not_dropped(self) -> None:
+        """A list of uncompressed-RLE dicts is not a flat polygon part, so it keeps its mask."""
+        rle = _encode_uncompressed_rle(_make_reference_mask())
+
+        result = convert_coco_poly_to_mask([[rle]], _H, _W)
+
+        assert torch.equal(result, convert_coco_poly_to_mask([rle], _H, _W))
+        assert result.sum() == 1200
+
+    def test_nested_point_pairs_still_fail_loudly(self) -> None:
+        """A part of ``[x, y]`` pairs is not a flat polygon, so the short one keeps raising as it did before."""
+        with pytest.raises(Exception, match="input type is not supported"):
+            convert_coco_poly_to_mask([[[[30, 20], [70, 50]]]], _H, _W)
 
     @pytest.mark.parametrize(
         "segmentation",
@@ -477,11 +526,55 @@ class TestDegeneratePolygonParts:
         assert target["masks"].shape == (1, _H, _W)
         assert torch.equal(target["masks"], _convert(polygon)["masks"])
 
+    def test_convert_coco_degenerate_only_annotation_gets_empty_mask(self) -> None:
+        """``ConvertCoco`` keeps an annotation whose only polygon part is degenerate, with an empty mask."""
+        annotation = {"bbox": [30, 20, 40, 30], "category_id": 0, "area": 1200, "iscrowd": 0}
+        annotation["segmentation"] = [[30, 20, 70, 50]]
+
+        target = ConvertCoco(include_masks=True)(_IMAGE, {"image_id": 1, "annotations": [annotation]})[1]
+
+        assert target["masks"].shape == (1, _H, _W)
+        assert target["masks"].sum() == 0
+        assert len(target["boxes"]) == 1
+
     def test_crowd_compression_skips_degenerate_parts(self) -> None:
-        """Crowd segmentations drop degenerate parts and become ``None`` when no part encloses an area."""
+        """Crowd segmentations drop degenerate parts and compress what remains like the polygon alone."""
         polygon = _make_polygon(_make_reference_mask())
 
         compressed = _compressed_crowd_segmentation([[30, 20, 70, 50], *polygon], _H, _W)
 
         assert compressed == _compressed_crowd_segmentation(polygon, _H, _W)
+
+    def test_crowd_compression_without_enclosing_part_is_none(self) -> None:
+        """A crowd segmentation with no part that encloses an area has no mask."""
         assert _compressed_crowd_segmentation([[30, 20, 70, 50]], _H, _W) is None
+
+    def test_crowd_compression_without_dimensions_still_filters(self) -> None:
+        """A degenerate-only crowd polygon is ``None`` even when the annotation file omits the image size."""
+        assert _compressed_crowd_segmentation([[30, 20, 70, 50]], None, None) is None
+
+    def test_crowd_compression_keeps_uncompressed_rle_dicts(self) -> None:
+        """A list of uncompressed-RLE dicts compresses to its area instead of being dropped as short parts."""
+        rle = _encode_uncompressed_rle(_make_reference_mask())
+
+        compressed = _compressed_crowd_segmentation([rle], _H, _W)
+
+        assert compressed is not None
+        assert mask_util.decode(compressed).sum() == 1200
+
+    def test_crowd_region_with_degenerate_polygon_keeps_box_without_mask(self) -> None:
+        """A crowd annotation with only a degenerate part stays a region, with its box and no mask."""
+        annotations = {
+            1: {
+                "image_id": 5,
+                "category_id": 3,
+                "bbox": [10, 20, 30, 40],
+                "iscrowd": 1,
+                "segmentation": [[30, 20, 70, 50]],
+            }
+        }
+        coco_api = SimpleNamespace(anns=annotations, imgs={5: {"height": _H, "width": _W}})
+
+        regions = crowd_regions_from_coco(coco_api)
+
+        assert regions == {5: [CrowdRegion(label=3, box=(10.0, 20.0, 40.0, 60.0), segmentation=None)]}
