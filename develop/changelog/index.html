@@ -3175,6 +3175,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Loading a pretrained model no longer warns that DINOv2 backbone weights are skipped. Most variants differ from DINOv2 in patch size or positional encodings, so <code>RFDETRNano()</code> and similar default loads printed two such warnings even though RF-DETR pretrained weights replace the backbone. The warnings still appear when DINOv2 weights are requested, as with <code>pretrain_weights=None</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1653">#1653</a>)</p>
+</li>
+<li>
 <p><code>import rfdetr</code> no longer fails in Databricks notebooks, or on any host that replaces <code>warnings.warn</code>, with <code>RuntimeError: Python builtin &lt;built-in function warn&gt; is currently not supported in Torchscript</code>. TorchScript recognizes <code>warnings.warn</code> by object identity, so a replaced function broke compilation of the segmentation losses that rfdetr scripts at import. Those losses now fall back to their eager functions when TorchScript compilation fails, which compute the same result; on Python 3.14+ they already did. (<a href="https://github.com/roboflow/rf-detr/pull/1649">#1649</a>)</p>
 </li>
 <li>
