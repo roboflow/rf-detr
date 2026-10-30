@@ -448,7 +448,8 @@ def dice_loss(
                  caller never has to sync it to the host (a host read cuts XLA's lazy
                  graph every step). This eager function accepts Python and NumPy scalars.
                  On Python 3.10–3.13, the scripted ``dice_loss_jit`` wrapper accepts only
-                 Tensor, float, or int; on Python 3.14+, it is this eager function.
+                 Tensor, float, or int; on Python 3.14+, or where TorchScript compilation
+                 fails, it is this eager function.
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
@@ -490,7 +491,8 @@ def sigmoid_ce_loss(
                  caller never has to sync it to the host (a host read cuts XLA's lazy
                  graph every step). This eager function accepts Python and NumPy scalars.
                  On Python 3.10–3.13, the scripted ``sigmoid_ce_loss_jit`` wrapper accepts
-                 only Tensor, float, or int; on Python 3.14+, it is this eager function.
+                 only Tensor, float, or int; on Python 3.14+, or where TorchScript
+                 compilation fails, it is this eager function.
 
     Returns:
         Loss tensor
