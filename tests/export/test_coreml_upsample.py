@@ -39,17 +39,33 @@ coreml_runtime_only = pytest.mark.skipif(sys.platform != "darwin", reason="needs
 
 # Core ML runs smaller resizes on the CPU, where the Neural Engine's offset never shows.
 _UPSAMPLE_INPUT_SHAPE = (1, 256, 36, 36)
+# Height and width differ, so a swapped or shared interpolation matrix gives a wrong shape or wrong values.
+_NON_SQUARE_INPUT_SHAPE = (1, 256, 26, 20)
 
 _PRECISIONS = pytest.mark.parametrize("precision", ["float32", "float16"])
+_INPUT_SHAPES = pytest.mark.parametrize(
+    "input_shape",
+    [
+        pytest.param(_UPSAMPLE_INPUT_SHAPE, id="square"),
+        pytest.param(_NON_SQUARE_INPUT_SHAPE, id="non-square"),
+    ],
+)
+_NO_NEURAL_ENGINE = "this host exposes no Neural Engine, so the plan says nothing about the model"
 
 
-def _convert_upsample(precision: str, align_corners: bool, compute_units: str = "CPU_ONLY") -> Any:
+def _convert_upsample(
+    precision: str,
+    align_corners: bool,
+    compute_units: str = "CPU_ONLY",
+    input_shape: tuple[int, ...] = _UPSAMPLE_INPUT_SHAPE,
+) -> Any:
     """Convert a lone 3x ``upsample_bilinear`` with the export's pass pipeline.
 
     Args:
         precision: ``"float32"`` or ``"float16"``, the ``coremltools.precision`` member to convert with.
         align_corners: The ``align_corners`` of the upsample.
         compute_units: The ``coremltools.ComputeUnit`` member that runs the model's predictions.
+        input_shape: The NCHW shape of the upsample's input.
 
     Returns:
         The converted ``coremltools.models.MLModel``.
@@ -59,7 +75,7 @@ def _convert_upsample(precision: str, align_corners: bool, compute_units: str = 
 
     from rfdetr.export._coreml.passes import rfdetr_pass_pipeline
 
-    @mb.program(input_specs=[mb.TensorSpec(shape=_UPSAMPLE_INPUT_SHAPE)], opset_version=ct.target.iOS15)
+    @mb.program(input_specs=[mb.TensorSpec(shape=input_shape)], opset_version=ct.target.iOS15)
     def program(x: Any) -> Any:
         return mb.upsample_bilinear(x=x, scale_factor_height=3.0, scale_factor_width=3.0, align_corners=align_corners)
 
@@ -71,6 +87,78 @@ def _convert_upsample(precision: str, align_corners: bool, compute_units: str = 
         pass_pipeline=rfdetr_pass_pipeline(),
         compute_units=getattr(ct.ComputeUnit, compute_units),
     )
+
+
+def _compute_plan_usages(model: Any) -> list[tuple[str, Any]]:
+    """Return the compute devices Core ML plans for each operation of ``model`` under ``CPU_AND_NE``.
+
+    Args:
+        model: A converted ``coremltools.models.MLModel`` with an ML program.
+
+    Returns:
+        One ``(operator name, MLComputeDeviceUsage)`` pair per operation the plan reports a usage for.
+
+    Examples:
+        The plan needs coremltools and the macOS Core ML runtime, so the example is not run:
+
+        >>> _compute_plan_usages(_convert_upsample("float16", False, "CPU_AND_NE"))  # doctest: +SKIP
+    """
+    import coremltools as ct
+    from coremltools.models.compute_plan import MLComputePlan
+
+    plan = MLComputePlan.load_from_path(path=model.get_compiled_model_path(), compute_units=ct.ComputeUnit.CPU_AND_NE)
+    return [
+        (operation.operator_name, usage)
+        for operation in plan.model_structure.program.functions["main"].block.operations
+        if (usage := plan.get_compute_device_usage_for_mlprogram_operation(operation)) is not None
+    ]
+
+
+def _has_neural_engine(usages: list[tuple[str, Any]]) -> bool:
+    """Return whether the plan lists a Neural Engine among the devices any operation supports.
+
+    A host without a Neural Engine (a virtualized CI runner) reports every operation as unsupported there. A test that
+    only discriminates on the Neural Engine would pass without the fix on such a host, so it skips instead.
+
+    Args:
+        usages: The pairs :func:`_compute_plan_usages` returns.
+
+    Returns:
+        ``True`` when at least one supported device is a Neural Engine device.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> class MLNeuralEngineComputeDevice: ...
+        >>> class MLCPUComputeDevice: ...
+        >>> on_engine = SimpleNamespace(supported_compute_devices=[MLCPUComputeDevice(), MLNeuralEngineComputeDevice()])
+        >>> cpu_only = SimpleNamespace(supported_compute_devices=[MLCPUComputeDevice()])
+        >>> _has_neural_engine([("matmul", on_engine)]), _has_neural_engine([("matmul", cpu_only)])
+        (True, False)
+    """
+    return any(
+        "NeuralEngine" in type(device).__name__ for _, usage in usages for device in usage.supported_compute_devices
+    )
+
+
+def _assert_predicts_like_torch(model: Any, input_shape: tuple[int, ...], align_corners: bool) -> None:
+    """Assert that ``model`` predicts the 3x bilinear resize ``F.interpolate`` computes.
+
+    Args:
+        model: A converted ``coremltools.models.MLModel`` from :func:`_convert_upsample`.
+        input_shape: The NCHW shape ``model`` was converted for.
+        align_corners: The ``align_corners`` ``model`` was converted with.
+
+    Examples:
+        Prediction needs the macOS Core ML runtime, so the example is not run:
+
+        >>> _assert_predicts_like_torch(_convert_upsample("float16", False), (1, 256, 36, 36), False)  # doctest: +SKIP
+    """
+    x = np.random.default_rng(0).standard_normal(input_shape).astype(np.float32)
+
+    (prediction,) = model.predict({"x": x}).values()
+
+    expected = F.interpolate(torch.from_numpy(x), scale_factor=3, mode="bilinear", align_corners=align_corners)
+    np.testing.assert_allclose(prediction, expected.numpy(), atol=1e-2)
 
 
 @_PRECISIONS
@@ -101,20 +189,10 @@ def test_rewritten_upsample_runs_on_the_neural_engine() -> None:
     ``MLComputePlan`` answers for the host it runs on. A host without a Neural Engine (a virtualized CI runner) reports
     every op as unsupported there, which says nothing about the model, so the test skips.
     """
-    import coremltools as ct
-    from coremltools.models.compute_plan import MLComputePlan
-
     model = _convert_upsample("float16", align_corners=False, compute_units="CPU_AND_NE")
-    plan = MLComputePlan.load_from_path(path=model.get_compiled_model_path(), compute_units=ct.ComputeUnit.CPU_AND_NE)
-    usages = [
-        (operation.operator_name, usage)
-        for operation in plan.model_structure.program.functions["main"].block.operations
-        if (usage := plan.get_compute_device_usage_for_mlprogram_operation(operation)) is not None
-    ]
-    if not any(
-        "NeuralEngine" in type(device).__name__ for _, usage in usages for device in usage.supported_compute_devices
-    ):
-        pytest.skip("this host exposes no Neural Engine, so the plan says nothing about the model")
+    usages = _compute_plan_usages(model)
+    if not _has_neural_engine(usages):
+        pytest.skip(_NO_NEURAL_ENGINE)
 
     matmul_devices = [type(usage.preferred_compute_device).__name__ for name, usage in usages if name == "matmul"]
 
@@ -123,20 +201,39 @@ def test_rewritten_upsample_runs_on_the_neural_engine() -> None:
 
 
 @coreml_runtime_only
-@pytest.mark.parametrize("compute_units", ["CPU_ONLY", "CPU_AND_NE"])
+@_INPUT_SHAPES
 @pytest.mark.parametrize("align_corners", [False, True])
 @_PRECISIONS
-def test_rewritten_upsample_predicts_like_torch(precision: str, align_corners: bool, compute_units: str) -> None:
-    """The rewritten upsample predicts like ``F.interpolate`` on the CPU and on the Neural Engine.
+def test_rewritten_upsample_predicts_like_torch(
+    precision: str, align_corners: bool, input_shape: tuple[int, ...]
+) -> None:
+    """The rewritten upsample predicts like ``F.interpolate`` on the CPU, for square and non-square inputs.
 
-    On the Neural Engine, the original fp16 ``upsample_bilinear`` with ``align_corners=False`` misses here by up to 1.8.
+    The CPU resize was never wrong, so this guards the matrices themselves: a swapped or shared height and width matrix
+    only shows when the two sizes differ.
     """
-    x = np.random.default_rng(0).standard_normal(_UPSAMPLE_INPUT_SHAPE).astype(np.float32)
+    model = _convert_upsample(precision, align_corners, input_shape=input_shape)
 
-    (prediction,) = _convert_upsample(precision, align_corners, compute_units).predict({"x": x}).values()
+    _assert_predicts_like_torch(model, input_shape, align_corners)
 
-    expected = F.interpolate(torch.from_numpy(x), scale_factor=3, mode="bilinear", align_corners=align_corners)
-    np.testing.assert_allclose(prediction, expected.numpy(), atol=1e-2)
+
+@coreml_runtime_only
+@_INPUT_SHAPES
+@pytest.mark.parametrize("align_corners", [False, True])
+def test_rewritten_upsample_predicts_like_torch_on_the_neural_engine(
+    align_corners: bool, input_shape: tuple[int, ...]
+) -> None:
+    """The rewritten fp16 upsample predicts like ``F.interpolate`` under ``CPU_AND_NE``.
+
+    On the Neural Engine, the original fp16 ``upsample_bilinear`` with ``align_corners=False`` misses here by up to 1.8,
+    square or not. The Neural Engine runs fp16 only, so float32 is covered by the CPU test above. On a host without a
+    Neural Engine the original passes too, so the test skips there instead of passing without the fix.
+    """
+    model = _convert_upsample("float16", align_corners, "CPU_AND_NE", input_shape)
+    if not _has_neural_engine(_compute_plan_usages(model)):
+        pytest.skip(_NO_NEURAL_ENGINE)
+
+    _assert_predicts_like_torch(model, input_shape, align_corners)
 
 
 def test_segmentation_export_has_no_bilinear_resize(tmp_path: Path) -> None:
