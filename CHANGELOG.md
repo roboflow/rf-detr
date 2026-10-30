@@ -153,7 +153,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `export(output_name=...)` keeps dots that are part of the name: `output_name="detector-v1.2"` writes `detector-v1.2.onnx` instead of `detector-v1.onnx`, so two versions of one name no longer overwrite each other, and a `backbone_only=True` TensorRT engine keeps its `-backbone` marker. Only an export file extension (`.onnx`, `.trt`, `.engine`, `.tflite`, `.mlpackage`, `.pte`, ...) is still stripped. ([#1641](https://github.com/roboflow/rf-detr/pull/1641))
 
-
 ## [1.11.2] — 2026-10-03
 
 ### Added
