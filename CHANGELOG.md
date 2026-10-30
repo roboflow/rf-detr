@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Breaking Changes
 
-- `RFDETR.inference()` now returns an independent `RFDETRInference` predictor. Capture the return value and call `predictor.predict(images)`; the source model is unchanged and later source mutations do not affect the predictor. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; delete it when its runtime is no longer needed. The default TorchScript compilation, batch size 1 and float32 settings are unchanged. ([#1658](https://github.com/roboflow/rf-detr/pull/1658))
+- `RFDETR.inference()` now returns an independent `RFDETRInference` predictor. Capture the return value and call `predictor.predict(images)`; the source model is unchanged and later source mutations do not affect the predictor. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; delete it when its runtime is no longer needed. The default TorchScript compilation, batch size 1 and float32 settings are unchanged. ([#1563](https://github.com/roboflow/rf-detr/pull/1563))
 
 - `format="coreml"` with `coreml_precision="float16"` now returns float32 output arrays; the `.mlpackage` returned float16 outputs before, because it was converted as an iOS 16 program and is now converted as iOS 15. A consumer that reads the outputs as float16 (a typed buffer, a `dtype` check) must read float32. `coreml_precision="float32"` bundles are unchanged. ([#1024](https://github.com/roboflow/rf-detr/issues/1024)) ([#1604](https://github.com/roboflow/rf-detr/pull/1604))
 
