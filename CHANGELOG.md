@@ -137,6 +137,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- In segmentation data pipelines, Albumentations geometric transforms (rotation, non-rigid warps, translation) now recompute tight target bounding boxes directly from the transformed masks and drop instances whose masks become empty, eliminating ground-truth mask/box misalignment and ghost boxes during segmentation training. ([#1636](https://github.com/roboflow/rf-detr/issues/1636))
+
 - The class-count warning claimed the checkpoint's class count was used when a set `num_classes` larger than the checkpoint was kept. `load_pretrain_weights` keeps the set count and resizes the loaded classification head to it; the warning now says so instead of "Using checkpoint class count". ([#1654](https://github.com/roboflow/rf-detr/pull/1654))
 
 - Loading a pretrained model no longer warns that DINOv2 backbone weights are skipped. Most variants differ from DINOv2 in patch size or positional encodings, so `RFDETRNano()` and similar default loads printed two such warnings even though RF-DETR pretrained weights replace the backbone. The warnings still appear when DINOv2 weights are requested, as with `pretrain_weights=None`. ([#1653](https://github.com/roboflow/rf-detr/pull/1653))
