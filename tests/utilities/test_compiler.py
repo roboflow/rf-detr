@@ -133,14 +133,30 @@ class TestScriptOrEager:
         """
         assert isinstance(script_or_eager(batch_dice_loss), torch.jit.ScriptFunction)
 
-    def test_returns_eager_function_when_scripting_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A TorchScript ``RuntimeError`` falls back to the eager function instead of propagating.
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(RuntimeError("not supported in Torchscript"), id="runtime-error"),
+            pytest.param(OSError("Can't get source for <function _wrapped>"), id="source-less-wrapper"),
+            pytest.param(
+                TypeError("module, class, method, function, traceback, frame, or code object was expected"),
+                id="functools-wraps-wrapper",
+            ),
+            pytest.param(SyntaxError("unexpected EOF while parsing"), id="lambda-wrapper"),
+        ],
+    )
+    def test_returns_eager_function_when_scripting_raises(
+        self, monkeypatch: pytest.MonkeyPatch, error: Exception
+    ) -> None:
+        """Any exception raised while scripting falls back to the eager function instead of propagating.
 
-        Hosts that wrap ``warnings.warn`` (Databricks notebooks) make TorchScript raise ``RuntimeError`` while compiling
-        torch's own loss helpers, which previously failed ``import rfdetr``.
+        Hosts that wrap ``warnings.warn`` (Databricks notebooks) make TorchScript fail while compiling torch's own loss
+        helpers, previously failing ``import rfdetr``. The failure class depends on the wrapper: ``RuntimeError`` when
+        torch saw the wrapper, ``OSError`` when it has no retrievable source, ``TypeError`` for a ``functools.wraps``
+        wrapper and ``SyntaxError`` for a lambda whose source line does not parse alone.
         """
         monkeypatch.setattr(sys, "version_info", (3, 13, 0))
-        monkeypatch.setattr(torch.jit, "script", MagicMock(side_effect=RuntimeError("not supported in Torchscript")))
+        monkeypatch.setattr(torch.jit, "script", MagicMock(side_effect=error))
 
         assert script_or_eager(batch_dice_loss) is batch_dice_loss
 
@@ -148,8 +164,9 @@ class TestScriptOrEager:
     def test_returns_eager_function_when_frontend_rejects_source(self) -> None:
         """A TorchScript frontend error falls back to the eager function instead of propagating.
 
-        A ``warnings.warn`` wrapper installed after torch was imported is compiled as Python source, and its variadic
-        signature makes the TorchScript frontend raise; a variadic function reproduces that without patching torch.
+        A ``warnings.warn`` wrapper installed after torch was imported is compiled as Python source when its source is
+        retrievable, and its variadic signature makes the TorchScript frontend raise; a variadic function reproduces
+        that without patching torch.
         """
         assert script_or_eager(_sum_variadic) is _sum_variadic
 
