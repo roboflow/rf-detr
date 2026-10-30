@@ -371,6 +371,7 @@ class TestPerClassThresholdValidation:
             pytest.param([None, 0.5, 0.5], id="none-entry"),
             pytest.param([b"0.5", 0.5, 0.5], id="bytes-entry"),
             pytest.param(np.array(["0.5", "0.5", "0.5"]), id="str-ndarray"),
+            pytest.param([np.array("0.5"), 0.5, 0.5], id="0-d-str-ndarray-entry"),
         ],
     )
     def test_non_numeric_entry_raises_before_inference(
@@ -404,6 +405,11 @@ class TestPerClassThresholdValidation:
         [
             pytest.param([np.float32(0.7), np.float64(0.4), 0.6], id="numpy-scalars"),
             pytest.param([torch.tensor(0.7), torch.tensor(0.4), torch.tensor(0.6)], id="0-d-tensors"),
+            pytest.param([np.array(0.7), np.array(0.4), np.array(0.6)], id="0-d-ndarrays"),
+            pytest.param(
+                [torch.tensor(0.7, requires_grad=True), torch.tensor(0.4), torch.tensor(0.6, requires_grad=True)],
+                id="0-d-tensors-requiring-grad",
+            ),
         ],
     )
     def test_entries_may_be_any_number_a_single_threshold_may_be(
@@ -476,6 +482,10 @@ class TestPerClassThresholdValidation:
         [
             pytest.param(np.array, id="ndarray"),
             pytest.param(torch.tensor, id="tensor"),
+            pytest.param(
+                lambda rows: [[torch.tensor(value, requires_grad=True) for value in row] for row in rows],
+                id="nested-list-of-tensors-requiring-grad",
+            ),
         ],
     )
     def test_two_dimensional_array_is_refused_before_conversion(
@@ -664,7 +674,7 @@ class TestPredictPerClassThreshold:
             pytest.param({"a": 0.5}, id="dict-by-class-name"),
             "0.5",
             pytest.param({0.5}, id="set"),
-            pytest.param(np.array(0.5), id="0-d-ndarray"),
+            pytest.param(np.array("0.5"), id="0-d-str-ndarray"),
         ],
     )
     def test_threshold_that_is_neither_a_number_nor_a_sequence_raises_before_inference(self, threshold: object) -> None:
@@ -684,12 +694,16 @@ class TestPredictPerClassThreshold:
             pytest.param(0, [0, 1, 2, 0, 1, 2], id="int"),
             pytest.param(np.float32(0.55), [0, 1, 2, 0], id="np-float32"),
             pytest.param(torch.tensor(0.55), [0, 1, 2, 0], id="0-d-tensor"),
+            pytest.param(np.array(0.55), [0, 1, 2, 0], id="0-d-ndarray"),
         ],
     )
     def test_numeric_scalar_threshold_still_takes_the_float_form(
         self, threshold: Any, expected_class_ids: list[int]
     ) -> None:
-        """The type guard must let through every scalar that ``scores > threshold`` accepts."""
+        """The type guard lets every numeric scalar through, a 0-d NumPy array included.
+
+        ``scores > np.array(0.55)`` raises ``TypeError``, so the single threshold is read as a float before it is used.
+        """
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
 
         detections = model.predict(_PER_CLASS_IMAGE, threshold=threshold)
@@ -794,21 +808,27 @@ class TestPredictPerClassThreshold:
         assert [len(batch) for batch in batches] == [2, 1]
         assert [result.class_id.tolist() for result in results] == [[0, 1, 2, 1]] * 3
 
-    def test_wrong_length_list_with_stream_raises_when_the_generator_is_consumed(self) -> None:
-        """A wrong-length list with ``stream=True`` raises on the first ``next``, not when ``predict`` returns.
+    def test_wrong_length_list_with_stream_raises_when_predict_is_called(self) -> None:
+        """A wrong-length list with ``stream=True`` raises when ``predict`` is called, not on the first ``next``.
 
-        This pins the current lazy contract, unlike the eager ``batch`` and ``vid_stride`` checks: the stream is not
-        opened for validation, and no model forward pass happens before the error.
+        The generator body only runs from its first ``next``, after it has opened its source and decoded a batch, so a
+        threshold the model cannot apply is refused up front, like the eager ``batch`` and ``vid_stride`` checks.
         """
         model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
-        batches: list[torch.Tensor] = []
+        predictor = RFDETRInference(model)
 
-        with model.model.model.register_forward_pre_hook(_record_model_inputs(batches)):
-            results = RFDETRInference(model).predict([_PER_CLASS_IMAGE], threshold=[0.5], stream=True)
-            with pytest.raises(ValueError, match=r"1 entries.*3 classes"):
-                next(results)
+        with pytest.raises(ValueError, match=r"1 entries.*3 classes"):
+            predictor.predict([_PER_CLASS_IMAGE], threshold=[0.5], stream=True)
 
-        assert batches == []
+    def test_bad_threshold_with_stream_never_opens_the_source(self) -> None:
+        """A NaN threshold with ``stream=True`` is refused before the source reader is created or a frame decoded."""
+        model = _make_scored_model(self._LABELS, self._SCORES, class_names=["a", "b", "c"])
+
+        with patch.object(core, "iter_source_batches", autospec=True) as source_batches:
+            with pytest.raises(ValueError, match="NaN"):
+                RFDETRInference(model).predict([_PER_CLASS_IMAGE], threshold=float("nan"), stream=True)
+
+        source_batches.assert_not_called()
 
 
 class _TupleOutputModelContext:

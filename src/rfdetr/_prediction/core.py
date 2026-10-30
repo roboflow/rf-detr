@@ -15,7 +15,7 @@ import re
 from collections.abc import Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast
 from urllib.parse import urlparse
 
 import numpy as np
@@ -324,12 +324,33 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-#: The scalars that ``scores > threshold`` takes. A single threshold and every entry of a per-class sequence must be one
-#: of them, so a bool, for instance, counts as a number in both forms and a string counts in neither.
+#: The scalars a threshold may be. A single threshold and every entry of a per-class sequence must be one of them, or a
+#: 0-d NumPy array holding one (see ``_is_threshold_number``), so a bool, for instance, counts as a number in both forms
+#: and a string counts in neither.
 _THRESHOLD_NUMBER_TYPES = (int, float, np.integer, np.floating, np.bool_, torch.Tensor)
 
 
-def _as_float(value: float | np.generic | torch.Tensor) -> float:
+def _is_threshold_number(value: object) -> TypeGuard[float | np.generic | np.ndarray[Any, Any] | torch.Tensor]:
+    """Report whether a value is a number a threshold may be, a 0-d NumPy array of one included.
+
+    Args:
+        value: A single threshold, or one entry of a per-class sequence.
+
+    Returns:
+        ``True`` for an instance of ``_THRESHOLD_NUMBER_TYPES``, or a 0-d array whose element is one.
+
+    Examples:
+        >>> _is_threshold_number(np.array(0.5)), _is_threshold_number(np.array("0.5")), _is_threshold_number("0.5")
+        (True, False, False)
+    """
+    if isinstance(value, np.ndarray):
+        # A 0-d array is NumPy's boxed scalar. Its element decides, so that an array of a string is refused as the
+        # string is, instead of being parsed by `float()`.
+        return value.ndim == 0 and isinstance(value[()], _THRESHOLD_NUMBER_TYPES)
+    return isinstance(value, _THRESHOLD_NUMBER_TYPES)
+
+
+def _as_float(value: float | np.generic | np.ndarray[Any, Any] | torch.Tensor) -> float:
     """Read one threshold number as a Python float.
 
     Args:
@@ -343,6 +364,30 @@ def _as_float(value: float | np.generic | torch.Tensor) -> float:
         (0.5, 1.0, 0.25)
     """
     return float(value.detach() if isinstance(value, torch.Tensor) else value)
+
+
+def _detach_tensors(threshold: Any) -> Any:
+    """Copy every tensor of a threshold, at any depth of nested lists and tuples, to the CPU without its autograd graph.
+
+    NumPy reads a tensor through ``.numpy()``, which refuses one that requires grad or sits on CUDA, so the shape check
+    in :func:`_per_class_thresholds` would fail with PyTorch's error instead of the threshold's own. Copying each tensor
+    once here also spares ``_as_float`` a second copy.
+
+    Args:
+        threshold: The ``threshold`` argument of ``predict``, or a part of it.
+
+    Returns:
+        The same structure, with lists and tuples rebuilt as lists and each tensor detached on the CPU.
+
+    Examples:
+        >>> _detach_tensors([[torch.tensor(0.5, requires_grad=True)], 0.25])
+        [[tensor(0.5000)], 0.25]
+    """
+    if isinstance(threshold, torch.Tensor):
+        return threshold.detach().cpu()
+    if isinstance(threshold, (list, tuple)):
+        return [_detach_tensors(entry) for entry in threshold]
+    return threshold
 
 
 def _threshold_entries(threshold: Sequence[Any] | np.ndarray[Any, Any] | torch.Tensor) -> list[Any]:
@@ -404,6 +449,7 @@ def _per_class_thresholds(threshold: _ThresholdInput, num_classes: int) -> list[
         ...
         ValueError: threshold is a sequence, but the model has no classes to give a threshold to; pass a single float.
     """
+    threshold = _detach_tensors(threshold)
     try:
         dimensions = np.ndim(threshold)
     except ValueError:
@@ -414,7 +460,7 @@ def _per_class_thresholds(threshold: _ThresholdInput, num_classes: int) -> list[
     if dimensions == 0:
         # A dict, a string, a set or a 0-d array also has no dimensions. Left alone it would reach the keep-filter and
         # fail there with a bare "'>' not supported between 'Tensor' and 'dict'", after the model ran.
-        if not isinstance(threshold, _THRESHOLD_NUMBER_TYPES):
+        if not _is_threshold_number(threshold):
             raise TypeError(
                 f"threshold must be a float or a one-dimensional sequence of floats, got {type(threshold).__name__}."
             )
@@ -435,7 +481,7 @@ def _per_class_thresholds(threshold: _ThresholdInput, num_classes: int) -> list[
     entries = _threshold_entries(cast("Sequence[Any]", threshold))
     for index, entry in enumerate(entries):
         # `float()` would take "0.5" and refuse None with its own words; the single threshold takes neither.
-        if not isinstance(entry, _THRESHOLD_NUMBER_TYPES):
+        if not _is_threshold_number(entry):
             raise TypeError(
                 "threshold must be a float or a one-dimensional sequence of floats, "
                 f"got a {type(entry).__name__} entry at index {index}."
@@ -536,6 +582,42 @@ def _check_class_id_layout(class_names: list[str], class_id_to_name: dict[int, s
         )
 
 
+def _class_thresholds(
+    threshold: _ThresholdInput, context: PredictionContext
+) -> tuple[list[float] | None, torch.Tensor | None]:
+    """Check a threshold against the model's classes, and lay a per-class one out by raw class id.
+
+    An export's metadata is used as written, so its class-id map is checked here and not assumed. A single float needs
+    no map.
+
+    Args:
+        threshold: A single threshold, or one threshold per entry of ``class_names``; see :func:`predict`.
+        context: The prediction rules whose ``class_names`` and class-id map the threshold must fit.
+
+    Returns:
+        ``(None, None)`` for a single threshold. Otherwise the thresholds in ``class_names`` order, and the table from
+        :func:`_threshold_by_class_id` that a detection's label indexes.
+
+    Raises:
+        TypeError: As :func:`_per_class_thresholds` does.
+        ValueError: As :func:`_per_class_thresholds` and :func:`_check_class_id_layout` do.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> context = SimpleNamespace(class_names=["a", "b"], class_id_to_name={1: "a", 2: "b"}, num_classes=2)
+        >>> _class_thresholds(0.5, context)
+        (None, None)
+        >>> values, table = _class_thresholds([0.25, 0.75], context)
+        >>> values, table.tolist()
+        ([0.25, 0.75], [inf, 0.25, 0.75, inf])
+    """
+    class_thresholds = _per_class_thresholds(threshold, len(context.class_names))
+    if class_thresholds is None:
+        return None, None
+    _check_class_id_layout(context.class_names, context.class_id_to_name, context.num_classes)
+    return class_thresholds, _threshold_by_class_id(class_thresholds, context.class_id_to_name)
+
+
 def _mps_lacks_antialiased_resize() -> bool:
     """Report whether the installed torch predates MPS support for antialiased bilinear resize.
 
@@ -633,6 +715,10 @@ def predict(
     # An explicit batch splits an eager image list; an empty list keeps its single-batch error below.
     bounded_image_list = batch is not None and isinstance(images, (list, tuple)) and len(images) > 0
     if stream or bounded_image_list or is_expanded_source(images):
+        # The generator below starts only at its first `next()`, after it has opened its source and decoded a batch, so
+        # a threshold the model cannot apply is refused here, when `predict` is called. Every batch checks it again
+        # against its own context, which a live model may have changed in between.
+        _class_thresholds(threshold, context_factory())
         if batch is None:
             # A BCHW tensor already is one batch; split it only when the caller bounds the batch size.
             batch = max(images.shape[0], 1) if isinstance(images, torch.Tensor) and images.ndim == 4 else 1
@@ -786,13 +872,8 @@ def _predict_batch(
         if context.fixed_shape and shape != context.default_shape:
             raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
 
-    class_thresholds = _per_class_thresholds(threshold, len(context.class_names))
-    # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused. An
-    # export's metadata is used as written, so the map is checked here and not assumed. A single float needs no map.
-    threshold_by_class_id: torch.Tensor | None = None
-    if class_thresholds is not None:
-        _check_class_id_layout(context.class_names, context.class_id_to_name, context.num_classes)
-        threshold_by_class_id = _threshold_by_class_id(class_thresholds, context.class_id_to_name)
+    # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused.
+    class_thresholds, threshold_by_class_id = _class_thresholds(threshold, context)
 
     if context.prepare is not None:
         context.prepare()
@@ -996,8 +1077,10 @@ def _predict_batch(
     predictions = context.run(batch_tensor)
     target_sizes = torch.tensor(orig_sizes, device=context.device)
     # With one threshold per class, the lowest is the loosest bound: the pre-filter in ``postprocess`` then never
-    # drops a row that the per-class filter below keeps.
-    score_floor = threshold if class_thresholds is None else min(class_thresholds)
+    # drops a row that the per-class filter below keeps. A single threshold is read as a float, which compares in the
+    # score dtype as every accepted scalar does, and which `scores > ...` takes where a 0-d NumPy array is refused;
+    # `_class_thresholds` returned no per-class list, so it is one number.
+    score_floor = _as_float(cast("float", threshold)) if class_thresholds is None else min(class_thresholds)
     results = context.postprocess(predictions, target_sizes=target_sizes, score_threshold=score_floor)
 
     _class_id_to_name = context.class_id_to_name
@@ -1022,9 +1105,9 @@ def _predict_batch(
 
         # INVARIANT: the pre-filter in PostProcess._postprocess_masks (`scores_i > score_threshold`) must keep
         # every row this predicate may keep, and use the same operator: it is fed `score_threshold=score_floor`
-        # above, which is `threshold`, or the lowest per-class threshold. With per-class thresholds this predicate
-        # can drop rows that the lowest-threshold pre-filter admits, never the reverse, so the pre-filter may be
-        # looser but never stricter. The seg path drops below-threshold masks before upsampling on the strength of
+        # above, which is the single threshold, or the lowest per-class threshold. With per-class thresholds this
+        # predicate can drop rows that the lowest-threshold pre-filter admits, never the reverse, so the pre-filter may
+        # be looser but never stricter. The seg path drops below-threshold masks before upsampling on the strength of
         # that match; a stricter pre-filter, or a different operator here (e.g. `>=`, top-k), would make it
         # silently drop rows this filter keeps — a behaviour change with no failing test.
         # Materialized as an index vector (not a bool mask) so the bool-mask advanced-indexing
@@ -1033,7 +1116,7 @@ def _predict_batch(
         # sync), while `t[int64_index]` is index_select-shaped and needs no further sync. Row order
         # is unaffected — `nonzero` returns ascending indices, identical to bool-mask selection order.
         if label_thresholds is None:
-            keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
+            keep_idx = (scores > score_floor).nonzero(as_tuple=True)[0]
         else:
             # -1 and every id past the table read the trailing inf sentinel. Clamping only the top would let an
             # id below -1 wrap around in Python indexing and read another class's threshold.
