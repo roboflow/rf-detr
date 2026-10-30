@@ -16,7 +16,7 @@ import tempfile
 import threading
 import warnings
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
@@ -26,16 +26,16 @@ from weakref import WeakKeyDictionary
 import numpy as np
 import torch
 from deprecate.deprecation import deprecation_warning
-from PIL import Image
 from pydantic import ValidationError
 
-from rfdetr import _prediction
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr._prediction import (
+from rfdetr._prediction.core import (
     PredictionContext,
+    _predict_batch,
     _resolve_patch_size,
     _validate_shape_dims,
 )
+from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -58,7 +58,7 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
+    from rfdetr._prediction.types import _PredictionOutput
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -252,6 +252,10 @@ _LOCK_REGISTRY_LOCK = threading.Lock()
 #: child; before supporting fork-based model use, reset it with ``os.register_at_fork(after_in_child=...)``.
 _MODULE_MOVE_LOCKS: WeakKeyDictionary[Any, threading.Lock] = WeakKeyDictionary()
 
+#: Source and streaming options that only :meth:`RFDETRInference.predict` takes; ``RFDETR.predict`` refuses them
+#: instead of silently ignoring them as other unknown keyword arguments.
+_SOURCE_PREDICT_OPTIONS = frozenset({"stream", "batch", "vid_stride", "stream_buffer"})
+
 
 def _device_move_lock(module: Any) -> threading.Lock:
     """Return the device-move lock for *module*, creating it on first use.
@@ -358,7 +362,7 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         # back to CPU by ``export()`` / ``evaluate()`` is detected: the real devices are re-read on every call.
         if all(param.device == target for param in inner.parameters()):
             return
-        # ``predict()`` is wrapped in ``@torch.inference_mode()`` and calls ``_prediction_context()``, which carries
+        # Prediction batches run under ``@torch.inference_mode()`` and call ``_prediction_context()``, which carries
         # ``@_ensure_model_on_device``, so the deferred move can run while inference mode is active.  Tensors
         # materialised by ``.to()`` under inference mode become *inference tensors*: they can never require
         # gradients, so a later ``train()`` or auto-batch probe would silently produce no gradients.  Disable
@@ -2096,9 +2100,10 @@ class RFDETR:
                   is written, so the ``.xml`` / ``.bin`` pair is already 8-bit, and **requires** *calibration_data*.
                 * ``format="tensorrt"`` — ``None`` (an FP16 or FP32 engine, as ``fp16`` says) or ``"int8"``: most of
                   the backbone encoder and decoder run in INT8 and the rest in FP16 (placement in the TensorRT export
-                  guide), with activation ranges calibrated on *calibration_data*, which is then required.  Detection,
-                  segmentation and keypoint models (the mask head and keypoint head stay FP16), static batch,
-                  ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
+                  guide), with activation ranges calibrated on *calibration_data*, which is then required (a
+                  detection model's backbone norms are smoothed and its backbone MLP biases corrected for INT8 on the
+                  same data).  Detection, segmentation and keypoint models (the mask head and keypoint head stay
+                  FP16), static batch, ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
                 * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
                   raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
             calibration_data: Representative data for static INT8.  **Required** for ``format="onnx"``,
@@ -2223,8 +2228,8 @@ class RFDETR:
                 detail suffix that would otherwise be appended to encode the resolved precision/backend/SoC
                 (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above), and the TensorRT
                 portability suffixes (``_ampere_plus``, ``_same_compute_capability``, ``_version_compatible``).
-                Sanitized against path
-                traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
+                Sanitized against path traversal: only the basename is used, with an export file extension such
+                as ``.onnx`` stripped; other dots, as in ``"my-model-v1.2"``, are kept. Exception: ``format="tflite"``
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
                 ``_dynamic_range_quant`` suffix is unavoidable even with
                 *output_name* set — it becomes the stem
@@ -3039,51 +3044,48 @@ class RFDETR:
             predictions = return_predictions
         return cast(dict[str, torch.Tensor], predictions)
 
-    @torch.inference_mode()
     def predict(
         self,
-        images: str
-        | os.PathLike[str]
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
-        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
-        threshold: float = 0.5,
+        images: _ImageInput | Iterable[_ImageInput],
+        threshold: _ThresholdInput = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
         antialias: bool = False,
         **kwargs: Any,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+    ) -> _PredictionOutput:
         """Performs model inference on the input images.
 
-        This method accepts a single image or a list or tuple of images in various formats (string or path-like file
-        path, image URL string, PIL Image,
-        NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
-        already be normalized to values in the [0, 1] range and have the shape (C, H, W).
+        This method accepts a single image or an iterable of images (string or path-like file path, image URL string,
+        PIL Image, NumPy array, or torch.Tensor) and runs them as one batch. The images should be in RGB channel order.
+        A torch.Tensor must already be normalized to values in the [0, 1] range and have the shape (C, H, W); a
+        (B, C, H, W) tensor is split into B images of one batch. Videos, directories, globs, manifests, webcams and
+        streams are not images: predict them through ``RFDETRInference(model).predict(...)``.
 
         Args:
             images:
-                A single image or a list of images to process. Images can be provided
-                as string or path-like file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. PIL and file
-                inputs convert to grayscale for one-channel models and RGB for three-channel models.
+                A single image or an iterable of images to process. Images can be provided as string or path-like
+                file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. Iterables other than lists and
+                tuples are read into a list first. PIL and file inputs convert to grayscale for one-channel models and
+                RGB for three-channel models.
                 HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
                 which does not bound the total download time. Redirects are followed, and the whole response body is
                 read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
                 URLs, download and validate the image yourself and pass the decoded image instead.
             threshold:
-                The minimum confidence score needed to consider a detected bounding box valid.
+                The confidence score a detection must exceed to be kept. A single float applies to every class. A
+                :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies
+                each class's own threshold to its detections, so that a class the model finds less reliably can be
+                held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:
+                the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection of
+                that class.
             shape:
-                Optional ``(height, width)`` tuple to resize images to before inference. When provided, overrides the
-                model's default inference resolution. The tuple should match the resolution used when exporting the
-                model (typically a square shape). Both dimensions must be positive integers divisible by ``patch_size *
-                num_windows``. Defaults to ``(model.resolution, model.resolution)`` when not set.
+                Resize to ``(height, width)``; defaults to the model resolution. Both dimensions must be positive
+                integers divisible by ``patch_size * num_windows``. Use the model's export resolution when applicable.
             patch_size:
-                Backbone patch size used for shape divisibility validation. Defaults to ``model_config.patch_size``
-                (typically 14 for large models, 16 for smaller ones). Divisibility is checked against ``patch_size *
-                num_windows``.
+                Backbone patch size for shape validation. Defaults to ``model_config.patch_size``.
             include_source_image:
                 Whether to attach the original image to the returned prediction. Detection and segmentation outputs use
                 ``detections.metadata["source_image"]``. Keypoint outputs use per-object
@@ -3104,12 +3106,14 @@ class RFDETR:
                 Defaults to ``False`` to preserve the existing inference behavior.
             **kwargs:
                 Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since
-                v1.12.0 and will raise TypeError in v2.0.0.
+                v1.12.0 and will raise TypeError in v2.0.0. The source options of
+                :meth:`RFDETRInference.predict` (``stream``, ``batch``, ``vid_stride``, ``stream_buffer``) raise
+                ``TypeError`` now.
 
         Returns:
-            A single or multiple Supervision prediction objects. Detection and segmentation models return
-            :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
-            coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
+            One result for a single image, or a list with one result per image for an iterable or a BCHW tensor.
+            Detection and segmentation return :class:`~supervision.Detections`; keypoints return
+            :class:`~supervision.KeyPoints` with ``xy`` coordinates.
             ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
             is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion
             controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it
@@ -3156,10 +3160,13 @@ class RFDETR:
             have their conversion and transfer queued before an earlier validation failure raises.
 
         Raises:
+            TypeError: If a source option of :meth:`RFDETRInference.predict` is passed, or if ``threshold`` is neither a
+                number nor a sequence of numbers, such as a ``dict`` keyed by class name.
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
-                num_windows``, or if ``patch_size`` is not a positive integer.
+                num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is
+                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.
 
         Examples:
             Skipped because this example requires pretrained weights and a local image file.
@@ -3168,21 +3175,23 @@ class RFDETR:
             >>> model = RFDETRSmall()  # doctest: +SKIP
             >>> detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP
         """
+        source_options = sorted(_SOURCE_PREDICT_OPTIONS.intersection(kwargs))
+        if source_options:
+            raise TypeError(
+                f"RFDETR.predict does not accept {', '.join(source_options)}: it predicts images only. "
+                "Use RFDETRInference(model).predict(...) for videos, directories, globs, manifests, webcams, "
+                "streams and lazy results."
+            )
         if kwargs:
-            # Account for the torch.inference_mode wrapper so the warning points to the caller.
             deprecation_warning(
                 "Passing unknown keyword arguments to RFDETR.predict is deprecated since v1.12.0: "
                 f"{', '.join(sorted(kwargs))}. They are ignored and will raise TypeError in v2.0.0.",
-                stacklevel=3,
+                stacklevel=2,
             )
-        return _prediction.predict(
-            self._prediction_context(),
-            images,
-            threshold,
-            shape,
-            patch_size,
-            include_source_image,
-            antialias=antialias,
+        if isinstance(images, torch.Tensor) and images.ndim == 4:
+            images = list(images.unbind(0))
+        return _predict_batch(
+            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias
         )
 
     def deploy_to_roboflow(

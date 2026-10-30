@@ -10,15 +10,14 @@ from __future__ import annotations
 __all__ = ["ModelContext", "RFDETRInference"]
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
 import torch
-from PIL import Image
 
-from rfdetr._prediction import PredictionContext, predict
+from rfdetr._prediction.core import PredictionContext, predict
+from rfdetr._prediction.types import _PredictionInput, _ThresholdInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -27,8 +26,7 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
-
+    from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
     from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
 
@@ -69,9 +67,11 @@ class RFDETRInference:
         | TensorRT | ``auto`` (``cuda:0``), ``cuda`` (the current CUDA device), ``cuda:N`` |
         | OpenVINO | ``auto`` (AUTO plugin), ``cpu``, ``gpu``, ``npu``, ``gpu.N``, ``npu.N``, any case |
         | TFLite, LiteRT | ``auto``, ``cpu`` |
-        | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only) |
+        | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only), ``cpu_and_gpu``, ``cpu_and_ne`` (preferences) |
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
         | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+
+        The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
 
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
@@ -90,7 +90,7 @@ class RFDETRInference:
             runtime_options: Settings for an exported artifact's runtime. Each format reads only its own keys and
                 raises ``ValueError`` for any other: TensorRT takes ``cuda_graph``, ``engine_host_code_allowed`` and
                 ``verbose`` (each a ``bool``); OpenVINO takes ``cache_dir``, ``inference_precision`` and ``config``;
-                the other formats take none.
+                TFLite and LiteRT take ``num_threads`` (a positive ``int``); the other formats take none.
 
         Raises:
             FileNotFoundError: If the artifact or metadata file is missing.
@@ -180,46 +180,58 @@ class RFDETRInference:
             "max_batch_size": context.max_batch_size,
         }
 
-    @torch.inference_mode()
     def predict(
         self,
-        images: str
-        | os.PathLike[str]
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
-        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
-        threshold: float = 0.5,
+        images: _PredictionInput,
+        threshold: _ThresholdInput = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
         antialias: bool | None = None,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
-        """Run prediction with the shared native and exported inference pipeline.
+        stream: bool = False,
+        batch: int | None = None,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+    ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
+        """Predict images, video, and live sources through the shared prediction pipeline.
 
         Args:
-            images: A file path, URL string, PIL image, HWC NumPy array, CHW tensor, or list or tuple of those inputs.
-                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
-                which does not bound the total download time. Redirects are followed, and the whole response body is
-                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
-                URLs, download and validate the image yourself and pass the decoded image instead.
-            threshold: Minimum confidence score for a prediction.
-            shape: Optional input height and width.
-            patch_size: Advanced override for shape divisibility validation; it does not change the backbone.
-            include_source_image: Include each source image in prediction metadata.
-            antialias: Use antialiasing during image resize. None uses the artifact metadata's resize_antialias
-                for exported sources and False for native sources. An explicit boolean overrides the default;
-                match the checkpoint training resize.
+            images: An image, directory, glob, video, webcam index, stream URL, manifest, or an iterable of these.
+                Images can be paths, HTTP URLs, PIL images, NumPy arrays, or tensors. Iterables other than lists and
+                tuples are read into a list first. TXT/CSV manifests list sources; ``.streams`` files capture streams
+                concurrently. YouTube URLs and ``screen`` capture require the optional ``rfdetr[stream]``
+                dependencies. String sources are downloaded, opened or expanded without size or host limits, so pass
+                only trusted strings.
+            threshold: The confidence score a detection must exceed to be kept. A single float applies to every class.
+                A :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies
+                each class's own threshold to its detections, so that a class the model finds less reliably can be
+                held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:
+                the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection
+                of that class.
+            shape: Input height and width; exports require their recorded shape.
+            patch_size: Backbone patch size for shape validation.
+            include_source_image: Store RGB source pixels in each result.
+            antialias: Override resize antialiasing. None uses artifact metadata for exports
+                and False for native models.
+            stream: Yield results lazily. Close the generator on early exit.
+            batch: Maximum finite-source batch size. None runs a bare BCHW tensor or an eager image-only list as
+                one batch and other expanded sources one image or frame at a time. An integer bounds every batch,
+                including eager image lists. Each batch must satisfy the runtime limits.
+                Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.
+            vid_stride: Read every Nth video frame.
+            stream_buffer: Queue live frames instead of keeping the latest frame.
 
         Returns:
-            A Supervision prediction object or a list of prediction objects.
+            A generator with stream enabled, otherwise a scalar image result or a list.
 
         Raises:
-            TypeError: If an unknown prediction keyword is supplied.
-            ValueError: If shape or patch_size is invalid, or the source cannot accept the channel count, batch size
-                or input shape.
+            TypeError: If ``threshold`` is neither a number nor a sequence of numbers.
+            ValueError: If shape, batch, stride, buffer, capture, or runtime limits are violated, or if a ``threshold``
+                sequence is not one-dimensional, differs in length from ``class_names`` or holds a NaN.
+            FileNotFoundError: If a local file is missing or a directory/glob contains no supported media.
+            ImportError: If a source needs the optional ``rfdetr[stream]`` dependencies and they are not installed.
 
         Examples:
             Skipped when run as a doctest: requires model weights and image files.
@@ -230,15 +242,18 @@ class RFDETRInference:
             >>> len(results)  # doctest: +SKIP
             2
         """
-        context = self._prediction_context()
         return predict(
-            context,
+            self._prediction_context,
             images,
-            threshold=threshold,
-            shape=shape,
-            patch_size=patch_size,
-            include_source_image=include_source_image,
-            antialias=context.antialias if antialias is None else antialias,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias=antialias,
+            stream=stream,
+            batch=batch,
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
         )
 
 
