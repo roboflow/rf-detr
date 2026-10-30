@@ -595,9 +595,20 @@ def crop(
             lambda boxes: functional.crop(boxes, top=top, left=left, height=height, width=width),
         )
         keep = (cropped[:, 2] > cropped[:, 0]) & (cropped[:, 3] > cropped[:, 1])
+        masks_cropped = False
+        if "masks" in target_out and target_out["masks"].shape[0] == keep.shape[0]:
+            # Drop ghost instances: a box clipped to a partly visible area whose mask lies fully outside the crop.
+            # Box-only instances (empty input mask) are kept.
+            in_masks = target_out["masks"]
+            out_masks = functional.crop(in_masks, top=top, left=left, height=height, width=width)
+            keep = keep & (~in_masks.flatten(1).any(dim=1) | out_masks.flatten(1).any(dim=1))
+            target_out["masks"] = out_masks
+            masks_cropped = True
         boxes = cropped[keep]
         target_out = _filter_per_instance_fields(target_out, keep, boxes)
-    if "masks" in target_out:
+    else:
+        masks_cropped = False
+    if "masks" in target_out and not masks_cropped:
         target_out["masks"] = functional.crop(target_out["masks"], top=top, left=left, height=height, width=width)
     if "keypoints" in target_out:
         keypoints = target_out["keypoints"].clone()
