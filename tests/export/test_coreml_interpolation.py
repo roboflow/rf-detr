@@ -19,8 +19,11 @@ from rfdetr.export._coreml.interpolation import bilinear_interpolation_matrix
 @pytest.mark.parametrize("align_corners", [False, True])
 @pytest.mark.parametrize(
     ("size_in", "size_out"),
-    [((26, 20), (78, 60)), ((36, 36), (72, 72)), ((5, 7), (1, 1))],
-    ids=["3x", "2x", "to-one-cell"],
+    [
+        pytest.param((26, 20), (78, 60), id="3x"),
+        pytest.param((36, 36), (72, 72), id="2x"),
+        pytest.param((5, 7), (1, 1), id="to-one-cell"),
+    ],
 )
 def test_resizes_like_torch(size_in: tuple[int, int], size_out: tuple[int, int], align_corners: bool) -> None:
     """``R_h @ x @ R_w.T`` equals ``F.interpolate(mode="bilinear")``, up by 3 or 2 and down to one cell."""
