@@ -1957,9 +1957,10 @@ def int8_source_graph(
     """Provide an INT8-quantized FP16 copy of *onnx_path* to build from, deleting it when the block exits.
 
     A detection model's calibration images are read three times: for SmoothQuant's per-channel scales of the backbone
-    norms (:func:`measure_smoothing_scales`), applied to both graphs before the ranges are calibrated, for the
-    activation ranges, and for the mean shift INT8 adds to the backbone MLP layers, which is subtracted from their
-    biases (:func:`measure_mlp_bias_shifts`). The other models' images are read once, for the ranges.
+    norms (:func:`measure_smoothing_scales`), applied to the FP32 graph before the ranges are calibrated and to the
+    FP16 copy before the Q/DQ nodes are inserted, for the activation ranges, and for the mean shift INT8 adds to the
+    backbone MLP layers, which is subtracted from their biases (:func:`measure_mlp_bias_shifts`). The other models'
+    images are read once, for the ranges.
 
     Args:
         onnx_path: The FP32 ``.onnx`` export.
