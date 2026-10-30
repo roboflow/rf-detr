@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-26T17:28:12">
+  <meta property="article:modified_time" content="2026-10-30T19:57:56">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-26T17:28:12",
+    "dateModified": "2026-10-30T19:57:56",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1772,6 +1772,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#measured-latency-on-a-laptop-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Latency on a Laptop CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#predict-with-rfdetrinference" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3065,6 +3076,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#measured-latency-on-a-laptop-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Latency on a Laptop CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#predict-with-rfdetrinference" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3144,6 +3166,48 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 </div>
 <p>This writes one float32 file named after the model's variant, <code>output/&lt;model-variant&gt;.tflite</code> (for example <code>output/rfdetr-small.tflite</code>; <code>-backbone</code> is appended with <code>backbone_only=True</code>, and <code>output_name</code> overrides the stem). <code>shape=(H, W)</code> picks a custom resolution exactly as for the other formats.</p>
+<h2 id="measured-latency-on-a-laptop-cpu">Measured Latency on a Laptop CPU<a class="headerlink" href="#measured-latency-on-a-laptop-cpu" title="Permanent link">&para;</a></h2>
+<p>Apple M4 Max CPU (arm64), <code>RFDETRSmall</code>, 5 warmup + 30 timed runs per row, <code>.tflite</code> exported per batch size, from the <a href="../../cookbooks/export-mobile/">mobile cookbook</a>. The PyTorch baseline of the same machine is on the <a href="../#pytorch-baseline">export overview</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Runtime</th>
+<th>Precision</th>
+<th>Quantization</th>
+<th>Batch</th>
+<th>forward [ms]</th>
+<th>end2end [ms]</th>
+<th>FPS [img/s] (end2end)</th>
+<th>Memory [MB]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NCHW</td>
+<td>fp32</td>
+<td>—</td>
+<td>1</td>
+<td>137.14 ± 3.00</td>
+<td>138.04 ± 2.72</td>
+<td>7.2</td>
+<td>213.2</td>
+</tr>
+<tr>
+<td>NCHW</td>
+<td>fp32</td>
+<td>—</td>
+<td>4</td>
+<td>557.56 ± 10.95</td>
+<td>557.93 ± 9.50</td>
+<td>7.2</td>
+<td>387.4</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Earlier measurement, pending a rerun</p>
+<p>These rows were measured before the cookbook pinned one thread count for every runtime: the interpreter ran at its own default thread count. Treat each row as a same-machine ratio, never as a phone latency: a phone's own delegate (NNAPI, Hexagon, Core ML) is not exercised.</p>
+</div>
 <h2 id="predict-with-rfdetrinference">Predict with RFDETRInference<a class="headerlink" href="#predict-with-rfdetrinference" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
@@ -3194,7 +3258,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 26, 2026 17:28:12 UTC">2026-10-26 17:28:12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
   </span>
 
     

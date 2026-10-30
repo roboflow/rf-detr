@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T13:13:07">
+  <meta property="article:modified_time" content="2026-10-30T19:57:56">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T13:13:07",
+    "dateModified": "2026-10-30T19:57:56",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3795,7 +3795,7 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h1 id="per-class-confidence-thresholds-in-rf-detr">Per-class confidence thresholds in RF-DETR<a class="anchor-link" href="#per-class-confidence-thresholds-in-rf-detr">¶</a></h1><p><a href="https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/docs/cookbooks/per-class-confidence-thresholds.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a></p>
-<p><code>RFDETR.predict(threshold=...)</code> takes either one confidence threshold for every class or a <code>ClassThresholds</code> with one confidence
+<p><code>predictor.predict(threshold=...)</code>, where <code>predictor = model.inference()</code>, takes either one confidence threshold for every class or a <code>ClassThresholds</code> with one confidence
 threshold per class. This cookbook shows how to choose those numbers, and measures on held-out images when the per-class form
 pays off and when it does not.</p>
 <p>Throughout, a <em>threshold</em> is the confidence score a detection must exceed for <code>predict()</code> to keep it. It is not the
@@ -3805,9 +3805,10 @@ single threshold has to compromise between them: lowering it to catch more of on
 the others, and raising it to silence one class loses objects of the rest.</p>
 <p>Until now the way around this was to call <code>predict()</code> with a very low threshold and filter the detections by class
 yourself. Passing a <code>ClassThresholds</code> does that filtering inside <code>predict()</code>:</p>
-<div class="highlight"><pre><span></span><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.45</span><span class="p">)</span>  <span class="c1"># the same bar for every class</span>
-<span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">ClassThresholds</span><span class="p">([</span><span class="mf">0.40</span><span class="p">,</span> <span class="mf">0.55</span><span class="p">,</span> <span class="mf">0.45</span><span class="p">]))</span>  <span class="c1"># a model with three classes: one bar per class</span>
-<span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">ClassThresholds</span><span class="p">({</span><span class="s2">"person"</span><span class="p">:</span> <span class="mf">0.35</span><span class="p">},</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.45</span><span class="p">))</span>  <span class="c1"># name only the classes that differ</span>
+<div class="highlight"><pre><span></span><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">()</span>
+<span class="n">detections</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.45</span><span class="p">)</span>  <span class="c1"># the same bar for every class</span>
+<span class="n">detections</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">ClassThresholds</span><span class="p">([</span><span class="mf">0.40</span><span class="p">,</span> <span class="mf">0.55</span><span class="p">,</span> <span class="mf">0.45</span><span class="p">]))</span>  <span class="c1"># a model with three classes: one bar per class</span>
+<span class="n">detections</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">ClassThresholds</span><span class="p">({</span><span class="s2">"person"</span><span class="p">:</span> <span class="mf">0.35</span><span class="p">},</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.45</span><span class="p">))</span>  <span class="c1"># name only the classes that differ</span>
 </pre></div>
 <p>A detection is kept when its score is strictly above the threshold of its own class. The list is read in the order of
 <code>model.class_names</code>, and it must hold exactly one entry per class.</p>
@@ -4149,12 +4150,15 @@ of images.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">predict_in_batches</span><span class="p">(</span><span class="n">ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="n">ClassThresholds</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">"""Run ``model.predict`` over the images ``ids`` in batches and return one ``sv.Detections`` per image."""</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">predict_in_batches</span><span class="p">(</span><span class="n">ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="n">ClassThresholds</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Run ``predictor.predict`` over the images ``ids`` in batches and return one ``sv.Detections`` per image."""</span>
     <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">start</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span> <span class="n">BATCH_SIZE</span><span class="p">),</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"predict"</span><span class="p">):</span>
         <span class="n">batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">paths</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">[</span><span class="n">start</span> <span class="p">:</span> <span class="n">start</span> <span class="o">+</span> <span class="n">BATCH_SIZE</span><span class="p">]]</span>
-        <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">threshold</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">threshold</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
     <span class="k">return</span> <span class="n">results</span>
 
 
@@ -4169,12 +4173,15 @@ of images.</p>
     <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">len</span><span class="p">,</span><span class="w"> </span><span class="n">tuning_detections</span><span class="p">))</span><span class="si">}</span><span class="s2"> tuning and </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">len</span><span class="p">,</span><span class="w"> </span><span class="n">test_detections</span><span class="p">))</span><span class="si">}</span><span class="s2"> test detections at </span><span class="si">{</span><span class="n">LOW_THRESHOLD</span><span class="si">}</span><span class="s2">"</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">def predict_in_batches(ids: list[int], threshold: float | ClassThresholds) -&gt; list[sv.Detections]:
-    """Run ``model.predict`` over the images ``ids`` in batches and return one ``sv.Detections`` per image."""
+<div class="clipboard-copy-txt" id="cell-5">predictor = model.inference(compile=False)
+
+
+def predict_in_batches(ids: list[int], threshold: float | ClassThresholds) -&gt; list[sv.Detections]:
+    """Run ``predictor.predict`` over the images ``ids`` in batches and return one ``sv.Detections`` per image."""
     results: list[sv.Detections] = []
     for start in tqdm(range(0, len(ids), BATCH_SIZE), desc="predict"):
         batch = [paths[i] for i in ids[start : start + BATCH_SIZE]]
-        results.extend(model.predict(batch, threshold=threshold, include_source_image=False))
+        results.extend(predictor.predict(batch, threshold=threshold, include_source_image=False))
     return results
 
 
@@ -4964,12 +4971,12 @@ class:</p>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">try</span><span class="p">:</span>
-    <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">paths</span><span class="p">[</span><span class="n">test_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">threshold</span><span class="o">=</span><span class="n">ClassThresholds</span><span class="p">(</span><span class="n">lowered_for_priority</span><span class="o">.</span><span class="n">tolist</span><span class="p">()[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
+    <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">paths</span><span class="p">[</span><span class="n">test_ids</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">threshold</span><span class="o">=</span><span class="n">ClassThresholds</span><span class="p">(</span><span class="n">lowered_for_priority</span><span class="o">.</span><span class="n">tolist</span><span class="p">()[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
 <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-13">try:
-    model.predict(paths[test_ids[0]], threshold=ClassThresholds(lowered_for_priority.tolist()[:-1]))
+    predictor.predict(paths[test_ids[0]], threshold=ClassThresholds(lowered_for_priority.tolist()[:-1]))
 except ValueError as error:
     print(error)</div>
 </div>
@@ -5031,7 +5038,7 @@ shows a gain for your model is exactly what the held-out test set is there to te
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 13:13:07 UTC">2026-10-30 13:13:07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
   </span>
 
     

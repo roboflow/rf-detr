@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-02T15:43:02">
+  <meta property="article:modified_time" content="2026-10-30T19:57:56">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-02T15:43:02",
+    "dateModified": "2026-10-30T19:57:56",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -5088,8 +5088,10 @@ immediately — the class names and architecture are all embedded alongside the 
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">loaded_model</span> <span class="o">=</span> <span class="n">RFDETRSegSmall</span><span class="o">.</span><span class="n">from_checkpoint</span><span class="p">(</span><span class="n">FINAL_CHECKPOINT_PATH</span><span class="p">)</span>
+<span class="n">predictor</span> <span class="o">=</span> <span class="n">loaded_model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">loaded_model = RFDETRSegSmall.from_checkpoint(FINAL_CHECKPOINT_PATH)</div>
+<div class="clipboard-copy-txt" id="cell-16">loaded_model = RFDETRSegSmall.from_checkpoint(FINAL_CHECKPOINT_PATH)
+predictor = loaded_model.inference(compile=False)</div>
 </div>
 </div>
 </div>
@@ -5212,9 +5214,9 @@ resolution gives the segmentation head more spatial detail to work with.</p>
 <span class="k">for</span> <span class="n">image_path</span> <span class="ow">in</span> <span class="n">inference_image_paths</span><span class="p">:</span>
     <span class="k">with</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">image_path</span><span class="p">)</span> <span class="k">as</span> <span class="n">image</span><span class="p">:</span>
         <span class="n">image_rgb</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-    <span class="n">detections</span> <span class="o">=</span> <span class="n">loaded_model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image_rgb</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">INFERENCE_THRESHOLD</span><span class="p">)</span>
+    <span class="n">detections</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image_rgb</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">INFERENCE_THRESHOLD</span><span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">detections</span><span class="p">,</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">):</span>
-        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Expected RFDETRSegSmall.predict() to return sv.Detections, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span><span class="si">!r}</span><span class="s2">."</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Expected predictor.predict() to return sv.Detections, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span><span class="si">!r}</span><span class="s2">."</span><span class="p">)</span>
     <span class="n">inference_grid_items</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">image_path</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image_rgb</span><span class="p">),</span> <span class="n">detections</span><span class="p">))</span>
 
 <span class="k">if</span> <span class="n">inference_grid_items</span><span class="p">:</span>
@@ -5226,9 +5228,9 @@ resolution gives the segmentation head more spatial detail to work with.</p>
 for image_path in inference_image_paths:
     with Image.open(image_path) as image:
         image_rgb = image.convert("RGB")
-    detections = loaded_model.predict(image_rgb, threshold=INFERENCE_THRESHOLD)
+    detections = predictor.predict(image_rgb, threshold=INFERENCE_THRESHOLD)
     if not isinstance(detections, sv.Detections):
-        raise RuntimeError(f"Expected RFDETRSegSmall.predict() to return sv.Detections, got {type(detections)!r}.")
+        raise RuntimeError(f"Expected predictor.predict() to return sv.Detections, got {type(detections)!r}.")
     inference_grid_items.append((image_path.name, np.array(image_rgb), detections))
 
 if inference_grid_items:
@@ -5343,7 +5345,7 @@ display(summary_df)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 15:43:02 UTC">2026-10-02 15:43:02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
   </span>
 
     

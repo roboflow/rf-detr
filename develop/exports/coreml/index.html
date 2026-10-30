@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-29T23:24:03">
+  <meta property="article:modified_time" content="2026-10-30T19:57:56">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-29T23:24:03",
+    "dateModified": "2026-10-30T19:57:56",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1910,6 +1910,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#measured-latency-on-apple-silicon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Latency on Apple Silicon
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3152,6 +3163,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#measured-latency-on-apple-silicon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Latency on Apple Silicon
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3557,6 +3579,50 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Equal scores and other models</p>
 <p>The one-hot selection puts equal scores in index order, lowest first. <code>torch.topk</code> does not specify an order for them, so equal scores at the k-th place can select different rows. A model without the box reparameterization of the released models (<code>bbox_reparam=True</code>) keeps <code>topk</code>, and the export logs a warning.</p>
 </div>
+<h2 id="measured-latency-on-apple-silicon">Measured Latency on Apple Silicon<a class="headerlink" href="#measured-latency-on-apple-silicon" title="Permanent link">&para;</a></h2>
+<p>Apple M4 Max, macOS 26.7.1, <code>RFDETRSmall</code>, 5 warmup + 30 timed runs per row, from the <a href="../../cookbooks/export-apple/">Apple cookbook</a>. Every latency is the end-to-end <code>predict()</code> call through <code>RFDETRInference</code> (preprocessing, forward, postprocessing); <code>FPS</code> is images per second at that batch size. <code>mAP@50:95</code> is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed. The PyTorch baseline of the same machine is on the <a href="../#pytorch-baseline">export overview</a>; the ExecuTorch CoreML-backend rows of the same run are on the <a href="../executorch/#measured-latency-on-apple-silicon">ExecuTorch page</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Compute units</th>
+<th>Precision</th>
+<th>b1 latency [ms]</th>
+<th>Size [MB]</th>
+<th>mAP@50:95 [%]</th>
+<th>FPS b1</th>
+<th>FPS b4</th>
+<th>FPS b8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ALL</code> (<code>device="auto"</code>)</td>
+<td>fp32</td>
+<td>12.7</td>
+<td>114.7</td>
+<td>56.5</td>
+<td>78.9</td>
+<td>113.6</td>
+<td>121.3</td>
+</tr>
+<tr>
+<td><code>ALL</code> (<code>device="auto"</code>)</td>
+<td>fp16</td>
+<td>24.4</td>
+<td>57.7</td>
+<td>56.5</td>
+<td>41.0</td>
+<td>47.8</td>
+<td>62.0</td>
+</tr>
+</tbody>
+</table>
+<p>CoreML fp32 is the faster row at every batch size, and 1.8 times faster than eager PyTorch <code>predict()</code> on the same machine at batch 1 (12.7 against 22.6 ms). Its fp16 export is half the size but about twice as slow at batch 1 (24.4 against 12.7 ms), so on Apple Silicon fp16 saves disk space, not time; measure it per chip generation. Both rows score the same mAP on the subset as eager PyTorch, so the choice here is about latency, size and tooling.</p>
+<p>On a Mac with macOS earlier than 27 the Core AI package loads and runs, but only on the CPU, so it is not measured here; see <a href="../coreai/">Core AI</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Noisy run</p>
+<p>Another job ran on the machine during this measurement, so some deviations are large (CoreML fp16 batch 8: ± 11.0 ms). Rerun on an idle machine for tighter numbers.</p>
+</div>
 
 
 
@@ -3577,7 +3643,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 29, 2026 23:24:03 UTC">2026-10-29 23:24:03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
   </span>
 
     

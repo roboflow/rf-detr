@@ -3798,7 +3798,7 @@ unknown fields and unsupported schema versions are rejected. Invalid for native 
                 <p>Settings for an exported artifact's runtime. Each format reads only its own keys and
 raises <code>ValueError</code> for any other: TensorRT takes <code>cuda_graph</code>, <code>engine_host_code_allowed</code> and
 <code>verbose</code> (each a <code>bool</code>); OpenVINO takes <code>cache_dir</code>, <code>inference_precision</code> and <code>config</code>;
-the other formats take none.</p>
+TFLite and LiteRT take <code>num_threads</code> (a positive <code>int</code>); the other formats take none.</p>
               </div>
             </td>
             <td>
