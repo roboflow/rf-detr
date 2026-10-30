@@ -12,17 +12,22 @@ change to `compute_window_block_indexes` is a deliberate, visible decision rathe
 """
 
 import copy
+import logging
+from unittest import mock
 
 import pytest
 import torch
+from torch import nn
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2, compute_window_block_indexes
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
 )
+from rfdetr.models.lwdetr import build_model_from_config
 
 
 def test_compiled_embeddings_preserve_interpolated_outputs_and_gradients() -> None:
@@ -199,3 +204,132 @@ class TestWindowBlockIndexesValidation:
                 load_dinov2_weights=False,
                 size="small",
             )
+
+
+class TestSkippedDinov2WeightsWarning:
+    """The "not loading DINOv2 backbone weights" warnings fire only when those weights were requested.
+
+    The model builder passes `load_dinov2_weights=False` when RF-DETR pretrained weights overwrite the backbone.
+    """
+
+    _SKIPPED_WEIGHTS = "not loading DINOv2 backbone weights"
+
+    @pytest.fixture(autouse=True)
+    def _propagate_rfdetr_logs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Let `caplog` see the `rf-detr` logger, which does not propagate to the root logger.
+
+        Examples:
+            Pytest fixtures cannot be called directly, so this runs only through the tests below.
+
+            >>> TestSkippedDinov2WeightsWarning()._propagate_rfdetr_logs(monkeypatch)  # doctest: +SKIP
+        """
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+    def _skipped_weights_messages(self, caplog: pytest.LogCaptureFixture) -> list[str]:
+        """Return the captured messages that report skipped DINOv2 weights.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> def record(msg):
+            ...     return logging.LogRecord("rf-detr", logging.WARNING, __file__, 0, msg, None, None)
+            >>> caplog = SimpleNamespace(records=[record("not loading DINOv2 backbone weights"), record("unrelated")])
+            >>> TestSkippedDinov2WeightsWarning()._skipped_weights_messages(caplog)
+            ['not loading DINOv2 backbone weights']
+        """
+        return [record.getMessage() for record in caplog.records if self._SKIPPED_WEIGHTS in record.getMessage()]
+
+    @pytest.mark.parametrize(
+        "patch_size, positional_encoding_size",
+        [
+            (16, 24),
+            (14, 24),
+        ],
+    )
+    def test_no_warning_when_dinov2_weights_not_requested(
+        self, caplog: pytest.LogCaptureFixture, patch_size: int, positional_encoding_size: int
+    ) -> None:
+        """Building with `load_dinov2_weights=False`, as for pretrained RF-DETR models, logs no skip warning."""
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            DinoV2(
+                out_feature_indexes=[12],
+                size="small",
+                load_dinov2_weights=False,
+                patch_size=patch_size,
+                positional_encoding_size=positional_encoding_size,
+            )
+
+        assert self._skipped_weights_messages(caplog) == []
+
+    @pytest.mark.parametrize(
+        "patch_size, positional_encoding_size, expected_count",
+        [
+            (16, 24, 2),
+            (14, 24, 1),
+        ],
+    )
+    def test_warning_kept_when_dinov2_weights_requested(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        patch_size: int,
+        positional_encoding_size: int,
+        expected_count: int,
+    ) -> None:
+        """Requesting DINOv2 weights with an incompatible shape still warns that they are skipped.
+
+        The mismatch disables the hub download before it starts, so this stays offline.
+        """
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            DinoV2(
+                out_feature_indexes=[12],
+                size="small",
+                load_dinov2_weights=True,
+                patch_size=patch_size,
+                positional_encoding_size=positional_encoding_size,
+            )
+
+        assert len(self._skipped_weights_messages(caplog)) == expected_count
+
+    def test_no_warning_when_requested_weights_match_dinov2_shape(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Requesting DINOv2 weights with the DINOv2 patch size and positional encodings stays silent and loads them.
+
+        Guards against over-gating: with patch size 14 and 37 positional encodings the shapes match, so the hub loader
+        must still run and no skipped-weights warning may appear. The hub call is the network boundary, so it is
+        replaced.
+        """
+        with (
+            mock.patch.object(
+                WindowedDinov2WithRegistersBackbone, "from_pretrained", return_value=nn.Identity()
+            ) as hub,
+            caplog.at_level(logging.WARNING, logger="rf-detr"),
+        ):
+            DinoV2(
+                out_feature_indexes=[12],
+                size="small",
+                load_dinov2_weights=True,
+                patch_size=14,
+                positional_encoding_size=37,
+            )
+
+        assert self._skipped_weights_messages(caplog) == []
+        hub.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "pretrain_weights, expected_count",
+        [
+            ("rf-detr-nano.pth", 0),
+            (None, 2),
+        ],
+    )
+    def test_builder_ties_warnings_to_pretrain_weights(
+        self, caplog: pytest.LogCaptureFixture, pretrain_weights: str | None, expected_count: int
+    ) -> None:
+        """Building a Nano model warns about skipped DINOv2 weights only when no RF-DETR pretrain weights are set.
+
+        The builder passes `load_dinov2_weights=args.pretrain_weights is None`; a regression that always passes True
+        would bring the warnings back for every default load while the direct `DinoV2` tests above still pass.
+        Construction downloads nothing, so this stays offline.
+        """
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            build_model_from_config(RFDETRNanoConfig(pretrain_weights=pretrain_weights))
+
+        assert len(self._skipped_weights_messages(caplog)) == expected_count

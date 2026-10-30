@@ -35,7 +35,7 @@ from rfdetr._prediction.core import (
     _resolve_patch_size,
     _validate_shape_dims,
 )
-from rfdetr._prediction.types import _ImageInput
+from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
@@ -2100,9 +2100,10 @@ class RFDETR:
                   is written, so the ``.xml`` / ``.bin`` pair is already 8-bit, and **requires** *calibration_data*.
                 * ``format="tensorrt"`` — ``None`` (an FP16 or FP32 engine, as ``fp16`` says) or ``"int8"``: most of
                   the backbone encoder and decoder run in INT8 and the rest in FP16 (placement in the TensorRT export
-                  guide), with activation ranges calibrated on *calibration_data*, which is then required.  Detection,
-                  segmentation and keypoint models (the mask head and keypoint head stay FP16), static batch,
-                  ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
+                  guide), with activation ranges calibrated on *calibration_data*, which is then required (a
+                  detection model's backbone norms are smoothed and its backbone MLP biases corrected for INT8 on the
+                  same data).  Detection, segmentation and keypoint models (the mask head and keypoint head stay
+                  FP16), static batch, ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
                 * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
                   raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
             calibration_data: Representative data for static INT8.  **Required** for ``format="onnx"``,
@@ -3046,7 +3047,7 @@ class RFDETR:
     def predict(
         self,
         images: _ImageInput | Iterable[_ImageInput],
-        threshold: float = 0.5,
+        threshold: _ThresholdInput = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
@@ -3073,7 +3074,13 @@ class RFDETR:
                 read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
                 URLs, download and validate the image yourself and pass the decoded image instead.
             threshold:
-                The minimum confidence score needed to consider a detected bounding box valid.
+                The confidence score a detection must exceed to be kept. A single float applies to every class. A
+                :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies
+                each class's own threshold to its detections, so that a class the model finds less reliably can be
+                held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:
+                the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the
+                unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection of
+                that class.
             shape:
                 Resize to ``(height, width)``; defaults to the model resolution. Both dimensions must be positive
                 integers divisible by ``patch_size * num_windows``. Use the model's export resolution when applicable.
@@ -3153,11 +3160,13 @@ class RFDETR:
             have their conversion and transfer queued before an earlier validation failure raises.
 
         Raises:
+            TypeError: If a source option of :meth:`RFDETRInference.predict` is passed, or if ``threshold`` is neither a
+                number nor a sequence of numbers, such as a ``dict`` keyed by class name.
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
-                num_windows``, or if ``patch_size`` is not a positive integer.
-            TypeError: If a source option of :meth:`RFDETRInference.predict` is passed.
+                num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is
+                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.
 
         Examples:
             Skipped because this example requires pretrained weights and a local image file.

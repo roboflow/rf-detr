@@ -243,3 +243,20 @@ The two graphs give close but not identical outputs, and the same accuracy. On C
 !!! note "Equal scores and other models"
 
     The one-hot selection puts equal scores in index order, lowest first. `torch.topk` does not specify an order for them, so equal scores at the k-th place can select different rows. A model without the box reparameterization of the released models (`bbox_reparam=True`) keeps `topk`, and the export logs a warning.
+
+## Measured Latency on Apple Silicon
+
+Apple M4 Max, macOS 26.7.1, `RFDETRSmall`, 5 warmup + 30 timed runs per row, from the [Apple cookbook](../../cookbooks/export-apple/). Every latency is the end-to-end `predict()` call through `RFDETRInference` (preprocessing, forward, postprocessing); `FPS` is images per second at that batch size. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed. The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline); the ExecuTorch CoreML-backend rows of the same run are on the [ExecuTorch page](executorch.md#measured-latency-on-apple-silicon).
+
+| Compute units           | Precision | b1 latency [ms] | Size [MB] | mAP@50:95 [%] | FPS b1 | FPS b4 | FPS b8 |
+| ----------------------- | --------- | --------------- | --------- | ------------- | ------ | ------ | ------ |
+| `ALL` (`device="auto"`) | fp32      | 12.7            | 114.7     | 56.5          | 78.9   | 113.6  | 121.3  |
+| `ALL` (`device="auto"`) | fp16      | 24.4            | 57.7      | 56.5          | 41.0   | 47.8   | 62.0   |
+
+CoreML fp32 is the faster row at every batch size, and 1.8 times faster than eager PyTorch `predict()` on the same machine at batch 1 (12.7 against 22.6 ms). Its fp16 export is half the size but about twice as slow at batch 1 (24.4 against 12.7 ms), so on Apple Silicon fp16 saves disk space, not time; measure it per chip generation. Both rows score the same mAP on the subset as eager PyTorch, so the choice here is about latency, size and tooling.
+
+On a Mac with macOS earlier than 27 the Core AI package loads and runs, but only on the CPU, so it is not measured here; see [Core AI](coreai.md).
+
+!!! note "Noisy run"
+
+    Another job ran on the machine during this measurement, so some deviations are large (CoreML fp16 batch 8: ± 11.0 ms). Rerun on an idle machine for tighter numbers.

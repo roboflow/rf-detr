@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 import torch
 
+from rfdetr import ClassThresholds
+
 from .helpers import _BaseFakeRFDETR, _DummyModel
 
 pytestmark = [
@@ -94,6 +96,17 @@ class TestPredictCudaTransfer:
         assert np.allclose(detections.xyxy, [[_TORN_READ_FILL] * 4] * 3, atol=1e-6)
         assert detections.mask is not None
         assert detections.mask.all(), "mask transfer is incomplete or torn"
+
+    def test_per_class_thresholds_are_applied_on_the_model_device(self) -> None:
+        """A threshold list is looked up on the device the labels live on, so the class-2 detection alone is dropped."""
+        img = torch.rand(3, 28, 28, device="cuda:0")
+        model = _CudaDummyRFDETR(pretrain_weights=None)
+        thresholds = [0.5] * len(model.class_names)
+        thresholds[2] = _TORN_READ_FILL + 1
+
+        detections = model.predict(img, threshold=ClassThresholds(thresholds))
+
+        assert detections.class_id.tolist() == [1, 3]
 
     def test_keypoint_precision_is_complete_after_async_transfer(self) -> None:
         """Every ``KeyPoints`` field — including keypoint precision — is fully populated after the batched transfer.

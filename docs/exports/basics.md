@@ -170,11 +170,12 @@ Every inference batch must satisfy the export's shape and batch limits. Use a ba
 
 Pass `runtime_options` to configure the runtime of an exported artifact. Each format reads only its own keys and raises `ValueError` for any other key, so a misspelled key, or one meant for another format, fails when the artifact is loaded instead of being ignored. Native models and checkpoints take no runtime options.
 
-| Format        | Keys                                                                                                                                                                       |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TensorRT      | `cuda_graph`, `engine_host_code_allowed`, `verbose`, each a `bool` that defaults to `False`. See [Predict with RFDETRInference](tensorrt.md#predict-with-rfdetrinference). |
-| OpenVINO      | `cache_dir`, `inference_precision`, `config`, with the meaning they have on the [OpenVINO session](openvino.md#advanced-use-the-openvino-session-directly).                |
-| Other formats | None.                                                                                                                                                                      |
+| Format         | Keys                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TensorRT       | `cuda_graph`, `engine_host_code_allowed`, `verbose`, each a `bool` that defaults to `False`. See [Predict with RFDETRInference](tensorrt.md#predict-with-rfdetrinference). |
+| OpenVINO       | `cache_dir`, `inference_precision`, `config`, with the meaning they have on the [OpenVINO session](openvino.md#advanced-use-the-openvino-session-directly).                |
+| TFLite, LiteRT | `num_threads`, a positive `int`: CPU threads for the interpreter, which otherwise runs on one thread.                                                                      |
+| Other formats  | None.                                                                                                                                                                      |
 
 ```python
 from rfdetr import RFDETRInference
