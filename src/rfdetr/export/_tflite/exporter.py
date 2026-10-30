@@ -30,6 +30,15 @@ into an equivalent bilinear sampling subgraph built from ``Gather(axis=0)`` on a
 ``batch_dims`` — the only TFLite gather path that is unconditionally supported, neither crashing on
 ``AllocateTensors()`` nor producing wrong values.
 
+The same pass rewrites each ``GatherElements`` that reads a constant (the two-stage query selection gathers its boxes
+from the constant-folded anchor proposals). ``onnx2tf`` moves such a constant into its channel-last layout but leaves
+the indices alone, so the gather silently returns the wrong boxes; :func:`_replace_constant_gather_elements` turns it
+into a rank-1 ``Gather(axis=0)`` over the flattened constant.
+
+Static ``Unsqueeze`` operations are normalized to equivalent ``Reshape`` operations. onnx2tf can lose coordinate
+layout when inserting broadcast axes into tensors with equal query and coordinate widths, causing subsequent
+slices to read the wrong coordinates even though every output shape looks correct.
+
 Import order
 ------------
 TensorFlow must be imported before ONNX's C extension or the conversion deadlocks, so :class:`TFLiteExporter` calls
@@ -77,11 +86,13 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
 import sysconfig
 import threading
 import warnings
 from dataclasses import dataclass
+from importlib.metadata import packages_distributions
 from pathlib import Path
 from typing import Any, Generator, cast
 
@@ -90,6 +101,7 @@ from numpy.typing import NDArray
 
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._resize import _bilinear_resize_half_pixel
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -99,6 +111,9 @@ logger = get_logger()
 
 # Supported quantization modes.
 _VALID_QUANTIZATIONS: set[str | None] = {None, "fp32", "fp16", "int8"}
+
+#: Known artifact suffixes stripped when locating sibling TFLite precision variants.
+_ARTIFACT_SUFFIXES: tuple[str, ...] = ("_fp32", "_fp16", "_dynamic_range_quant")
 
 # Number of random calibration samples generated when none are provided.
 _DEFAULT_CALIB_SAMPLES: int = 20
@@ -167,7 +182,12 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
 
     def v(name: str, dtype: Any = np.float32, shape: list[int] | None = None) -> Any:
         uid[0] += 1
-        return gs.Variable(f"{pfx}_{uid[0]}_{name}", dtype=dtype, shape=shape)
+        variable_name = f"{pfx}_{uid[0]}_{name}"
+        return (
+            gs.Variable(variable_name, dtype=dtype)
+            if shape is None
+            else gs.Variable(variable_name, dtype=dtype, shape=shape)
+        )
 
     def c(val: Any, dtype: Any = np.float32, name: str = "") -> Any:
         uid[0] += 1
@@ -424,6 +444,69 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     graph.nodes.extend(nodes)
 
 
+def _replace_constant_gather_elements(node: Any, graph: Any, *, index: int) -> None:
+    """Rewrite one ``GatherElements`` that reads a constant into a rank-1 ``Gather`` over the flattened constant.
+
+    ``onnx2tf`` moves a rank-3 or higher constant ``GatherElements`` input into its channel-last layout and remaps
+    ``axis`` to match, but leaves the indices in ONNX layout (onnx2tf 2.4.3, ``ops/GatherElements.py``), so the gather
+    reads the wrong elements. A square index shape, such as the ``(1, 4, 4)`` box indices of RF-DETR's two-stage query
+    selection, raises no shape error, and the selected boxes come out silently wrong. A rank-1 constant has no layout
+    to move: the replacement reads the flattened constant at ``sum(coordinate * stride)``, where the coordinate along
+    ``axis`` comes from the indices and every other coordinate is the output position, precomputed because the index
+    shape is static.
+
+    Args:
+        node: The ``gs.Node`` to replace: a ``GatherElements`` whose data input is a ``gs.Constant`` and whose
+            indices have a static shape.
+        graph: The ``gs.Graph`` that owns *node*.
+        index: Unique integer suffix used to namespace tensor and constant names.
+    """
+    import onnx
+    import onnx_graphsurgeon as gs
+
+    data, indices = node.inputs
+    out = node.outputs[0]
+    values = np.asarray(data.values)
+    axis = node.attrs.get("axis", 0) % values.ndim
+    index_shape = tuple(int(size) for size in indices.shape)
+    strides = [int(np.prod(values.shape[dim + 1 :])) for dim in range(values.ndim)]
+    position = np.indices(index_shape, dtype=np.int64)
+    offsets = np.zeros(index_shape, dtype=np.int64)
+    for dim in range(values.ndim):
+        if dim != axis:
+            offsets += position[dim] * strides[dim]
+
+    pfx = f"_gerepl{index}"
+
+    def v(name: str) -> Any:
+        return gs.Variable(f"{pfx}_{name}", dtype=np.int64, shape=list(index_shape))
+
+    def c(name: str, value: Any, dtype: Any = np.int64) -> Any:
+        return gs.Constant(f"{pfx}_c_{name}", np.asarray(value, dtype=dtype))
+
+    as_int64, shifted, wrapped, scaled, linear = v("i64"), v("shifted"), v("wrapped"), v("scaled"), v("linear")
+    size = c("size", values.shape[axis])
+    flat = c("flat", values.reshape(-1), values.dtype)
+    linear_1d = gs.Variable(f"{pfx}_linear_1d", dtype=np.int64, shape=[offsets.size])
+    gathered_1d = gs.Variable(f"{pfx}_gathered_1d", dtype=values.dtype, shape=[offsets.size])
+    graph.nodes.extend(
+        [
+            gs.Node("Cast", inputs=[indices], outputs=[as_int64], attrs={"to": int(onnx.TensorProto.INT64)}),
+            # GatherElements accepts indices in [-size, size); (i + size) mod size maps them all to [0, size).
+            gs.Node("Add", inputs=[as_int64, size], outputs=[shifted]),
+            gs.Node("Mod", inputs=[shifted, size], outputs=[wrapped]),
+            gs.Node("Mul", inputs=[wrapped, c("stride", strides[axis])], outputs=[scaled]),
+            gs.Node("Add", inputs=[scaled, c("offsets", offsets)], outputs=[linear]),
+            gs.Node("Reshape", inputs=[linear, c("rank1", [-1])], outputs=[linear_1d]),
+            gs.Node("Gather", inputs=[flat, linear_1d], outputs=[gathered_1d], attrs={"axis": 0}),
+            gs.Node("Reshape", inputs=[gathered_1d, c("shape", index_shape)], outputs=[out]),
+        ]
+    )
+    # Disconnect the original node so graph.cleanup() removes it.
+    node.inputs.clear()
+    node.outputs.clear()
+
+
 def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     """Rewrite every GridSample node in *onnx_path* to use TFLite-safe ops.
 
@@ -439,14 +522,20 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     Only ``mode="bilinear"``, ``padding_mode="zeros"``, ``align_corners=0`` nodes are patched — the only variant emitted
     by RF-DETR's exporter.
 
+    The same pass rewrites every ``GatherElements`` that reads a constant with static-shape indices, which ``onnx2tf``
+    converts into a gather over the wrong elements (see :func:`_replace_constant_gather_elements`).
+    Static ``Unsqueeze`` outputs become equivalent ``Reshape`` operations so onnx2tf preserves coordinate layout
+    through singleton-axis insertion. Symbolic output shapes are left unchanged.
+    Graph outputs are sorted by name to match TensorFlow's signature order before onnx2tf copies their names.
+
     Args:
         onnx_path: Path to the source ``.onnx`` file.
         output_dir: Directory where the patched ``.onnx`` is written.  Must
             already exist.
 
     Returns:
-        Path to the patched ``.onnx`` file if any ``GridSample`` nodes were found; *onnx_path* unchanged if the graph
-        contains no such nodes.
+        Path to the patched ``.onnx`` file if any ``GridSample``, constant-input ``GatherElements``, or static
+        ``Unsqueeze`` nodes were found; *onnx_path* unchanged if the graph contains no such nodes.
 
     Raises:
         ImportError: If ``onnx`` or ``onnx_graphsurgeon`` are not available.
@@ -465,18 +554,58 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     model = onnx.load(str(onnx_path))
     model = onnx.shape_inference.infer_shapes(model)
     graph = gs.import_onnx(model)
+    # onnx2tf's own onnxsim pass folds constant subgraphs (the segmentation model's anchor proposals reach their
+    # GatherElements through Where and Cast) into the constants its layout bug mishandles; fold them here first.
+    graph.fold_constants().cleanup()
+    # Folding also resolves Expand targets. Refresh their symbolic index dimensions before selecting the gathers;
+    # otherwise the two-stage box gather is skipped even though its indices now have a fixed shape.
+    graph = gs.import_onnx(onnx.shape_inference.infer_shapes(gs.export_onnx(graph)))
 
     gs_nodes = [n for n in graph.nodes if n.op == "GridSample"]
-    if not gs_nodes:
-        logger.debug("No GridSample nodes found; skipping TFLite-safe patch.")
+    ge_nodes = [
+        n
+        for n in graph.nodes
+        if n.op == "GatherElements"
+        and isinstance(n.inputs[0], gs.Constant)
+        and n.inputs[1].shape is not None
+        and all(isinstance(size, int) for size in n.inputs[1].shape)
+    ]
+    unsqueeze_nodes = [
+        n
+        for n in graph.nodes
+        if n.op == "Unsqueeze"
+        and n.outputs[0].shape is not None
+        and all(isinstance(size, int) and size > 0 for size in n.outputs[0].shape)
+    ]
+    # onnx2tf's name copier falls back to pairing sorted signature entries with ONNX output order. Keeping both
+    # orders identical preserves labels/keypoints, while still giving signature-free segmentation its output names.
+    sorted_outputs = sorted(graph.outputs, key=lambda output: output.name)
+    output_order_changed = [output.name for output in sorted_outputs] != [output.name for output in graph.outputs]
+    graph.outputs = sorted_outputs
+    if not gs_nodes and not ge_nodes and not unsqueeze_nodes and not output_order_changed:
+        logger.debug("No GridSample, constant-input GatherElements, or static Unsqueeze nodes found; skipping patch.")
         return onnx_path
 
-    logger.info(
-        "Patching %d GridSample node(s) → TFLite-safe Gather(axis=0) subgraph.",
-        len(gs_nodes),
-    )
+    if unsqueeze_nodes:
+        logger.info("Normalizing %d static Unsqueeze node(s) → Reshape for coordinate layout.", len(unsqueeze_nodes))
+    for i, node in enumerate(unsqueeze_nodes):
+        # A fixed target shape inserts exactly the same singleton axes without onnx2tf's axis-remapping heuristic.
+        shape = gs.Constant(f"_usrepl{i}_shape", np.asarray(node.outputs[0].shape, dtype=np.int64))
+        node.op = "Reshape"
+        node.attrs.clear()
+        node.inputs = [node.inputs[0], shape]
+
+    if gs_nodes:
+        logger.info(
+            "Patching %d GridSample node(s) → TFLite-safe Gather(axis=0) subgraph.",
+            len(gs_nodes),
+        )
     for i, node in enumerate(gs_nodes):
         _replace_single_gridsample(node, graph, index=i)
+    if ge_nodes:
+        logger.info("Patching %d constant-input GatherElements node(s) → rank-1 Gather(axis=0).", len(ge_nodes))
+    for i, node in enumerate(ge_nodes):
+        _replace_constant_gather_elements(node, graph, index=i)
 
     graph.cleanup().toposort()
 
@@ -568,6 +697,36 @@ def _check_onnx2tf_available() -> None:
             f"onnx2tf {installed} is installed but RF-DETR requires >= 2.4.0. "
             "Earlier 1.x releases cannot lower the Expand, TopK, and Tile ops "
             "in RF-DETR's ONNX graph. Upgrade with: pip install 'onnx2tf>=2.4.0'"
+        )
+
+
+#: Distributions that install the top-level ``onnxsim`` package and the ``onnxsim`` console script onnx2tf runs.
+_ONNXSIM_DISTRIBUTIONS: frozenset[str] = frozenset({"onnxsim", "onnxsim-prebuilt"})
+
+
+def _check_single_onnxsim_owner() -> None:
+    """Refuse an environment where ``onnxsim`` and ``onnxsim-prebuilt`` are both installed.
+
+    onnx2tf simplifies the ONNX graph by running the ``onnxsim`` console script of the distribution its release
+    depends on: ``onnxsim-prebuilt`` for onnx2tf 2.4.x, ``onnxsim`` for 2.5 and later. Both wheels install the same
+    ``onnxsim`` package and script, so with both present the one installed last has replaced the other's files and
+    onnx2tf simplifies with a release it does not pin; ``onnxsim`` 0.8.1 under onnx2tf 2.4.3 made the conversion of
+    every RF-DETR model fail. Earlier ``rfdetr[tflite]`` releases installed ``onnxsim`` beside onnx2tf's own
+    ``onnxsim-prebuilt``, so an environment upgraded in place still has both.
+
+    Raises:
+        ImportError: If both distributions are installed.
+
+    Examples:
+        >>> _check_single_onnxsim_owner()  # a host with at most one of them passes
+    """
+    owners = {re.sub(r"[-_.]+", "-", name).lower() for name in packages_distributions().get("onnxsim", [])}
+    if _ONNXSIM_DISTRIBUTIONS <= owners:
+        raise ImportError(
+            "TFLite export found both onnxsim and onnxsim-prebuilt installed. Both install the onnxsim package and "
+            "console script that onnx2tf runs to simplify the graph, so the one installed last replaced the other and "
+            "onnx2tf would simplify with a release it does not pin. Remove both, then reinstall the extra: "
+            'pip uninstall -y onnxsim onnxsim-prebuilt && pip install "rfdetr[tflite]"'
         )
 
 
@@ -1008,6 +1167,18 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         _check_onnx_graphsurgeon_available()
         _check_onnx2tf_available()
 
+    def check_environment(self) -> None:
+        """Refuse a host with two distributions of ``onnxsim`` installed, before the forward pass.
+
+        The ``onnxsim`` console script onnx2tf runs may then not be the one onnx2tf depends on. ``RFDETR.export``
+        and ``Exporter.__call__`` call it after :meth:`check_dependencies`; :meth:`convert_onnx`, a public entry point
+        that bypasses both, calls it too.
+
+        Raises:
+            ImportError: If ``onnxsim`` and ``onnxsim-prebuilt`` are both installed.
+        """
+        _check_single_onnxsim_owner()
+
     def _convert(self, graph: ExportGraph) -> Path:
         """Export to ONNX, convert to TFLite, and return the converted artifact's path.
 
@@ -1045,7 +1216,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
 
         Raises:
             FileNotFoundError: If *onnx_path* does not exist.
-            ImportError: If ``onnx2tf`` is not installed.
+            ImportError: If ``onnx2tf`` is not installed, or ``onnxsim`` and ``onnxsim-prebuilt`` are both installed.
             RuntimeError: If the conversion fails.
 
         Note:
@@ -1074,6 +1245,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             # -> PosixPath('output/rfdetr-small_gs_patched_fp32.tflite')
             ```
         """
+        self.check_environment()
         onnx_path = Path(onnx_path)
         output_dir = Path(self.config.output_dir)
 
@@ -1096,8 +1268,91 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         # to the RF-DETR-wide "fp32"/"fp16" token before either return path below, so both
         # files carry the same vocabulary as the other export backends.
         _rename_precision_outputs(output_dir, model_stem)
+        primary = self._resolve_primary_output(output_dir, model_stem)
+        return primary
 
-        return self._resolve_primary_output(output_dir, model_stem)
+    def _metadata_artifacts(self, path: Path) -> tuple[Path, ...]:
+        """Find sibling precision artifacts from the primary artifact's filename.
+
+        Args:
+            path: Primary TFLite artifact returned by conversion.
+
+        Returns:
+            Existing FP32 and FP16 siblings followed by the primary, without duplicates.
+            An unrecognized filename suffix returns only the primary.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     primary = Path(directory) / "model_fp32.tflite"
+            ...     sibling = primary.with_name("model_fp16.tflite")
+            ...     primary.touch()
+            ...     sibling.touch()
+            ...     exporter = TFLiteExporter(TFLiteConfig(output_dir=directory))
+            ...     exporter._metadata_artifacts(primary) == (primary, sibling)
+            True
+        """
+        for suffix in _ARTIFACT_SUFFIXES:
+            if path.stem.endswith(suffix):
+                stem = path.stem.removesuffix(suffix)
+                break
+        else:
+            return (path,)
+
+        siblings = tuple(
+            candidate
+            for candidate in (
+                path.with_name(f"{stem}_fp32.tflite"),
+                path.with_name(f"{stem}_fp16.tflite"),
+            )
+            if candidate.is_file()
+        )
+        return tuple(dict.fromkeys((*siblings, path)))
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Read the final TFLite signature before assigning semantic outputs."""
+        from rfdetr.export._tflite.inference import _create_interpreter
+
+        interpreter = _create_interpreter(path)
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        if len(input_details) != 1:
+            raise ValueError(f"TFLite export has {len(input_details)} inputs; inference expects one")
+        names = [str(output.get("name", "")) for output in output_details]
+        signatures = interpreter.get_signature_list() if hasattr(interpreter, "get_signature_list") else {}
+        signature_outputs: dict[str, int] = {}
+        if len(signatures) == 1:
+            signature_name = next(iter(signatures))
+            runner = interpreter.get_signature_runner(signature_name)
+            if hasattr(runner, "get_output_details"):
+                positions = {int(output["index"]): index for index, output in enumerate(output_details)}
+                signature_outputs = {
+                    name: positions[int(details["index"])]
+                    for name, details in runner.get_output_details().items()
+                    if int(details["index"]) in positions
+                }
+        outputs: dict[str, int] = {}
+        for semantic in metadata.outputs:
+            source = cast(str, metadata.outputs[semantic])
+            matches = [index for name, index in signature_outputs.items() if source in name]
+            if not matches:
+                matches = [index for index, name in enumerate(names) if source in name]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Cannot identify TFLite {semantic} output in {names}. "
+                    "The converter removed its semantic name; pass explicit metadata after inspecting the graph."
+                )
+            outputs[semantic] = matches[0]
+        if len(set(outputs.values())) != len(outputs):
+            raise ValueError(f"TFLite output names do not identify distinct tensors: {names}")
+        return metadata.model_copy(
+            update={
+                "input_name": 0,
+                "input_layout": "NHWC",
+                "input_dtype": input_details[0]["dtype"].__name__,
+                "outputs": outputs,
+            }
+        )
 
     def _validate_onnx_source(self, onnx_path: Path) -> None:
         """Reject a missing source model.
@@ -1221,6 +1476,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                     "input_onnx_file_path": str(onnx_path),
                     "output_folder_path": str(output_dir),
                     "output_signaturedefs": True,
+                    "copy_onnx_input_output_names_to_tflite": True,
                     "non_verbose": not self.config.verbose,
                     "verbosity": verbosity,
                     # Replace Erf / GeLU with TFLite-native pseudo-operators so the

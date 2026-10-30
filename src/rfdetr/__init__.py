@@ -41,8 +41,9 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
         setattr(numpy, "complex_", _complex128)
 
 
+from rfdetr._prediction.thresholds import ClassThresholds
 from rfdetr.detr import RFDETR
-from rfdetr.inference import ModelContext
+from rfdetr.inference import ModelContext, RFDETRInference
 from rfdetr.platform import _PLUS_EXPORTS
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
@@ -62,7 +63,9 @@ from rfdetr.variants import (
 )
 
 __all__ = [
+    "ClassThresholds",
     "ModelContext",
+    "RFDETRInference",
     "from_checkpoint",
     "RFDETRKeypointPreview",
     "RFDETRNano",

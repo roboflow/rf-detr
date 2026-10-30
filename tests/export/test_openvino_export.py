@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import types
+import warnings
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -33,10 +35,14 @@ import pytest
 import torch
 from numpy.typing import NDArray
 
+from rfdetr import RFDETRInference
 from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.inference import OpenVINOInference
+from rfdetr.export._runtime.adapters import load_runtime
+from rfdetr.export._runtime.metadata import ExportMetadata, read_metadata
 from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
 from rfdetr.export.prepare import ExportGraph
+from tests.export._openvino_shapes import FakePartialShape
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
@@ -182,6 +188,57 @@ def _stub_openvino_module() -> types.ModuleType:
 # ---------------------------------------------------------------------------
 
 
+class TestOpenVINOMetadata:
+    """Match the prediction batch contract to the saved IR without importing OpenVINO."""
+
+    @pytest.mark.parametrize(
+        ("sizes", "static_rank", "expected_batch"),
+        [
+            pytest.param([None, 3, None, None], True, -1, id="dynamic-batch"),
+            pytest.param([1, 3, 384, 384], True, 1, id="static-batch"),
+            pytest.param([], False, 1, id="dynamic-rank-keeps-recorded-batch"),
+        ],
+    )
+    def test_metadata_matches_ir_batch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sizes: list[int | None],
+        static_rank: bool,
+        expected_batch: int,
+    ) -> None:
+        """Relax only a proven dynamic batch, preserving positional outputs and spatial preprocessing."""
+        xml_path = tmp_path / "model.xml"
+        fake_ov = types.ModuleType("openvino")
+        fake_ov.Core = mock.Mock()
+        core = fake_ov.Core.return_value
+        core.read_model.return_value.input.return_value.partial_shape = FakePartialShape(sizes, static_rank=static_rank)
+        monkeypatch.setitem(sys.modules, "openvino", fake_ov)
+        metadata = ExportMetadata(
+            format="openvino",
+            task="detect",
+            input_shape=(1, 3, 384, 384),
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=2,
+        )
+
+        result = OpenVINOExporter(OpenVINOConfig())._metadata_for_artifact(metadata, xml_path)
+
+        assert result.input_shape == (expected_batch, 3, 384, 384)
+        assert result.input_name == 0
+        assert result.outputs == {"pred_boxes": 0, "pred_logits": 1}
+        assert metadata.input_shape == (1, 3, 384, 384)
+        core.read_model.assert_called_once_with(xml_path)
+        core.read_model.return_value.input.assert_called_once_with(0)
+
+
 @pytest.fixture
 def openvino_unimportable() -> Any:
     """Make ``import openvino`` raise ``ImportError`` for the duration of a test, whether or not it is installed.
@@ -247,8 +304,8 @@ class TestOpenVINOInferenceMissingDependency:
 class TestOpenVINOInferenceInputValidation:
     """``OpenVINOInference.infer()``'s dtype/contiguity boundary check (no real ``openvino`` needed).
 
-    The check runs before ``self.infer_request`` is touched, so these tests construct an instance via ``__new__``
-    (skipping ``__init__``'s real OpenVINO runtime setup) and call ``infer()`` directly.
+    These tests construct a compatibility facade via ``__new__`` and provide a minimal session, without a real OpenVINO
+    install.
     """
 
     @staticmethod
@@ -260,7 +317,11 @@ class TestOpenVINOInferenceInputValidation:
             >>> hasattr(inference, "infer")
             True
         """
-        return OpenVINOInference.__new__(OpenVINOInference)
+        from rfdetr.export._openvino.inference import _OpenVINOSession
+
+        inference = OpenVINOInference.__new__(OpenVINOInference)
+        inference._session = _OpenVINOSession(None, None, threading.Lock(), None, [])
+        return inference
 
     def test_rejects_float64_input(self) -> None:
         """A ``float64`` array must raise ``ValueError`` instead of silently doubling the buffer size."""
@@ -401,7 +462,7 @@ def _stub_openvino_runtime_module() -> tuple[types.ModuleType, mock.MagicMock]:
 
     Returns:
         A ``(module, core_instance)`` pair where ``module.Core()`` returns ``core_instance``, and
-        ``core_instance.compile_model(...)`` returns a compiled-model mock with one output.
+        ``core_instance.compile_model(...)`` returns a compiled-model mock with one input and one output.
 
     Examples:
         >>> fake_module, fake_core = _stub_openvino_runtime_module()
@@ -411,6 +472,7 @@ def _stub_openvino_runtime_module() -> tuple[types.ModuleType, mock.MagicMock]:
     fake = types.ModuleType("openvino")
     core = mock.MagicMock(name="core")
     compiled_model = mock.MagicMock(name="compiled_model")
+    compiled_model.inputs = [mock.MagicMock(name="input_0")]
     compiled_model.outputs = [mock.MagicMock(name="output_0")]
     core.read_model.return_value = mock.MagicMock(name="ov_model")
     core.compile_model.return_value = compiled_model
@@ -450,6 +512,57 @@ def _compile_call(core: mock.MagicMock) -> tuple[str, dict[str, Any]]:
     args, kwargs = core.compile_model.call_args
     bound = {**dict(zip(("model", "device_name", "config"), args)), **kwargs}
     return bound["device_name"], bound.get("config", {})
+
+
+class TestOpenVINORuntimePrecision:
+    """The unified runtime loader preserves the compile precision policy."""
+
+    @pytest.mark.parametrize(
+        ("device", "runtime_options", "expected_properties"),
+        [
+            pytest.param("cpu", {}, {"INFERENCE_PRECISION_HINT": "f32"}, id="cpu-default-f32"),
+            pytest.param("npu", {}, {}, id="npu-default-no-hint"),
+            pytest.param(
+                "cpu", {"inference_precision": "float16"}, {"INFERENCE_PRECISION_HINT": "f16"}, id="cpu-float16-alias"
+            ),
+            pytest.param("cpu", {"inference_precision": None}, {}, id="cpu-no-hint"),
+        ],
+    )
+    def test_precision_hint_reaches_compile_model(
+        self,
+        tmp_path: Path,
+        device: str,
+        runtime_options: dict[str, Any],
+        expected_properties: dict[str, str],
+    ) -> None:
+        """Default, aliased and disabled precision hints reach compilation through the runtime loader."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        core.available_devices = ["CPU", "NPU"]
+        core.compile_model.return_value.input.return_value.partial_shape = FakePartialShape((1, 3, 8, 8))
+        core.compile_model.return_value.outputs = [object(), object()]
+        metadata = ExportMetadata(
+            format="openvino",
+            task="detect",
+            input_name=0,
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=1,
+            num_windows=1,
+        )
+
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            load_runtime(xml_path, metadata, device=device, options=runtime_options)
+
+        assert _compile_call(core) == (device.upper(), expected_properties)
+        core.compile_model.assert_called_once()
 
 
 class TestOpenVINOInferenceDeviceAndCache:
@@ -627,6 +740,67 @@ class TestOpenVINOInferenceDeviceAndCache:
         core.set_property.assert_not_called()
 
 
+class TestOpenVINOInferenceDeprecation:
+    """The old session facade delegates to shared functions and warns about its replacement."""
+
+    def test_legacy_facade_warns_and_runs_inference(self, tmp_path: Path) -> None:
+        """The compatibility class warns at the caller and still returns owned output arrays."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        output = np.array([[1.0, 2.0]], dtype=np.float32)
+        infer_request = mock.MagicMock()
+        infer_request.get_output_tensor.return_value.data = output
+        core.compile_model.return_value.create_infer_request.return_value = infer_request
+
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            with pytest.warns(
+                FutureWarning, match=r"deprecated in v1\.12\.0.*removed in v1\.15\.0.*RFDETRInference\(.*\)\.predict"
+            ) as caught:
+                inference = OpenVINOInference(xml_path)
+            result = inference.infer(np.zeros((1, 3, 8, 8), dtype=np.float32))
+
+        assert caught[0].filename == __file__
+        assert len(result) == 1
+        assert np.array_equal(result[0], output)
+        assert not np.shares_memory(result[0], output)
+
+    def test_public_predictor_is_warning_free(self, tmp_path: Path) -> None:
+        """The unified runtime loader uses shared functions without constructing the deprecated facade."""
+        from rfdetr import RFDETRInference
+        from rfdetr.export._runtime.metadata import ExportMetadata
+
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        fake_ov.Type = mock.Mock(f32="f32-type")
+        core.available_devices = ["CPU"]
+        core.compile_model.return_value.outputs = [object(), object()]
+        core.compile_model.return_value.input.return_value.partial_shape = FakePartialShape((None, None, None, None))
+        metadata = ExportMetadata(
+            format="openvino",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=14,
+            num_windows=1,
+        )
+
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                predictor = RFDETRInference(xml_path, metadata=metadata.model_dump(), device="cpu")
+
+        assert not [warning for warning in caught if issubclass(warning.category, (DeprecationWarning, FutureWarning))]
+        assert predictor.runtime_info["backend"] == "openvino"
+
+
 class TestModelWrapper:
     """Verify the independently importable ``ModelWrapper`` normalizes export-mode output to a tuple.
 
@@ -735,6 +909,7 @@ class TestExportFormatParameter:
         self._tmp_path = tmp_path
         xml_out = tmp_path / "inference_model.xml"
         xml_out.write_bytes(b"<xml/>")
+        mock.patch("rfdetr.export.base.write_metadata").start()
 
         self._mock_stack = mock.patch("rfdetr.export.prepare.make_infer_image")
         self._mock_make_infer_image = self._mock_stack.start()
@@ -768,12 +943,21 @@ class TestExportFormatParameter:
         obj.model.resolution = 560
         obj.model.device = "cpu"
         obj.model.model.to.return_value = obj.model.model
+        obj.model.args = None
+        obj.model.class_names = ["object"]
+        obj.model.postprocess.num_select = 100
+        obj.model.postprocess.trace_alpha = 0.2
+        obj.model.postprocess.upsample_masks_to_image_size = True
+        obj.means = [0.485, 0.456, 0.406]
+        obj.stds = [0.229, 0.224, 0.225]
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = segmentation_head
         obj.model_config.use_grouppose_keypoints = use_grouppose_keypoints
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
         obj.model_config.num_channels = 3
+        obj.model_config.num_classes = 1
+        obj.model_config.num_keypoints_per_class = [3] if use_grouppose_keypoints else []
         obj.size = "rfdetr-nano"
         return obj
 
@@ -1003,6 +1187,21 @@ def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[
 @pytest.mark.e2e_openvino
 class TestOpenVINOEndToEnd:
     """Real OpenVINO IR export + CPU numerical parity (``-m e2e_openvino``, requires ``openvino`` installed)."""
+
+    def test_public_predictor_accepts_two_images(
+        self,
+        openvino_detection_export: tuple[Any, torch.Tensor, Path],
+        people_walking_image_path: Path,
+    ) -> None:
+        """Saved dynamic-batch metadata lets the public predictor execute a two-image batch."""
+        _, _, xml_path = openvino_detection_export
+        predictor = RFDETRInference(xml_path, device="cpu")
+
+        results = predictor.predict([people_walking_image_path, people_walking_image_path])
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+        assert read_metadata(xml_path).input_shape[0] == -1
 
     def test_xml_and_bin_written(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
         """Export must write both the ``.xml`` graph and its companion ``.bin`` weights file."""

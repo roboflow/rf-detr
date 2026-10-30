@@ -8,16 +8,16 @@ RF-DETR is a real-time transformer architecture for instance segmentation, built
 
 ## Pre-trained Checkpoints
 
-RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1.
+RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Every RF-DETR-Seg size, including XLarge and 2XLarge, is part of the core `rfdetr` package under Apache 2.0, so it's commercially usable out of the box: you can ship it in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. No `rfdetr[plus]` install is needed.
 
-| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
-| :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: |
-|  N   |    `RFDETRSegNano`    | `rfdetr-seg-nano`       |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   |
-|  S   |   `RFDETRSegSmall`    | `rfdetr-seg-small`      |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   |
-|  M   |   `RFDETRSegMedium`   | `rfdetr-seg-medium`     |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   |
-|  L   |   `RFDETRSegLarge`    | `rfdetr-seg-large`      |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   |
-|  XL  |   `RFDETRSegXLarge`   | `rfdetr-seg-xlarge`     |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   |
-| 2XL  |  `RFDETRSeg2XLarge`   | `rfdetr-seg-2xlarge`    |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   |
+| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
+| :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+|  N   |    `RFDETRSegNano`    | `rfdetr-seg-nano`       |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   | Apache 2.0 |
+|  S   |   `RFDETRSegSmall`    | `rfdetr-seg-small`      |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   | Apache 2.0 |
+|  M   |   `RFDETRSegMedium`   | `rfdetr-seg-medium`     |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   | Apache 2.0 |
+|  L   |   `RFDETRSegLarge`    | `rfdetr-seg-large`      |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   | Apache 2.0 |
+|  XL  |   `RFDETRSegXLarge`   | `rfdetr-seg-xlarge`     |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   | Apache 2.0 |
+| 2XL  |  `RFDETRSeg2XLarge`   | `rfdetr-seg-2xlarge`    |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   | Apache 2.0 |
 
 ## Run on an Image
 
@@ -78,16 +78,17 @@ print(sv.mask_to_polygons(detections.mask[0]))  # polygon outline of the first i
 print(detections.area)  # per-instance pixel area, computed from the masks
 ```
 
-Instances scoring below `threshold` are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. Use `sv.MaskAnnotator` to draw filled masks, `sv.PolygonAnnotator` to draw outlines only, or `sv.BoxAnnotator` to overlay the boxes as well.
+Instances scoring below `threshold` are dropped before their masks are upsampled to the image size, so a higher threshold also means less mask memory and post-processing time. With per-class thresholds (a `ClassThresholds`, see [Set a confidence threshold for each class](detection.md#set-a-confidence-threshold-for-each-class)), the lowest of them sets only the mask pre-filter cut-off before upsampling; each instance is then filtered by its own class's threshold. Use `sv.MaskAnnotator` to draw filled masks, `sv.PolygonAnnotator` to draw outlines only, or `sv.BoxAnnotator` to overlay the boxes as well.
 
 ### Preprocessing and inference backends
 
-`predict()` resizes without antialiasing by default (`antialias=False`), which matches checkpoints trained with the default CPU augmentation backend when `rfdetr[augment]` is installed (Albumentations). Pass `antialias=True` for checkpoints trained with torchvision resizing: the Kornia/GPU augmentation backend, the CPU backend without `rfdetr[augment]`, or older RF-DETR releases. Antialiasing costs a little extra preprocessing time per image. Exported models and the `rfdetr.export` runtime helpers always resize without antialiasing, so `antialias=True` results will not match them unless you pre-resize the image with antialiasing yourself.
+`predict()` resizes without antialiasing by default (`antialias=False`), which matches checkpoints trained with the default CPU augmentation backend when `rfdetr[augment]` is installed (Albumentations). Pass `antialias=True` for checkpoints trained with torchvision resizing: the Kornia/GPU augmentation backend, the CPU backend without `rfdetr[augment]`, or older RF-DETR releases. Antialiasing costs a little extra preprocessing time per image. `RFDETRInference` uses the artifact metadata's `resize_antialias` by default for exported models; pass an explicit `antialias=True` or `antialias=False` to override it. The lower-level `rfdetr.export` runtime preprocessing helpers always resize without antialiasing.
 
 For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. Capture allocates a graph-private memory pool that persists for the graph's lifetime and scales with batch size, resolution and model. Segmentation models also carry the mask outputs in that pool, so expect higher memory cost than for detection. The backend was measured on detection RF-DETR Nano at batch size 1; segmentation models use the same path but are unmeasured. The default stays `"torchscript"`:
 
 ```python
-model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
+predictor = model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
+detections = predictor.predict("image.jpg")
 ```
 
 An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
@@ -95,16 +96,22 @@ An operator that CUDA Graphs cannot capture makes `inference()` raise a `Runtime
 PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. Inductor compiles with `torch.compile` on a device supported by the installed PyTorch version and its operators; it does not require CUDA. `dtype="float16"` also requires FP16 support on that device. The external `inference` package API shown above does not expose `RFDETR.inference()`:
 
 ```python
-model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
+predictor = model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
+detections = predictor.predict("image.jpg")
 ```
 
-For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before calling `predict()`. Pass `dtype="float16"` to halve weight memory in addition to clearing the base model reference. This operation is irreversible — to restore the original model, create a new `RFDETR` instance:
+The native factory returns a predictor that owns one independent copy of the current model weights. The source model remains unchanged; deleting the predictor releases its runtime when no other references remain. Use the same pattern for CPU inference without compilation:
 
 ```python
-model.inference(compile=False, inplace=True, dtype="float16")
+predictor = model.inference(compile=False, dtype="float16")
+detections = predictor.predict("image.jpg")
 ```
 
 ## Run on video, webcam, or RTSP stream
+
+!!! tip "Built-in video and stream sources"
+
+    `RFDETRInference(model).predict()` reads video files, video URLs, webcams, RTSP streams, and YouTube directly and can yield results lazily with `stream=True`. See [Run on Videos and Streams](videos-and-streams.md). The examples below keep full control of decoding and display with OpenCV.
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.
 

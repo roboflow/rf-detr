@@ -93,6 +93,8 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 | `inference_model_fp16.tflite`                | FP16 model (always produced)            |
 | `inference_model_dynamic_range_quant.tflite` | INT8 model (when `quantization="int8"`) |
 
+Each TFLite artifact also has an inference metadata sidecar named `<artifact>.rfdetr.json`, for example `inference_model_fp32.tflite.rfdetr.json`. Copy the matching sidecar alongside each model you deploy with `RFDETRInference`; without it, loading fails unless you supply the missing metadata through `metadata=`.
+
 !!! note
 
     Segmentation models produce TFLite files with three outputs: `dets` (bounding boxes), `labels` (class scores), and `masks` (per-instance segmentation masks). Keypoint models produce three outputs too, the third being `keypoints`.
@@ -103,7 +105,39 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 
     Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite `_run_inference` reference helper safely defaults `rank4_output` to `None`, decoding a mask only from an output that names itself. For a name-stripped segmentation export, pass `rank4_output="masks"`; pass `"keypoints"` to suppress anonymous-mask decoding for a keypoint export.
 
-## TFLite Inference Example
+This private NumPy helper is kept for dependency-light numerical reference checks and shares raw interpreter execution with the common runtime adapter. Use `RFDETRInference` for normal image prediction.
+
+## Measured Latency on a Laptop CPU
+
+Apple M4 Max CPU (arm64), `RFDETRSmall`, 5 warmup + 30 timed runs per row, from the [mobile cookbook](../../cookbooks/export-mobile/). The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline). Every TFLite artifact is its own static per-batch export, because TFLite refuses `dynamic_batch=True`.
+
+| Runtime | Precision | Quantization  | Batch | forward [ms]    | end2end [ms]    | FPS [img/s] (end2end) | Memory [MB] |
+| ------- | --------- | ------------- | ----- | --------------- | --------------- | --------------------- | ----------- |
+| NHWC    | fp32      | —             | 1     | 797.93 ± 18.61  | 784.56 ± 5.09   | 1.3                   | 174.1       |
+| NHWC    | fp16      | —             | 1     | 787.83 ± 11.31  | 791.92 ± 3.38   | 1.3                   | 251.2       |
+| NHWC    | INT8      | dynamic range | 1     | 321.81 ± 2.85   | 328.72 ± 8.12   | 3.0                   | 135.5       |
+| NHWC    | fp32      | —             | 4     | 3178.63 ± 51.98 | 3178.26 ± 22.20 | 1.3                   | 768.1       |
+| NHWC    | fp16      | —             | 4     | 3225.73 ± 54.01 | 3177.77 ± 18.71 | 1.3                   | 442.6       |
+| NHWC    | INT8      | dynamic range | 4     | 1324.80 ± 14.17 | 1341.11 ± 20.03 | 3.0                   | 98.4        |
+
+!!! warning "Earlier measurement, pending a rerun"
+
+    These rows were measured before the cookbook pinned one thread count for every runtime: the interpreter ran at its own default thread count. Treat each row as a same-machine ratio, never as a phone latency: a phone's own delegate (NNAPI, Hexagon, Core ML) is not exercised.
+
+INT8 dynamic-range quantization ran 2.4 to 2.5 times faster than fp32 and fp16 at both batch sizes in these rows (328.72 against 784.56 ms at batch 1), and one detection dropped below the 0.5 threshold on the sample image (3 against 4).
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model_fp32.tflite")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+The loader reads the TFLite input layout from export metadata. It returns the same Supervision result types as the native model. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use the TFLite interpreter directly
 
 ```python
 import numpy as np

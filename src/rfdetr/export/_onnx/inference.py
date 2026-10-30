@@ -5,26 +5,96 @@
 # ------------------------------------------------------------------------
 """ONNX Runtime inference helpers for RF-DETR exported models.
 
-These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or the
-RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
+These functions handle session creation, image preprocessing, and detection decoding using ``onnxruntime``, ``numpy``,
+``supervision``, and ``Pillow``, alongside the RF-DETR package dependencies. Loading a ``.onnx`` artifact through
+``RFDETRInference`` also reads its embedded inference metadata with the ``onnx`` package, so that path needs
+``rfdetr[onnx]``, which installs both ``onnx`` and ``onnxruntime``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _runtime_options,
+    _single_input,
+)
 from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
 
-def _create_onnx_session(model_path: str | Path, providers: list[str] | None = None) -> Any:
+def _run_onnx_raw(session: Any, input_name: str, array: Any) -> list[Any]:
+    """Execute one ONNX batch through the shared session path."""
+    return cast(list[Any], session.run(None, {input_name: array}))
+
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
+    """Load an ONNX artifact with explicit provider and interface checks; it reads no runtime options."""
+    _runtime_options("ONNX", options, ())
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise ImportError("ONNX inference requires onnxruntime or onnxruntime-gpu.") from exc
+
+    providers = ort.get_available_providers()
+    if device == "cpu":
+        provider = "CPUExecutionProvider"
+    elif device == "auto":
+        provider = "CUDAExecutionProvider" if "CUDAExecutionProvider" in providers else "CPUExecutionProvider"
+    elif device == "cuda" or (device.startswith("cuda:") and device[5:].isdigit()):
+        provider = "CUDAExecutionProvider"
+    else:
+        raise ValueError(f"ONNX device {device!r} is unsupported. Use cpu, cuda:N, or auto.")
+    if provider not in providers:
+        raise RuntimeError(f"ONNX provider {provider} is unavailable. Installed providers: {providers}.")
+
+    device_id = int(device[5:]) if device.startswith("cuda:") else 0
+    requested: list[str | tuple[str, dict[str, Any]]] = (
+        [(provider, {"device_id": device_id})] if provider == "CUDAExecutionProvider" else [provider]
+    )
+    session = _create_onnx_session(path, providers=requested)
+    if provider not in session.get_providers():
+        raise RuntimeError(f"ONNX session did not activate requested provider {provider}.")
+    if device != "auto" and provider == "CUDAExecutionProvider" and hasattr(session, "disable_fallback"):
+        session.disable_fallback()
+    input_info = _single_input("ONNX", session.get_inputs())
+    # ONNX names element types "tensor(<type>)"; only "float" differs from the NumPy name, where it means float64.
+    element_type = input_info.type.removeprefix("tensor(").removesuffix(")")
+    dtype = "float32" if element_type == "float" else element_type
+    # A symbolic or unnamed ONNX dimension is a str or None; only an int fixes the axis.
+    shape = [size if isinstance(size, int) else None for size in input_info.shape]
+    _check_input_interface("ONNX", metadata, input_info.name, shape, dtype)
+    output_names = [item.name for item in session.get_outputs()]
+    _check_output_interface("ONNX", metadata, output_names)
+
+    def execute(batch: Any) -> dict[str, Any]:
+        """Map one raw ONNX result by graph output name."""
+        return dict(zip(output_names, _run_onnx_raw(session, input_info.name, _input_array(batch, metadata))))
+
+    return ExportRuntime(
+        "onnx", metadata, session=session, device_policy=provider, execute=execute, borrowed_outputs=False
+    )
+
+
+def _create_onnx_session(
+    model_path: str | Path, providers: list[str | tuple[str, dict[str, Any]]] | None = None
+) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
     Imports ``onnxruntime`` at call time so that the rest of the package remains usable without it installed.  Input and
@@ -159,7 +229,7 @@ def _run_inference(
     with PILImage.open(image_path) as pil_img:
         inp_tensor = preprocess_to_nchw(pil_img, height, width, channels)
 
-    raw_outputs = session.run(None, {input_name: inp_tensor})
+    raw_outputs = _run_onnx_raw(session, input_name, inp_tensor)
 
     # RF-DETR ONNX output names: "dets" = pred_boxes, "labels" = pred_logits.
     # Match by name so the code is robust to output reordering.
