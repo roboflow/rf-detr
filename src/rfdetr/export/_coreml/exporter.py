@@ -83,14 +83,12 @@ class _CoreMLApi:
         target: ``coremltools.target``, the deployment-target enum.
         float32: ``coremltools.precision.FLOAT32``.
         float16: ``coremltools.precision.FLOAT16``.
-        pass_pipeline: The default ``coremltools.PassPipeline`` plus RF-DETR's graph passes.
     """
 
     convert: Callable[..., Any]
     target: Any
     float32: ct_precision
     float16: ct_precision
-    pass_pipeline: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +218,6 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             target=ct_target,
             float32=ct_precision.FLOAT32,
             float16=ct_precision.FLOAT16,
-            pass_pipeline=rfdetr_pass_pipeline(),
         )
 
     def _prepare_output_dir(self) -> Path:
@@ -355,7 +352,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             NotImplementedError: If the exported graph contains op kinds missing from coremltools'
                 Torch registry.
             ValueError: If ``torch.export`` or ``coremltools.convert`` raises it directly.
-            RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
+            RuntimeError: If ``torch.export``, building the RF-DETR pass pipeline or ``coremltools.convert`` fails
+                for any other reason.
         """
         try:
             with torch.no_grad():
@@ -371,8 +369,11 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                     # `resample` fp32 via FP16ComputePrecision(op_selector=...) (measured 48.04 AP at iOS16, #1604).
                     minimum_deployment_target=api.target.iOS15,
                     compute_precision=compute_precision,
-                    # Resizes masks with matmuls: the Neural Engine's 3x upsample_bilinear samples half a cell off.
-                    pass_pipeline=api.pass_pipeline,
+                    # Rewrites every upsample_bilinear (the segmentation masks' 3x resize included) as matmuls: the
+                    # Neural Engine's 3x upsample_bilinear samples half a cell off. Built here, inside the guard,
+                    # because coremltools mutates the pipeline and a coremltools release without the anchor pass
+                    # must fail as a RuntimeError naming the pin.
+                    pass_pipeline=rfdetr_pass_pipeline(),
                 )
         except (ImportError, NotImplementedError, ValueError):
             # ImportError here is not dead code even though _check_coremltools_available() already

@@ -11,17 +11,24 @@ where coremltools is not installed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rfdetr.export._coreml.interpolation import bilinear_interpolation_matrix
 from rfdetr.utilities.logger import get_logger
 
+if TYPE_CHECKING:
+    from coremltools import PassPipeline
+
 logger = get_logger()
 
+#: The one place the pass id is written: registration splits it into namespace and name, the pipeline inserts it by id.
 UPSAMPLE_BILINEAR_TO_MATMUL = "rfdetr::upsample_bilinear_to_matmul"
 
+#: The coremltools pass the RF-DETR pass runs after, so it sees the program with complex dialect ops already lowered.
+_LOWERING_PASS = "common::lower_complex_dialect_ops"
 
-def rfdetr_pass_pipeline() -> Any:
+
+def rfdetr_pass_pipeline() -> PassPipeline:
     """The default coremltools pass pipeline, with ``rfdetr::upsample_bilinear_to_matmul`` after the dialect lowering.
 
     On the Neural Engine, ``upsample_bilinear`` by a factor of 3 samples half an output cell off: output cell ``i``
@@ -31,31 +38,44 @@ def rfdetr_pass_pipeline() -> Any:
     computes the same resize with matmuls (:func:`rewrite_upsample_bilinear`), which are right on every compute unit.
 
     Returns:
-        A ``coremltools.PassPipeline`` for ``coremltools.convert(pass_pipeline=...)``.
+        A ``coremltools.PassPipeline`` for ``coremltools.convert(pass_pipeline=...)``. ``coremltools.convert``
+        changes the pipeline it is given, so build one per conversion.
+
+    Raises:
+        RuntimeError: If the installed ``coremltools`` has no ``common::lower_complex_dialect_ops`` pass to insert the
+            RF-DETR pass after, which happens in a ``coremltools`` release outside the supported range.
     """
     import coremltools as ct
 
     _register_upsample_bilinear_to_matmul()
     pipeline = ct.PassPipeline.DEFAULT
-    after_lowering = pipeline.passes.index("common::lower_complex_dialect_ops") + 1
+    try:
+        after_lowering = pipeline.passes.index(_LOWERING_PASS) + 1
+    except ValueError as exc:
+        raise RuntimeError(
+            f"coremltools {ct.__version__} has no {_LOWERING_PASS!r} pass to run "
+            f"{UPSAMPLE_BILINEAR_TO_MATMUL!r} after. The Core ML export supports coremltools >=8.0,<10.0."
+        ) from exc
     pipeline.insert_pass(index=after_lowering, pass_name=UPSAMPLE_BILINEAR_TO_MATMUL)
     return pipeline
 
 
 def _register_upsample_bilinear_to_matmul() -> None:
-    """Register :func:`rewrite_upsample_bilinear` as the graph pass ``rfdetr::upsample_bilinear_to_matmul``."""
+    """Register :func:`rewrite_upsample_bilinear` as the graph pass ``rfdetr::upsample_bilinear_to_matmul``.
+
+    The registration overrides an existing one, so it is safe to repeat: two threads running their first export at once,
+    or a test that restores ``sys.modules`` and imports this module again, register the same pass twice.
+    """
     from coremltools.converters.mil.mil.passes.graph_pass import AbstractGraphPass
-    from coremltools.converters.mil.mil.passes.pass_registry import PASS_REGISTRY, register_pass
+    from coremltools.converters.mil.mil.passes.pass_registry import register_pass
 
-    # The registry refuses a second registration, and a test that restores sys.modules imports this module again.
-    if UPSAMPLE_BILINEAR_TO_MATMUL in PASS_REGISTRY:
-        return
+    namespace, name = UPSAMPLE_BILINEAR_TO_MATMUL.split("::")
 
-    class upsample_bilinear_to_matmul(AbstractGraphPass):  # type: ignore[misc]  # noqa: N801 — the pass is named after the class
+    class UpsampleBilinearToMatmul(AbstractGraphPass):  # type: ignore[misc]
         def apply(self, prog: Any) -> None:
             rewrite_upsample_bilinear(prog)
 
-    register_pass(namespace="rfdetr")(upsample_bilinear_to_matmul)
+    register_pass(namespace=namespace, name=name, override=True)(UpsampleBilinearToMatmul)
 
 
 def rewrite_upsample_bilinear(prog: Any) -> None:

@@ -398,9 +398,7 @@ class TestResolveComputePrecision:
         self, tmp_path: Path, precision: object, expected: object
     ) -> None:
         """Each name reaches its own member, no precision means float32, and a member is passed through."""
-        api = _CoreMLApi(
-            convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member", pass_pipeline=None
-        )
+        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=precision))
 
         assert exporter._resolve_compute_precision(api) is expected
@@ -422,15 +420,13 @@ class TestConvertDeploymentTarget:
         """
         target = mock.Mock()
         convert = mock.Mock(return_value="mlmodel")
-        pass_pipeline = mock.Mock()
-        api = _CoreMLApi(
-            convert=convert, target=target, float32="fp32-member", float16="fp16-member", pass_pipeline=pass_pipeline
-        )
+        api = _CoreMLApi(convert=convert, target=target, float32="fp32-member", float16="fp16-member")
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
 
         with (
             mock.patch.object(exporter, "_export_program") as export_program,
             mock.patch.object(exporter, "_check_op_coverage"),
+            mock.patch("rfdetr.export._coreml.exporter.rfdetr_pass_pipeline") as rfdetr_pass_pipeline,
         ):
             exporter._build_mlmodel(mock.Mock(), precision_member, api)
 
@@ -439,8 +435,32 @@ class TestConvertDeploymentTarget:
             convert_to="mlprogram",
             minimum_deployment_target=target.iOS15,
             compute_precision=precision_member,
-            pass_pipeline=pass_pipeline,
+            pass_pipeline=rfdetr_pass_pipeline.return_value,
         )
+
+
+class TestPassPipelineGuard:
+    """``_build_mlmodel`` builds the pass pipeline inside the conversion's error guard."""
+
+    def test_a_failing_pipeline_build_surfaces_as_a_runtime_error(self, tmp_path: Path) -> None:
+        """A pipeline that cannot be built fails the export as ``RuntimeError``, not as the raw registry error.
+
+        Every Core ML export builds the pipeline, detection included. Before it moved into the guard, a registry
+        ``KeyError`` escaped ``_import_coreml_api`` unclassified, so a coremltools release that breaks the pass
+        registration broke every export with an error that did not mention Core ML.
+        """
+        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
+
+        with (
+            mock.patch.object(exporter, "_export_program"),
+            mock.patch.object(exporter, "_check_op_coverage"),
+            mock.patch(
+                "rfdetr.export._coreml.exporter.rfdetr_pass_pipeline", side_effect=KeyError("already registered")
+            ),
+            pytest.raises(RuntimeError, match="CoreML export failed"),
+        ):
+            exporter._build_mlmodel(mock.Mock(), "fp32-member", api)
 
 
 class TestSaveMlmodelMetadata:
