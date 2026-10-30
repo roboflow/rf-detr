@@ -48,7 +48,7 @@ from tests._markers import onnx_and_onnxruntime_only, onnxruntime_only
 
 __doctest_requires__ = {
     ("_outputs_before_and_after_lift",): ["onnxruntime"],
-    ("_fc2_bias_after_quantization",): ["onnxruntime", "onnxconverter_common"],
+    ("_int8_source",): ["onnxruntime", "onnxconverter_common"],
 }
 
 # Module-level on purpose: the parametrized ``CASES`` below build ONNX nodes while the module is collected, so a guarded
@@ -2979,6 +2979,74 @@ def _norm_graph(prefix: str = BACKBONE, *, axis: int = -1) -> Any:
     return model
 
 
+def _two_norm_graph() -> Any:
+    """Build ``x -> norm1 -> up -> norm2 -> down`` with RF-DETR-style names, two norms of different widths.
+
+    ``x`` is 4 rows of 8 channels. ``norm1`` normalizes them and ``up`` widens them to 16 channels, which ``norm2``
+    normalizes before ``down`` narrows them back to 8, the graph's output. Each norm is read by one projection only, so
+    both can be smoothed, and each norm's scale makes its channel 0 wider than the others.
+
+    Examples:
+        >>> [node.op_type for node in _two_norm_graph().graph.node]
+        ['LayerNormalization', 'MatMul', 'LayerNormalization', 'MatMul']
+    """
+    rng = np.random.default_rng(10)
+    inits = [
+        numpy_helper.from_array(np.array([8.0, *[1.0] * 7], np.float32), "g1"),
+        numpy_helper.from_array((rng.standard_normal(8) * 0.1).astype(np.float32), "b1"),
+        numpy_helper.from_array((rng.standard_normal((8, 16)) * 0.5).astype(np.float32), "w1"),
+        numpy_helper.from_array(np.array([4.0, *[1.0] * 15], np.float32), "g2"),
+        numpy_helper.from_array((rng.standard_normal(16) * 0.1).astype(np.float32), "b2"),
+        numpy_helper.from_array((rng.standard_normal((16, 8)) * 0.5).astype(np.float32), "w2"),
+    ]
+    nodes = [
+        helper.make_node("LayerNormalization", ["x", "g1", "b1"], ["n1"], f"{BACKBONE}norm1/LayerNormalization"),
+        helper.make_node("MatMul", ["n1", "w1"], ["h"], f"{BACKBONE}up/MatMul"),
+        helper.make_node("LayerNormalization", ["h", "g2", "b2"], ["n2"], f"{BACKBONE}norm2/LayerNormalization"),
+        helper.make_node("MatMul", ["n2", "w2"], ["y"], f"{BACKBONE}down/MatMul"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "two_norms",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 8])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8])],
+        inits,
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 19)], ir_version=10)
+    onnx.checker.check_model(model, full_check=True)
+    return model
+
+
+def _layer_norm(rows: np.ndarray, gamma: np.ndarray, beta: np.ndarray) -> np.ndarray:
+    """Normalize each row over its last axis as ``LayerNormalization`` does by default, then scale and shift it.
+
+    The variance is the population one and epsilon is ONNX's default ``1e-5``.
+
+    Examples:
+        >>> _layer_norm(np.array([[1.0, 3.0]]), np.array([2.0, 1.0]), np.array([0.0, 1.0])).round(3).tolist()
+        [[-2.0, 2.0]]
+    """
+    normalized = (rows - rows.mean(-1, keepdims=True)) / np.sqrt(rows.var(-1, keepdims=True) + 1e-5)
+    return normalized * gamma + beta
+
+
+def _smoothing_scales(activation: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    """Return SmoothQuant's per-channel scales at alpha 0.5, divided by their geometric mean.
+
+    *activation* holds each channel's absolute maximum and *weight* the largest magnitude of the weight rows reading
+    it. A channel where either is 0 starts at a raw scale of 1, which the geometric-mean division then applies to as
+    well: it ends at 1 over the geometric mean of the raw scales, not at 1.
+
+    Examples:
+        >>> _smoothing_scales(np.array([4.0, 0.0]), np.array([1.0, 1.0])).round(4).tolist()
+        [1.4142, 0.7071]
+    """
+    alive = (activation > 0) & (weight > 0)
+    raw = np.ones(activation.shape, np.float64)
+    raw[alive] = np.sqrt(activation[alive] / weight[alive])
+    return raw / np.exp(np.log(raw).mean())
+
+
 def _read_the_norm_elsewhere(model: Any) -> None:
     """Give the norm's output a reader that is not a projection.
 
@@ -3303,37 +3371,61 @@ class TestSmoothingScales:
         path, model, plan, inputs = norm
         weights = {i.name: numpy_helper.to_array(i).astype(np.float64) for i in model.graph.initializer}
         rows = np.concatenate([x.reshape(4, 8) for x in inputs]).astype(np.float64)
-        normalized = (rows - rows.mean(1, keepdims=True)) / np.sqrt(rows.var(1, keepdims=True) + 1e-5)
-        activation = np.abs(normalized * weights["gamma"] + weights["beta"]).max(0)
+        activation = np.abs(_layer_norm(rows, weights["gamma"], weights["beta"])).max(0)
         weight = np.maximum(np.abs(weights["wq"]).max(1), np.abs(weights["wk"]).max(1))
-        expected = np.sqrt(activation / weight)
-        expected /= np.exp(np.log(expected).mean())
         scales = quantize.measure_smoothing_scales(str(path), model, plan, inputs)
-        np.testing.assert_allclose(scales[NORM], expected, rtol=1e-4)
+        np.testing.assert_allclose(scales[NORM], _smoothing_scales(activation, weight), rtol=1e-4)
 
-    def test_a_dead_channel_still_gets_a_finite_scale(
-        self, norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]]
+    @pytest.mark.parametrize(
+        "dead",
+        [
+            pytest.param(("gamma", "beta"), id="dead-channel"),
+            pytest.param(("wq", "wk"), id="dead-weight-row"),
+        ],
+    )
+    def test_a_dead_channel_is_divided_by_the_geometric_mean_too(
+        self, norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]], dead: tuple[str, str]
     ) -> None:
+        """A channel with no activation or no weight starts at scale 1, then shares the norm's geometric-mean division.
+
+        Zeroing channel 3 of the norm's scale and bias silences its activation; zeroing row 3 of both projections
+        silences its weight. SmoothQuant's ratio is undefined for it, so its raw scale is 1, and it ends at 1 over the
+        geometric mean of the raw scales, not at 1: a scale kept at 1 would no longer match the other channels' sizes.
+        """
         path, model, plan, inputs = norm
-        for name in ("gamma", "beta"):
+        for name in dead:
             init = next(i for i in model.graph.initializer if i.name == name)
             values = numpy_helper.to_array(init).copy()
             values[3] = 0.0
             init.CopyFrom(numpy_helper.from_array(values, name))
+        weights = {i.name: numpy_helper.to_array(i).astype(np.float64) for i in model.graph.initializer}
+        rows = np.concatenate([x.reshape(4, 8) for x in inputs]).astype(np.float64)
+        activation = np.abs(_layer_norm(rows, weights["gamma"], weights["beta"])).max(0)
+        weight = np.maximum(np.abs(weights["wq"]).max(1), np.abs(weights["wk"]).max(1))
         scales = quantize.measure_smoothing_scales(str(path), model, plan, inputs)
-        assert np.isfinite(scales[NORM]).all()
+        np.testing.assert_allclose(scales[NORM], _smoothing_scales(activation, weight), rtol=1e-4)
 
-    def test_a_dead_weight_row_still_gets_a_finite_scale(
-        self, norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]]
-    ) -> None:
-        path, model, plan, inputs = norm
-        for name in ("wq", "wk"):
-            init = next(i for i in model.graph.initializer if i.name == name)
-            values = numpy_helper.to_array(init).copy()
-            values[3] = 0.0
-            init.CopyFrom(numpy_helper.from_array(values, name))
-        scales = quantize.measure_smoothing_scales(str(path), model, plan, inputs)
-        assert np.isfinite(scales[NORM]).all()
+    def test_two_norms_of_different_widths_each_get_their_own_scales(self, tmp_path: Path) -> None:
+        """Each of two chained norms, 8 and 16 channels wide, gets the scales measured on its own channels.
+
+        One probe reads every norm's channel maxima in a single pass and pairs them back with the norms by position, so
+        a slip in that pairing would give one norm the other's maxima, of the other's width.
+        """
+        model = _two_norm_graph()
+        path = tmp_path / "norms.onnx"
+        onnx.save(model, path)
+        inputs = list(np.random.default_rng(11).standard_normal((4, 1, 4, 8)).astype(np.float32))
+        weights = {i.name: numpy_helper.to_array(i).astype(np.float64) for i in model.graph.initializer}
+        rows = np.concatenate([x.reshape(4, 8) for x in inputs]).astype(np.float64)
+        narrow = _layer_norm(rows, weights["g1"], weights["b1"])
+        wide = _layer_norm(narrow @ weights["w1"], weights["g2"], weights["b2"])
+        expected = [
+            _smoothing_scales(np.abs(narrow).max(0), np.abs(weights["w1"]).max(1)),
+            _smoothing_scales(np.abs(wide).max(0), np.abs(weights["w2"]).max(1)),
+        ]
+        scales = quantize.measure_smoothing_scales(str(path), model, quantize.plan_int8(model), inputs)
+        norms = [f"{BACKBONE}norm1/LayerNormalization", f"{BACKBONE}norm2/LayerNormalization"]
+        np.testing.assert_allclose(np.concatenate([scales[n] for n in norms]), np.concatenate(expected), rtol=1e-4)
 
     def test_a_norm_whose_scaled_weights_would_not_fit_fp16_is_left_alone(
         self, monkeypatch: pytest.MonkeyPatch, norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]]
@@ -3700,19 +3792,25 @@ class TestMlpBiasShifts:
         assert (shifts, os.listdir(tmp_path)) == ({}, [])
 
 
-def _fc2_bias_after_quantization(root: Path, outputs: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Quantize :func:`_gelu_mlp` with *outputs* in *root*; return ``fc2``'s FP16 bias after and before, and the images.
+def _int8_source(
+    root: Path, *, outputs: tuple[str, ...] = ("dets", "labels"), norm: bool = False, seed: int = 7
+) -> tuple[Any, Path, np.ndarray]:
+    """Build the INT8 source graph of :func:`_gelu_mlp` in *root*; return it, the FP32 graph's path and the images.
+
+    *outputs* and *norm* go to :func:`_gelu_mlp`, whose graph is saved as ``mlp.onnx`` in *root*. Four ``(2, 4, 4)``
+    calibration images drawn with *seed* calibrate it at its static batch, and the quantized graph is loaded before
+    :func:`quantize.int8_source_graph` removes its file.
 
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as root:  # doctest: +IGNORE_OUTPUT
-        ...     after, before, images = _fc2_bias_after_quantization(Path(root), ("dets", "labels", "masks"))
-        >>> (after == before).all(), images.shape
-        (np.True_, (4, 2, 4, 4))
+        ...     quantized, path, images = _int8_source(Path(root), outputs=("dets", "labels", "masks"))
+        >>> path.name, images.shape, "QuantizeLinear" in {node.op_type for node in quantized.graph.node}
+        ('mlp.onnx', (4, 2, 4, 4), True)
     """
     path = root / "mlp.onnx"
-    onnx.save(_gelu_mlp(outputs=outputs), path)
-    images = np.random.default_rng(6).standard_normal((4, 2, 4, 4)).astype(np.float32)
+    onnx.save(_gelu_mlp(outputs=outputs, norm=norm), path)
+    images = np.random.default_rng(seed).standard_normal((4, 2, 4, 4)).astype(np.float32)
     with quantize.int8_source_graph(
         str(path),
         calibration_data=images,
@@ -3721,11 +3819,19 @@ def _fc2_bias_after_quantization(root: Path, outputs: tuple[str, ...]) -> tuple[
         fp16_graph=tensorrt_export.fp16_source_graph,
     ) as int8_path:
         quantized = onnx.load(int8_path)
-    add = next(node for node in quantized.graph.node if node.name == MLP_ADD2)
-    constants = quantize._constant_weights(quantized.graph)
-    bias = next(constants[tensor] for tensor in add.input if tensor in constants)
-    original = next(init for init in onnx.load(path).graph.initializer if init.name == "b2")
-    return numpy_helper.to_array(bias), numpy_helper.to_array(original).astype(np.float16), images
+    return quantized, path, images
+
+
+def _bias_of(model: Any, add: str) -> np.ndarray:
+    """Return the constant that the bias ``Add`` named *add* in *model* adds to its product.
+
+    Examples:
+        >>> _bias_of(_gelu_mlp(), MLP_ADD2).shape
+        (8,)
+    """
+    node = next(node for node in model.graph.node if node.name == add)
+    constants = quantize._constant_weights(model.graph)
+    return next(numpy_helper.to_array(constants[tensor]) for tensor in node.input if tensor in constants)
 
 
 @onnxruntime_only
@@ -3736,15 +3842,17 @@ class TestBiasCorrectionInInt8Source:
     """A detector's INT8 graph carries the corrected biases; a segmentation or keypoint model's keeps its own."""
 
     def test_detector_bias_loses_the_measured_shift(self, tmp_path: Path) -> None:
-        corrected, original, images = _fc2_bias_after_quantization(tmp_path, ("dets", "labels"))
-        model = onnx.load(tmp_path / "mlp.onnx")
+        quantized, path, images = _int8_source(tmp_path, seed=6)
+        model = onnx.load(path)
         quantize._lift_opset(model)
         plan = quantize.plan_int8(model)
         tensors = sorted({quantize._input_tensor(model.graph, *key) for key in plan.activations})
-        by_tensor = quantize.calibrate_ranges(str(tmp_path / "mlp.onnx"), model, tensors, list(images[:, None]))
+        by_tensor = quantize.calibrate_ranges(str(path), model, tensors, list(images[:, None]))
         ranges = {key: by_tensor[quantize._input_tensor(model.graph, *key)] for key in plan.activations}
-        shift = quantize.measure_mlp_bias_shifts(str(tmp_path / "mlp.onnx"), model, plan, ranges, list(images[:, None]))
-        np.testing.assert_array_equal(corrected, (original.astype(np.float64) - shift[MLP_ADD2]).astype(np.float16))
+        shift = quantize.measure_mlp_bias_shifts(str(path), model, plan, ranges, list(images[:, None]))
+        original = _bias_of(onnx.load(path), MLP_ADD2).astype(np.float16)
+        expected = (original.astype(np.float64) - shift[MLP_ADD2]).astype(np.float16)
+        np.testing.assert_array_equal(_bias_of(quantized, MLP_ADD2), expected)
 
     @pytest.mark.parametrize(
         ("outputs", "smoothed"), [(("dets", "labels"), True), (("dets", "labels", "masks"), False)]
@@ -3752,17 +3860,7 @@ class TestBiasCorrectionInInt8Source:
     def test_only_a_detector_norm_reads_a_smoothed_scale(
         self, tmp_path: Path, outputs: tuple[str, ...], smoothed: bool
     ) -> None:
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(outputs=outputs, norm=True), path)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ) as int8_path:
-            quantized = onnx.load(int8_path)
+        quantized, _, _ = _int8_source(tmp_path, outputs=outputs, norm=True)
         norm = next(node for node in quantized.graph.node if node.op_type == "LayerNormalization")
         assert (norm.input[1] != "gamma") == smoothed
 
@@ -3782,19 +3880,9 @@ class TestBiasCorrectionInInt8Source:
         A detection export reads the images three times, so each warning about an unnormalized sample would otherwise be
         logged three times; a model whose images are read once keeps its warnings.
         """
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(outputs=outputs, norm=True), path)
         reads = Mock(wraps=calibration.calibration_batches)
         monkeypatch.setattr(calibration, "calibration_batches", reads)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ):
-            pass
+        _int8_source(tmp_path, outputs=outputs, norm=True)
         assert [call.kwargs.get("quiet", False) for call in reads.call_args_list] == quiet
 
     @pytest.mark.parametrize(
@@ -3804,36 +3892,16 @@ class TestBiasCorrectionInInt8Source:
     def test_a_detector_reads_the_calibration_images_once_per_step(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outputs: tuple[str, ...], passes: int
     ) -> None:
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(outputs=outputs, norm=True), path)
         reads = Mock(wraps=calibration.calibration_batches)
         monkeypatch.setattr(calibration, "calibration_batches", reads)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ):
-            pass
+        _int8_source(tmp_path, outputs=outputs, norm=True)
         assert reads.call_count == passes
 
     @pytest.mark.parametrize(("index", "constant"), [(1, "gamma"), (2, "beta")])
     def test_the_fp16_norm_carries_the_scales_the_ranges_were_calibrated_with(
         self, tmp_path: Path, index: int, constant: str
     ) -> None:
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(norm=True), path)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ) as int8_path:
-            quantized = onnx.load(int8_path)
+        quantized, path, images = _int8_source(tmp_path, norm=True)
         model = onnx.load(path)
         quantize._lift_opset(model)
         name = f"{BACKBONE}norm2/LayerNormalization"
@@ -3845,17 +3913,7 @@ class TestBiasCorrectionInInt8Source:
         np.testing.assert_array_equal(actual, expected)
 
     def test_the_fp16_projection_carries_the_scales_the_ranges_were_calibrated_with(self, tmp_path: Path) -> None:
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(norm=True), path)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ) as int8_path:
-            quantized = onnx.load(int8_path)
+        quantized, path, images = _int8_source(tmp_path, norm=True)
         model = onnx.load(path)
         quantize._lift_opset(model)
         name = f"{BACKBONE}norm2/LayerNormalization"
@@ -3869,20 +3927,8 @@ class TestBiasCorrectionInInt8Source:
         np.testing.assert_array_equal(actual, expected)
 
     def test_the_first_projection_is_corrected_on_the_smoothed_graph(self, tmp_path: Path) -> None:
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(norm=True), path)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ) as int8_path:
-            quantized = onnx.load(int8_path)
-        add = next(node for node in quantized.graph.node if node.name == MLP_ADD1)
-        constants = quantize._constant_weights(quantized.graph)
-        corrected = next(numpy_helper.to_array(constants[t]) for t in add.input if t in constants)
+        quantized, path, images = _int8_source(tmp_path, norm=True)
+        corrected = _bias_of(quantized, MLP_ADD1)
         model = onnx.load(path)
         quantize._lift_opset(model)
         plan, batches = quantize.plan_int8(model), list(images[:, None])
@@ -3891,22 +3937,12 @@ class TestBiasCorrectionInInt8Source:
         by_tensor = quantize.calibrate_ranges(str(path), model, tensors, batches)
         ranges = {key: by_tensor[quantize._input_tensor(model.graph, *key)] for key in plan.activations}
         shift = quantize.measure_mlp_bias_shifts(str(path), model, plan, ranges, batches)[MLP_ADD1]
-        original = next(numpy_helper.to_array(i) for i in onnx.load(path).graph.initializer if i.name == "b1")
+        original = _bias_of(onnx.load(path), MLP_ADD1)
         expected = (original.astype(np.float16).astype(np.float64) - shift).astype(np.float16)
         np.testing.assert_array_equal(corrected, expected)
 
     def test_the_norm_output_is_calibrated_after_smoothing(self, tmp_path: Path) -> None:
-        path = tmp_path / "mlp.onnx"
-        onnx.save(_gelu_mlp(norm=True), path)
-        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
-        with quantize.int8_source_graph(
-            str(path),
-            calibration_data=images,
-            max_images=10,
-            dynamic_batch=False,
-            fp16_graph=tensorrt_export.fp16_source_graph,
-        ) as int8_path:
-            quantized = onnx.load(int8_path)
+        quantized, path, images = _int8_source(tmp_path, norm=True)
         step = next(
             float(numpy_helper.to_array(init)) for init in quantized.graph.initializer if init.name == "rows_int8_scale"
         )
@@ -3920,8 +3956,9 @@ class TestBiasCorrectionInInt8Source:
 
     @pytest.mark.parametrize("head", ["masks", "keypoints"])
     def test_segmentation_and_keypoint_biases_are_kept(self, tmp_path: Path, head: str) -> None:
-        corrected, original, _ = _fc2_bias_after_quantization(tmp_path, ("dets", "labels", head))
-        np.testing.assert_array_equal(corrected, original)
+        quantized, path, _ = _int8_source(tmp_path, outputs=("dets", "labels", head), seed=6)
+        original = _bias_of(onnx.load(path), MLP_ADD2).astype(np.float16)
+        np.testing.assert_array_equal(_bias_of(quantized, MLP_ADD2), original)
 
 
 class TestNanoInt8Plan:
