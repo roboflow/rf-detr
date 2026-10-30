@@ -15,7 +15,7 @@ import torch
 from PIL import Image
 from supervision import Detections
 
-from rfdetr import RFDETRInference
+from rfdetr import ClassThresholds, RFDETRInference
 from rfdetr.detr import RFDETR
 from tests._markers import onnx_and_onnxruntime_only
 
@@ -164,6 +164,56 @@ def exported_detection(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     }
 
 
+@pytest.fixture
+def exported_sparse_classes(exported_detection: tuple[Path, dict[str, object]]) -> tuple[Path, dict[str, object]]:
+    """Return the detector regraphed to class ids 0 and 2 (named ``a`` and ``b``) plus the no-object slot.
+
+    Class id 1 is unused, as in a pretrained COCO checkpoint with gaps in its category ids. Query 0 scores class id 2
+    at 0.982 and query 1 scores class id 0 at 0.269; every other slot stays at 0.018.
+
+    Examples:
+        >>> exported_sparse_classes()  # doctest: +SKIP
+        # Pytest supplies the detection fixture it edits.
+    """
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    path, metadata = exported_detection
+    graph = onnx.load(path)
+    initializers = {tensor.name: tensor for tensor in graph.graph.initializer}
+    # Columns are (query 0, ids 0..3) then (query 1, ids 0..3); id 3 is the no-object slot.
+    logit_bias = np.array([-4, -4, 4, -4, -1, -4, -4, -4], dtype=np.float32)
+    initializers["logit_weights"].CopyFrom(numpy_helper.from_array(np.zeros((3, 8), np.float32), "logit_weights"))
+    initializers["logit_bias"].CopyFrom(numpy_helper.from_array(logit_bias, "logit_bias"))
+    initializers["logit_shape"].CopyFrom(numpy_helper.from_array(np.array([-1, 2, 4], np.int64), "logit_shape"))
+    logits = next(output for output in graph.graph.output if output.name == "logits")
+    logits.CopyFrom(helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["batch", 2, 4]))
+    onnx.save(graph, path)
+    return path, dict(metadata, class_names=["a", "b"], class_id_to_name={"0": "a", "2": "b"}, num_classes=3)
+
+
+@pytest.fixture
+def exported_segmentation(exported_detection: tuple[Path, dict[str, object]]) -> tuple[Path, dict[str, object]]:
+    """Return the detector with an all-ones ``pred_masks`` output added, and its segmentation metadata.
+
+    Examples:
+        >>> exported_segmentation()  # doctest: +SKIP
+        # Pytest supplies the detection fixture it edits.
+    """
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    path, metadata = exported_detection
+    outputs = metadata["outputs"]
+    assert isinstance(outputs, dict)
+    masks = np.ones((1, 2, 4, 6), dtype=np.float32)
+    graph = onnx.load(path)
+    graph.graph.node.append(helper.make_node("Constant", [], ["task_output"], value=numpy_helper.from_array(masks)))
+    graph.graph.output.append(helper.make_tensor_value_info("task_output", TensorProto.FLOAT, list(masks.shape)))
+    onnx.save(graph, path)
+    return path, dict(metadata, task="segment", outputs={**outputs, "pred_masks": "task_output"})
+
+
 @onnx_and_onnxruntime_only
 class TestInferenceCapabilities:
     """The public constructor returns an inference-only type."""
@@ -222,6 +272,69 @@ class TestExportedPrediction:
         np.testing.assert_allclose(
             [first.confidence[0], second.confidence[0]], [first_score, second_score], rtol=0, atol=1e-5
         )
+
+    @pytest.mark.parametrize(("threshold", "kept"), [([0.5], 1), ([1.0], 0)])
+    def test_per_class_threshold_filters_the_exported_detections(
+        self, exported_detection: tuple[Path, dict[str, object]], threshold: list[float], kept: int
+    ) -> None:
+        """A one-class threshold sequence reaches the same keep-filter as a native model's, through a real runtime."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+
+        result = model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=ClassThresholds(threshold))
+
+        assert len(result) == kept
+
+    def test_per_class_threshold_of_the_wrong_length_raises(
+        self, exported_detection: tuple[Path, dict[str, object]]
+    ) -> None:
+        """An exported model with one class refuses two thresholds before it runs."""
+        path, metadata = exported_detection
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+
+        with pytest.raises(ValueError, match="2 entries but the model has 1 classes"):
+            model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=ClassThresholds([0.5, 0.5]))
+
+    @pytest.mark.parametrize(
+        ("threshold", "expected_class_id", "expected_class_name"),
+        [
+            # Name "b" is class id 2 (score 0.982); the list reads its entry by position, so 0.1 keeps it.
+            pytest.param([0.99, 0.1], 2, "b", id="second-name-owns-id-2"),
+            # Name "a" is class id 0 (score 0.269); its entry is first, so 0.1 keeps it and 0.99 drops id 2.
+            pytest.param([0.1, 0.99], 0, "a", id="first-name-owns-id-0"),
+        ],
+    )
+    def test_per_class_threshold_follows_sparse_class_ids(
+        self,
+        exported_sparse_classes: tuple[Path, dict[str, object]],
+        threshold: list[float],
+        expected_class_id: int,
+        expected_class_name: str,
+    ) -> None:
+        """With class ids 0 and 2 the list is still one entry per class name, in id order, not indexed by raw id.
+
+        Reading the list by raw id would pair id 2 with a missing third entry, and pairing the entries with ids 0 and 1
+        would hand id 2 no threshold, which drops its detection.
+        """
+        path, metadata = exported_sparse_classes
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+
+        result = model.predict(np.zeros((32, 48, 3), dtype=np.uint8), threshold=ClassThresholds(threshold))
+
+        assert result.class_id.tolist() == [expected_class_id]
+        assert list(result.data["class_name"]) == [expected_class_name]
+
+    @pytest.mark.parametrize(("threshold", "kept"), [([0.5], 1), ([1.0], 0)])
+    def test_per_class_threshold_filters_the_exported_masks(
+        self, exported_segmentation: tuple[Path, dict[str, object]], threshold: list[float], kept: int
+    ) -> None:
+        """A segmentation export keeps one mask per surviving detection when thresholds are given per class."""
+        path, metadata = exported_segmentation
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+
+        result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8), threshold=ClassThresholds(threshold))
+
+        assert (len(result), np.asarray(result.mask).shape) == (kept, (kept, 64, 96))
 
     @pytest.mark.parametrize("keyword", ["threhsold", "confidence"])
     def test_unknown_keyword_cannot_change_threshold_intent(

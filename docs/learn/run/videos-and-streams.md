@@ -14,7 +14,7 @@ Video, camera, network stream, YouTube, and screen capture need the optional str
 uv pip install "rfdetr[stream]"
 ```
 
-The clips below come from RF-DETR Small at a 0.5 confidence threshold. Each one is annotated from the results of the call shown above it.
+The clips below come from RF-DETR Small at a 0.5 confidence threshold. Each one is annotated from the results of the call shown above it. `threshold` also takes a `ClassThresholds` with a value per class on every source on this page, as described in [Set a confidence threshold for each class](detection.md#set-a-confidence-threshold-for-each-class).
 
 ## Predict on a video file
 
