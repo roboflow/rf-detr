@@ -436,9 +436,11 @@ class TestInt8Host:
         [
             pytest.param("10.8.0.43", True, id="10.x-before-10.16"),
             pytest.param("12.0.0.1", True, id="newer-major"),
-            pytest.param("10.16.1.11", False, id="10.16"),
-            pytest.param("11.3.0.99", False, id="11.3"),
+            # The placement alone was measured there, not the smoothing, the bias correction or the seg/keypoint models.
+            pytest.param("10.16.1.11", True, id="10.16"),
+            pytest.param("11.3.0.99", True, id="11.3"),
             pytest.param("11.4.0.106", False, id="11.4"),
+            pytest.param("11.5.0.1", False, id="later-11.x"),
         ],
     )
     def test_unmeasured_tensorrt_is_warned_about_before_the_forward_pass(
@@ -480,7 +482,7 @@ class TestInt8Host:
         named: str,
     ) -> None:
         """A portable INT8 engine was never measured, so the flag is named in a warning even on a measured TensorRT."""
-        monkeypatch.setitem(sys.modules, "tensorrt", types.SimpleNamespace(__version__="11.3.0.99"))
+        monkeypatch.setitem(sys.modules, "tensorrt", types.SimpleNamespace(__version__="11.4.0.106"))
         monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
         exporter = TensorRTExporter(
             TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), **settings)
@@ -2628,6 +2630,32 @@ class TestCalibration:
             ):
                 pass
 
+    @pytest.mark.parametrize("value", [np.nan, np.inf])
+    def test_non_finite_calibration_image_is_refused_on_the_first_pass(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: float
+    ) -> None:
+        """A detector whose norms are smoothed refuses a NaN or infinite image on the smoothing pass, its first one.
+
+        The smoothing pass runs before calibration; refusing only in calibration would cost one full pass over the
+        images first. The bad value is not the first element, which onnxruntime's ``ReduceMax`` would not skip.
+        """
+        path = tmp_path / "mlp.onnx"
+        onnx.save(_gelu_mlp(norm=True), path)
+        reads = Mock(wraps=calibration.calibration_batches)
+        monkeypatch.setattr(calibration, "calibration_batches", reads)
+        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
+        images[1, 0, 1, 2] = value
+        with pytest.raises(ValueError, match="batch 2 holds NaN or infinite"):
+            with quantize.int8_source_graph(
+                str(path),
+                calibration_data=images,
+                max_images=10,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
+            ):
+                pass
+        assert reads.call_count == 1
+
     @pytest.mark.parametrize("opset", [17, 19])
     def test_nan_computed_inside_the_graph_gives_an_infinite_range(self, tmp_path: Path, opset: int) -> None:
         """A NaN the graph computes from a finite image calibrates to an infinite range, which the range check refuses.
@@ -2975,6 +3003,19 @@ def _multiply_by_the_norm(model: Any) -> None:
     model.graph.node[2].input[:] = ["wk", "n"]
 
 
+def _root_the_norm_input(model: Any) -> None:
+    """Make the norm read the square root of ``x``, so a negative input value becomes a NaN inside the graph.
+
+    Examples:
+        >>> model = _norm_graph()
+        >>> _root_the_norm_input(model)
+        >>> [(node.op_type, list(node.input)) for node in model.graph.node][:2]
+        [('Sqrt', ['x']), ('LayerNormalization', ['x_root', 'gamma', 'beta'])]
+    """
+    model.graph.node[0].input[0] = "x_root"
+    model.graph.node.insert(0, helper.make_node("Sqrt", ["x"], ["x_root"], "root"))
+
+
 def _feed_the_scale(model: Any) -> None:
     """Make the norm's scale a graph input instead of a constant.
 
@@ -3107,6 +3148,18 @@ def _read_the_norm_with_a_gemm(model: Any) -> None:
     model.graph.node[1].op_type = "Gemm"
 
 
+def _make_the_norm_a_group_norm(model: Any) -> None:
+    """Turn the norm into a ``GroupNormalization``, which also reads a scale and a bias but is not a LayerNorm.
+
+    Examples:
+        >>> model = _norm_graph()
+        >>> _make_the_norm_a_group_norm(model)
+        >>> next(node.op_type for node in model.graph.node if node.name == NORM)
+        'GroupNormalization'
+    """
+    next(node for node in model.graph.node if node.name == NORM).op_type = "GroupNormalization"
+
+
 def _drop_the_projections(model: Any) -> None:
     """Remove both readers of the norm, so nothing undoes a scale of its output.
 
@@ -3210,6 +3263,7 @@ class TestSmoothNorms:
             _add_a_constant_to_the_norm,
             _drop_the_norm_bias,
             _read_the_norm_with_a_gemm,
+            _make_the_norm_a_group_norm,
             _name_another_node_like_the_norm,
             _feed_the_scale,
             _drop_the_projections,
@@ -3295,15 +3349,37 @@ class TestSmoothingScales:
         monkeypatch.setattr(quantize, "_MAX_FP16", (norm_terms + weights) / 2)
         assert quantize.measure_smoothing_scales(str(path), model, plan, inputs) == {}
 
-    def test_a_norm_with_an_infinite_scale_is_left_alone(
+    def test_a_norm_with_an_infinite_range_is_refused(
         self, norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]]
     ) -> None:
+        """A norm output that is infinite on the calibration images is refused, not silently left unsmoothed.
+
+        Leaving the norm out would only defer the refusal to the calibration pass, which finds the same range after one
+        more full pass over the images.
+        """
         path, model, plan, inputs = norm
         init = next(i for i in model.graph.initializer if i.name == "gamma")
         values = numpy_helper.to_array(init).copy()
-        values[0] = np.inf  # the channel's range is infinite, so every scale of the norm comes out NaN
+        values[0] = np.inf
         init.CopyFrom(numpy_helper.from_array(values, "gamma"))
-        assert quantize.measure_smoothing_scales(str(path), model, plan, inputs) == {}
+        with pytest.raises(ValueError, match="norm output.* not finite"):
+            quantize.measure_smoothing_scales(str(path), model, plan, inputs)
+
+    def test_a_nan_the_norm_computes_after_its_first_row_is_refused(self, tmp_path: Path) -> None:
+        """A NaN the graph computes in a later row of the norm output is refused, though ReduceMax would skip it.
+
+        onnxruntime's ``ReduceMax`` skips a NaN anywhere but the first element it reduces, so without the guard the
+        probe reports a finite range for the NaN channel. ``Sqrt`` of a negative value in the second row of a finite
+        image puts the NaN there.
+        """
+        model = _norm_graph()
+        _root_the_norm_input(model)
+        path = tmp_path / "norm.onnx"
+        onnx.save(model, path)
+        image = np.ones((1, 4, 8), np.float32)
+        image[0, 1, 2] = -1.0
+        with pytest.raises(ValueError, match="norm output.* not finite"):
+            quantize.measure_smoothing_scales(str(path), model, quantize.plan_int8(model), [image])
 
     def test_a_graph_without_a_smoothable_norm_reads_no_image(self, tmp_path: Path) -> None:
         model = _gelu_mlp()
@@ -3315,6 +3391,29 @@ class TestSmoothingScales:
         path, model, plan, inputs = norm
         monkeypatch.setattr(quantize, "_MAX_FP16", 1.0)
         assert quantize.measure_smoothing_scales(str(path), model, plan, inputs) == {}
+
+    def test_a_norm_left_alone_is_logged_with_the_constant_that_would_not_fit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]],
+    ) -> None:
+        """A norm left unsmoothed is logged at debug level by name, with the smoothed constant past the FP16 maximum.
+
+        Only the count of smoothed norms is logged at info level, so without this a missing norm could not be traced.
+        """
+        path, model, plan, inputs = norm
+        monkeypatch.setattr(quantize, "_MAX_FP16", 1.0)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            quantize.measure_smoothing_scales(str(path), model, plan, inputs)
+        # Repeated objects are one emission under pytest>=9.1; see the calibration tests' range warnings.
+        messages = [
+            record.getMessage() for record in dict.fromkeys(caplog.records) if "unsmoothed" in record.getMessage()
+        ]
+        assert [(m.partition(": its smoothed ")[0], m.endswith("past the FP16 maximum 1.")) for m in messages] == [
+            (f"Left backbone LayerNorm {NORM!r} unsmoothed for INT8", True)
+        ]
 
     def test_smoothing_leaves_the_outputs_unchanged(
         self, norm: tuple[Path, Any, quantize.Int8Plan, list[np.ndarray]]
@@ -3503,10 +3602,11 @@ class TestCorrectBiases:
         constants = quantize._constant_weights(model.graph)
         assert numpy_helper.to_array(constants[model.graph.node[1].input[1]]).tolist() == [1.0, 2.0]
 
-    @pytest.mark.parametrize("name", ["missing", "constant-free", "second"])
+    @pytest.mark.parametrize("name", ["missing", "constant-free", "second", "not-an-add"])
     def test_an_add_the_fp16_copy_lacks_is_refused(self, name: str) -> None:
         model = self._two_adds()
         model.graph.node.append(helper.make_node("Add", ["y0", "y1"], ["z2"], "constant-free"))
+        model.graph.node.append(helper.make_node("Sub", ["y0", "b"], ["z4"], "not-an-add"))  # reads a constant
         model.graph.node.append(helper.make_node("Identity", ["z1"], ["z3"], "second"))  # a second node named "second"
         with pytest.raises(ValueError, match="has no bias Add"):
             quantize._correct_biases(model, {name: np.zeros(2)})
@@ -3567,9 +3667,15 @@ class TestMlpBiasShifts:
         shifts = quantize.measure_mlp_bias_shifts(str(path), model, plan, ranges, images)
         np.testing.assert_allclose(shifts[MLP_ADD1 if layer == "fc1" else MLP_ADD2], expected, rtol=1e-3, atol=1e-6)
 
-    def test_a_static_batch_averages_over_every_image(self, tmp_path: Path) -> None:
-        model = _gelu_mlp(batch=2)
-        path = tmp_path / "mlp2.onnx"
+    @pytest.mark.parametrize("batch", [1, 2, 3])
+    def test_a_static_batch_averages_over_every_image(self, tmp_path: Path, batch: int) -> None:
+        """Each real image weighs the same in the means, whatever the static batch the images are grouped into.
+
+        Four images fill two batches of 2 exactly, but at batch 3 the second batch holds one image and two copies of it
+        that only pad the batch: counting those copies would weight the last image three times.
+        """
+        model = _gelu_mlp(batch=batch)
+        path = tmp_path / "mlp.onnx"
         onnx.save(model, path)
         quantize._lift_opset(model)
         images = list(np.random.default_rng(4).standard_normal((4, 1, 2, 4, 4)).astype(np.float32))
@@ -3659,6 +3765,37 @@ class TestBiasCorrectionInInt8Source:
             quantized = onnx.load(int8_path)
         norm = next(node for node in quantized.graph.node if node.op_type == "LayerNormalization")
         assert (norm.input[1] != "gamma") == smoothed
+
+    @pytest.mark.parametrize(
+        ("outputs", "quiet"),
+        [
+            pytest.param(("dets", "labels"), [False, True, True], id="detection"),
+            pytest.param(("dets", "labels", "masks"), [False], id="segmentation"),
+            pytest.param(("dets", "labels", "keypoints"), [False], id="keypoints"),
+        ],
+    )
+    def test_only_the_first_pass_reports_the_calibration_images(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outputs: tuple[str, ...], quiet: list[bool]
+    ) -> None:
+        """Only the first pass over the calibration images logs their per-sample range warnings.
+
+        A detection export reads the images three times, so each warning about an unnormalized sample would otherwise be
+        logged three times; a model whose images are read once keeps its warnings.
+        """
+        path = tmp_path / "mlp.onnx"
+        onnx.save(_gelu_mlp(outputs=outputs, norm=True), path)
+        reads = Mock(wraps=calibration.calibration_batches)
+        monkeypatch.setattr(calibration, "calibration_batches", reads)
+        images = np.random.default_rng(7).standard_normal((4, 2, 4, 4)).astype(np.float32)
+        with quantize.int8_source_graph(
+            str(path),
+            calibration_data=images,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ):
+            pass
+        assert [call.kwargs.get("quiet", False) for call in reads.call_args_list] == quiet
 
     @pytest.mark.parametrize(
         ("outputs", "passes"),

@@ -124,21 +124,23 @@ def _image_paths(directory: Path, max_images: int) -> list[Path]:
 
 
 def _arrays_from_samples(
-    array: NDArray[Any], height: int, width: int, channels: int = 3
+    array: NDArray[Any], height: int, width: int, channels: int = 3, *, quiet: bool = False
 ) -> Iterator[NDArray[np.float32]]:
     """Yield one ``(1, C, H, W)`` float32 batch per sample of a pre-normalized calibration array.
 
     Each sample is also compared with the values ImageNet normalization can produce (:data:`_NORMALIZED_RANGE`, plus
     :data:`_NORMALIZED_SLACK` on each side). One that falls outside -- raw 0-255 pixels stored as floats, say -- is
-    logged with a warning, once per sample, and still used: its activation ranges will not match what the model sees at
-    inference. Pixels scaled to 0-1 but never normalized fall inside that range, so they cannot be told apart from
-    normalized data and calibrate wrong without a warning.
+    logged with a warning, once per sample unless *quiet*, and still used: its activation ranges will not match what the
+    model sees at inference. Pixels scaled to 0-1 but never normalized fall inside that range, so they cannot be told
+    apart from normalized data and calibrate wrong without a warning.
 
     Args:
         array: Samples shaped ``(N, C, H, W)``, already normalized the way the model expects.
         height: Spatial height the graph was exported at.
         width: Spatial width the graph was exported at.
         channels: Channel count the graph expects.
+        quiet: Skip the out-of-range warnings, for a later pass over samples an earlier pass has already reported.
+            The checks that raise are kept.
 
     Yields:
         One single-sample batch per row of *array*.
@@ -177,7 +179,7 @@ def _arrays_from_samples(
         # Measured on the converted batch, so a memory-mapped sample is paged in once. A NaN compares false either way
         # and is left to the quantizer, which refuses it.
         smallest, largest = float(batch.min()), float(batch.max())
-        if smallest < low or largest > high:
+        if not quiet and (smallest < low or largest > high):
             logger.warning(
                 f"Calibration sample {index} spans {smallest:.4g} to {largest:.4g}, outside the {low:.4g} to "
                 f"{high:.4g} an image normalized as predict() does stays within. Its activation ranges will not match "
@@ -193,6 +195,7 @@ def calibration_batches(
     width: int,
     channels: int = 3,
     max_images: int = 100,
+    quiet: bool = False,
 ) -> Generator[NDArray[np.float32], None, None]:
     """Yield ``(1, C, H, W)`` float32 batches to calibrate activation ranges with.
 
@@ -213,6 +216,9 @@ def calibration_batches(
         channels: Channel count the graph expects.
         max_images: Maximum images read from a directory. An array or ``.npy`` file is used whole and is not capped
             by this value -- slice it before passing it in to calibrate on fewer samples.
+        quiet: Skip the warning logged for each array or ``.npy`` sample outside the range normalized images stay
+            within, for a quantizer's later pass over data its first pass has already reported. Every check that
+            raises still runs. Images read from a directory are normalized here and are never warned about.
 
     Yields:
         One preprocessed single-image batch at a time.
@@ -230,7 +236,7 @@ def calibration_batches(
         3
     """
     if isinstance(calibration_data, np.ndarray):
-        yield from _arrays_from_samples(calibration_data, height, width, channels)
+        yield from _arrays_from_samples(calibration_data, height, width, channels, quiet=quiet)
         return
 
     path = Path(calibration_data)
@@ -244,7 +250,7 @@ def calibration_batches(
             array = np.load(path, mmap_mode="r", allow_pickle=False)
         except ValueError as exc:
             raise ValueError(f"Calibration file {path} is not a plain numeric .npy array: {exc}") from exc
-        yield from _arrays_from_samples(array, height, width, channels)
+        yield from _arrays_from_samples(array, height, width, channels, quiet=quiet)
         return
 
     from PIL import Image, UnidentifiedImageError  # Pillow is an inference-time dependency, not an import-time one.

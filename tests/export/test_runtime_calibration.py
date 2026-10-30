@@ -186,6 +186,19 @@ class TestArraysFromSamples:
 class TestCalibrationBatches:
     """``calibration_batches`` accepts a directory, a ``.npy`` path or an array, and refuses what it cannot read."""
 
+    def test_a_quiet_pass_logs_no_range_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``quiet=True`` skips the per-sample range warning that an unnormalized array otherwise gets.
+
+        The TensorRT detection export reads the same array three times; only its first pass should report the samples.
+        """
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        samples = np.random.default_rng(0).uniform(0, 255, (2, 3, 4, 4)).astype(np.float32)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            list(calibration_batches(samples, height=4, width=4, quiet=True))
+        assert caplog.records == []
+
     def test_missing_path_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="does not exist"):
             next(calibration_batches(tmp_path / "missing", height=8, width=8))

@@ -262,6 +262,27 @@ def _constant_weights(graph: Any) -> dict[str, Any]:
     return constants
 
 
+def _consumers(graph: Any) -> dict[str, list[Any]]:
+    """Map every tensor that a node of *graph* reads to those nodes, in graph order.
+
+    Only the top-level nodes are read: a tensor read inside an ``If``/``Loop`` subgraph is not listed for that read. A
+    node that reads one tensor through two of its inputs is listed twice.
+
+    Examples:
+        >>> from onnx import helper
+        >>> graph = helper.make_graph(
+        ...     [helper.make_node("Relu", ["x"], ["y"], "relu"), helper.make_node("Add", ["x", "y"], ["z"], "add")],
+        ...     "g", [], [])
+        >>> {name: [node.name for node in nodes] for name, nodes in _consumers(graph).items()}
+        {'x': ['relu', 'add'], 'y': ['add']}
+    """
+    consumers: dict[str, list[Any]] = {}
+    for node in graph.node:
+        for name in node.input:
+            consumers.setdefault(name, []).append(node)
+    return consumers
+
+
 def _weight_name(node: Any, initializers: Mapping[str, Any]) -> str | None:
     """Return the name of *node*'s constant weight when INT8 per-channel weights apply to it, else ``None``.
 
@@ -726,10 +747,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
     shapes = {v.name: v for v in (*inferred.graph.value_info, *inferred.graph.input, *inferred.graph.output)}
     initializers = _constant_weights(graph)
     producers = {output: node for node in graph.node for output in node.output}
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
 
     blocks = []
     for softmax in (node for node in graph.node if node.op_type == "Softmax"):
@@ -806,10 +824,7 @@ def plan_int8(model: Any) -> Int8Plan:
     """
     graph = model.graph
     initializers = _constant_weights(graph)
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
     names = [node.name for node in graph.node]
     duplicated = {name for name, count in Counter(names).items() if count > 1}
 
@@ -881,26 +896,29 @@ def _input_tensor(graph: Any, node_name: str, index: int) -> str:
     return str(node.input[index])
 
 
-def _graph_batches(batches: Iterable[NDArray[np.float32]], batch: int | None) -> Iterator[NDArray[np.float32]]:
+def _graph_batches(
+    batches: Iterable[NDArray[np.float32]], batch: int | None
+) -> Iterator[tuple[NDArray[np.float32], int]]:
     """Group single-image calibration batches into the batch size a static graph was exported at.
 
-    A short final group is padded by repeating its last image: calibration keeps each tensor's absolute maximum, which
-    a repeated image cannot change.
+    A short final group is padded by repeating its last image, and each group comes with the number of real images it
+    holds, first in the group. A maximum is not changed by a repeated image; a mean must leave the copies out.
 
     Examples:
         >>> singles = [np.full((1, 1, 1, 1), v, np.float32) for v in range(3)]
-        >>> [b[:, 0, 0, 0].tolist() for b in _graph_batches(singles, 2)]
-        [[0.0, 1.0], [2.0, 2.0]]
+        >>> [(b[:, 0, 0, 0].tolist(), real) for b, real in _graph_batches(singles, 2)]
+        [([0.0, 1.0], 2), ([2.0, 2.0], 1)]
     """
     group: list[NDArray[np.float32]] = []
     for sample in batches:
         group.append(sample)
         if len(group) == (batch or 1):
-            yield np.concatenate(group)
+            yield np.concatenate(group), len(group)
             group = []
     if group:
-        group += [group[-1]] * ((batch or 1) - len(group))
-        yield np.concatenate(group)
+        real = len(group)
+        group += [group[-1]] * ((batch or 1) - real)
+        yield np.concatenate(group), real
 
 
 def _calibration_graph(model: Any, tensors: list[str]) -> Any:
@@ -924,24 +942,51 @@ def _calibration_graph(model: Any, tensors: list[str]) -> Any:
     probe = onnx.ModelProto()
     probe.CopyFrom(model)
     taken = _tensor_names(probe.graph)
-    # onnxruntime's ReduceMax skips a NaN anywhere but the first element, so NaN is swapped for +inf before reducing.
     infinity = _unique_name("calibration_infinity", taken)
-    value = numpy_helper.from_array(np.array(np.inf, np.float32))
-    probe.graph.node.append(helper.make_node("Constant", [], [infinity], value=value))
+    probe.graph.node.append(
+        helper.make_node("Constant", [], [infinity], value=numpy_helper.from_array(np.array(np.inf, np.float32)))
+    )
     for tensor in tensors:
-        absolute, nan, guarded, maximum = (
-            _unique_name(f"{tensor}__{suffix}", taken) for suffix in ("abs", "isnan", "guarded", "absmax")
-        )
-        probe.graph.node.extend(
-            [
-                helper.make_node("Abs", [tensor], [absolute]),
-                helper.make_node("IsNaN", [tensor], [nan]),
-                helper.make_node("Where", [nan, infinity, absolute], [guarded]),
-                helper.make_node("ReduceMax", [guarded], [maximum], keepdims=0),
-            ]
-        )
+        guarded = _absolute_with_nan_as_infinity(probe.graph, tensor, tensor, infinity, taken)
+        maximum = _unique_name(f"{tensor}__absmax", taken)
+        probe.graph.node.append(helper.make_node("ReduceMax", [guarded], [maximum], keepdims=0))
         probe.graph.output.append(helper.make_tensor_value_info(maximum, TensorProto.FLOAT, []))
     return probe
+
+
+def _absolute_with_nan_as_infinity(graph: Any, tensor: str, stem: str, infinity: str, taken: set[str]) -> str:
+    """Append the absolute value of *tensor*, with every NaN made ``+inf``, to *graph*; return the result's name.
+
+    onnxruntime's ``ReduceMax`` skips a NaN anywhere but the first element, so a maximum taken over this result reports
+    a NaN as an infinite value, which a refusal of non-finite values sees.
+
+    Args:
+        graph: The probe ``GraphProto`` to append the nodes to.
+        tensor: The tensor to read.
+        stem: The prefix of the new tensor names.
+        infinity: A scalar ``+inf`` FP32 tensor of *graph*.
+        taken: The names already used in *graph*; the new names are added to it.
+
+    Returns:
+        The name of the guarded absolute value.
+
+    Examples:
+        >>> from onnx import helper
+        >>> graph = helper.make_graph([], "g", [], [])
+        >>> _absolute_with_nan_as_infinity(graph, "x", "x", "inf", {"x", "inf"}), [n.op_type for n in graph.node]
+        ('x__guarded', ['Abs', 'IsNaN', 'Where'])
+    """
+    from onnx import helper
+
+    absolute, nan, guarded = (_unique_name(f"{stem}__{suffix}", taken) for suffix in ("abs", "isnan", "guarded"))
+    graph.node.extend(
+        [
+            helper.make_node("Abs", [tensor], [absolute]),
+            helper.make_node("IsNaN", [tensor], [nan]),
+            helper.make_node("Where", [nan, infinity, absolute], [guarded]),
+        ]
+    )
+    return guarded
 
 
 @contextlib.contextmanager
@@ -1003,68 +1048,56 @@ def calibrate_ranges(
     if not tensors:
         # onnxruntime treats an empty output list as every output, so the slice below would measure the wrong tensors.
         raise ValueError("Calibration was given no tensor to measure.")
-    with _probe_session(onnx_path, _calibration_graph(model, tensors)) as session:
-        feed_name = session.get_inputs()[0].name
-        dimension = session.get_inputs()[0].shape[0]
-        # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
-        outputs = [o.name for o in session.get_outputs()][-len(tensors) :]
-        ranges: NDArray[np.float64] = np.zeros(len(tensors), dtype=np.float64)
-        count = images = 0
-
-        def tally(source: Iterable[NDArray[np.float32]]) -> Iterator[NDArray[np.float32]]:
-            """Pass *source* through, adding up the images it holds (the groups below repeat the last one to pad)."""
-            nonlocal images
-            for image in source:
-                images += len(image)
-                yield image
-
-        for group in _graph_batches(tally(batches), dimension if isinstance(dimension, int) else None):
-            # Refused here rather than as a non-finite range afterwards, so the message names the batch.
-            if not np.isfinite(group).all():
-                raise ValueError(f"Calibration batch {count + 1} holds NaN or infinite values.")
-            ranges = np.maximum(ranges, np.asarray(session.run(outputs, {feed_name: group}), dtype=np.float64))
-            count += 1
-    if count == 0:
-        raise ValueError("Calibration data held no image.")
+    probe = _calibration_graph(model, tensors)
+    # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
+    outputs = [output.name for output in probe.graph.output][-len(tensors) :]
+    ranges: NDArray[np.float64] = np.zeros(len(tensors), dtype=np.float64)
+    count = images = 0
+    for values, real in _run_probe(onnx_path, probe, outputs, batches):
+        # A copy padding the last group repeats an image, which cannot change a maximum.
+        ranges = np.maximum(ranges, np.asarray(values, dtype=np.float64))
+        count += 1
+        images += real
     warn_if_too_few_samples(images)
     logger.info(f"Calibrated {len(tensors)} INT8 activation ranges over {count} batch(es)")
     return dict(zip(tensors, ranges.tolist()))
 
 
 def _run_probe(
-    onnx_path: str,
-    probe: Any,
-    names: list[str],
-    batches: Iterable[NDArray[np.float32]],
-    combine: Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float64]],
-) -> tuple[list[NDArray[np.float64]], int]:
-    """Run *batches* through *probe* and fold each of its *names* outputs over the batches with *combine*.
+    onnx_path: str, probe: Any, names: list[str], batches: Iterable[NDArray[np.float32]]
+) -> Iterator[tuple[list[NDArray[np.float64]], int]]:
+    """Run *batches* through *probe*, yielding its *names* outputs for each group with the number of real images in it.
+
+    The images are grouped into the probe's static batch as calibration groups them, so the last group may end in
+    copies of its last image (see :func:`_graph_batches`); an output with one row per image keeps only its first rows
+    for the real ones.
 
     Args:
         onnx_path: The FP32 ``.onnx`` file the probe was made from; the probe is written to a temporary file beside it.
         probe: The probe ``ModelProto``.
         names: The probe outputs to read.
-        batches: Preprocessed ``(1, C, H, W)`` images, grouped into the probe's static batch as calibration groups them.
-        combine: How two batches' values of one output fold into one, ``np.add`` or ``np.maximum``.
+        batches: Preprocessed ``(1, C, H, W)`` images.
 
-    Returns:
-        The folded values, in the order of *names*, and the number of batches run.
+    Yields:
+        The values of *names*, in order, and the number of real images in the group.
 
     Raises:
-        ValueError: If *batches* is empty.
+        ValueError: If *batches* is empty or holds a NaN or infinite value, which is refused before the group holding it
+            runs, on whichever pass over the images reads it first.
     """
-    folded: list[NDArray[np.float64]] = []
-    count = 0
+    images = 0
     with _probe_session(onnx_path, probe) as session:
         feed_name = session.get_inputs()[0].name
         dimension = session.get_inputs()[0].shape[0]
-        for group in _graph_batches(batches, dimension if isinstance(dimension, int) else None):
-            values = [np.asarray(value, dtype=np.float64) for value in session.run(names, {feed_name: group})]
-            folded = values if not folded else [combine(total, value) for total, value in zip(folded, values)]
-            count += 1
-    if count == 0:
+        groups = _graph_batches(batches, dimension if isinstance(dimension, int) else None)
+        for number, (group, real) in enumerate(groups, start=1):
+            # Refused here rather than as a non-finite result afterwards, so the message names the batch.
+            if not np.isfinite(group).all():
+                raise ValueError(f"Calibration batch {number} holds NaN or infinite values.")
+            yield [np.asarray(value, dtype=np.float64) for value in session.run(names, {feed_name: group})], real
+            images += real
+    if images == 0:
         raise ValueError("Calibration data held no image.")
-    return folded, count
 
 
 def _smoothable_norms(model: Any, plan: Int8Plan) -> dict[str, tuple[str, ...]]:
@@ -1097,10 +1130,7 @@ def _smoothable_norms(model: Any, plan: Int8Plan) -> dict[str, tuple[str, ...]]:
     """
     graph = model.graph
     constants = _constant_weights(graph)
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
     names = Counter(node.name for node in graph.node)
     planned = set(plan.weighted)
     # Smoothing changes the norm's output, so only the projections that undo it may see that output.
@@ -1150,6 +1180,37 @@ def _projects(reader: Any, tensor: str, channels: int, constants: Mapping[str, A
     return weight is not None and len(weight.dims) == 2 and int(weight.dims[0]) == channels
 
 
+def _unfit_smoothed_term(labels: list[str], terms: list[NDArray[np.float64]]) -> str | None:
+    """Say which smoothed constant of a norm does not fit FP16 and why, or return ``None`` when every one fits.
+
+    A term is left out of FP16 for one of two causes, worded apart: its largest magnitude reaches
+    :data:`_MAX_FP16`, or it is not finite (a NaN compares False, so it counts as not fitting too).
+
+    Args:
+        labels: One description per term, naming the constant it replaces.
+        terms: The smoothed constants, in the order of *labels*.
+
+    Returns:
+        The first term that does not fit and its cause, or ``None``.
+
+    Examples:
+        >>> _unfit_smoothed_term(["bias 'b'"], [np.array([1.0, -2.0])]) is None
+        True
+        >>> _unfit_smoothed_term(["bias 'b'"], [np.array([1e6])])
+        "its smoothed bias 'b' reaches 1e+06, past the FP16 maximum 6.55e+04"
+        >>> _unfit_smoothed_term(["bias 'b'"], [np.array([np.nan])])
+        "its smoothed bias 'b' is not finite"
+    """
+    for label, term in zip(labels, terms, strict=True):
+        peak = float(np.abs(term).max())
+        if peak < _MAX_FP16:
+            continue
+        if np.isfinite(peak):
+            return f"its smoothed {label} reaches {peak:.4g}, past the FP16 maximum {_MAX_FP16:.4g}"
+        return f"its smoothed {label} is not finite"
+    return None
+
+
 def measure_smoothing_scales(
     onnx_path: str, model: Any, plan: Int8Plan, batches: Iterable[NDArray[np.float32]]
 ) -> dict[str, NDArray[np.float64]]:
@@ -1161,7 +1222,7 @@ def measure_smoothing_scales(
     through the FP32 graph and ``w`` the largest weight of its rows, ``s = a ** alpha / w ** (1 - alpha)`` with alpha
     :data:`_SMOOTHING_ALPHA`, divided by the geometric mean of the norm's scales so that the norm keeps its overall
     size. A channel whose ``a`` or ``w`` is 0 keeps ``s = 1``, and a norm whose scaled scale, bias or weights would not
-    fit FP16 is left out.
+    fit FP16 is left out, logged at debug level with the constant that does not fit and why.
 
     Args:
         onnx_path: The FP32 ``.onnx`` file *model* was loaded from; the probe graph is written to a temporary file
@@ -1174,7 +1235,8 @@ def measure_smoothing_scales(
         Norm name to its channel scales; empty when no norm qualifies.
 
     Raises:
-        ValueError: If *batches* is empty.
+        ValueError: If *batches* is empty or holds a NaN or infinite value, or a norm's output is not finite on it (a
+            NaN computed inside the graph included).
     """
     import onnx
     from onnx import TensorProto, helper, numpy_helper
@@ -1191,25 +1253,36 @@ def measure_smoothing_scales(
     probe = onnx.ModelProto()
     probe.CopyFrom(model)
     taken = _tensor_names(probe.graph)
-    rows_axis = _unique_name("channel_maxima_rows", taken)
-    probe.graph.initializer.append(numpy_helper.from_array(np.array([0], np.int64), rows_axis))
+    rows_axis, infinity = (_unique_name(name, taken) for name in ("channel_maxima_rows", "channel_maxima_infinity"))
+    probe.graph.initializer.extend(
+        [
+            numpy_helper.from_array(np.array([0], np.int64), rows_axis),
+            numpy_helper.from_array(np.array(np.inf, np.float32), infinity),
+        ]
+    )
     names = []
     for norm in norms:
         tensor, channels = by_name[norm].output[0], int(constants[by_name[norm].input[1]].dims[0])
-        shape, rows, absolute, maximum = (
-            _unique_name(f"{tensor}__{suffix}", taken) for suffix in ("rows_shape", "rows", "abs", "channel_max")
-        )
+        shape, rows = (_unique_name(f"{tensor}__{suffix}", taken) for suffix in ("rows_shape", "rows"))
         probe.graph.initializer.append(numpy_helper.from_array(np.array([-1, channels], np.int64), shape))
-        probe.graph.node.extend(
-            [
-                helper.make_node("Reshape", [tensor, shape], [rows]),
-                helper.make_node("Abs", [rows], [absolute]),
-                helper.make_node("ReduceMax", [absolute, rows_axis], [maximum], keepdims=0),
-            ]
-        )
+        probe.graph.node.append(helper.make_node("Reshape", [tensor, shape], [rows]))
+        guarded = _absolute_with_nan_as_infinity(probe.graph, rows, tensor, infinity, taken)
+        maximum = _unique_name(f"{tensor}__channel_max", taken)
+        probe.graph.node.append(helper.make_node("ReduceMax", [guarded, rows_axis], [maximum], keepdims=0))
         probe.graph.output.append(helper.make_tensor_value_info(maximum, TensorProto.FLOAT, [channels]))
         names.append(maximum)
-    maxima, _ = _run_probe(onnx_path, probe, names, batches, np.maximum)
+    maxima: list[NDArray[np.float64]] = []
+    for values, _ in _run_probe(onnx_path, probe, names, batches):
+        # A copy padding the last group repeats an image, which cannot change a maximum.
+        maxima = values if not maxima else [np.maximum(total, value) for total, value in zip(maxima, values)]
+    unusable = [norm for norm, activation in zip(norms, maxima) if not np.isfinite(activation).all()]
+    if unusable:
+        # Refused here: a norm left out of the smoothing for it would only be refused by the calibration pass after.
+        raise ValueError(
+            f"Calibration gave {len(unusable)} backbone norm output(s) a range that is not finite (the graph "
+            f"computed a NaN or infinite activation), e.g. {unusable[0]!r}. Check that calibration_data is normalized "
+            "as predict() normalizes and that the model's outputs on it are finite."
+        )
     scales = {}
     for (norm, readers), activation in zip(norms.items(), maxima):
         weights = [numpy_helper.to_array(constants[by_name[reader].input[1]]).astype(np.float64) for reader in readers]
@@ -1221,9 +1294,13 @@ def measure_smoothing_scales(
         node = by_name[norm]
         terms = [numpy_helper.to_array(constants[node.input[i]]).astype(np.float64) / scale for i in (1, 2)]
         terms += [w * scale[:, None] for w in weights]
-        # A NaN or infinite term compares False, so it leaves the norm out too.
-        if all(float(np.abs(term).max()) < _MAX_FP16 for term in terms):
+        labels = [f"scale {node.input[1]!r}", f"bias {node.input[2]!r}"]
+        labels += [f"weight {by_name[reader].input[1]!r} of {reader!r}" for reader in readers]
+        cause = _unfit_smoothed_term(labels, terms)
+        if cause is None:
             scales[norm] = scale
+        else:
+            logger.debug(f"Left backbone LayerNorm {norm!r} unsmoothed for INT8: {cause}.")
     return scales
 
 
@@ -1258,10 +1335,7 @@ def _smooth_norms(model: Any, scales: Mapping[str, NDArray[np.float64]]) -> None
     graph = model.graph
     constants = _constant_weights(graph)
     counts = Counter(node.name for node in graph.node)
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
     by_name = {node.name: node for node in graph.node if node.name in scales and counts[node.name] == 1}
     taken = _tensor_names(graph)
 
@@ -1281,6 +1355,7 @@ def _smooth_norms(model: Any, scales: Mapping[str, NDArray[np.float64]]) -> None
         projections = all(_projects(reader, output, len(scale), constants) for reader in readers)
         if (
             norm is None
+            or norm.op_type != "LayerNormalization"
             or len(norm.input) != 3
             or not set(norm.input[1:]) <= set(constants)
             or not readers
@@ -1332,10 +1407,7 @@ def _mlp_biases(model: Any, plan: Int8Plan) -> dict[str, str]:
     """
     graph = model.graph
     constants = _constant_weights(graph)
-    consumers: dict[str, list[Any]] = {}
-    for node in graph.node:
-        for name in node.input:
-            consumers.setdefault(name, []).append(node)
+    consumers = _consumers(graph)
     names = Counter(node.name for node in graph.node)
     planned = set(plan.weighted)
     by_name = {node.name: node for node in graph.node if node.name in planned}
@@ -1375,17 +1447,20 @@ def _bias_input(add: Any, product: str, constants: Mapping[str, Any]) -> int | N
 
 
 def _channel_means_graph(
-    model: Any, tensors: Mapping[str, tuple[int, float]]
+    model: Any, tensors: Mapping[str, tuple[int, float]], batch: int
 ) -> tuple[Any, dict[str, tuple[str, str]]]:
-    """Return a copy of *model* that also outputs, per channel, the mean of each tensor and of its INT8 rounding.
+    """Return a copy of *model* that also outputs, per image and channel, the mean of each tensor and its INT8 rounding.
 
-    Each tensor of *tensors* is read as rows of its last axis, its ``channels``; the mean of every channel is taken over
-    all the rows, as is the mean of the tensor quantized to INT8 with the given step and dequantized again. *model*
-    must be at opset 18 or later, where ``ReduceMean`` takes its axes as an input.
+    Each tensor of *tensors* is read as *batch* images, each a run of rows of its last axis, its ``channels``: the
+    tensor's leading axis must list the images one after another, as RF-DETR's backbone does when it splits each image
+    into windows. The mean of every channel is taken over the rows of each image, as is the mean of the tensor
+    quantized to INT8 with the given step and dequantized again, so each output has one row per image. *model* must be
+    at opset 18 or later, where ``ReduceMean`` takes its axes as an input.
 
     Args:
         model: The FP32 ``ModelProto``.
         tensors: Tensor name to ``(channels, step)``.
+        batch: The number of images the graph runs at once.
 
     Returns:
         The probe, and per tensor the names of its two mean outputs (plain, then INT8).
@@ -1396,7 +1471,7 @@ def _channel_means_graph(
         ...     [helper.make_tensor_value_info("x", TensorProto.FLOAT, [3, 2])],
         ...     [helper.make_tensor_value_info("y", TensorProto.FLOAT, [3, 2])])
         >>> model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 19)])
-        >>> probe, outputs = _channel_means_graph(model, {"y": (2, 0.5)})
+        >>> probe, outputs = _channel_means_graph(model, {"y": (2, 0.5)}, batch=3)
         >>> outputs, [output.name for output in probe.graph.output]
         ({'y': ('y__mean', 'y__int8_mean')}, ['y', 'y__mean', 'y__int8_mean'])
     """
@@ -1409,7 +1484,7 @@ def _channel_means_graph(
     rows_axis, zero = _unique_name("channel_means_rows", taken), _unique_name("channel_means_zero_point", taken)
     probe.graph.initializer.extend(
         [
-            numpy_helper.from_array(np.array([0], np.int64), rows_axis),
+            numpy_helper.from_array(np.array([1], np.int64), rows_axis),
             numpy_helper.from_array(np.array(0, np.int8), zero),
         ]
     )
@@ -1421,7 +1496,7 @@ def _channel_means_graph(
         )
         probe.graph.initializer.extend(
             [
-                numpy_helper.from_array(np.array([-1, channels], np.int64), shape),
+                numpy_helper.from_array(np.array([batch, -1, channels], np.int64), shape),
                 numpy_helper.from_array(np.array(step, np.float32), scale),
             ]
         )
@@ -1435,7 +1510,7 @@ def _channel_means_graph(
             ]
         )
         for name in (mean, int8_mean):
-            probe.graph.output.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, [channels]))
+            probe.graph.output.append(helper.make_tensor_value_info(name, TensorProto.FLOAT, [batch, channels]))
         outputs[tensor] = (mean, int8_mean)
     return probe, outputs
 
@@ -1450,13 +1525,15 @@ def measure_mlp_bias_shifts(
     """Measure the shift INT8 adds to the mean output of each backbone MLP layer, per output channel.
 
     An INT8 layer ``y = x W + b`` computes ``Q(x) Q(W) + b``, where ``Q(x)`` rounds the input to its INT8 step and
-    ``Q(W)`` is the per-channel INT8 weight :func:`insert_qdq` stores for the FP16 copy (where a smoothed weight was
-    rounded to FP16 once more, before it was scaled). Over the calibration images
-    run through the FP32 graph its mean output moves by ``E[Q(x)] Q(W) - E[x] W``, the means taken per input channel
-    over every token, and subtracting that shift from ``b`` gives the INT8 layer the FP32 layer's mean output. Each
-    layer is measured on FP32 inputs, independently of the INT8 error of the layers before it. A static batch larger
-    than the images left over is padded with the last image, as calibration pads it, which weights that image a little
-    more in the means. The layers are those of :func:`_mlp_biases`.
+    ``Q(W)`` is the per-channel INT8 rounding of the weight cast to FP16. That matches the weight :func:`insert_qdq`
+    stores for the FP16 copy up to one FP16 rounding of a smoothed weight: the copy scales the weight it already cast to
+    FP16 and rounds it again, ``fp16(fp16(W) s)``, while this casts the smoothed FP32 weight once, ``fp16(W s)``. Over
+    the calibration images run through the FP32 graph its mean output moves by ``E[Q(x)] Q(W) - E[x] W``, the means
+    taken per input channel over every token of every image, and subtracting that shift from ``b`` gives the INT8 layer
+    the FP32 layer's mean output. Each layer is measured on FP32 inputs, independently of the INT8 error of the layers
+    before it. A static batch larger than the images left over is padded with copies of the last image, as calibration
+    pads it; the means are taken per image and the copies left out, so every image weighs the same at any batch. The
+    layers are those of :func:`_mlp_biases`.
 
     Args:
         onnx_path: The FP32 ``.onnx`` file *model* was loaded from; the probe graph is written to a temporary file
@@ -1487,15 +1564,24 @@ def measure_mlp_bias_shifts(
         )
         for name in layers
     }
-    probe, outputs = _channel_means_graph(model, tensors)
+    # The batch _graph_batches groups the images into: the static one, or a single image for a dynamic batch.
+    batch = model.graph.input[0].type.tensor_type.shape.dim[0].dim_value or 1
+    probe, outputs = _channel_means_graph(model, tensors, batch)
     names = [name for pair in outputs.values() for name in pair]
-    sums, count = _run_probe(onnx_path, probe, names, batches, np.add)
-    means = dict(zip(names, (total / count for total in sums)))
+    sums: list[NDArray[np.float64]] = []
+    images = 0
+    for measured, real in _run_probe(onnx_path, probe, names, batches):
+        # One row per image, so the copies that pad the last group are left out.
+        group = [value[:real].sum(axis=0) for value in measured]
+        sums = group if not sums else [total + value for total, value in zip(sums, group)]
+        images += real
+    means = dict(zip(names, (total / images for total in sums)))
     shifts = {}
     for name, add in layers.items():
         node = by_name[name]
         weight = numpy_helper.to_array(weights[node.input[1]]).astype(np.float64)
-        # As insert_qdq quantizes the FP16 copy, whose smoothed weights were rounded to FP16 once more before scaling.
+        # The weight insert_qdq quantizes in the FP16 copy, up to one FP16 rounding of a smoothed weight: the copy holds
+        # fp16(fp16(W) * s), this is fp16(W * s).
         values, scales = _quantized_weight(weight.astype(np.float16), axis=1)
         mean, int8_mean = (means[output] for output in outputs[node.input[0]])
         shifts[add] = int8_mean @ (values.astype(np.float64) * scales.astype(np.float64)) - mean @ weight
@@ -1534,7 +1620,7 @@ def _correct_biases(model: Any, shifts: Mapping[str, NDArray[np.float64]]) -> No
     for name, shift in shifts.items():
         node = by_name.get(name)
         index = next((i for i, tensor in enumerate(node.input) if tensor in constants), None) if node else None
-        if node is None or index is None:
+        if node is None or node.op_type != "Add" or index is None:
             raise ValueError(
                 f"The FP16 copy has no bias Add {name!r} for the INT8 bias correction, which the FP16 cast cannot "
                 "cause."
@@ -1932,10 +2018,15 @@ def int8_source_graph(
     keys = list(plan.activations)
     tensors = sorted({_input_tensor(source.graph, name, index) for name, index in keys})
 
-    def images() -> contextlib.closing[Generator[NDArray[np.float32], None, None]]:
-        """A fresh pass over the calibration images, closed even when the pass raises (a memory-mapped ``.npy``)."""
+    def images(*, quiet: bool = False) -> contextlib.closing[Generator[NDArray[np.float32], None, None]]:
+        """A fresh pass over the calibration images, closed even when the pass raises (a memory-mapped ``.npy``).
+
+        *quiet* skips the per-sample range warnings, which the first pass over the images has already logged.
+        """
         return contextlib.closing(
-            calibration_batches(calibration_data, height=height, width=width, channels=channels, max_images=max_images)
+            calibration_batches(
+                calibration_data, height=height, width=width, channels=channels, max_images=max_images, quiet=quiet
+            )
         )
 
     detection = tuple(output.name for output in source.graph.output) == _DETECTION_OUTPUT_NAMES
@@ -1946,7 +2037,7 @@ def int8_source_graph(
             scales = measure_smoothing_scales(onnx_path, source, plan, batches)
         _smooth_norms(source, scales)
         logger.info(f"Smoothed {len(scales)} backbone LayerNorm output(s) for INT8")
-    with images() as batches:
+    with images(quiet=detection) as batches:  # the first pass unless the smoothing pass came before
         by_tensor = calibrate_ranges(onnx_path, source, tensors, batches)
     unusable = sorted(t for t, r in by_tensor.items() if not np.isfinite(r) or r / _INT8_MAX > _MAX_FP16)
     if unusable:
@@ -1960,7 +2051,7 @@ def int8_source_graph(
     shifts: dict[str, NDArray[np.float64]] = {}
     if detection:
         # Measured at the steps just calibrated, on the smoothed graph.
-        with images() as batches:
+        with images(quiet=True) as batches:
             shifts = measure_mlp_bias_shifts(onnx_path, source, plan, ranges, batches)
         logger.info(f"Corrected the bias of {len(shifts)} backbone MLP layer(s) for the mean shift of INT8")
     del source
