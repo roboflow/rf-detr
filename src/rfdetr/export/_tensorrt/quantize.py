@@ -489,8 +489,9 @@ def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
     Args:
         model: ``ModelProto`` to rewrite; left untouched when it holds no such layer.
         multiple_of: At least 1. Rewrite only a patch whose flattened ``channels * patch * patch`` values are a
-            multiple of this. The INT8 plan passes :data:`_INT8_CONV_CHANNEL_MULTIPLE`, so that the patches it quantizes
-            are the ones an INT8 matrix multiply needs no padding for; the default rewrites every patch embedding.
+            multiple of this. The INT8 plan passes :data:`_INT8_CONV_CHANNEL_MULTIPLE`, which keeps the 768 values of a
+            16-pixel patch and leaves out the 432 of a 12-pixel one: on Seg Small and Keypoint Preview that INT8 matrix
+            multiply ran no faster than the FP16 one and lowered the AP. The default rewrites every patch embedding.
 
     Returns:
         The number of layers rewritten.
