@@ -424,7 +424,7 @@ class TestValidateCheckpointCompatibility:
 
         warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert any(
-            "Keeping num_classes=93" in msg and "resized to 94 outputs" in msg and "the 3 new outputs" in msg
+            "Keeping num_classes=93" in msg and "grows from 90 to 93 classes" in msg and "3 added class(es)" in msg
             for msg in warning_msgs
         ), f"Expected a 'Keeping num_classes=93' resize warning, got: {warning_msgs}"
         assert not any("Using checkpoint class count" in msg for msg in warning_msgs), warning_msgs

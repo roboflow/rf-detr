@@ -354,16 +354,18 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
                     model_num_classes,
                 )
             elif "num_classes" in getattr(model_args, "model_fields_set", set()):
-                # A num_classes that was set (by the caller or by dataset alignment) wins: `load_pretrain_weights`
-                # loads the checkpoint head, then resizes it to the configured size by tiling existing rows.
+                # A num_classes in `model_fields_set` (any explicit value or later assignment) wins:
+                # `load_pretrain_weights` loads the checkpoint head, then resizes it to the configured size by
+                # tiling existing rows.
                 logger.warning(
                     "Checkpoint has %d classes but model is configured for %d. "
-                    "Keeping num_classes=%d; the loaded classification head is resized to %d outputs, "
-                    "and the %d new outputs start as copies of existing checkpoint rows.",
+                    "Keeping num_classes=%d; the classification head grows from %d to %d classes, "
+                    "and the %d added class(es) start as copies of existing ones until fine-tuned.",
                     ckpt_num_classes - 1,
                     model_num_classes,
                     model_num_classes,
-                    model_num_classes + 1,
+                    ckpt_num_classes - 1,
+                    model_num_classes,
                     model_num_classes + 1 - ckpt_num_classes,
                 )
             else:
