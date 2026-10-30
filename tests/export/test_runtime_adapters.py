@@ -562,6 +562,43 @@ class TestRuntimeSuffixes:
         with pytest.raises(ValueError, match="does not accept 'cache_dirr'"):
             load_runtime(artifact, _detect_metadata(format), options={"cache_dirr": "cache"})
 
+    @pytest.mark.parametrize("format", ["tflite", "litert"])
+    def test_tflite_family_passes_num_threads_to_the_interpreter(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, format: str
+    ) -> None:
+        """`num_threads` reaches the interpreter, so a benchmark can put TFLite and LiteRT on the same pool as the rest.
+
+        The interpreter defaults to one thread, which makes an unpinned TFLite or LiteRT row measure the thread pool and
+        not the format. The loader stops at the stub, before the graph checks, because only the hand-off is under test.
+        """
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"artifact")
+        create = Mock(side_effect=RuntimeError("stop after the interpreter hand-off"))
+        monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", create)
+
+        with pytest.raises(RuntimeError, match="stop after"):
+            load_runtime(artifact, _detect_metadata(format), options={"num_threads": 4})
+
+        create.assert_called_once_with(artifact, num_threads=4)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool"),
+            pytest.param("4", id="string"),
+            pytest.param(2.5, id="float"),
+        ],
+    )
+    def test_tflite_refuses_an_invalid_num_threads(self, tmp_path: Path, value: object) -> None:
+        """Only a positive integer thread count is accepted, before the interpreter package is needed."""
+        artifact = tmp_path / "model.tflite"
+        artifact.write_bytes(b"artifact")
+
+        with pytest.raises(ValueError, match="num_threads"):
+            load_runtime(artifact, _detect_metadata("tflite"), options={"num_threads": value})
+
 
 class TestGraphInterfaceChecks:
     """The shared graph-interface checks every format loader runs before it builds a runtime."""
