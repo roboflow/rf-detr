@@ -42,6 +42,7 @@ import torch
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
+from rfdetr.export._coreml.passes import rfdetr_pass_pipeline
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._neural_engine import neural_engine_model
 from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
@@ -351,7 +352,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             NotImplementedError: If the exported graph contains op kinds missing from coremltools'
                 Torch registry.
             ValueError: If ``torch.export`` or ``coremltools.convert`` raises it directly.
-            RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
+            RuntimeError: If ``torch.export``, building the RF-DETR pass pipeline or ``coremltools.convert`` fails
+                for any other reason.
         """
         try:
             with torch.no_grad():
@@ -367,6 +369,11 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                     # `resample` fp32 via FP16ComputePrecision(op_selector=...) (measured 48.04 AP at iOS16, #1604).
                     minimum_deployment_target=api.target.iOS15,
                     compute_precision=compute_precision,
+                    # Rewrites every upsample_bilinear (the segmentation masks' 3x resize included) as matmuls: the
+                    # Neural Engine's 3x upsample_bilinear samples half a cell off. Built here, inside the guard,
+                    # because coremltools mutates the pipeline and a coremltools release without the anchor pass
+                    # must fail as a RuntimeError naming the pin.
+                    pass_pipeline=rfdetr_pass_pipeline(),
                 )
         except (ImportError, NotImplementedError, ValueError):
             # ImportError here is not dead code even though _check_coremltools_available() already

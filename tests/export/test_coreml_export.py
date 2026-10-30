@@ -411,7 +411,7 @@ class TestConvertDeploymentTarget:
     def test_converts_for_ios15_so_the_neural_engine_runs_a_spec_6_program(
         self, tmp_path: Path, precision_member: str
     ) -> None:
-        """The whole convert call is pinned: mlprogram, the iOS15 target, and the resolved precision member.
+        """The whole convert call is pinned: mlprogram, the iOS15 target, the precision member, and the pass pipeline.
 
         The target selects the program generation; spec 7 (iOS16) loses ~3 box AP on the Neural Engine. Measured on an
         M3 Pro: pretrained RFDETRNano at fp16 under ``CPU_AND_NE`` scores 45.06 AP on all 5000 COCO val2017 images at
@@ -426,6 +426,7 @@ class TestConvertDeploymentTarget:
         with (
             mock.patch.object(exporter, "_export_program") as export_program,
             mock.patch.object(exporter, "_check_op_coverage"),
+            mock.patch("rfdetr.export._coreml.exporter.rfdetr_pass_pipeline") as rfdetr_pass_pipeline,
         ):
             exporter._build_mlmodel(mock.Mock(), precision_member, api)
 
@@ -434,7 +435,32 @@ class TestConvertDeploymentTarget:
             convert_to="mlprogram",
             minimum_deployment_target=target.iOS15,
             compute_precision=precision_member,
+            pass_pipeline=rfdetr_pass_pipeline.return_value,
         )
+
+
+class TestPassPipelineGuard:
+    """``_build_mlmodel`` builds the pass pipeline inside the conversion's error guard."""
+
+    def test_a_failing_pipeline_build_surfaces_as_a_runtime_error(self, tmp_path: Path) -> None:
+        """A pipeline that cannot be built fails the export as ``RuntimeError``, not as the raw registry error.
+
+        Every Core ML export builds the pipeline, detection included. Before it moved into the guard, a registry
+        ``KeyError`` escaped ``_import_coreml_api`` unclassified, so a coremltools release that breaks the pass
+        registration broke every export with an error that did not mention Core ML.
+        """
+        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
+
+        with (
+            mock.patch.object(exporter, "_export_program"),
+            mock.patch.object(exporter, "_check_op_coverage"),
+            mock.patch(
+                "rfdetr.export._coreml.exporter.rfdetr_pass_pipeline", side_effect=KeyError("already registered")
+            ),
+            pytest.raises(RuntimeError, match="CoreML export failed"),
+        ):
+            exporter._build_mlmodel(mock.Mock(), "fp32-member", api)
 
 
 class TestSaveMlmodelMetadata:
@@ -582,6 +608,7 @@ class TestExportCoremlBareDefaultNaming:
             mock.patch("rfdetr.export._coreml.exporter._IS_COREMLTOOLS_AVAILABLE", True),
             mock.patch("torch.export.export", return_value=exported_program),
             mock.patch("rfdetr.export._coreml.exporter.unsupported_coreml_ops", return_value={}),
+            mock.patch("rfdetr.export._coreml.exporter.rfdetr_pass_pipeline"),
         ):
             config = CoreMLConfig(
                 output_dir=tmp_path,
