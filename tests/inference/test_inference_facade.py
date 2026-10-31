@@ -27,15 +27,14 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersLayer,
 )
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.utilities.imports import _IS_TORCH_INDUCTOR_MPS_INSTALLED
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 
 from .helpers import _DummyModel, _DummyRFDETR
 
 _skip_without_mps_inductor = pytest.mark.skipif(
-    not (torch.backends.mps.is_available() and _IS_TORCH_INDUCTOR_MPS_INSTALLED),
-    reason="needs an MPS device and PyTorch's MPS inductor code generator",
+    not torch.backends.mps.is_available() or _default_compile_backend(torch.device("mps")) != "inductor",
+    reason="needs an MPS device whose default predictor compiles with inductor",
 )
 
 
