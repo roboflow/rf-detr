@@ -182,6 +182,14 @@ jobs:
         # empirically validated range and removal condition).
         run: uv pip install -e ".[${{ matrix.format }}${{ matrix.extra_plus }},train,augment,cli,visual]" --group tests --group ${{ matrix.extra_group }}
 
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        env:
+          EXTRAS: ${{ matrix.format }}${{ matrix.extra_plus }},train,augment,cli,visual
+          GROUPS: tests${{ matrix.extra_group && format(',{0}', matrix.extra_group) || '' }}
+        shell: bash
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras "$EXTRAS" --groups "$GROUPS"
+
       # Guard against a silently-skipped parity test: each format's test class is gated by a
       # skipif/importorskip on its runtime's availability, so a broken/missing wheel would skip
       # it (false green) instead of failing red. The executorch+coreml delegate row runs both
@@ -322,6 +330,13 @@ jobs:
         # [tensorrt] provides tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
         # export toolchain (the e2e exports RFDETRNano to ONNX first).
         run: uv pip install -e ".[tensorrt,onnx,train,augment,cli,visual]" --group tests
+
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        shell: bash
+        run: >-
+          uv run --no-sync python .github/scripts/check_install_flags.py
+          --extras tensorrt,onnx,train,augment,cli,visual --groups tests
 
       - name: 🔎 Verify tensorrt import
         # Guard against a silently-skipped parity test: TestTensorRTEndToEnd is gated by a skipif on
@@ -498,6 +513,11 @@ jobs:
       - name: 🚀 Install Packages (train and cli extras, for the roboflow SDK)
         timeout-minutes: 5
         run: uv pip install -e ".[train,cli]" --group tests
+
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        shell: bash
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras train,cli --groups tests
 
       - name: 🔑 Verify required secrets are present
         run: |

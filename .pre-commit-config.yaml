@@ -106,6 +106,17 @@ repos:
         exclude: >-
           ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/test_tensorrt_int8)\.py$
 
+      - id: install-flags-declared
+        name: install flags probe declared packages
+        description: >-
+          Every _IS_<PACKAGE>_INSTALLED flag is a literal is_installed("<name>") probe of a package pyproject.toml
+          declares; a mistyped name would leave the flag false and skip its tests on every host.
+        language: python
+        additional_dependencies: ["packaging", "tomli; python_version < '3.11'"]
+        entry: python .github/scripts/check_install_flags.py
+        files: ^(src/rfdetr/(utilities|export)/imports\.py|pyproject\.toml|\.github/scripts/check_install_flags\.py)$
+        pass_filenames: false
+
       - id: mypy
         name: mypy
         # Run through the project environment, matching ci-typing.yml.

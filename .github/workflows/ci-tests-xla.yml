@@ -62,6 +62,10 @@ jobs:
         run: |
           uv pip install -e ".[train,xla,cli]" --group tests
 
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras train,xla,cli --groups tests
+
       - name: 🔧 Expose libpython for torch_xla
         # torch_xla's _XLAC extension links the shared libpython3.11.so.1.0, which uv's standalone
         # CPython keeps in the interpreter LIBDIR — not on the loader path. Put LIBDIR on

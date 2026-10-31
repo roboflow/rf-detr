@@ -53,6 +53,12 @@ jobs:
         # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
         run: uv pip install -e ".[onnx,plus,train,augment,visual,data,cli]" --group tests
 
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        run: >-
+          uv run --no-sync python .github/scripts/check_install_flags.py
+          --extras onnx,plus,train,augment,visual,data,cli --groups tests
+
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights
         with:
