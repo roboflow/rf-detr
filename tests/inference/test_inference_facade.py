@@ -623,6 +623,19 @@ def _snapshot_rewrites(module: torch.nn.Module) -> tuple[bool, bool]:
     return native, folded
 
 
+def _cpu_twin(model: RFDETRNano) -> RFDETRNano:
+    """Build a CPU copy of a ``mps_nano_model``-shaped model carrying the same weights.
+
+    Examples:
+        Needs a built model, which a standalone doctest cannot create cheaply.
+
+        >>> _cpu_twin(mps_nano_model).predict(image)  # doctest: +SKIP
+    """
+    twin = RFDETRNano(pretrain_weights=None, device="cpu", resolution=64, num_queries=4, num_select=4, num_classes=2)
+    twin.model.model.load_state_dict(model.model.model.state_dict())
+    return twin
+
+
 class TestMpsSnapshotRewrites:
     """On MPS the snapshot samples with ``F.grid_sample`` and folds LayerScale; elsewhere it is left as built."""
 
@@ -674,9 +687,12 @@ class TestMpsSnapshotRewrites:
         The other parity cases pin TorchScript or replace ``torch.compile``; this one runs the shipped default, so a
         wrong inductor kernel or a sampler rewrite that breaks under inductor fails here. The LayerScales hold distinct
         non-unit values, as in the TorchScript case.
+
+        The reference runs on the CPU: on the virtualized GPU of GitHub's macOS runners, eager MPS predicted confidences
+        near 0.7 for this model while the CPU and the inductor snapshot agreed on about 0.02.
         """
         image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
-        expected = mps_scaled_nano_model.predict(image, threshold=0.0)
+        expected = _cpu_twin(mps_scaled_nano_model).predict(image, threshold=0.0)
 
         actual = mps_scaled_nano_model.inference().predict(image, threshold=0.0)
 
