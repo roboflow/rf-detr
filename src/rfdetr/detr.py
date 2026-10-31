@@ -48,6 +48,8 @@ from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categorie
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, RFDETRInference, _build_model_context
+from rfdetr.models.backbone.dinov2_with_windowed_attn import _fold_layer_scales
+from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
@@ -56,6 +58,7 @@ from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_proc
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.tensors import _native_grid_sample
 
 if TYPE_CHECKING:
     from rfdetr._prediction.types import _PredictionOutput
@@ -1687,6 +1690,10 @@ class RFDETR:
         source concurrently with snapshot creation. An existing legacy optimized runtime is not copied; the current
         base weights are the source of truth.
 
+        On MPS, the snapshot samples deformable attention with the fused ``F.grid_sample`` and, unless
+        ``compile_backend="inductor"``, folds each DINOv2 LayerScale into the Linear layer before it. Its predictions
+        match the source model's to float rounding, not bit for bit.
+
         Capture the return value and call ``predictor.predict(images)``. Calling ``model.predict(images)`` continues
         to use the source model. Each factory call allocates its own weight copy; release a predictor to release its
         runtime, or release the source model when only inference is needed. The former ``inplace`` option is removed.
@@ -1763,6 +1770,16 @@ class RFDETR:
             inference_model = inference_model.to(device=device)
             inference_model.eval()
             inference_model.export()
+            if device.type == "mps":
+                # The snapshot never runs backward, so it can take MPS's fused `F.grid_sample` instead of the gather
+                # path the training sampler keeps for its missing MPS backward. Folding LayerScale into the Linears
+                # before it drops two multiplies per backbone block for TorchScript and eager; inductor fuses them
+                # already, and measured slower with them folded.
+                for module in inference_model.modules():
+                    if isinstance(module, MSDeformAttn):
+                        module.grid_sample = _native_grid_sample
+                if not (compile and compile_backend == "inductor"):
+                    _fold_layer_scales(inference_model)
             inference_model = inference_model.to(dtype=dtype)
             if compile:
                 dummy_input = torch.randn(

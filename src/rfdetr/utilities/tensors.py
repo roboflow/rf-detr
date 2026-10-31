@@ -245,6 +245,36 @@ def _onnx_nested_tensor_from_tensor_list(
     return NestedTensor(tensor, mask=mask)
 
 
+def _native_grid_sample(
+    input: Tensor,
+    grid: Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+) -> Tensor:
+    """Bilinear ``F.grid_sample`` on every device, for modules that never run a backward pass.
+
+    :func:`_bilinear_grid_sample` keeps a gather-based path on MPS because ``F.grid_sample`` has no MPS backward. An
+    inference-only copy of a model, such as the snapshot :meth:`rfdetr.detr.RFDETR.inference` builds, can use the fused
+    kernel instead: on MPS it is faster and matches the gather path to float rounding.
+
+    Args:
+        input: Feature map of shape ``(N, C, H, W)``.
+        grid: Sampling grid of shape ``(N, Hg, Wg, 2)`` with values in ``[-1, 1]``.
+        padding_mode: ``"zeros"`` or ``"border"``, as for :func:`_bilinear_grid_sample`.
+        align_corners: Whether grid extremes map to the corner pixel centres.
+
+    Returns:
+        Sampled tensor of shape ``(N, C, Hg, Wg)``.
+
+    Examples:
+        >>> _native_grid_sample(torch.ones(1, 1, 2, 2), torch.zeros(1, 1, 1, 2)).item()
+        1.0
+    """
+    import torch.nn.functional as F  # noqa: N812
+
+    return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
+
+
 def _bilinear_grid_sample(
     input: Tensor,
     grid: Tensor,
