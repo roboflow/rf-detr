@@ -64,6 +64,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- On MPS, `RFDETR.inference()` builds a faster predictor: its copy of the model samples deformable attention with PyTorch's fused `F.grid_sample` instead of the gather-based sampler kept for training, and, for TorchScript and `compile=False` predictors, folds each DINOv2 LayerScale into the Linear layer before it. At float32, predictions match the source model to float rounding, not bit for bit, and half precision can differ by more; the source model, other devices, the inductor backend's LayerScale and exports are unchanged.
+
 - On an accelerator such as CUDA or MPS, `RFDETRInference.predict()` decodes the next batch of image files on worker threads while the current batch runs, for directories, globs, image files and lists of them predicted in batches; results are unchanged. Cameras, live URLs, screens, videos named directly, manifests and models predicting on the CPU keep reading one batch at a time.
 
 - `RFDETRInference.predict()` with `batch=None` now predicts an eager (`stream=False`) directory or glob, or a list of them, in batches of eight on a model without a fixed batch size; it ran one image per batch before. Batched results can differ from single-image ones by floating-point rounding. Streamed calls, manifests, compiled snapshots and exports keep one image per batch; pass `batch=1` to keep the previous behaviour.

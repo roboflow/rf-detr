@@ -32,6 +32,28 @@ results = predictor.predict("image.jpg")
 
 The native factory defaults to TorchScript compilation, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
 
+### Choose a fast route
+
+`model.inference()` is the fast native route. `RFDETRInference(model)` and a `.pth`, `.pt`, or `.ckpt` path passed to `RFDETRInference` run the eager model, which is slower per image than the default TorchScript predictor. For a checkpoint, load it with `RFDETR.from_checkpoint()` and call `inference()` on the result.
+
+On Apple Silicon, `compile_backend="inductor"` can be faster than the default TorchScript backend; measure both with your model, batch size and resolution. Compilation takes several seconds and runs again for each new input shape, so prefer it for long runs at one batch size and resolution. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.
+
+```python
+from pathlib import Path
+
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall(device="mps")
+predictor = model.inference(compile_backend="inductor", batch_size=8)
+images = sorted(Path("images").glob("*.jpg"))
+images = images[: len(images) // 8 * 8]  # Whole batches only; predict the rest with a compile=False predictor.
+if not images:
+    raise ValueError("Need at least eight images for one compiled batch of 8.")
+results = predictor.predict(images, batch=8)
+```
+
+On MPS, the predictor also samples the decoder's deformable attention with PyTorch's fused `grid_sample` and, for TorchScript and eager predictors, folds the backbone's LayerScale weights into the Linear layers before them. Only the predictor's copy of the model changes; at float32 its predictions match the source model's to float rounding, and in half precision they can differ by more.
+
 For the borrowed live-model behavior, construct `RFDETRInference(model)` directly. That facade reads the model's current state on every prediction, so it observes later training or optimization changes; configure the model's device and omit `device`, `metadata`, and `runtime_options` for this source. This mode does not promise safety when training mutates the model concurrently with prediction.
 
 For export files, install the runtime extra for the target format and keep any `.rfdetr.json` sidecar beside its artifact. ONNX stores inference metadata in the model; other exported formats use the sidecar. For older exports, load the source checkpoint and call `model.write_export_metadata(path, format=...)` with the original export settings; without that checkpoint, supply missing inference semantics through `metadata=` as a JSON path or mapping. Sidecar metadata is checked against the artifact. `notes` do not replace task, classes, output, or preprocessing metadata. See [Export Basics](../exports/basics.md#predict-with-rfdetrinference) and its format guides for runtime installation and options.

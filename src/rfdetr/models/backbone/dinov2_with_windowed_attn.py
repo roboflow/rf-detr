@@ -812,6 +812,44 @@ class WindowedDinov2WithRegistersLayer(nn.Module):
         return cast("tuple[Tensor, Tensor | None] | tuple[Tensor]", outputs)
 
 
+@torch.no_grad()
+def _fold_layer_scales(module: nn.Module) -> int:
+    """Fold every DINOv2 ``LayerScale`` into the Linear that feeds it, for an inference-only copy of a model.
+
+    ``layer_scale1`` multiplies the attention output projection's result and ``layer_scale2`` the MLP's last Linear's,
+    per channel, so scaling that Linear's weight rows and bias gives the same values with one kernel fewer per scale;
+    each ``LayerScale`` is then replaced by ``nn.Identity``. The parameters change in place, so call this on a copy
+    that will not be trained or saved as a checkpoint.
+
+    Args:
+        module: A model, or part of one, holding :class:`WindowedDinov2WithRegistersLayer` modules.
+
+    Returns:
+        The number of ``LayerScale`` modules folded.
+
+    Examples:
+        >>> _fold_layer_scales(nn.Linear(2, 2))
+        0
+    """
+    folded = 0
+    for layer in module.modules():
+        if not isinstance(layer, WindowedDinov2WithRegistersLayer):
+            continue
+        mlp_output = layer.mlp.weights_out if isinstance(layer.mlp, Dinov2WithRegistersSwiGLUFFN) else layer.mlp.fc2
+        producers = (("layer_scale1", layer.attention.output.dense), ("layer_scale2", mlp_output))
+        for name, linear in cast("tuple[tuple[str, nn.Linear], ...]", producers):
+            scale = getattr(layer, name)
+            if not isinstance(scale, Dinov2WithRegistersLayerScale):
+                continue
+            factor = scale.lambda1.to(linear.weight.dtype)
+            linear.weight.mul_(factor[:, None])
+            if linear.bias is not None:
+                linear.bias.mul_(factor)
+            setattr(layer, name, nn.Identity())
+            folded += 1
+    return folded
+
+
 class WindowedDinov2WithRegistersEncoder(nn.Module):
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
         super().__init__()

@@ -38,8 +38,9 @@ def _is_power_of_2(n: int) -> bool:
 class MSDeformAttn(nn.Module):
     """Multi-Scale Deformable Attention Module."""
 
-    #: Samples each level's value map in the deformable-attention core. An exporter can set an exact sampler of its
-    #: own on the module instances of the model it converts; the class default serves every other caller.
+    #: Samples each level's value map in the deformable-attention core. An exporter, or ``RFDETR.inference()`` for the
+    #: snapshot it builds, can set a sampler of its own on the module instances of the copy it owns; the class default
+    #: serves every other caller.
     grid_sample: Callable[..., Tensor] = staticmethod(_bilinear_grid_sample)
 
     def __init__(self, d_model: int = 256, n_levels: int = 4, n_heads: int = 8, n_points: int = 4) -> None:
