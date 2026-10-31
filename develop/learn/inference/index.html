@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-26T17:28:12">
+  <meta property="article:modified_time" content="2026-10-31T17:00:19">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-26T17:28:12",
+    "dateModified": "2026-10-31T17:00:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -962,6 +962,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Choose a source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choose-a-fast-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a fast route
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3040,6 +3057,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Choose a source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choose-a-fast-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a fast route
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3103,12 +3137,28 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The native factory defaults to TorchScript compilation, batch size 1, and float32. Pass <code>compile=False</code> for a CPU-safe eager predictor. Compilation settings such as <code>batch_size</code>, <code>dtype</code>, and <code>compile_backend</code> belong to each returned predictor; the factory does not change the source model. The removed <code>inplace</code> keyword is rejected. <code>remove_optimized_model()</code> and <code>is_optimized_inplace</code> remain only for legacy model state and do not manage predictor lifetime.</p>
+<h3 id="choose-a-fast-route">Choose a fast route<a class="headerlink" href="#choose-a-fast-route" title="Permanent link">&para;</a></h3>
+<p><code>model.inference()</code> is the fast native route. <code>RFDETRInference(model)</code> and a <code>.pth</code>, <code>.pt</code>, or <code>.ckpt</code> path passed to <code>RFDETRInference</code> run the eager model, which is slower per image than the default TorchScript predictor. For a checkpoint, load it with <code>RFDETR.from_checkpoint()</code> and call <code>inference()</code> on the result.</p>
+<p>On Apple Silicon, <code>compile_backend="inductor"</code> can be faster than the default TorchScript backend; measure both with your model, batch size and resolution. Compilation takes several seconds and runs again for each new input shape, so prefer it for long runs at one batch size and resolution. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"mps"</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">compile_backend</span><span class="o">=</span><span class="s2">"inductor"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">images</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"images"</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.jpg"</span><span class="p">))</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">images</span> <span class="o">=</span> <span class="n">images</span><span class="p">[:</span> <span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">)</span> <span class="o">//</span> <span class="mi">8</span> <span class="o">*</span> <span class="mi">8</span><span class="p">]</span>  <span class="c1"># Whole batches only; predict the rest with a compile=False predictor.</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">if</span> <span class="ow">not</span> <span class="n">images</span><span class="p">:</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Need at least eight images for one compiled batch of 8."</span><span class="p">)</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span></code></pre></div>
+<p>On MPS, the predictor also samples the decoder's deformable attention with PyTorch's fused <code>grid_sample</code> and, for TorchScript and eager predictors, folds the backbone's LayerScale weights into the Linear layers before them. Only the predictor's copy of the model changes; at float32 its predictions match the source model's to float rounding, and in half precision they can differ by more.</p>
 <p>For the borrowed live-model behavior, construct <code>RFDETRInference(model)</code> directly. That facade reads the model's current state on every prediction, so it observes later training or optimization changes; configure the model's device and omit <code>device</code>, <code>metadata</code>, and <code>runtime_options</code> for this source. This mode does not promise safety when training mutates the model concurrently with prediction.</p>
 <p>For export files, install the runtime extra for the target format and keep any <code>.rfdetr.json</code> sidecar beside its artifact. ONNX stores inference metadata in the model; other exported formats use the sidecar. For older exports, load the source checkpoint and call <code>model.write_export_metadata(path, format=...)</code> with the original export settings; without that checkpoint, supply missing inference semantics through <code>metadata=</code> as a JSON path or mapping. Sidecar metadata is checked against the artifact. <code>notes</code> do not replace task, classes, output, or preprocessing metadata. See <a href="../../exports/basics/#predict-with-rfdetrinference">Export Basics</a> and its format guides for runtime installation and options.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"checkpoint.pth"</span><span class="p">)</span>  <span class="c1"># The source checkpoint of this export.</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">model</span><span class="o">.</span><span class="n">write_export_metadata</span><span class="p">(</span><span class="s2">"output/model.xml"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"checkpoint.pth"</span><span class="p">)</span>  <span class="c1"># The source checkpoint of this export.</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">model</span><span class="o">.</span><span class="n">write_export_metadata</span><span class="p">(</span><span class="s2">"output/model.xml"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Backbone-only artifacts contain features rather than predictions and cannot be loaded by this image-prediction API. LiteRT does not support full keypoint exports. The constructor accepts a <code>trust_checkpoint</code> option for checkpoints containing custom Python objects; enable it only for a checkpoint you trust.</p>
 <h2 id="predict-images">Predict images<a class="headerlink" href="#predict-images" title="Permanent link">&para;</a></h2>
@@ -3116,18 +3166,18 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>HTTP(S) URL strings are downloaded with <code>requests</code> using a 30-second connect and read timeout, which does not bound the total download time. Redirects are followed, and the whole response body is read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted URLs, download and validate the image yourself and pass the decoded image instead.</p>
 <p>PIL images and files are converted to the model's expected channels. For a one-channel model, a single-channel PIL image or file is converted to grayscale (<code>L</code>); for three-channel models, non-RGB PIL images are converted to RGB. NumPy arrays retain their supplied layout: use <code>(H, W)</code> or <code>(H, W, 1)</code> for one channel and <code>(H, W, 3)</code> for RGB. Tensor inputs use channel-first <code>(C, H, W)</code> and must already have the model's channel count. Floating-point arrays and all tensor inputs must have pixel values in <code>[0, 1]</code>; PIL images and <code>uint8</code> NumPy arrays use <code>[0, 255]</code>. Tensors are image pixels before mean/std normalization, not already-preprocessed runtime batches.</p>
 <p>With <code>include_source_image=True</code> (the default), predictions retain a writable <code>uint8</code> source image: single-channel PIL/file inputs converted to <code>L</code> use <code>(H, W)</code>, NumPy arrays keep <code>(H, W)</code> or <code>(H, W, 1)</code>, and single-channel tensor inputs become <code>(H, W, 1)</code> after conversion from channel-first layout. RGB source images use <code>(H, W, 3)</code>. <code>source_image</code> is stored in <code>Detections.metadata</code>; <code>KeyPoints</code> stores it per object in <code>data</code>. Convert grayscale to RGB explicitly before passing it to annotation code that expects three-channel color:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">gray_predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="s2">"output/grayscale.onnx"</span><span class="p">)</span>  <span class="c1"># A one-channel detector.</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">with</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"gray.png"</span><span class="p">)</span> <span class="k">as</span> <span class="n">image</span><span class="p">:</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">gray</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"L"</span><span class="p">))</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">gray_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">gray</span><span class="p">)</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">rgb</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="n">gray</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="mi">3</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">()</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">rgb</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">gray_predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="s2">"output/grayscale.onnx"</span><span class="p">)</span>  <span class="c1"># A one-channel detector.</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="k">with</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"gray.png"</span><span class="p">)</span> <span class="k">as</span> <span class="n">image</span><span class="p">:</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">gray</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"L"</span><span class="p">))</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">gray_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">gray</span><span class="p">)</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="n">rgb</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="n">gray</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="mi">3</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">()</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">rgb</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The output is <code>supervision.Detections</code> for detection and segmentation, or <code>supervision.KeyPoints</code> for keypoints. <code>class_names</code> returns the class names for the source. Prediction does not promise a particular accuracy or latency; those depend on the model, runtime, hardware, and settings.</p>
 <h2 id="inspect-runtime-constraints">Inspect runtime constraints<a class="headerlink" href="#inspect-runtime-constraints" title="Permanent link">&para;</a></h2>
@@ -3168,14 +3218,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </table>
 <p>Eager native models accept dynamic spatial dimensions and batch sizes. A native predictor returned by <code>model.inference()</code> fixes its spatial dimensions and reports an exact <code>batch_size</code> after compilation. Exported artifacts report their own fixed or dynamic axes and batch limits. A fixed batch requires exactly that many images; a maximum permits smaller batches down to one. Invalid shapes or batches fail before runtime execution.</p>
 <p>By default, preprocessing resizes to <code>default_shape</code>. Pass <code>shape=(height, width)</code> to override it where the source allows. Each dimension must be positive and divisible by <code>patch_size * num_windows</code>; fixed-shape artifacts require their exported dimensions. <code>patch_size</code> is an advanced validation override, not a way to change the backbone: it must be a positive integer matching the model's configured patch size. Omit it to use the configured value.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="s2">"output/model.onnx"</span><span class="p">)</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">class_names</span><span class="p">)</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">runtime_info</span><span class="p">)</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">),</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.4</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="s2">"output/model.onnx"</span><span class="p">)</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">class_names</span><span class="p">)</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">runtime_info</span><span class="p">)</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">),</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.4</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>antialias=None</code> (the default) uses the artifact metadata's <code>resize_antialias</code> for exported sources and <code>False</code> for native sources. Pass <code>antialias=True</code> or <code>antialias=False</code> to override it and match the checkpoint's training resize. New exports record <code>resize_antialias=False</code> because training-time resize settings are not stored; for older artifacts without metadata, <code>metadata=</code> can supply <code>resize_antialias=True</code>.</p>
 <p>The public prediction keywords are <code>threshold</code>, <code>shape</code>, <code>patch_size</code>, <code>include_source_image</code>, and <code>antialias</code>. Unknown keywords raise <code>TypeError</code> before model execution. Constructor-only settings are <code>device</code>, <code>metadata</code>, <code>trust_checkpoint</code>, and <code>runtime_options</code>; runtime options are export-format-specific and reject unknown keys. See the <a href="../../exports/basics/#predict-with-rfdetrinference">runtime options table</a> and the <a href="../../exports/">format guides</a>.</p>
@@ -3199,7 +3249,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 26, 2026 17:28:12 UTC">2026-10-26 17:28:12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 31, 2026 17:00:19 UTC">2026-10-31 17:00:19</span>
   </span>
 
     
