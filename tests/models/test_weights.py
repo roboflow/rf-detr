@@ -14,19 +14,22 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, call
 
 import pytest
 import torch
 
 from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
-from rfdetr.models.weights import _warn_on_partial_load, apply_lora, load_pretrain_weights
+from rfdetr.models.weights import _slice_query_param_per_group, _warn_on_partial_load, apply_lora, load_pretrain_weights
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.imports import _IS_PEFT_INSTALLED
 from rfdetr.utilities.reproducibility import seed_all
 
 peft_only = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installed; `pip install rfdetr[lora]`")
+
+#: ``num_classes`` default of ``RFDETRBaseConfig``; an explicit value equal to it must still count as explicit.
+_DEFAULT_NUM_CLASSES = RFDETRBaseConfig.model_fields["num_classes"].default
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -36,17 +39,15 @@ peft_only = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installe
 def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: int = 13) -> dict:
     """Build a minimal checkpoint dict with the given class count.
 
-    Examples:
-        >>> ckpt = _make_checkpoint(num_classes=3, num_queries=2, group_detr=2)
-        >>> ckpt["model"]["query_feat.weight"].shape
-        torch.Size([4, 256])
-
-
-
     Args:
         num_classes: Total classes including background (bias shape).
         num_queries: Number of object queries per group.
         group_detr: Number of groups.
+
+    Examples:
+        >>> ckpt = _make_checkpoint(num_classes=3, num_queries=2, group_detr=2)
+        >>> ckpt["model"]["query_feat.weight"].shape
+        torch.Size([4, 256])
     """
     total_queries = num_queries * group_detr
     state = {
@@ -64,22 +65,16 @@ def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: 
     return {"model": state, "args": ckpt_args}
 
 
-def _make_train_config(tmp_path=None) -> TrainConfig:
+def _make_train_config() -> TrainConfig:
     """Return a minimal TrainConfig for use in load_pretrain_weights.
 
     Examples:
-        >>> cfg = _make_train_config()
-        >>> cfg.dataset_dir.endswith("dataset")
+        >>> _make_train_config().dataset_dir.endswith("dataset")
         True
-
-
-
-    Args:
-        tmp_path: Optional pytest tmp_path fixture value.
     """
     return TrainConfig(
-        dataset_dir=str(tmp_path / "dataset") if tmp_path else "/nonexistent/dataset",
-        output_dir=str(tmp_path / "output") if tmp_path else "/nonexistent/output",
+        dataset_dir="/nonexistent/dataset",
+        output_dir="/nonexistent/output",
         epochs=10,
         lr=1e-4,
         lr_encoder=1.5e-4,
@@ -95,23 +90,74 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
     )
 
 
+def _base_config(pretrain_weights: str | None = "/fake/weights.pth", **config: Any) -> RFDETRBaseConfig:
+    """Return a CPU ``RFDETRBaseConfig`` pointing at a fake weights path.
+
+    Args:
+        pretrain_weights: Value for ``pretrain_weights``; ``None`` disables loading.
+        **config: Extra ``RFDETRBaseConfig`` fields.
+
+    Examples:
+        >>> _base_config(num_classes=2).num_classes
+        2
+    """
+    return RFDETRBaseConfig(pretrain_weights=pretrain_weights, device="cpu", **config)
+
+
 def _fake_nn_model() -> MagicMock:
     """Return a MagicMock that behaves enough like an LWDETR nn.Module.
+
+    Returns:
+        MagicMock with reinitialize_detection_head and load_state_dict stubs.
 
     Examples:
         >>> model = _fake_nn_model()
         >>> hasattr(model, "load_state_dict")
         True
-
-
-
-    Returns:
-        MagicMock with reinitialize_detection_head and load_state_dict stubs.
     """
     model = MagicMock()
     model.reinitialize_detection_head = MagicMock()
     model.load_state_dict = MagicMock()
     return model
+
+
+def _serve_checkpoint(monkeypatch: pytest.MonkeyPatch, checkpoint: dict) -> None:
+    """Make ``torch.load`` as called by ``rfdetr.models.weights`` return ``checkpoint``.
+
+    Args:
+        monkeypatch: Patches ``torch.load`` for the duration of the test.
+        checkpoint: Checkpoint object handed back for any path.
+
+    Examples:
+        >>> with pytest.MonkeyPatch.context() as patch:
+        ...     _serve_checkpoint(patch, {"model": {}})
+        ...     torch.load("ignored")
+        {'model': {}}
+    """
+    monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+
+@pytest.fixture
+def captured(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture every call to ``rfdetr.models.weights.logger.warning`` as a formatted string.
+
+    The rf-detr logger has ``propagate=False``, so pytest's ``caplog`` does not see its records.
+
+    Examples:
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> captured(None)  # doctest: +SKIP
+    """
+    messages: list[str] = []
+
+    def _capture(msg: str, *args: object, **kwargs: object) -> None:
+        try:
+            messages.append(msg % args if args else msg)
+        except TypeError:
+            messages.append(msg)
+
+    monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+    return messages
 
 
 class _PatchWeightsIO:
@@ -140,66 +186,60 @@ class _PatchWeightsIO:
 class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
     """Verify reinitialize_detection_head call patterns for all class-count scenarios."""
 
-    def test_characterization_fine_tuned_checkpoint_auto_aligns_default_num_classes(self, monkeypatch, tmp_path):
+    def test_fine_tuned_checkpoint_auto_aligns_default_num_classes(self, monkeypatch):
         """Fine-tuned checkpoint (fewer classes) + default num_classes → 1 reinit to ckpt size.
 
         When the user did NOT explicitly set num_classes (default=90), the loader auto-aligns to the checkpoint's class
         count (3 classes = bias shape [3]). Only one reinit fires; no second reinit back to 91.
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
-        checkpoint = _make_checkpoint(num_classes=3)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        mc = _base_config()
+        _serve_checkpoint(monkeypatch, _make_checkpoint(num_classes=3))
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls[0] == call(3), f"First reinit must resize to checkpoint size 3, got {calls[0]}"
-        assert len(calls) == 1, (
-            f"Expected exactly 1 reinit call; got {len(calls)}: {calls}. "
+        assert calls == [call(3)], (
+            f"Expected exactly one reinit to checkpoint size 3, got {calls}. "
             "A second reinit to 91 would destroy loaded fine-tuned weights."
         )
         assert mc.num_classes == 2, "Auto-aligned checkpoint class count must be persisted back onto ModelConfig."
 
-    def test_characterization_backbone_pretrain_two_reinits(self, monkeypatch, tmp_path):
-        """Backbone pretrain (more classes in checkpoint) + explicit small num_classes → 2 reinits.
-
-        Scenario: 91-class COCO checkpoint, user explicitly requested num_classes=2.
-        First reinit to 91 so load_state_dict works; second reinit to 3 to match config.
-        """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=2)
-        checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls == [call(91), call(3)], f"Expected reinit to [91, 3] (expand then trim), got {calls}"
-
-    def test_characterization_user_override_larger_than_checkpoint_reexpands(self, monkeypatch, tmp_path):
-        """Explicit num_classes larger than checkpoint → 2 reinits (load then expand back).
-
-        Scenario: 91-class checkpoint, user explicitly set num_classes=93.
-        The head must temporarily align to 91 for loading, then expand back to 94.
-        """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=93)
-        checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+    @pytest.mark.parametrize(
+        ("num_classes", "checkpoint_classes", "expected_calls"),
+        [
+            # 91-class COCO checkpoint, explicit small num_classes: reinit to 91 so loading works, then trim to 3.
+            pytest.param(2, 91, [call(91), call(3)], id="smaller_than_checkpoint_loads_then_trims"),
+            # The head aligns to 91 for loading, then expands back to 94.
+            pytest.param(93, 91, [call(91), call(94)], id="larger_than_checkpoint_loads_then_expands"),
+            # Guards against re-introducing a `num_classes != default` clause, which made an explicit default behave
+            # like "unset" and silently adopted the checkpoint's class count.
+            pytest.param(
+                _DEFAULT_NUM_CLASSES,
+                3,
+                [call(3), call(_DEFAULT_NUM_CLASSES + 1)],
+                id="explicit_default_is_honored_like_any_explicit_value",
+            ),
+            # 91 == 90 + 1: the checkpoint already fits the head.
+            pytest.param(90, 91, [], id="matching_checkpoint_skips_reinit"),
+        ],
+    )
+    def test_explicit_num_classes_is_kept_across_reinits(
+        self, monkeypatch, num_classes: int, checkpoint_classes: int, expected_calls: list
+    ):
+        """An explicit num_classes is never replaced by the checkpoint's: the head aligns for loading, then resizes."""
+        mc = _base_config(num_classes=num_classes)
+        assert "num_classes" in mc.model_fields_set
+        _serve_checkpoint(monkeypatch, _make_checkpoint(num_classes=checkpoint_classes))
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
+        assert calls == expected_calls, f"Expected reinit calls {expected_calls}, got {calls}"
+        assert mc.num_classes == num_classes, "Explicit num_classes must be preserved, not auto-aligned."
 
-    def test_num_classes_assigned_after_construction_treated_as_explicit(self, monkeypatch, tmp_path):
+    def test_num_classes_assigned_after_construction_treated_as_explicit(self, monkeypatch):
         """num_classes assigned post-construction wins over a smaller checkpoint (load then expand).
 
         Scenario: config constructed without an explicit num_classes, then ``num_classes`` assigned to 5 — mirroring
@@ -207,12 +247,9 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         ``from_checkpoint`` (issue #1092).  Loading a 3-class checkpoint must align to the checkpoint for loading and
         expand back to 6, NOT auto-align the config back down to the checkpoint's class count.
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        mc = _base_config()
         mc.num_classes = 5  # Pydantic records assigned fields in model_fields_set.
-        checkpoint = _make_checkpoint(num_classes=3)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        _serve_checkpoint(monkeypatch, _make_checkpoint(num_classes=3))
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -221,57 +258,12 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         assert calls == [call(3), call(6)], f"Expected reinit to [3, 6] (load then expand), got {calls}"
         assert mc.num_classes == 5, "Dataset-aligned num_classes must not be clobbered by the checkpoint."
 
-    def test_explicit_default_num_classes_treated_as_explicit(self, monkeypatch, tmp_path):
-        """num_classes set explicitly to the class default is honored like any explicit value.
-
-        Scenario: config constructed with ``num_classes`` equal to the ModelConfig default (so it is
-        recorded in ``model_fields_set``), loading a smaller checkpoint.  The configured value must be
-        preserved — the head aligns to the checkpoint for loading, then expands back to the configured
-        size — it must NOT auto-align down to the checkpoint's class count.  Guards against
-        re-introducing the ``num_classes != default`` clause, which made an explicit default behave
-        like "unset" and so silently adopted the checkpoint's class count.
-        """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        default_nc = RFDETRBaseConfig.model_fields["num_classes"].default
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=default_nc)
-        assert "num_classes" in mc.model_fields_set
-        checkpoint = _make_checkpoint(num_classes=3)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls == [call(3), call(default_nc + 1)], (
-            f"Expected reinit to [3, {default_nc + 1}] (load at checkpoint, expand back to configured), got {calls}"
-        )
-        assert mc.num_classes == default_nc, "Explicit default num_classes must be preserved, not auto-aligned."
-
-    def test_characterization_no_mismatch_no_reinit(self, monkeypatch, tmp_path):
-        """Checkpoint class count matches config → no reinit.
-
-        Scenario: 91-class checkpoint with num_classes=90. 91 == 90 + 1 → no reinit.
-        """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
-        checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        nn_model.reinitialize_detection_head.assert_not_called()
-
-    def test_keypoint_active_mask_mismatch_is_dropped(self, monkeypatch, tmp_path):
+    def test_keypoint_active_mask_mismatch_is_dropped(self, monkeypatch):
         """Checkpoint `_kp_active_mask` with mismatched shape is dropped before load_state_dict."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        mc = _base_config()
         checkpoint = _make_checkpoint(num_classes=91)
         checkpoint["model"]["_kp_active_mask"] = torch.ones(2, 17, dtype=torch.bool)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         nn_model.state_dict = MagicMock(return_value={"_kp_active_mask": torch.ones(1, 17, dtype=torch.bool)})
@@ -282,22 +274,12 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         loaded_state = nn_model.load_state_dict.call_args[0][0]
         assert "_kp_active_mask" not in loaded_state
 
-    def test_keypoint_checkpoint_schema_reinitializes_before_and_after_load(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    def test_keypoint_checkpoint_schema_reinitializes_before_and_after_load(self, monkeypatch):
         """Schema-dependent keypoint tensors should match checkpoint shape during load, then return to config schema."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            use_grouppose_keypoints=True,
-            num_keypoints_per_class=[0, 17],
-        )
+        mc = _base_config(use_grouppose_keypoints=True, num_keypoints_per_class=[0, 17])
         checkpoint = _make_checkpoint(num_classes=91)
         checkpoint["model"]["_kp_active_mask"] = torch.ones(1, 17, dtype=torch.bool)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         nn_model.reinitialize_keypoint_head = MagicMock()
@@ -318,43 +300,31 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
 class TestLoadPretrainWeightsClassNames(_PatchWeightsIO):
     """Verify that class_names are extracted from checkpoint and returned."""
 
-    def test_characterization_class_names_extracted_from_checkpoint(self, monkeypatch, tmp_path):
+    def test_class_names_extracted_from_checkpoint(self, monkeypatch):
         """class_names stored in checkpoint args are returned as a list of strings."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
+        mc = _base_config(num_classes=90)
         checkpoint = _make_checkpoint(num_classes=91)
-        checkpoint["args"] = SimpleNamespace(
-            segmentation_head=False,
-            patch_size=14,
-            class_names=["cat", "dog", "bird"],
-        )
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        checkpoint["args"] = SimpleNamespace(segmentation_head=False, patch_size=14, class_names=["cat", "dog", "bird"])
+        _serve_checkpoint(monkeypatch, checkpoint)
 
-        nn_model = _fake_nn_model()
-        result = load_pretrain_weights(nn_model, mc)
+        result = load_pretrain_weights(_fake_nn_model(), mc)
 
         assert result == ["cat", "dog", "bird"], f"Expected class names from checkpoint, got {result!r}"
 
-    def test_characterization_empty_class_names_when_absent_from_checkpoint(self, monkeypatch, tmp_path):
+    def test_class_names_empty_when_absent_from_checkpoint(self, monkeypatch):
         """Empty list returned when checkpoint has no args or no class_names key."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
+        mc = _base_config(num_classes=90)
         checkpoint = _make_checkpoint(num_classes=91)
-        checkpoint.pop("args", None)  # no args key at all
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        checkpoint.pop("args")  # no args key at all
+        _serve_checkpoint(monkeypatch, checkpoint)
 
-        nn_model = _fake_nn_model()
-        result = load_pretrain_weights(nn_model, mc)
+        result = load_pretrain_weights(_fake_nn_model(), mc)
 
         assert result == [], f"Expected empty list when checkpoint has no class_names, got {result!r}"
 
-    def test_none_pretrain_weights_returns_empty_list_immediately(self, tmp_path):
+    def test_none_pretrain_weights_returns_empty_list_immediately(self):
         """load_pretrain_weights returns [] without any I/O when pretrain_weights is None."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        mc = _base_config(pretrain_weights=None)
         nn_model = _fake_nn_model()
 
         result = load_pretrain_weights(nn_model, mc)
@@ -377,29 +347,21 @@ class TestLoadPretrainWeightsTrustPropagation(_PatchWeightsIO):
     the same file here — making ``trust_checkpoint=True`` inert for any checkpoint that actually needed it.
     """
 
-    def test_trust_true_forwarded_to_safe_torch_load(self):
-        """load_pretrain_weights(trust=True) calls _safe_torch_load with trust=True."""
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
-        checkpoint = _make_checkpoint(num_classes=91)
+    @pytest.mark.parametrize(
+        ("trust_kwargs", "expected_trust"),
+        [
+            pytest.param({"trust": True}, True, id="trust_true_forwarded"),
+            pytest.param({}, False, id="trust_defaults_to_false"),
+        ],
+    )
+    def test_trust_forwarded_to_safe_torch_load(self, mocker, trust_kwargs: dict, expected_trust: bool):
+        """load_pretrain_weights passes its trust kwarg (default False) on to _safe_torch_load."""
+        mc = _base_config()
+        mock_load = mocker.patch("rfdetr.utilities.io._safe_torch_load", return_value=_make_checkpoint(num_classes=91))
 
-        with patch("rfdetr.utilities.io._safe_torch_load", return_value=checkpoint) as mock_load:
-            from rfdetr.models.weights import load_pretrain_weights
+        load_pretrain_weights(_fake_nn_model(), mc, **trust_kwargs)
 
-            load_pretrain_weights(_fake_nn_model(), mc, trust=True)
-
-        mock_load.assert_called_once_with(mc.pretrain_weights, trust=True)
-
-    def test_trust_defaults_to_false(self):
-        """load_pretrain_weights without a trust kwarg calls _safe_torch_load with trust=False."""
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
-        checkpoint = _make_checkpoint(num_classes=91)
-
-        with patch("rfdetr.utilities.io._safe_torch_load", return_value=checkpoint) as mock_load:
-            from rfdetr.models.weights import load_pretrain_weights
-
-            load_pretrain_weights(_fake_nn_model(), mc)
-
-        mock_load.assert_called_once_with(mc.pretrain_weights, trust=False)
+        mock_load.assert_called_once_with(mc.pretrain_weights, trust=expected_trust)
 
 
 # ---------------------------------------------------------------------------
@@ -410,18 +372,19 @@ class TestLoadPretrainWeightsTrustPropagation(_PatchWeightsIO):
 class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
     """Verify that PTL-native .ckpt checkpoints (state_dict, no model key) are handled."""
 
-    def _make_ptl_checkpoint(
-        self,
-        num_classes: int = 91,
-        num_queries: int = 300,
-        group_detr: int = 13,
-    ) -> dict:
+    @staticmethod
+    def _make_ptl_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: int = 13) -> dict:
         """Build a fake PyTorch Lightning (PTL) native checkpoint with state_dict keys prefixed by 'model.'.
 
         Args:
             num_classes: Total classes including background (bias shape).
             num_queries: Number of object queries per group.
             group_detr: Number of groups.
+
+        Examples:
+            >>> checkpoint = TestLoadPretrainWeightsPTLCkptFormat._make_ptl_checkpoint(3, 2, 2)
+            >>> sorted(checkpoint["state_dict"])[0], checkpoint["epoch"]
+            ('model.class_embed.bias', 10)
         """
         total_queries = num_queries * group_detr
         raw_state = {
@@ -437,13 +400,10 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
             "global_step": 1000,
         }
 
-    def test_ptl_ckpt_loads_successfully(self, monkeypatch):
+    def test_loads_without_model_key(self, monkeypatch):
         """PTL .ckpt checkpoints (state_dict without model key) must load without KeyError."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
-        checkpoint = self._make_ptl_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        mc = _base_config("/fake/last.ckpt", num_classes=90)
+        _serve_checkpoint(monkeypatch, self._make_ptl_checkpoint(num_classes=91))
 
         nn_model = _fake_nn_model()
         result = load_pretrain_weights(nn_model, mc)
@@ -451,13 +411,10 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
         nn_model.load_state_dict.assert_called_once()
         assert result == [], f"Expected [] (no args/class_names in checkpoint), got {result!r}"
 
-    def test_ptl_ckpt_model_prefix_stripped_before_load_state_dict(self, monkeypatch):
+    def test_model_prefix_stripped_before_load_state_dict(self, monkeypatch):
         """Model weights passed to load_state_dict must not carry the 'model.' prefix."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
-        checkpoint = self._make_ptl_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        mc = _base_config("/fake/last.ckpt", num_classes=90)
+        _serve_checkpoint(monkeypatch, self._make_ptl_checkpoint(num_classes=91))
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -467,63 +424,51 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
             f"Keys passed to load_state_dict must not have 'model.' prefix, got: {list(loaded_state.keys())[:5]}"
         )
 
-    def test_ptl_ckpt_no_model_prefix_in_state_dict_raises_value_error(self, monkeypatch):
+    def test_missing_model_prefix_in_state_dict_raises_value_error(self, monkeypatch):
         """A checkpoint with state_dict but no 'model.'-prefixed keys raises ValueError."""
-        from rfdetr.models.weights import load_pretrain_weights
+        mc = _base_config("/fake/last.ckpt", num_classes=90)
+        _serve_checkpoint(monkeypatch, {"state_dict": {"some_other.key": torch.zeros(1)}, "epoch": 10})
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
-        checkpoint = {"state_dict": {"some_other.key": torch.zeros(1)}, "epoch": 10}
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        with pytest.raises(ValueError) as exc_info:
+            load_pretrain_weights(_fake_nn_model(), mc)
 
-        nn_model = _fake_nn_model()
-        with pytest.raises(ValueError, match="model\\."):
-            load_pretrain_weights(nn_model, mc)
+        assert "model." in str(exc_info.value)
 
-    def test_ptl_ckpt_class_names_from_hyper_parameters(self, monkeypatch):
-        """Class names stored in hyper_parameters are returned when args key is absent."""
-        from rfdetr.models.weights import load_pretrain_weights
+    @pytest.mark.parametrize(
+        ("extra", "expected"),
+        [
+            pytest.param(
+                {"hyper_parameters": {"class_names": ["cat", "dog"]}}, ["cat", "dog"], id="hyper_parameters_only"
+            ),
+            pytest.param(
+                {"args": {"class_names": ["from_args"]}, "hyper_parameters": {"class_names": ["from_hyper_params"]}},
+                ["from_args"],
+                id="args_take_precedence_over_hyper_parameters",
+            ),
+        ],
+    )
+    def test_class_names_source(self, monkeypatch, extra: dict, expected: list[str]):
+        """Class names come from hyper_parameters when args is absent, and from args when both are present."""
+        mc = _base_config("/fake/last.ckpt", num_classes=90)
+        _serve_checkpoint(monkeypatch, {**self._make_ptl_checkpoint(num_classes=91), **extra})
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
-        checkpoint = self._make_ptl_checkpoint(num_classes=91)
-        checkpoint["hyper_parameters"] = {"class_names": ["cat", "dog"]}
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        result = load_pretrain_weights(_fake_nn_model(), mc)
 
-        nn_model = _fake_nn_model()
-        result = load_pretrain_weights(nn_model, mc)
+        assert result == expected, f"Expected class names {expected!r}, got {result!r}"
 
-        assert result == ["cat", "dog"], f"Expected class names from hyper_parameters, got {result!r}"
-
-    def test_ptl_ckpt_args_takes_precedence_over_hyper_parameters(self, monkeypatch):
-        """When both args and hyper_parameters are present, args takes precedence."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
-        checkpoint = self._make_ptl_checkpoint(num_classes=91)
-        checkpoint["args"] = {"class_names": ["from_args"]}
-        checkpoint["hyper_parameters"] = {"class_names": ["from_hyper_params"]}
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        result = load_pretrain_weights(nn_model, mc)
-
-        assert result == ["from_args"], f"args must take precedence over hyper_parameters, got {result!r}"
-
-    def test_ptl_ckpt_non_model_keys_in_state_dict_are_excluded(self, monkeypatch):
+    def test_non_model_keys_in_state_dict_are_excluded(self, monkeypatch):
         """Non-model keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
 
         Real PTL checkpoints contain keys like 'optimizer.param_groups' and 'lr_scheduler.last_epoch' alongside
         'model.*' weights. The loader must exclude these non-model keys so they do not pollute the state dict passed to
         load_state_dict and do not cause KeyError or unexpected parameter names.
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        mc = _base_config("/fake/last.ckpt", num_classes=90)
         checkpoint = self._make_ptl_checkpoint(num_classes=91)
-        # Inject non-model keys that a real PTL checkpoint would contain
         checkpoint["state_dict"]["optimizer.param_groups"] = torch.zeros(1)
         checkpoint["state_dict"]["lr_scheduler.last_epoch"] = torch.tensor(10)
         checkpoint["state_dict"]["callback_states.ema.shadow_params"] = torch.zeros(4)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -533,28 +478,18 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
         non_model_keys = [k for k in loaded_state if k.startswith(("optimizer.", "lr_scheduler.", "callback_states."))]
         assert not non_model_keys, f"Non-model keys must be excluded from loaded state; found: {non_model_keys}"
 
-    def test_ptl_ckpt_torch_compile_orig_mod_prefix_stripped(self, monkeypatch):
+    def test_torch_compile_orig_mod_prefix_stripped(self, monkeypatch):
         """PTL .ckpt from a torch.compile-wrapped model must load without KeyError.
 
         When a model is wrapped with torch.compile before training, PTL records weights under keys like
         "model._orig_mod.class_embed.bias".  The loader must strip both the "model." and the subsequent "_orig_mod."
         segment so the resulting keys match the bare parameter names expected by load_state_dict.
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
-        raw_state = {
-            "class_embed.weight": torch.randn(91, 256),
-            "class_embed.bias": torch.randn(91),
-            "refpoint_embed.weight": torch.randn(300 * 13, 4),
-            "query_feat.weight": torch.randn(300 * 13, 256),
-        }
+        mc = _base_config("/fake/last.ckpt", num_classes=90)
+        ptl_state = self._make_ptl_checkpoint(num_classes=91)["state_dict"]
         # Simulate torch.compile: keys are prefixed with "model._orig_mod."
-        checkpoint = {
-            "state_dict": {f"model._orig_mod.{k}": v for k, v in raw_state.items()},
-            "epoch": 5,
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        checkpoint = {"state_dict": {k.replace("model.", "model._orig_mod.", 1): v for k, v in ptl_state.items()}}
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -565,24 +500,13 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
             f"Keys must have both 'model.' and '_orig_mod.' stripped; got: {list(loaded_state.keys())[:5]}"
         )
 
-    def test_best_model_callback_format_with_both_model_and_state_dict_still_works(self, monkeypatch):
+    def test_best_model_callback_format_with_model_and_state_dict_loads(self, monkeypatch):
         """Checkpoints with both 'model' and 'state_dict' (BestModelCallback format) must still load."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/checkpoint_best_total.pth", device="cpu", num_classes=90)
+        mc = _base_config("/fake/checkpoint_best_total.pth", num_classes=90)
         # BestModelCallback writes both "model" (raw keys) and "state_dict" (prefixed keys).
-        raw_state = {
-            "class_embed.weight": torch.randn(91, 256),
-            "class_embed.bias": torch.randn(91),
-            "refpoint_embed.weight": torch.randn(300 * 13, 4),
-            "query_feat.weight": torch.randn(300 * 13, 256),
-        }
-        checkpoint = {
-            "model": raw_state,
-            "state_dict": {f"model.{k}": v for k, v in raw_state.items()},
-            "epoch": 5,
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        ptl_state = self._make_ptl_checkpoint(num_classes=91)["state_dict"]
+        checkpoint = {"model": {k.removeprefix("model."): v for k, v in ptl_state.items()}, "state_dict": ptl_state}
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -595,38 +519,33 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
 # ---------------------------------------------------------------------------
 
 
-def _mock_peft_module() -> MagicMock:
-    """Return a stand-in ``peft`` module whose ``PeftModel`` is a real class, so ``isinstance`` checks work.
-
-    Examples:
-        >>> mock_peft = _mock_peft_module()
-        >>> isinstance(mock_peft.PeftModel(), mock_peft.PeftModel)
-        True
-        >>> isinstance(MagicMock(), mock_peft.PeftModel)
-        False
-    """
-    return MagicMock(PeftModel=type("PeftModel", (), {}))
-
-
 class TestApplyLora:
     """Verify that apply_lora applies LoRA adapters to the backbone encoder.
 
-    ``apply_lora`` lazily imports ``peft`` inside the function body, so we use ``patch.dict("sys.modules", ...)`` to
-    intercept the import rather than patching a module-level name.
+    ``apply_lora`` lazily imports ``peft`` inside the function body, so the tests put a stand-in ``peft`` module into
+    ``sys.modules`` to intercept the import rather than patching a module-level name.
     """
 
-    def test_characterization_apply_lora_wraps_backbone_encoder(self):
-        """apply_lora must call get_peft_model on nn_model.backbone[0].encoder."""
-        from rfdetr.models.weights import apply_lora
+    @pytest.fixture
+    def mock_peft(self, mocker) -> MagicMock:
+        """Install a stand-in ``peft`` module whose ``PeftModel`` is a real class, so ``isinstance`` checks work.
 
+        Examples:
+            Pytest fixtures cannot be called directly outside fixture injection.
+
+            >>> TestApplyLora.mock_peft(None, None)  # doctest: +SKIP
+        """
+        module = MagicMock(PeftModel=type("PeftModel", (), {}))
+        mocker.patch.dict("sys.modules", {"peft": module})
+        return module
+
+    def test_wraps_backbone_encoder(self, mock_peft):
+        """apply_lora must call get_peft_model on nn_model.backbone[0].encoder."""
         nn_model = MagicMock()
         fake_peft_model = MagicMock()
-
-        mock_peft = _mock_peft_module()
         mock_peft.get_peft_model.return_value = fake_peft_model
 
-        with patch.dict("sys.modules", {"peft": mock_peft}):
-            apply_lora(nn_model)
+        apply_lora(nn_model)
 
         mock_peft.LoraConfig.assert_called_once()
         lora_kwargs = mock_peft.LoraConfig.call_args.kwargs
@@ -637,15 +556,9 @@ class TestApplyLora:
         assert mock_peft.get_peft_model.call_count == 1, "get_peft_model must be called exactly once"
         assert nn_model.backbone[0].encoder is fake_peft_model, "backbone encoder must be replaced with the peft model"
 
-    def test_characterization_apply_lora_target_modules(self):
+    def test_targets_expected_modules(self, mock_peft):
         """apply_lora must target exactly the 9 expected module names."""
-        from rfdetr.models.weights import apply_lora
-
-        nn_model = MagicMock()
-        mock_peft = _mock_peft_module()
-
-        with patch.dict("sys.modules", {"peft": mock_peft}):
-            apply_lora(nn_model)
+        apply_lora(MagicMock())
 
         expected_targets = {
             "q_proj",
@@ -663,18 +576,16 @@ class TestApplyLora:
             f"LoRA target_modules mismatch.\nExpected: {expected_targets}\nGot: {actual_targets}"
         )
 
-    def test_already_wrapped_encoder_is_left_alone(self) -> None:
+    def test_already_wrapped_encoder_is_left_alone(self, mock_peft) -> None:
         """An encoder that ``load_pretrain_weights`` already wrapped for a LoRA checkpoint gets no second adapter set.
 
         Both model builders call ``apply_lora`` after loading, so a second wrap would nest one PEFT model inside another
         and rename every encoder key again.
         """
-        mock_peft = _mock_peft_module()
         nn_model = MagicMock()
         nn_model.backbone[0].encoder = mock_peft.PeftModel()
 
-        with patch.dict("sys.modules", {"peft": mock_peft}):
-            apply_lora(nn_model)
+        apply_lora(nn_model)
 
         mock_peft.get_peft_model.assert_not_called()
 
@@ -901,6 +812,39 @@ def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2, labe
     return torch.tensor(rows, dtype=torch.float32)
 
 
+def _query_config(num_queries: int, group_detr: int) -> RFDETRBaseConfig:
+    """Return a CPU ``RFDETRBaseConfig`` with the given query layout.
+
+    Examples:
+        >>> _query_config(2, 3).group_detr
+        3
+    """
+    return _base_config(num_queries=num_queries, num_select=num_queries, group_detr=group_detr)
+
+
+def _query_checkpoint(num_queries: int, group_detr: int, **extra: Any) -> dict:
+    """Build a checkpoint whose query embeddings carry ``(group, query)`` labels in their first column.
+
+    Args:
+        num_queries: Queries per group in the checkpoint.
+        group_detr: Groups in the checkpoint.
+        **extra: Further top-level checkpoint entries, e.g. ``args``.
+
+    Examples:
+        >>> _query_checkpoint(2, 3, args={})["model"]["refpoint_embed.weight"].shape
+        torch.Size([6, 4])
+    """
+    return {
+        "model": {
+            "class_embed.weight": torch.randn(91, 256),
+            "class_embed.bias": torch.randn(91),
+            "refpoint_embed.weight": _labelled_query_tensor(num_queries, group_detr, dim=4),
+            "query_feat.weight": _labelled_query_tensor(num_queries, group_detr, dim=256),
+        },
+        **extra,
+    }
+
+
 class TestSliceQueryParamPerGroup:
     """Direct unit tests for ``_slice_query_param_per_group``.
 
@@ -910,122 +854,53 @@ class TestSliceQueryParamPerGroup:
     """
 
     def test_returns_input_unchanged_when_dimensions_match(self):
-        from rfdetr.models.weights import _slice_query_param_per_group
-
+        """Matching checkpoint and target dimensions return the very same tensor object."""
         tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
         out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=4, target_group_detr=3)
         assert out is tensor
 
-    def test_num_queries_decrease_preserves_per_group_structure(self):
-        """The bug being fixed: 4→2 queries with 3 groups must keep first 2 of each group."""
-        from rfdetr.models.weights import _slice_query_param_per_group
-
-        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
-        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=2, target_group_detr=3)
-        # Expect rows: g0q0, g0q1, g1q0, g1q1, g2q0, g2q1 → labels 0, 1, 100, 101, 200, 201.
-        labels = out[:, 0].int().tolist()
-        assert labels == [0, 1, 100, 101, 200, 201], (
-            f"Per-group structure scrambled. A flat slice would give {tensor[:6, 0].int().tolist()}."
+    @pytest.mark.parametrize(
+        ("ckpt_nq", "ckpt_g", "tgt_nq", "tgt_g", "expected_labels"),
+        [
+            # The bug being fixed: 4→2 queries with 3 groups must keep the first 2 of each group, not a flat prefix.
+            pytest.param(4, 3, 2, 3, [0, 1, 100, 101, 200, 201], id="nq_shrinks"),
+            pytest.param(4, 3, 4, 2, [0, 1, 2, 3, 100, 101, 102, 103], id="g_shrinks_drops_tail_groups"),
+            pytest.param(4, 3, 2, 2, [0, 1, 100, 101], id="both_shrink"),
+            pytest.param(4, 3, 8, 3, [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203], id="nq_expands_g_equal"),
+            pytest.param(4, 2, 4, 4, [0, 1, 2, 3, 100, 101, 102, 103], id="g_expands_nq_equal"),
+            pytest.param(4, 3, 8, 2, [0, 1, 2, 3, 100, 101, 102, 103], id="nq_expands_g_shrinks"),
+            pytest.param(4, 3, 2, 4, [0, 1, 100, 101, 200, 201], id="nq_shrinks_g_expands"),
+            pytest.param(4, 3, 8, 4, [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203], id="both_expand"),
+        ],
+    )
+    def test_keeps_min_prefix_per_group(
+        self, ckpt_nq: int, ckpt_g: int, tgt_nq: int, tgt_g: int, expected_labels: list[int]
+    ) -> None:
+        """Min(target, ckpt) along each axis produces the correct per-group prefix."""
+        tensor = _labelled_query_tensor(num_queries=ckpt_nq, group_detr=ckpt_g)
+        out = _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+        flat_labels = tensor[: len(expected_labels), 0].int().tolist()
+        assert out[:, 0].int().tolist() == expected_labels, (
+            f"Per-group structure scrambled; a flat slice gives {flat_labels}."
         )
-
-    def test_group_detr_decrease_drops_tail_groups(self):
-        from rfdetr.models.weights import _slice_query_param_per_group
-
-        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
-        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=4, target_group_detr=2)
-        labels = out[:, 0].int().tolist()
-        # First 2 groups, all 4 queries each.
-        assert labels == [0, 1, 2, 3, 100, 101, 102, 103]
-
-    def test_both_decrease(self):
-        from rfdetr.models.weights import _slice_query_param_per_group
-
-        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
-        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=2, target_group_detr=2)
-        labels = out[:, 0].int().tolist()
-        assert labels == [0, 1, 100, 101]
 
     def test_falls_back_to_flat_slice_on_inconsistent_shape(self):
         """If args don't match the tensor's flat length, defer to legacy behavior."""
-        from rfdetr.models.weights import _slice_query_param_per_group
-
         weird = torch.arange(7, dtype=torch.float32).unsqueeze(1)  # shape [7, 1], not 4*3=12
         out = _slice_query_param_per_group(weird, 4, 3, target_num_queries=2, target_group_detr=2)
         # Legacy: tensor[:4]
         assert out.shape == (4, 1)
         assert out[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0]
 
-    @pytest.mark.parametrize(
-        "ckpt_nq,ckpt_g,tgt_nq,tgt_g,expected_labels",
-        [
-            pytest.param(
-                4,
-                3,
-                8,
-                3,
-                [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203],
-                id="nq_expands_g_equal",
-            ),
-            pytest.param(
-                4,
-                2,
-                4,
-                4,
-                [0, 1, 2, 3, 100, 101, 102, 103],
-                id="g_expands_nq_equal",
-            ),
-            pytest.param(
-                4,
-                3,
-                8,
-                2,
-                [0, 1, 2, 3, 100, 101, 102, 103],
-                id="nq_expands_g_shrinks",
-            ),
-            pytest.param(
-                4,
-                3,
-                2,
-                4,
-                [0, 1, 100, 101, 200, 201],
-                id="nq_shrinks_g_expands",
-            ),
-            pytest.param(
-                4,
-                3,
-                8,
-                4,
-                [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203],
-                id="both_expand",
-            ),
-        ],
-    )
-    def test_expansion_combos(
-        self,
-        ckpt_nq: int,
-        ckpt_g: int,
-        tgt_nq: int,
-        tgt_g: int,
-        expected_labels: list[int],
-    ) -> None:
-        """Min(target, ckpt) along each axis produces the correct per-group prefix."""
-        from rfdetr.models.weights import _slice_query_param_per_group
-
-        tensor = _labelled_query_tensor(num_queries=ckpt_nq, group_detr=ckpt_g)
-        out = _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
-        assert out[:, 0].int().tolist() == expected_labels
-
     def test_num_queries_expansion_returns_smaller_tensor(self):
         """When target > ckpt, return min-per-group; load_state_dict will reject."""
-        from rfdetr.models.weights import _slice_query_param_per_group
-
         tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
         out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=8, target_group_detr=3)
         # min(4, 8) = 4 per group, all 3 groups → 12 rows == input length.
         assert out.shape == (12, 2)
 
     @pytest.mark.parametrize(
-        "ckpt_nq,ckpt_g,tgt_nq,tgt_g",
+        ("ckpt_nq", "ckpt_g", "tgt_nq", "tgt_g"),
         [
             pytest.param(0, 3, 2, 3, id="ckpt_nq=0"),
             pytest.param(-1, 3, 2, 3, id="ckpt_nq=-1"),
@@ -1039,189 +914,73 @@ class TestSliceQueryParamPerGroup:
     )
     def test_raises_on_non_positive_dimension(self, ckpt_nq: int, ckpt_g: int, tgt_nq: int, tgt_g: int) -> None:
         """ValueError raised when any dimension arg is zero or negative."""
-        from rfdetr.models.weights import _slice_query_param_per_group
-
-        tensor = torch.zeros(12, 2)
-        with pytest.raises(ValueError, match="must be positive"):
-            _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+        with pytest.raises(ValueError) as exc_info:
+            _slice_query_param_per_group(torch.zeros(12, 2), ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+        assert "must be positive" in str(exc_info.value)
 
 
 class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
     """End-to-end check that ``load_pretrain_weights`` invokes per-group slicing."""
 
-    def _make_args_dict_checkpoint(self, num_queries: int, group_detr: int) -> dict:
-        """Build a checkpoint with labelled query weights and dict-style args."""
-        labelled_refpoint = _labelled_query_tensor(num_queries, group_detr, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries, group_detr, dim=256)
-        state = {
-            "class_embed.weight": torch.randn(91, 256),
-            "class_embed.bias": torch.randn(91),
-            "refpoint_embed.weight": labelled_refpoint,
-            "query_feat.weight": labelled_query_feat,
-        }
-        # Dict-style args payload used to exercise the checkpoint-loading path.
-        return {"model": state, "args": {"num_queries": num_queries, "group_detr": group_detr}}
+    @pytest.mark.parametrize(
+        ("config_shape", "checkpoint_shape", "checkpoint_extra", "expected"),
+        [
+            # (num_queries, group_detr) of the config and of the checkpoint; the checkpoint args describe its layout.
+            pytest.param(
+                (2, 3),
+                (4, 3),
+                {"args": {"num_queries": 4, "group_detr": 3}},
+                [0, 1, 100, 101, 200, 201],
+                id="dict_args",
+            ),
+            pytest.param(
+                (2, 3),
+                (4, 3),
+                {"args": SimpleNamespace(num_queries=4, group_detr=3)},
+                [0, 1, 100, 101, 200, 201],
+                id="namespace_args",
+            ),
+            pytest.param(
+                (4, 2),
+                (4, 3),
+                {"args": {"num_queries": 4, "group_detr": 3}},
+                [0, 1, 2, 3, 100, 101, 102, 103],
+                id="group_detr_decrease_drops_tail_groups",
+            ),
+            # Legacy checkpoints carry no (or incomplete) layout info → flat slice of the first 2*3=6 rows.
+            pytest.param((2, 3), (4, 3), {}, [0, 1, 2, 3, 100, 101], id="legacy_without_args_flat_slice"),
+            pytest.param((2, 1), (4, 1), {"args": {}}, [0, 1], id="args_without_query_keys_flat_slice"),
+        ],
+    )
+    def test_query_embeddings_follow_target_layout(
+        self, monkeypatch, config_shape: tuple, checkpoint_shape: tuple, checkpoint_extra: dict, expected: list[int]
+    ):
+        """Checkpoint query embeddings are re-partitioned per group when the checkpoint layout is known.
 
-    def test_decreasing_num_queries_preserves_per_group_structure(self, monkeypatch, tmp_path):
-        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3).
-
-        Group structure must be preserved.
+        The first column carries the (group, query) identity (see ``_labelled_query_tensor``).
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=2,
-            num_select=2,
-            group_detr=3,
-        )
-        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        mc = _query_config(*config_shape)
+        _serve_checkpoint(monkeypatch, _query_checkpoint(*checkpoint_shape, **checkpoint_extra))
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         passed_state = nn_model.load_state_dict.call_args[0][0]
-        refpoint = passed_state["refpoint_embed.weight"]
-        query_feat = passed_state["query_feat.weight"]
-        expected = [0, 1, 100, 101, 200, 201]
-        # First column carries (group, query) identity (see _labelled_query_tensor).
-        assert refpoint[:, 0].int().tolist() == expected, (
-            "Per-group structure was not preserved in refpoint_embed.weight."
-        )
-        assert query_feat[:, 0].int().tolist() == expected, (
-            "Per-group structure was not preserved in query_feat.weight."
-        )
+        assert passed_state["refpoint_embed.weight"][:, 0].int().tolist() == expected
+        assert passed_state["query_feat.weight"][:, 0].int().tolist() == expected
 
-    def test_legacy_checkpoint_without_args_falls_back_to_flat_slice(self, monkeypatch, tmp_path):
-        """No ``args`` in checkpoint → preserve the legacy flat slice (backward compat)."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=2,
-            num_select=2,
-            group_detr=3,
-        )
-        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
-        del checkpoint["args"]  # legacy
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        refpoint = passed_state["refpoint_embed.weight"]
-        query_feat = passed_state["query_feat.weight"]
-        # Legacy flat slice: first 2*3=6 rows of the original 12.  Original rows
-        # are labelled 0,1,2,3,100,101,102,103,200,201,202,203 → first 6 are
-        # 0,1,2,3,100,101.
-        expected = [0, 1, 2, 3, 100, 101]
-        assert refpoint[:, 0].int().tolist() == expected
-        assert query_feat[:, 0].int().tolist() == expected
-
-    def test_decreasing_group_detr_drops_tail_groups(self, monkeypatch, tmp_path):
-        """Checkpoint(nq=4, g=3) → model(nq=4, g=2): tail group dropped, retained groups intact."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=4,
-            num_select=4,
-            group_detr=2,
-        )
-        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        refpoint = passed_state["refpoint_embed.weight"]
-        query_feat = passed_state["query_feat.weight"]
-        expected = [0, 1, 2, 3, 100, 101, 102, 103]
-        assert refpoint[:, 0].int().tolist() == expected
-        assert query_feat[:, 0].int().tolist() == expected
-
-    def test_decreasing_num_queries_namespace_args(self, monkeypatch, tmp_path):
-        """Namespace-style args in checkpoint trigger per-group slice identical to dict-style."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=2,
-            num_select=2,
-            group_detr=3,
-        )
-        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": SimpleNamespace(num_queries=4, group_detr=3),
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        refpoint = passed_state["refpoint_embed.weight"]
-        query_feat = passed_state["query_feat.weight"]
-        expected = [0, 1, 100, 101, 200, 201]
-        assert refpoint[:, 0].int().tolist() == expected
-        assert query_feat[:, 0].int().tolist() == expected
-
-    def test_legacy_fallback_multigroup_emits_warning(self, monkeypatch) -> None:
+    def test_legacy_fallback_multigroup_emits_warning(self, monkeypatch, captured) -> None:
         """group_detr > 1 legacy checkpoint (no num_queries/group_detr in args) emits scramble-risk warning."""
-        from rfdetr.models.weights import load_pretrain_weights
+        mc = _query_config(2, 3)
+        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 3, args={}))  # no num_queries / group_detr keys
 
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=2,
-            num_select=2,
-            group_detr=3,
-        )
-        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": {},  # no num_queries / group_detr keys
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        captured: list[str] = []
-
-        def _capture(msg: str, *args: object, **kwargs: object) -> None:
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
+        load_pretrain_weights(_fake_nn_model(), mc)
 
         assert any("group_detr" in msg and ("scramble" in msg or "flat slice" in msg) for msg in captured), (
             f"Expected scramble-risk warning for group_detr > 1; got: {captured}"
         )
 
-    def test_legacy_fallback_mixed_truncating_and_non_truncating_tensors(self, monkeypatch) -> None:
+    def test_legacy_fallback_mixed_truncating_and_non_truncating_tensors(self, monkeypatch, captured) -> None:
         """One query tensor truncates against target rows while its sibling does not — only the former is sliced.
 
         ``legacy_fallback_truncates`` is computed via ``any(...)`` across every query-suffix tensor, so it stays
@@ -1230,38 +989,13 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
         sliced independently in the per-tensor loop: the truncating one is shortened, the non-truncating one passes
         through unchanged.
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=2,
-            num_select=2,
-            group_detr=3,
-        )
+        mc = _query_config(2, 3)
         # target_query_rows = 2 * 3 = 6. refpoint has 8 rows (> 6, truncates); query_feat has 6 rows (== 6, no-op).
-        labelled_refpoint = _labelled_query_tensor(num_queries=8, group_detr=1, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries=6, group_detr=1, dim=256)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": {},  # no num_queries / group_detr keys
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        captured: list[str] = []
-
-        def _capture(msg: str, *args: object, **kwargs: object) -> None:
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+        checkpoint = _query_checkpoint(8, 1, args={})
+        checkpoint["model"]["query_feat.weight"] = _labelled_query_tensor(num_queries=6, group_detr=1, dim=256)
+        labelled_refpoint = checkpoint["model"]["refpoint_embed.weight"]
+        labelled_query_feat = checkpoint["model"]["query_feat.weight"]
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -1280,248 +1014,62 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
             "Non-truncating sibling tensor (already 6 rows) must pass through unchanged."
         )
 
-    def test_legacy_fallback_matching_total_rows_can_still_scramble_groups(self, monkeypatch) -> None:
-        """Row-count match does not imply factorization match — the silent flat slice can still reinterpret groups.
-
-        Checkpoint trained with (num_queries=150, group_detr=2) has the same total row count (300) as a target
-        configured with (num_queries=100, group_detr=3). Because the totals match, ``legacy_fallback_truncates`` is
-        False and no warning fires — but the flat ``tensor[:300]`` slice is a no-op on row *values*, while the target
-        silently reinterprets those rows under its own (100, 3) partition. Row 100 is checkpoint group 0's query 100
-        under the checkpoint's own (150, 2) split, yet the target treats row 100 as group 1's query 0.
-        """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=100,
-            num_select=100,
-            group_detr=3,
-        )
-        # Non-colliding label scheme: default stride (100) collides once num_queries >= 100
-        # (checkpoint group0/query100 would equal group1/query0 = 100). Use stride=1000 so the
-        # checkpoint's own (group, query) identity survives intact through the flat slice.
-        labelled_refpoint = _labelled_query_tensor(num_queries=150, group_detr=2, dim=4, label_stride=1000)
-        labelled_query_feat = _labelled_query_tensor(num_queries=150, group_detr=2, dim=256, label_stride=1000)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": {},  # no num_queries / group_detr keys
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        captured: list[str] = []
-
-        def _capture(msg: str, *args: object, **kwargs: object) -> None:
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), (
-            f"Matching total row count (300 == 300) must not warn; got: {captured}"
-        )
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        # Checkpoint's own factorization (nq=150, g=2): row 100 is group 0, query 100 → label 0*1000+100 = 100.
-        # The target's factorization (nq=100, g=3) instead treats row 100 as group 1, query 0. The silent flat
-        # slice actually reinterprets the data under the target partition: pin that the CHECKPOINT's value
-        # (100), not a target-consistent group1/query0 value (which would be 1000), lands at row 100.
-        assert passed_state["refpoint_embed.weight"][100, 0].item() == 100.0, (
-            "Row 100 must still hold the checkpoint's group0/query100 value (100), proving the flat slice "
-            "silently reinterprets it as the target's group1/query0 without reordering anything."
-        )
-        assert passed_state["query_feat.weight"][100, 0].item() == 100.0
-
     @pytest.mark.parametrize(
-        "mc_num_queries,mc_group_detr,ckpt_num_queries,ckpt_group_detr",
+        ("config_shape", "checkpoint_shape"),
         [
-            pytest.param(4, 3, 4, 3, id="matching_rows_group_detr_gt1"),
-            pytest.param(4, 1, 8, 1, id="truncating_rows_group_detr_eq1"),
+            # The flat slice changes nothing because row counts already match (group_detr > 1, nothing truncates).
+            pytest.param((4, 3), (4, 3), id="matching_rows_group_detr_gt1"),
+            # group_detr == 1 has no groups to scramble even though the flat slice truncates rows.
+            pytest.param((4, 1), (8, 1), id="truncating_rows_group_detr_eq1"),
+            # Growing num_queries: a checkpoint with FEWER rows than the target never trips the strict ``>`` check.
+            pytest.param((4, 3), (6, 1), id="fewer_checkpoint_rows_than_target"),
+            # (150, 2) and (100, 3) both have 300 rows, so nothing truncates and no warning fires, yet the flat slice
+            # is a no-op on row values while the target reinterprets them under its own partition.
+            pytest.param((100, 3), (150, 2), id="matching_total_rows_different_factorization"),
         ],
     )
     def test_legacy_fallback_is_silent_when_no_scramble_risk(
-        self,
-        monkeypatch,
-        mc_num_queries: int,
-        mc_group_detr: int,
-        ckpt_num_queries: int,
-        ckpt_group_detr: int,
+        self, monkeypatch, captured, config_shape: tuple, checkpoint_shape: tuple
     ) -> None:
-        """Missing metadata needs no warning when either the flat slice is a no-op or ``group_detr == 1``.
+        """Missing layout metadata needs no warning when the flat slice truncates nothing or has no groups to scramble.
 
-        Two distinct reasons both suppress the scramble-risk warning for the same missing-metadata flat-slice
-        fallback: (1) the configured flat slice changes nothing because row counts already match
-        (``group_detr > 1`` but nothing truncates), or (2) ``group_detr == 1`` has no groups to scramble even
-        though the flat slice does truncate rows. Both cases assert against the same
-        ``tensor[:target_query_rows]`` formula, which is a true no-op in case (1) and an actual truncation in
-        case (2) — this pins that the warning stays silent for both, for different reasons.
+        The flat slice is ``tensor[:target_query_rows]``: a true no-op when the checkpoint has no more rows than the
+        target, and a plain truncation when ``group_detr == 1``. Either way the rows reach ``load_state_dict`` exactly
+        as the flat slice leaves them, in checkpoint order, and the scramble-risk warning stays silent.
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=mc_num_queries,
-            num_select=mc_num_queries,
-            group_detr=mc_group_detr,
-        )
-        labelled_refpoint = _labelled_query_tensor(num_queries=ckpt_num_queries, group_detr=ckpt_group_detr, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries=ckpt_num_queries, group_detr=ckpt_group_detr, dim=256)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": {},
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        captured: list[str] = []
-
-        def _capture(msg: str, *args: object, **kwargs: object) -> None:
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+        mc = _query_config(*config_shape)
+        checkpoint = _query_checkpoint(*checkpoint_shape, args={})  # no num_queries / group_detr keys
+        _serve_checkpoint(monkeypatch, checkpoint)
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         passed_state = nn_model.load_state_dict.call_args[0][0]
-        target_query_rows = mc_num_queries * mc_group_detr
-        assert torch.equal(passed_state["refpoint_embed.weight"], labelled_refpoint[:target_query_rows])
-        assert torch.equal(passed_state["query_feat.weight"], labelled_query_feat[:target_query_rows])
+        target_query_rows = config_shape[0] * config_shape[1]
+        assert torch.equal(
+            passed_state["refpoint_embed.weight"], checkpoint["model"]["refpoint_embed.weight"][:target_query_rows]
+        )
+        assert torch.equal(
+            passed_state["query_feat.weight"], checkpoint["model"]["query_feat.weight"][:target_query_rows]
+        )
         assert not any("scramble" in msg or "flat slice" in msg for msg in captured), captured
 
-    def test_legacy_fallback_fewer_checkpoint_rows_than_target_is_silent_noop(self, monkeypatch) -> None:
-        """Growing num_queries (checkpoint has FEWER query rows than target) never warns — strict ``>`` excludes it.
 
-        ``legacy_fallback_truncates`` only trips on ``tensor.shape[0] > target_query_rows``. A checkpoint with 6 query
-        rows loaded into a target needing 12 (``num_queries=4, group_detr=3``) never satisfies that strict inequality,
-        so no warning fires — and ``tensor[:12]`` on a 6-row tensor is a no-op, so the tensor is untouched.
-        """
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=4,
-            num_select=4,
-            group_detr=3,
-        )
-        labelled_refpoint = _labelled_query_tensor(num_queries=6, group_detr=1, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries=6, group_detr=1, dim=256)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": {},  # no num_queries / group_detr keys
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        captured: list[str] = []
-
-        def _capture(msg: str, *args: object, **kwargs: object) -> None:
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), (
-            f"Checkpoint with fewer rows (6) than target (12) must not warn; got: {captured}"
-        )
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        assert torch.equal(passed_state["refpoint_embed.weight"], labelled_refpoint)
-        assert torch.equal(passed_state["query_feat.weight"], labelled_query_feat)
-
-    def test_legacy_fallback_when_args_missing_num_queries_key(self, monkeypatch, tmp_path):
-        """When checkpoint args dict lacks num_queries/group_detr keys, falls back to flat legacy slice."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mc = RFDETRBaseConfig(
-            pretrain_weights="/fake/weights.pth",
-            device="cpu",
-            num_queries=2,
-            num_select=2,
-            group_detr=1,
-        )
-        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=1, dim=4)
-        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=1, dim=256)
-        checkpoint = {
-            "model": {
-                "class_embed.weight": torch.randn(91, 256),
-                "class_embed.bias": torch.randn(91),
-                "refpoint_embed.weight": labelled_refpoint,
-                "query_feat.weight": labelled_query_feat,
-            },
-            "args": {},
-        }
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        refpoint = passed_state["refpoint_embed.weight"]
-        query_feat = passed_state["query_feat.weight"]
-        expected = [0, 1]
-        assert refpoint[:, 0].int().tolist() == expected
-        assert query_feat[:, 0].int().tolist() == expected
-
-
-# Partial-load detector
-# ---------------------------------------------------------------------------
+_REMOVED_KEYPOINT_PROJECTION_KEYS = [
+    "keypoint_head.keypoint_proj.0.weight",
+    "keypoint_head.keypoint_proj.0.bias",
+    "keypoint_head.keypoint_proj.2.weight",
+    "keypoint_head.keypoint_proj.2.bias",
+]
 
 
 class TestPartialLoadDetector:
-    """Tests for ``_warn_on_partial_load`` — surfaces silent partial loads.
-
-    The rf-detr logger has ``propagate=False`` so pytest's ``caplog`` does not see its records.  These tests monkeypatch
-    ``logger.warning`` directly to capture the message text.
-    """
-
-    @pytest.fixture
-    def captured(self, monkeypatch):
-        """Capture every call to ``rfdetr.models.weights.logger.warning`` as a formatted string."""
-        captured: list[str] = []
-
-        def _capture(msg, *args, **kwargs):
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
-        return captured
+    """Tests for ``_warn_on_partial_load`` — surfaces silent partial loads."""
 
     @pytest.mark.parametrize(
         "result",
         [
-            pytest.param(
-                SimpleNamespace(missing_keys=[], unexpected_keys=[]),
-                id="clean_load",
-            ),
+            pytest.param(SimpleNamespace(missing_keys=[], unexpected_keys=[]), id="clean_load"),
             pytest.param(
                 SimpleNamespace(
                     missing_keys=[
@@ -1541,216 +1089,144 @@ class TestPartialLoadDetector:
                 id="legacy_checkpoint_missing_deterministic_keypoint_mask",
             ),
             pytest.param(
-                SimpleNamespace(missing_keys=42, unexpected_keys=[]),
-                id="non_iterable_missing_keys",
+                SimpleNamespace(missing_keys=["transformer.decoder._kp_active_mask"], unexpected_keys=[]),
+                id="submodule_prefixed_missing_mask",
             ),
+            pytest.param(
+                SimpleNamespace(missing_keys=[], unexpected_keys=_REMOVED_KEYPOINT_PROJECTION_KEYS),
+                id="removed_keypoint_projection_keys",
+            ),
+            pytest.param(SimpleNamespace(missing_keys=42, unexpected_keys=[]), id="non_iterable_missing_keys"),
         ],
     )
     def test_no_warning_cases(self, captured, result: SimpleNamespace) -> None:
         """Cases that must not emit any partial-load warning.
 
-        Covers: clean load, intentional head keys, deterministic buffers, and non-iterable missing_keys.
+        Covers: clean load, intentional head keys, deterministic buffers (bare or under a submodule path), removed
+        legacy keypoint projection tensors, and non-iterable missing_keys.
         """
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert captured == []
 
-    def test_unexpected_backbone_missing_keys_warn(self, captured):
-        """Missing backbone keys (e.g. register_tokens) must trigger the warning."""
-        result = SimpleNamespace(
-            missing_keys=[
-                "backbone.0.encoder.encoder.embeddings.register_tokens",
-                "backbone.0.encoder.encoder.layers.0.register_block.weight",
-            ],
-            unexpected_keys=[],
-        )
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "/fake/weights.pth" in captured[0]
-        assert "register_tokens" in captured[0]
-
-    def test_missing_keypoint_mask_does_not_hide_real_missing_key(self, captured):
-        """The deterministic mask is ignored without suppressing a real backbone gap."""
-        result = SimpleNamespace(
-            missing_keys=[
-                "_kp_active_mask",
-                "backbone.0.encoder.encoder.embeddings.register_tokens",
-            ],
-            unexpected_keys=[],
-        )
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "register_tokens" in captured[0]
-        assert "_kp_active_mask" not in captured[0]
-
-    def test_submodule_prefixed_missing_mask_does_not_warn(self, captured):
-        """The mask is filtered under a submodule path too, not only as a bare top-level key."""
-        result = SimpleNamespace(missing_keys=["transformer.decoder._kp_active_mask"], unexpected_keys=[])
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert captured == []
-
-    def test_similarly_named_missing_key_still_warns(self, captured):
-        """Filtering the exact schema buffer must not hide a prefix collision."""
-        result = SimpleNamespace(missing_keys=["_kp_active_mask_projection.weight"], unexpected_keys=[])
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "_kp_active_mask_projection.weight" in captured[0]
-
-    def test_suffix_collision_without_separator_still_warns(self, captured):
-        """The submodule clause is anchored on the `.` separator, so a bare suffix match is not the buffer."""
-        result = SimpleNamespace(missing_keys=["backbone.custom_kp_active_mask"], unexpected_keys=[])
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "backbone.custom_kp_active_mask" in captured[0]
-
-    def test_unexpected_keypoint_mask_still_warns(self, captured):
-        """Only a missing deterministic mask is intentional; an unconsumed mask is still surfaced."""
-        result = SimpleNamespace(missing_keys=[], unexpected_keys=["_kp_active_mask"])
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "_kp_active_mask" in captured[0]
-
-    def test_unexpected_keys_warn(self, captured):
-        """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""
-        result = SimpleNamespace(
-            missing_keys=[],
-            unexpected_keys=["backbone.0.encoder.legacy_module.weight"],
-        )
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "not consumed by model" in captured[0]
-
-    def test_removed_keypoint_projection_keys_do_not_warn(self, captured):
-        """Legacy keypoint projection tensors are intentionally ignored during partial-load checks."""
-        result = SimpleNamespace(
-            missing_keys=[],
-            unexpected_keys=[
-                "keypoint_head.keypoint_proj.0.weight",
-                "keypoint_head.keypoint_proj.0.bias",
-                "keypoint_head.keypoint_proj.2.weight",
-                "keypoint_head.keypoint_proj.2.bias",
-            ],
-        )
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert captured == []
-
-    def test_removed_keypoint_projection_keys_do_not_mask_other_unexpected_keys(self, captured):
-        """Only the removed keypoint projection tensors are filtered from the partial-load warning."""
-        result = SimpleNamespace(
-            missing_keys=[],
-            unexpected_keys=[
-                "keypoint_head.keypoint_proj.0.weight",
-                "keypoint_head.keypoint_proj.0.bias",
-                "keypoint_head.keypoint_proj.2.weight",
-                "keypoint_head.keypoint_proj.2.bias",
-                "backbone.0.encoder.legacy_module.weight",
-            ],
-        )
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "legacy_module" in captured[0]
-        assert "keypoint_proj" not in captured[0]
-
-    def test_handles_non_iterable_input_gracefully(self, captured):
-        """A MagicMock-style result (used in many existing tests) must not raise."""
-        _warn_on_partial_load(MagicMock(), "/fake/weights.pth")
-        # The crucial assertion is "did not raise"; whether captured is empty
-        # depends on MagicMock truthiness — both outcomes are acceptable.
-
     @pytest.mark.parametrize(
-        "missing_keys, unexpected_keys, count_str",
+        ("missing_keys", "unexpected_keys", "present", "absent"),
         [
+            pytest.param(
+                [
+                    "backbone.0.encoder.encoder.embeddings.register_tokens",
+                    "backbone.0.encoder.encoder.layers.0.register_block.weight",
+                ],
+                [],
+                ["/fake/weights.pth", "register_tokens"],
+                [],
+                id="unexpected_backbone_missing_keys",
+            ),
+            pytest.param(
+                ["_kp_active_mask", "backbone.0.encoder.encoder.embeddings.register_tokens"],
+                [],
+                ["register_tokens"],
+                ["_kp_active_mask"],
+                id="missing_keypoint_mask_does_not_hide_real_missing_key",
+            ),
+            pytest.param(
+                [
+                    "class_embed.weight",
+                    "bbox_embed.layers.0.weight",
+                    "refpoint_embed.weight",
+                    "backbone.0.encoder.encoder.embeddings.register_tokens",
+                ],
+                [],
+                ["register_tokens"],
+                ["class_embed"],
+                id="intentional_head_keys_filtered_from_mixed_missing_keys",
+            ),
+            pytest.param(
+                ["_kp_active_mask_projection.weight"],
+                [],
+                ["_kp_active_mask_projection.weight"],
+                [],
+                id="similarly_named_missing_key",
+            ),
+            pytest.param(
+                ["backbone.custom_kp_active_mask"],
+                [],
+                ["backbone.custom_kp_active_mask"],
+                [],
+                id="suffix_collision_without_separator",
+            ),
+            pytest.param([], ["_kp_active_mask"], ["_kp_active_mask"], [], id="unexpected_keypoint_mask"),
+            pytest.param(
+                [],
+                ["backbone.0.encoder.legacy_module.weight"],
+                ["not consumed by model"],
+                [],
+                id="unexpected_checkpoint_keys",
+            ),
+            pytest.param(
+                [],
+                [*_REMOVED_KEYPOINT_PROJECTION_KEYS, "backbone.0.encoder.legacy_module.weight"],
+                ["legacy_module"],
+                ["keypoint_proj"],
+                id="removed_projection_keys_do_not_mask_other_unexpected_keys",
+            ),
             pytest.param(
                 [f"backbone.0.encoder.layer.{i}.weight" for i in range(10)],
                 [],
-                "10 model parameter",
-                id="long_missing_keys",
+                ["10 model parameter", "..."],
+                [],
+                id="long_missing_keys_truncated",
             ),
             pytest.param(
                 [],
                 [f"backbone.0.legacy.{i}.weight" for i in range(8)],
-                "8 checkpoint key(s)",
-                id="long_unexpected_keys",
+                ["8 checkpoint key(s)", "..."],
+                [],
+                id="long_unexpected_keys_truncated",
             ),
         ],
     )
-    def test_truncates_long_key_lists_in_message(
-        self,
-        captured,
-        missing_keys: list[str],
-        unexpected_keys: list[str],
-        count_str: str,
+    def test_warns_once_naming_only_unintentional_keys(
+        self, captured, missing_keys: list[str], unexpected_keys: list[str], present: list[str], absent: list[str]
     ) -> None:
-        """Sample key lists in the warning are bounded to 5 entries with a trailing ellipsis."""
-        result = SimpleNamespace(missing_keys=missing_keys, unexpected_keys=unexpected_keys)
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert count_str in captured[0]
-        assert "..." in captured[0]
+        """Genuine gaps trigger exactly one warning that names them, without the intentionally ignored keys.
 
-    def test_mixed_intentional_and_unintentional_keys_warn_only_for_unexpected(self, captured) -> None:
-        """Only unintentional missing keys appear in the warning; intentional reinit keys are filtered.
-
-        When a checkpoint load returns both head-reinit keys (class_embed.weight, etc.) and a genuine backbone mismatch
-        (backbone.0.encoder.register_tokens), the warning must fire exactly once and must reference the unintentional
-        key, not the filtered ones.
+        Key lists in the message are bounded to 5 entries with a trailing ellipsis.
         """
-        result = SimpleNamespace(
-            missing_keys=[
-                "class_embed.weight",
-                "bbox_embed.layers.0.weight",
-                "refpoint_embed.weight",
-                "backbone.0.encoder.encoder.embeddings.register_tokens",
-            ],
-            unexpected_keys=[],
-        )
-        _warn_on_partial_load(result, "/fake/mixed.pth")
+        result = SimpleNamespace(missing_keys=missing_keys, unexpected_keys=unexpected_keys)
+
+        _warn_on_partial_load(result, "/fake/weights.pth")
+
         assert len(captured) == 1, f"Expected exactly one warning, got {len(captured)}: {captured}"
-        assert "register_tokens" in captured[0], "Warning must reference the unintentional backbone key"
-        assert "class_embed" not in captured[0], "Intentional head key must be filtered from warning text"
+        assert all(text in captured[0] for text in present), f"Warning must contain {present}; got: {captured[0]}"
+        assert not any(text in captured[0] for text in absent), f"Warning must not contain {absent}; got: {captured[0]}"
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.os.path.isfile", return_value=True)
-    @patch("rfdetr.models.weights.validate_checkpoint_compatibility")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    @patch("rfdetr.models.weights.download_pretrain_weights")
-    def test_partial_load_is_invoked_during_load_pretrain_weights(
-        self,
-        mock_download: MagicMock,
-        mock_validate_weights: MagicMock,
-        mock_validate_compat: MagicMock,
-        mock_isfile: MagicMock,
-        mock_torch_load: MagicMock,
-        monkeypatch,
+    def test_handles_non_iterable_input_gracefully(self, captured):
+        """A MagicMock-style result (used in many existing tests) must not raise.
+
+        The crucial assertion is "did not raise"; whether anything is captured depends on MagicMock truthiness, and both
+        outcomes are acceptable.
+        """
+        _warn_on_partial_load(MagicMock(), "/fake/weights.pth")
+
+
+class TestPartialLoadWiring(_PatchWeightsIO):
+    """``load_pretrain_weights`` wires up the partial-load detector."""
+
+    @pytest.mark.parametrize(
+        ("missing_keys", "expect_warning"),
+        [
+            pytest.param(["backbone.0.encoder.something_required.weight"], True, id="partial_load_warns"),
+            pytest.param([], False, id="clean_load_is_silent"),
+        ],
+    )
+    def test_partial_load_warning_follows_load_result(
+        self, monkeypatch, captured, missing_keys: list[str], expect_warning: bool
     ) -> None:
-        """Integration check: load_pretrain_weights wires up the partial-load detector."""
-        from rfdetr.models.weights import load_pretrain_weights
-
-        mock_torch_load.return_value = _make_checkpoint(num_classes=91)
-
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        """A load that leaves model parameters missing warns about a partial load; a clean load does not."""
+        _serve_checkpoint(monkeypatch, _make_checkpoint(num_classes=91))
         nn_model = _fake_nn_model()
-        nn_model.load_state_dict.return_value = SimpleNamespace(
-            missing_keys=["backbone.0.encoder.something_required.weight"],
-            unexpected_keys=[],
-        )
+        nn_model.load_state_dict.return_value = SimpleNamespace(missing_keys=missing_keys, unexpected_keys=[])
 
-        captured: list[str] = []
+        load_pretrain_weights(nn_model, _base_config())
 
-        def _capture_warning(msg, *args, **kwargs):
-            try:
-                captured.append(msg % args if args else msg)
-            except TypeError:
-                captured.append(msg)
-
-        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture_warning)
-        load_pretrain_weights(nn_model, mc)
-
-        assert any("partially" in m for m in captured), (
-            f"Expected partial-load warning to fire; got messages: {captured}"
-        )
-
-        # Conversely, a clean load must not fire the warning.
-        captured.clear()
-        nn_model.load_state_dict.return_value = SimpleNamespace(missing_keys=[], unexpected_keys=[])
-        load_pretrain_weights(nn_model, mc)
-        assert not any("partially" in m for m in captured), f"Clean load must not warn; got messages: {captured}"
+        assert any("partially" in m for m in captured) is expect_warning, f"Unexpected warnings: {captured}"

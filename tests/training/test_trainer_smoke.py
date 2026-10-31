@@ -14,10 +14,11 @@ Chapter 1 gate: these must pass before Chapter 2 begins.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from pytorch_lightning import Trainer
 
 from rfdetr.config import SegmentationTrainConfig
@@ -63,118 +64,79 @@ def _make_trainer() -> Trainer:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def patched_stack(mocker: MockerFixture) -> None:
+    """Replace the model, criterion, dataset and param-dict builders with tiny fakes (20 detection samples).
+
+    Tests needing another dataset or criterion patch that builder again after requesting this fixture.
+
+    Examples:
+        >>> patched_stack  # doctest: +SKIP
+        A pytest fixture; it needs pytest-mock's mocker.
+    """
+    mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel())
+    mocker.patch(
+        "rfdetr.training.module_model.build_criterion_from_config",
+        return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+    )
+    mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20))
+    mocker.patch(
+        "rfdetr.training.module_model.get_param_dict", side_effect=lambda args, model: _make_param_dicts(model)
+    )
+
+
+@pytest.fixture
+def patched_ddp_builders(mocker: MockerFixture) -> None:
+    """Replace the model and criterion builders with picklable fakes, for modules sent through ``ddp_spawn``.
+
+    ``MagicMock`` is not picklable, so the post-processor is a plain ``_FakePostProcess``. Datasets are pre-set on the
+    datamodule instead of patching ``build_dataset``, which does not survive the spawn boundary.
+
+    Examples:
+        >>> patched_ddp_builders  # doctest: +SKIP
+        A pytest fixture; it needs pytest's monkeypatch.
+    """
+    mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel())
+    mocker.patch(
+        "rfdetr.training.module_model.build_criterion_from_config", return_value=(_FakeCriterion(), _FakePostProcess())
+    )
+
+
 class TestDetectionSmoke:
     """Trainer(fast_dev_run=2).fit() must complete without error for detection."""
 
-    def test_fit_runs_without_error(self, base_model_config, base_train_config):
+    def test_fit_runs_without_error(self, patched_stack, base_model_config, base_train_config):
         """Full PTL fit loop runs 2 train + 2 val batches without raising."""
         mc = base_model_config()
         tc = base_train_config()
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
 
-        tiny_model = _TinyModel()
-        fake_criterion = _FakeCriterion()
-        fake_postprocess = MagicMock(side_effect=_fake_postprocess)
-        fake_dataset = _FakeDataset(length=20)
+        _make_trainer().fit(module, datamodule)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            _make_trainer().fit(module, datamodule)
-
-    def test_training_step_called_expected_times(self, base_model_config, base_train_config):
-        """fast_dev_run=2 must run exactly 2 training steps."""
+    @pytest.mark.parametrize("step_name", ["training_step", "validation_step"])
+    def test_step_called_expected_times(self, patched_stack, base_model_config, base_train_config, step_name):
+        """fast_dev_run=2 must run exactly 2 training steps and exactly 2 validation steps."""
         mc = base_model_config()
         tc = base_train_config()
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        original_step = getattr(module, step_name)
+        call_count = []
 
-        tiny_model = _TinyModel()
-        fake_criterion = _FakeCriterion()
-        fake_postprocess = MagicMock(side_effect=_fake_postprocess)
-        fake_dataset = _FakeDataset(length=20)
+        def _counting_step(batch, batch_idx):
+            call_count.append(1)
+            return original_step(batch, batch_idx)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-
-            original_training_step = module.training_step
-            call_count = []
-
-            def _counting_training_step(batch, batch_idx):
-                call_count.append(1)
-                return original_training_step(batch, batch_idx)
-
-            module.training_step = _counting_training_step
-            _make_trainer().fit(module, datamodule)
+        setattr(module, step_name, _counting_step)
+        _make_trainer().fit(module, datamodule)
 
         assert sum(call_count) == 2
 
-    def test_val_step_called_expected_times(self, base_model_config, base_train_config):
-        """fast_dev_run=2 must run exactly 2 validation steps."""
-        mc = base_model_config()
-        tc = base_train_config()
-
-        tiny_model = _TinyModel()
-        fake_criterion = _FakeCriterion()
-        fake_postprocess = MagicMock(side_effect=_fake_postprocess)
-        fake_dataset = _FakeDataset(length=20)
-
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-
-            original_validation_step = module.validation_step
-            call_count = []
-
-            def _counting_val_step(batch, batch_idx):
-                call_count.append(1)
-                return original_validation_step(batch, batch_idx)
-
-            module.validation_step = _counting_val_step
-            _make_trainer().fit(module, datamodule)
-
-        assert sum(call_count) == 2
-
-    def test_loss_decreases_or_is_finite(self, base_model_config, base_train_config):
+    def test_loss_is_finite(self, patched_stack, mocker, base_model_config, base_train_config):
         """Training loss must be finite (not NaN/inf) for the run to be valid."""
         mc = base_model_config()
         tc = base_train_config()
-
-        tiny_model = _TinyModel()
-        fake_postprocess = MagicMock(side_effect=_fake_postprocess)
-        fake_dataset = _FakeDataset(length=20)
-
         losses = []
 
         def _recording_criterion(outputs, targets, num_boxes=None):
@@ -187,22 +149,14 @@ class TestDetectionSmoke:
         fake_criterion = MagicMock(side_effect=_recording_criterion)
         fake_criterion.weight_dict = {"loss_ce": 1.0}
         fake_criterion.num_boxes_for_targets.return_value = torch.tensor(1.0)
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
+        )
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            _make_trainer().fit(module, datamodule)
+        _make_trainer().fit(module, datamodule)
 
         assert len(losses) > 0
         assert all(torch.isfinite(torch.tensor(v)) for v in losses)
@@ -211,54 +165,27 @@ class TestDetectionSmoke:
 class TestSegmentationSmoke:
     """Trainer(fast_dev_run=2).fit() must complete without error for segmentation."""
 
-    def test_fit_runs_without_error(self, base_model_config, seg_train_config):
+    def test_fit_runs_without_error(self, patched_stack, mocker, base_model_config, seg_train_config):
         """Full PTL fit loop runs 2 train + 2 val batches without raising."""
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDatasetWithMasks(length=20))
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
 
-        tiny_model = _TinyModel()
-        fake_criterion = _FakeCriterion()
-        fake_postprocess = MagicMock(side_effect=_fake_postprocess)
-        fake_dataset = _FakeDatasetWithMasks(length=20)
+        _make_trainer().fit(module, datamodule)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            _make_trainer().fit(module, datamodule)
-
-    def test_segmentation_config_accepted(self, base_model_config, seg_train_config):
+    def test_segmentation_config_accepted(self, patched_stack, mocker, base_model_config, seg_train_config):
         """SegmentationTrainConfig must be accepted by both module and datamodule."""
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDatasetWithMasks())
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDatasetWithMasks()),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
 
-            assert isinstance(module.train_config, SegmentationTrainConfig)
-            assert isinstance(datamodule.train_config, SegmentationTrainConfig)
+        assert isinstance(module.train_config, SegmentationTrainConfig)
+        assert isinstance(datamodule.train_config, SegmentationTrainConfig)
 
 
 class TestBuildTrainerSmoke:
@@ -268,27 +195,15 @@ class TestBuildTrainerSmoke:
     internals so no real dataset or GPU is required.
     """
 
-    def test_fit_via_build_trainer(self, base_model_config, base_train_config):
+    def test_fit_via_build_trainer(self, patched_stack, base_model_config, base_train_config):
         """build_trainer() + trainer.fit(module, datamodule=datamodule) must not raise."""
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False)
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
-            trainer.fit(module, datamodule=datamodule)
+        trainer.fit(module, datamodule=datamodule)
 
 
 class _DDPModule(RFDETRModelModule):
@@ -353,31 +268,20 @@ class TestMultiScaleHookPropagation:
     in training_step if h==32, making trainer.fit() fail when the in-place mutation does not propagate.
     """
 
-    def test_mutation_persists_to_training_step(self, base_model_config, base_train_config):
+    def test_mutation_persists_to_training_step(self, patched_stack, base_model_config, base_train_config):
         """Single-process: training_step must see resized tensors, not original 32×32."""
         mc = base_model_config()
         tc = base_train_config(multi_scale=True, use_ema=False, run_test=False)
-        fake_dataset = _FakeDataset(length=20)
+        module = _MultiScaleCheckDDPModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), _FakePostProcess()),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-        ):
-            module = _MultiScaleCheckDDPModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
-            trainer.fit(module, datamodule=datamodule)
+        trainer.fit(module, datamodule=datamodule)
 
 
-# Windows CI currently cannot run this smoke test because gloo DDP spawn fails
-# with makeDeviceForHostname unsupported-device errors.
 @pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
-def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
+def test_ddp_spawn_fit_runs_without_error(patched_ddp_builders, base_model_config, base_train_config):
     """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
 
     ``ddp_spawn`` forks child processes, so all objects passed to ``trainer.fit()`` must be picklable.  ``MagicMock`` is
@@ -389,17 +293,9 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
 
     fake_dataset = _FakeDataset(length=20)
 
-    with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-        patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_FakeCriterion(), _FakePostProcess()),
-        ),
-    ):
-        module = _DDPModule(mc, tc)
+    module = _DDPModule(mc, tc)
 
     datamodule = RFDETRDataModule(mc, tc)
-    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
     datamodule._dataset_train = fake_dataset
     datamodule._dataset_val = fake_dataset
 
@@ -410,7 +306,7 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
 @pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.timeout(300)
-def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
+def test_ddp_spawn_run_test_completes(patched_ddp_builders, base_model_config, base_train_config):
     """``run_test=True`` under ``ddp_spawn`` must finish ``fit`` and leave the best checkpoint behind.
 
     ``BestModelCallback.on_fit_end`` used to call ``trainer.test()`` from the main rank's spawned worker, which made the
@@ -424,17 +320,9 @@ def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
 
     fake_dataset = _FakeDataset(length=20)
 
-    with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-        patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_FakeCriterion(), _FakePostProcess()),
-        ),
-    ):
-        module = _DDPModule(mc, tc)
+    module = _DDPModule(mc, tc)
 
     datamodule = RFDETRDataModule(mc, tc)
-    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
     datamodule._dataset_train = fake_dataset
     datamodule._dataset_val = fake_dataset
     datamodule._dataset_test = fake_dataset
@@ -447,7 +335,7 @@ def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
 
 @pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
-def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train_config):
+def test_ddp_spawn_multi_scale_mutation_propagates(patched_ddp_builders, base_model_config, base_train_config):
     """ddp_spawn with multi_scale=True must propagate on_train_batch_start resize to training_step.
 
     _MultiScaleCheckDDPModule raises AssertionError in training_step when the NestedTensor height is still 32 (original
@@ -462,17 +350,9 @@ def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train
 
     fake_dataset = _FakeDataset(length=20)
 
-    with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-        patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_FakeCriterion(), _FakePostProcess()),
-        ),
-    ):
-        module = _MultiScaleCheckDDPModule(mc, tc)
+    module = _MultiScaleCheckDDPModule(mc, tc)
 
     datamodule = RFDETRDataModule(mc, tc)
-    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
     datamodule._dataset_train = fake_dataset
     datamodule._dataset_val = fake_dataset
 
@@ -513,6 +393,7 @@ class _DDPMinStepsModule(RFDETRModelModule):
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.parametrize("trainer_grad_accum_steps", [1, 2])
 def test_ddp_spawn_preserves_minimum_optimizer_steps(
+    patched_ddp_builders,
     base_model_config,
     base_train_config,
     trainer_grad_accum_steps: int,
@@ -529,17 +410,9 @@ def test_ddp_spawn_preserves_minimum_optimizer_steps(
 
     fake_dataset = _FakeDataset(length=3)
 
-    with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-        patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_FakeCriterion(), _FakePostProcess()),
-        ),
-    ):
-        module = _DDPMinStepsModule(mc, tc)
+    module = _DDPMinStepsModule(mc, tc)
 
     datamodule = RFDETRDataModule(mc, tc)
-    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
     datamodule._dataset_train = fake_dataset
     datamodule._dataset_val = fake_dataset
 
@@ -601,7 +474,9 @@ class _DDPValImageCountModule(RFDETRModelModule):
 @pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.parametrize("val_images", [3, 1])
-def test_ddp_spawn_validation_scores_each_image_once(base_model_config, base_train_config, val_images: int):
+def test_ddp_spawn_validation_scores_each_image_once(
+    patched_ddp_builders, base_model_config, base_train_config, val_images: int
+):
     """A 3-image validation split on 2 ranks must merge to 3 images, not the 4 the padded sampler forwards.
 
     ``TestDistributedSamplerPaddingFilter`` in ``callbacks/test_coco_eval_callback.py`` covers the arithmetic against a
@@ -616,18 +491,10 @@ def test_ddp_spawn_validation_scores_each_image_once(base_model_config, base_tra
     train_dataset = _FakeDataset(length=20)
     val_dataset = _FakeDataset(length=val_images)
 
-    with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-        patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_FakeCriterion(), _FakePostProcess()),
-        ),
-    ):
-        module = _DDPValImageCountModule(mc, tc)
+    module = _DDPValImageCountModule(mc, tc)
     module.expected_images = len(val_dataset)
 
     datamodule = RFDETRDataModule(mc, tc)
-    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
     datamodule._dataset_train = train_dataset
     datamodule._dataset_val = val_dataset
 

@@ -196,16 +196,32 @@ class _RaisingRepr:
         raise RuntimeError("this object cannot describe itself")
 
 
+def _save_hook_module(model_config: Any = None, **train_overrides: Any) -> SimpleNamespace:
+    """Stand in for the module ``on_save_checkpoint`` reads: a trainer without datamodule plus the two configs.
+
+    Args:
+        model_config: Model config to hold, or ``None`` for a CPU Nano config without pretrained weights.
+        **train_overrides: Train config fields to override.
+
+    Examples:
+        >>> _save_hook_module(notes="n").train_config.notes
+        'n'
+    """
+    if model_config is None:
+        model_config = RFDETRNanoConfig(pretrain_weights=None, device="cpu")
+    return SimpleNamespace(
+        trainer=SimpleNamespace(datamodule=None),
+        model_config=model_config,
+        train_config=TrainConfig(dataset_dir="dataset", **train_overrides),
+    )
+
+
 class TestOnSaveCheckpoint:
     """``RFDETRModelModule.on_save_checkpoint`` on inputs the one-epoch CPU run does not produce."""
 
     def test_syncs_num_classes_from_compiled_weights(self) -> None:
         """The saved ``num_classes`` follows the weights ``torch.compile`` nests under ``model._orig_mod.``."""
-        module = SimpleNamespace(
-            trainer=SimpleNamespace(datamodule=None),
-            model_config=RFDETRNanoConfig(pretrain_weights=None, num_classes=5, device="cpu"),
-            train_config=TrainConfig(dataset_dir="dataset"),
-        )
+        module = _save_hook_module(RFDETRNanoConfig(pretrain_weights=None, num_classes=5, device="cpu"))
         checkpoint = {"state_dict": {"model._orig_mod.class_embed.weight": torch.zeros(4, 8)}}
 
         RFDETRModelModule.on_save_checkpoint(module, checkpoint)
@@ -221,11 +237,7 @@ class TestOnSaveCheckpoint:
     )
     def test_stores_what_a_weights_only_load_rejects_as_repr(self, notes: object) -> None:
         """Lightning resumes ``ckpt_path`` weights-only, so ``notes`` it cannot read must not reach the file as is."""
-        module = SimpleNamespace(
-            trainer=SimpleNamespace(datamodule=None),
-            model_config=RFDETRNanoConfig(pretrain_weights=None, device="cpu"),
-            train_config=TrainConfig(dataset_dir="dataset", notes=notes),
-        )
+        module = _save_hook_module(notes=notes)
         checkpoint: dict[str, Any] = {"state_dict": {}}
         with pytest.warns(UserWarning, match="'notes'"):
             RFDETRModelModule.on_save_checkpoint(module, checkpoint)
@@ -241,11 +253,7 @@ class TestOnSaveCheckpoint:
         The ``repr`` fallback is the last resort for a value no checkpoint can hold; calling it unguarded made a broken
         ``__repr__`` abort every checkpoint write of the run instead of costing one field of provenance.
         """
-        module = SimpleNamespace(
-            trainer=SimpleNamespace(datamodule=None),
-            model_config=RFDETRNanoConfig(pretrain_weights=None, device="cpu"),
-            train_config=TrainConfig(dataset_dir="dataset", notes=_RaisingRepr()),
-        )
+        module = _save_hook_module(notes=_RaisingRepr())
         checkpoint: dict[str, Any] = {"state_dict": {}}
 
         with pytest.warns(UserWarning, match="'notes'"):
@@ -260,11 +268,7 @@ class TestOnSaveCheckpoint:
         only thing between a plain ``Trainer`` and its ``.ckpt`` — records it. The callback's own ``.pth`` files keep
         refusing it; refusing here made such a run unable to save at all.
         """
-        module = SimpleNamespace(
-            trainer=SimpleNamespace(datamodule=None),
-            model_config=RFDETRLargeDeprecatedConfig(model_name=None, pretrain_weights=None, device="cpu"),
-            train_config=TrainConfig(dataset_dir="dataset"),
-        )
+        module = _save_hook_module(RFDETRLargeDeprecatedConfig(model_name=None, pretrain_weights=None, device="cpu"))
         checkpoint: dict[str, Any] = {"state_dict": {}}
 
         RFDETRModelModule.on_save_checkpoint(module, checkpoint)

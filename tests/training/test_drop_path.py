@@ -5,7 +5,9 @@
 # ------------------------------------------------------------------------
 
 import logging
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,40 +27,36 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.lwdetr import LWDETR
 
 
+def _nano_args(drop_path: float) -> SimpleNamespace:
+    """Build the RF-DETR Nano model arguments with the given ``drop_path`` rate.
+
+    Examples:
+        >>> _nano_args(0.1).drop_path
+        0.1
+    """
+    mc = RFDETRNanoConfig(num_classes=3, pretrain_weights=None)
+    tc = TrainConfig(dataset_dir=".", output_dir=".", drop_path=drop_path)
+    return _namespace_from_configs(mc, tc)
+
+
 @pytest.fixture
-def model_with_drop_path(monkeypatch: pytest.MonkeyPatch) -> LWDETR:
+def offline_backbone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build windowed DINOv2 backbones from their config instead of downloading pretrained weights."""
+    monkeypatch.setattr(
+        WindowedDinov2WithRegistersBackbone, "from_pretrained", classmethod(lambda cls, name, config: cls(config))
+    )
+
+
+@pytest.fixture
+def model_with_drop_path(offline_backbone: None) -> LWDETR:
     """Create RF-DETR Nano LWDETR with drop_path enabled."""
-    monkeypatch.setattr(
-        WindowedDinov2WithRegistersBackbone,
-        "from_pretrained",
-        classmethod(lambda cls, name, config: cls(config)),
-    )
-    mc = RFDETRNanoConfig(num_classes=3, pretrain_weights=None)
-    tc = TrainConfig(
-        dataset_dir=".",
-        output_dir=".",
-        drop_path=0.1,
-    )
-    args = _namespace_from_configs(mc, tc)
-    return build_model(args)
+    return build_model(_nano_args(0.1))
 
 
 @pytest.fixture
-def model_without_drop_path(monkeypatch: pytest.MonkeyPatch) -> LWDETR:
+def model_without_drop_path(offline_backbone: None) -> LWDETR:
     """Create RF-DETR Nano LWDETR without drop_path."""
-    monkeypatch.setattr(
-        WindowedDinov2WithRegistersBackbone,
-        "from_pretrained",
-        classmethod(lambda cls, name, config: cls(config)),
-    )
-    mc = RFDETRNanoConfig(num_classes=3, pretrain_weights=None)
-    tc = TrainConfig(
-        dataset_dir=".",
-        output_dir=".",
-        drop_path=0.0,
-    )
-    args = _namespace_from_configs(mc, tc)
-    return build_model(args)
+    return build_model(_nano_args(0.0))
 
 
 def test_get_backbone_encoder_layers_dinov2(model_with_drop_path: LWDETR) -> None:
@@ -108,7 +106,9 @@ def test_update_drop_path_dinov2(model_with_drop_path: LWDETR) -> None:
     )
 
 
-def test_drop_path_initialization(model_with_drop_path: LWDETR, model_without_drop_path: LWDETR) -> None:
+def test_drop_path_module_is_identity_only_for_zero_rate(
+    model_with_drop_path: LWDETR, model_without_drop_path: LWDETR
+) -> None:
     """Verify drop_path initialization: Dinov2WithRegistersDropPath vs Identity based on rate."""
     layers_with_dp = model_with_drop_path._get_backbone_encoder_layers()
     layers_without_dp = model_without_drop_path._get_backbone_encoder_layers()
@@ -131,7 +131,9 @@ def test_drop_path_initialization(model_with_drop_path: LWDETR, model_without_dr
         )
 
 
-def test_update_drop_path_handles_missing_layers(model_with_drop_path: LWDETR, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_update_drop_path_without_layers_returns_early(
+    model_with_drop_path: LWDETR, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify update_drop_path() handles models without recognizable layer structure gracefully."""
     model = model_with_drop_path
 
@@ -192,7 +194,7 @@ class TestUpdateDropPathMissingLayersWarning:
         assert messages == []
 
 
-def test_update_drop_path_partial_layers(model_with_drop_path: LWDETR) -> None:
+def test_update_drop_path_caps_schedule_at_available_layers(model_with_drop_path: LWDETR) -> None:
     """Verify min() guard prevents IndexError when vit_encoder_num_layers > len(layers)."""
     model = model_with_drop_path
 
@@ -216,7 +218,7 @@ def test_update_drop_path_partial_layers(model_with_drop_path: LWDETR) -> None:
         )
 
 
-def test_non_windowed_drop_path_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_windowed_backbone_warns_drop_path_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify a warning is emitted when drop_path_rate > 0 with non-windowed backbone."""
     mock_backbone = MagicMock()
     monkeypatch.setattr(dinov2_module, "AutoBackbone", MagicMock(from_pretrained=MagicMock(return_value=mock_backbone)))
@@ -233,23 +235,21 @@ def test_non_windowed_drop_path_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_get_backbone_encoder_layers_blocks_path() -> None:
-    """Verify _get_backbone_encoder_layers() returns enc.blocks for standard ViT backbones."""
+@pytest.mark.parametrize(
+    "make_encoder",
+    [
+        # Standard ViT backbones keep their layers in ``encoder.blocks``.
+        pytest.param(lambda blocks: SimpleNamespace(blocks=blocks), id="vit-blocks"),
+        # aimv2 backbones nest them under ``encoder.trunk.blocks`` and have no top-level ``blocks``.
+        pytest.param(lambda blocks: SimpleNamespace(trunk=SimpleNamespace(blocks=blocks)), id="aimv2-trunk-blocks"),
+    ],
+)
+def test_get_backbone_encoder_layers_finds_blocks_of_non_dinov2_backbones(make_encoder: Callable[..., Any]) -> None:
+    """Verify _get_backbone_encoder_layers() returns the block list of standard ViT and aimv2 backbones."""
     mock_blocks = nn.ModuleList([nn.Linear(1, 1) for _ in range(3)])
     # SimpleNamespace gives only the attributes we define, so hasattr checks work correctly.
-    mock_encoder = SimpleNamespace(blocks=mock_blocks)
-    mock_self = SimpleNamespace(backbone=[SimpleNamespace(encoder=mock_encoder)])
+    mock_self = SimpleNamespace(backbone=[SimpleNamespace(encoder=make_encoder(mock_blocks))])
 
     result = LWDETR._get_backbone_encoder_layers(mock_self)  # type: ignore[arg-type]
-    assert result is mock_blocks, "Should return enc.blocks for standard ViT backbone"
 
-
-def test_get_backbone_encoder_layers_trunk_blocks_path() -> None:
-    """Verify _get_backbone_encoder_layers() returns enc.trunk.blocks for aimv2 backbones."""
-    mock_blocks = nn.ModuleList([nn.Linear(1, 1) for _ in range(3)])
-    mock_trunk = SimpleNamespace(blocks=mock_blocks)
-    mock_encoder = SimpleNamespace(trunk=mock_trunk)  # no 'blocks' at top level
-    mock_self = SimpleNamespace(backbone=[SimpleNamespace(encoder=mock_encoder)])
-
-    result = LWDETR._get_backbone_encoder_layers(mock_self)  # type: ignore[arg-type]
-    assert result is mock_blocks, "Should return enc.trunk.blocks for aimv2 backbone"
+    assert result is mock_blocks, "Should return the backbone's block list"

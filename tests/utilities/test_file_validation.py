@@ -4,12 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import hashlib
 import os
 import stat
-import tempfile
 from pathlib import Path
-from typing import Iterable, Iterator, Literal, Optional
-from unittest.mock import Mock, patch
+from typing import Iterable, Iterator, Optional
+from unittest.mock import Mock
 
 import pytest
 import requests
@@ -84,130 +84,81 @@ def _assert_no_download_temp_files(tmp_path: Path, filename: str = "weights.bin"
     assert not list(tmp_path.glob(f"{filename}.*.tmp"))
 
 
+_CONTENT = "Test content"
+_CONTENT_MD5 = hashlib.md5(_CONTENT.encode()).hexdigest()
+_URL = "https://example.com/file.bin"
+
+
 class TestFileMD5Validation:
     """Test MD5 hash computation and validation."""
 
-    def test_compute_file_md5(self):
-        """Test MD5 hash computation for a simple file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Hello, World!")
-            temp_file = f.name
+    @pytest.mark.parametrize(
+        ("content", "expected_hash"),
+        [
+            pytest.param(b"Hello, World!", "65a8e27d8879283831b664bd8b7f0ad4", id="known-text"),
+            pytest.param(b"", "d41d8cd98f00b204e9800998ecf8427e", id="empty-file"),
+        ],
+    )
+    def test_compute_file_md5_matches_known_hash(self, tmp_path: Path, content: bytes, expected_hash: str) -> None:
+        """MD5 of a file equals the well-known digest of its content, including the empty file."""
+        path = tmp_path / "data.bin"
+        path.write_bytes(content)
 
-        try:
-            # Known MD5 hash for "Hello, World!"
-            expected_hash = "65a8e27d8879283831b664bd8b7f0ad4"
-            actual_hash = _compute_file_md5(temp_file)
-            assert actual_hash == expected_hash
-        finally:
-            os.unlink(temp_file)
+        assert _compute_file_md5(path) == expected_hash
 
-    def test_validate_file_md5_success(self):
-        """Test successful MD5 validation."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Test content")
-            temp_file = f.name
+    def test_compute_file_md5_large_file(self, tmp_path: Path) -> None:
+        """MD5 of a 1 MiB file is a well-formed 32-char lowercase hex digest, so chunked reading works."""
+        path = tmp_path / "large.bin"
+        path.write_bytes(b"A" * (1024 * 1024))
 
-        try:
-            # Compute the actual hash first
-            expected_hash = _compute_file_md5(temp_file)
+        hash_value = _compute_file_md5(path)
 
-            # Validation should succeed
-            assert _validate_file_md5(temp_file, expected_hash) is True
-        finally:
-            os.unlink(temp_file)
-
-    def test_validate_file_md5_failure(self):
-        """Test MD5 validation failure with wrong hash."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Test content")
-            temp_file = f.name
-
-        try:
-            # Use a wrong hash
-            wrong_hash = "0" * 32
-
-            # Validation should fail
-            assert _validate_file_md5(temp_file, wrong_hash) is False
-        finally:
-            os.unlink(temp_file)
+        assert len(hash_value) == 32
+        assert all(c in "0123456789abcdef" for c in hash_value)
 
     @pytest.mark.parametrize(
-        "hash_case", [pytest.param("lower", id="lowercase"), pytest.param("upper", id="uppercase")]
+        ("expected_hash", "is_valid"),
+        [
+            pytest.param(_CONTENT_MD5, True, id="matching-hash"),
+            pytest.param(_CONTENT_MD5.upper(), True, id="matching-uppercase-hash"),
+            pytest.param("0" * 32, False, id="wrong-hash"),
+        ],
     )
-    def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
-        """Test that MD5 validation is case-insensitive."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Test content")
-            temp_file = f.name
+    def test_validate_file_md5(self, tmp_path: Path, expected_hash: str, is_valid: bool) -> None:
+        """Validation accepts the file's own digest in either letter case and rejects a wrong digest."""
+        path = tmp_path / "data.txt"
+        path.write_text(_CONTENT)
 
-        try:
-            # Get hash in lowercase
-            hash_lower = _compute_file_md5(temp_file)
-            test_hash = hash_lower.upper() if hash_case == "upper" else hash_lower
+        assert _validate_file_md5(path, expected_hash) is is_valid
 
-            # Each case variant (lower/upper) should validate successfully
-            assert _validate_file_md5(temp_file, test_hash) is True
-        finally:
-            os.unlink(temp_file)
+    def test_validate_nonexistent_file(self, tmp_path: Path) -> None:
+        """Validation of a missing file returns False instead of raising."""
+        assert _validate_file_md5(tmp_path / "nonexistent_file_xyz.txt", "abc123") is False
 
-    def test_validate_nonexistent_file(self):
-        """Test validation of non-existent file."""
-        nonexistent_file = "/tmp/nonexistent_file_xyz.txt"
-        assert _validate_file_md5(nonexistent_file, "abc123") is False
 
-    def test_compute_file_md5_empty_file(self):
-        """Test MD5 hash computation for empty file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            # Create empty file
-            temp_file = f.name
-
-        try:
-            # Known MD5 hash for empty file
-            expected_hash = "d41d8cd98f00b204e9800998ecf8427e"
-            actual_hash = _compute_file_md5(temp_file)
-            assert actual_hash == expected_hash
-        finally:
-            os.unlink(temp_file)
-
-    def test_compute_file_md5_large_file(self):
-        """Test MD5 computation for larger file (tests chunking)."""
-        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
-            # Write 1MB of data
-            data = b"A" * (1024 * 1024)
-            f.write(data)
-            temp_file = f.name
-
-        try:
-            # Compute hash (should handle chunking correctly)
-            hash_value = _compute_file_md5(temp_file)
-
-            # Verify it's a valid MD5 hash format
-            assert len(hash_value) == 32
-            assert all(c in "0123456789abcdef" for c in hash_value)
-        finally:
-            os.unlink(temp_file)
+@pytest.fixture
+def mock_get(mocker: pytest.MonkeyPatch) -> Mock:
+    """Replace the downloader's ``tqdm`` and ``requests.get``; return the ``requests.get`` mock."""
+    mocker.patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    return mocker.patch("rfdetr.utilities.files.requests.get")
 
 
 class TestDownloadFile:
     """Test download helper behavior and failure cleanup."""
 
-    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_missing_content_length(self, mock_get: Mock, tmp_path: Path):
         """Download succeeds when content-length is missing."""
         target_path = tmp_path / "weights.bin"
         response = _FakeResponse([b"hello", b"world"], headers={})
         mock_get.return_value = response
 
-        _download_file("https://example.com/file.bin", str(target_path))
+        _download_file(_URL, str(target_path))
 
-        assert target_path.exists()
         assert target_path.read_bytes() == b"helloworld"
         _assert_no_download_temp_files(tmp_path)
-        mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
+        mock_get.assert_called_once_with(_URL, stream=True, timeout=30.0)
         response.close.assert_called_once_with()
 
-    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_http_error(self, mock_get: Mock, tmp_path: Path):
         """HTTP errors raise and do not create files."""
         target_path = tmp_path / "weights.bin"
@@ -215,14 +166,12 @@ class TestDownloadFile:
         mock_get.return_value = response
 
         with pytest.raises(requests.HTTPError):
-            _download_file("https://example.com/file.bin", str(target_path))
+            _download_file(_URL, str(target_path))
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
         response.close.assert_called_once_with()
 
-    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_stream_error_cleans_temp(self, mock_get: Mock, tmp_path: Path):
         """Streaming errors clean up temp files."""
         target_path = tmp_path / "weights.bin"
@@ -236,14 +185,12 @@ class TestDownloadFile:
         mock_get.return_value = response
 
         with pytest.raises(RuntimeError):
-            _download_file("https://example.com/file.bin", str(target_path))
+            _download_file(_URL, str(target_path))
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
         response.close.assert_called_once_with()
 
-    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_md5_failure_cleans_temp(self, mock_get: Mock, tmp_path: Path):
         """MD5 failure removes temp file and target is not created."""
         target_path = tmp_path / "weights.bin"
@@ -251,65 +198,49 @@ class TestDownloadFile:
         mock_get.return_value = response
 
         with pytest.raises(ValueError):
-            _download_file(
-                "https://example.com/file.bin",
-                str(target_path),
-                expected_md5="0" * 32,
-            )
+            _download_file(_URL, str(target_path), expected_md5="0" * 32)
 
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
         response.close.assert_called_once_with()
 
-    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.utilities.files.requests.get")
-    def test_download_file_replace_failure_cleans_temp(self, mock_get: Mock, tmp_path: Path):
+    def test_download_file_replace_failure_cleans_temp(self, mock_get: Mock, mocker, tmp_path: Path):
         """Replace failure removes temp file and target is not created."""
         target_path = tmp_path / "weights.bin"
         response = _FakeResponse([b"data"], headers={"content-length": "4"})
         mock_get.return_value = response
+        mocker.patch("rfdetr.utilities.files.os.replace", side_effect=PermissionError("replace denied"))
 
-        with (
-            patch("rfdetr.utilities.files.os.replace", side_effect=PermissionError("replace denied")),
-            pytest.raises(PermissionError, match="replace denied"),
-        ):
-            _download_file("https://example.com/file.bin", str(target_path))
+        with pytest.raises(PermissionError) as exc_info:
+            _download_file(_URL, str(target_path))
 
+        assert "replace denied" in str(exc_info.value)
         assert not target_path.exists()
         _assert_no_download_temp_files(tmp_path)
         response.close.assert_called_once_with()
 
-    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.utilities.files.open", side_effect=AssertionError("must not reopen temp filename"))
-    @patch("rfdetr.utilities.files.requests.get")
-    def test_download_file_uses_fdopen_without_reopen(
-        self,
-        mock_get: Mock,
-        mock_open: Mock,
-        tmp_path: Path,
-    ) -> None:
+    def test_download_file_uses_fdopen_without_reopen(self, mock_get: Mock, mocker, tmp_path: Path) -> None:
         """Download writes through mkstemp file descriptor to avoid TOCTOU reopen."""
         target_path = tmp_path / "weights.bin"
-        response = _FakeResponse([b"data"], headers={"content-length": "4"})
-        mock_get.return_value = response
+        mock_get.return_value = _FakeResponse([b"data"], headers={"content-length": "4"})
+        mock_open = mocker.patch(
+            "rfdetr.utilities.files.open", side_effect=AssertionError("must not reopen temp filename")
+        )
 
-        _download_file("https://example.com/file.bin", str(target_path))
+        _download_file(_URL, str(target_path))
 
-        assert target_path.exists()
         assert target_path.read_bytes() == b"data"
         _assert_no_download_temp_files(tmp_path)
         mock_open.assert_not_called()
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
-    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_mode_follows_umask(self, mock_get: Mock, process_umask: int, tmp_path: Path) -> None:
         """The downloaded file gets the mode ``open()`` would give it, not ``mkstemp``'s owner-only ``0o600``."""
         target_path = tmp_path / "weights.bin"
         mock_get.return_value = _FakeResponse([b"data"], headers={"content-length": "4"})
 
-        _download_file("https://example.com/file.bin", str(target_path))
+        _download_file(_URL, str(target_path))
 
         assert stat.S_IMODE(target_path.stat().st_mode) == 0o666 & ~process_umask
 
@@ -317,31 +248,36 @@ class TestDownloadFile:
 class TestMkstempDefaultMode:
     """Tests for the temp-file helper behind the atomic writes, whose mode follows the umask."""
 
-    def test_retries_a_colliding_name(self, tmp_path: Path) -> None:
+    def test_retries_a_colliding_name(self, tmp_path: Path, mocker) -> None:
         """A candidate name that is already taken is skipped in favour of the next one."""
         (tmp_path / f"tmp{'a' * 16}").touch()
-        with patch("rfdetr.utilities.files.secrets.token_hex", side_effect=["a" * 16, "b" * 16]):
-            fd, path = _mkstemp_default_mode(tmp_path)
+        mocker.patch("rfdetr.utilities.files.secrets.token_hex", side_effect=["a" * 16, "b" * 16])
+
+        fd, path = _mkstemp_default_mode(tmp_path)
+
         os.close(fd)
         assert Path(path).name == f"tmp{'b' * 16}"
 
-    def test_raises_when_every_candidate_name_is_taken(self, tmp_path: Path) -> None:
+    def test_raises_when_every_candidate_name_is_taken(self, tmp_path: Path, mocker) -> None:
         """Running out of ``tempfile.TMP_MAX`` candidates raises instead of looping forever."""
         (tmp_path / f"tmp{'a' * 16}").touch()
-        with (
-            patch("rfdetr.utilities.files.tempfile.TMP_MAX", 3),
-            patch("rfdetr.utilities.files.secrets.token_hex", return_value="a" * 16),
-            pytest.raises(FileExistsError, match="No usable temporary file name"),
-        ):
+        mocker.patch("rfdetr.utilities.files.tempfile.TMP_MAX", 3)
+        mocker.patch("rfdetr.utilities.files.secrets.token_hex", return_value="a" * 16)
+
+        with pytest.raises(FileExistsError) as exc_info:
             _mkstemp_default_mode(tmp_path)
 
+        assert "No usable temporary file name" in str(exc_info.value)
+
     @pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs elevated privileges on Windows")
-    def test_never_follows_a_planted_symlink(self, tmp_path: Path) -> None:
+    def test_never_follows_a_planted_symlink(self, tmp_path: Path, mocker) -> None:
         """A symlink planted at a candidate name counts as taken, so the file it points to is never created."""
         link_target = tmp_path / "link_target"
         (tmp_path / f"tmp{'a' * 16}").symlink_to(link_target)
-        with patch("rfdetr.utilities.files.secrets.token_hex", side_effect=["a" * 16, "b" * 16]):
-            fd, _ = _mkstemp_default_mode(tmp_path)
+        mocker.patch("rfdetr.utilities.files.secrets.token_hex", side_effect=["a" * 16, "b" * 16])
+
+        fd, _ = _mkstemp_default_mode(tmp_path)
+
         os.close(fd)
         assert not link_target.exists()
 

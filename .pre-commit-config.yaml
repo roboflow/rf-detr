@@ -104,7 +104,7 @@ repos:
         # test_tensorrt_int8 keeps one module-level importorskip("onnx"), because its parametrized cases build ONNX nodes at
         # collection time; moving them behind local imports is a follow-up.
         exclude: >-
-          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/test_tensorrt_int8)\.py$
+          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/tensorrt/test_tensorrt_int8)\.py$
 
       - id: mypy
         name: mypy

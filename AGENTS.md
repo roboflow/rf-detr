@@ -121,6 +121,8 @@ pre-commit run --all-files
 
 **Test Organization:**
 
+- Mirror the package in `tests/`: a test for `src/rfdetr/<pkg>/_<fmt>/` lives in `tests/<pkg>/<fmt>/` (for example `tests/export/onnx/`, `tests/export/tensorrt/`), and tests for format-independent code stay in `tests/<pkg>/`. Each test folder is a package (`__init__.py`), and fixtures shared by several formats go in the nearest common `conftest.py`.
+- Patch with the `mocker` fixture (`pytest-mock`, in the `tests` group) in preference to `with patch(...)` blocks and `@patch` stacks. Keep a `with` block only where a patch must end before the end of the test. Use `monkeypatch` for environment variables, `sys.modules` and attributes.
 - Group related tests in classes
 - Use `pytest.param(..., id="name")` only for a function, object, compound setup passed as one case, a per-case mark, or when the raw value would produce an unclear/empty ID (e.g., `""`); use bare string/number/boolean/`None` values otherwise, and do not maintain a parallel `ids` list
 - Mark GPU/heavy tests with `@pytest.mark.gpu`

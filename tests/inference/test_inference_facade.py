@@ -140,7 +140,7 @@ class TestLiveModelDevicePolicy:
     @pytest.mark.parametrize("device", ["cpu", "not_a_device", pytest.param(torch.device("cpu"), id="torch-device")])
     def test_explicit_device_is_rejected(self, nano_model: RFDETRNano, device: str | torch.device) -> None:
         """Even a matching device must be configured on the native source itself."""
-        with pytest.raises(ValueError, match="live model.*device"):
+        with pytest.raises(ValueError, match="A live model owns its device policy"):
             RFDETRInference(nano_model, device=device)
 
     @pytest.mark.parametrize("source_device", ["cuda", "cuda:0"])
@@ -149,7 +149,7 @@ class TestLiveModelDevicePolicy:
     ) -> None:
         """An explicit borrowed-model request has the same outcome before the deferred move."""
         nano_model.model.device = torch.device(source_device)
-        with pytest.raises(ValueError, match="live model.*device"):
+        with pytest.raises(ValueError, match="A live model owns its device policy"):
             RFDETRInference(nano_model, device="cuda:0")
 
 
@@ -281,15 +281,11 @@ class TestCheckpointSource:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=0, rtol=0)
         np.testing.assert_array_equal(actual.class_id, expected.class_id)
 
-    def test_checkpoint_loader_omits_auto_device_and_forwards_trust(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
+    def test_checkpoint_loader_omits_auto_device_and_forwards_trust(self, mocker, tmp_path: Path) -> None:
         """Automatic checkpoint loading leaves device selection to the native loader."""
         loaded_model = SimpleNamespace(model=SimpleNamespace(device=torch.device("cpu")))
-        loader = Mock(return_value=loaded_model)
-        monkeypatch.setattr(RFDETR, "from_checkpoint", classmethod(lambda cls, path, **kwargs: loader(path, **kwargs)))
+        loader = mocker.Mock(return_value=loaded_model)
+        mocker.patch.object(RFDETR, "from_checkpoint", classmethod(lambda cls, path, **kwargs: loader(path, **kwargs)))
         checkpoint = tmp_path / "model.ckpt"
 
         RFDETRInference(checkpoint, trust_checkpoint=True)
@@ -338,7 +334,7 @@ class TestCheckpointSource:
 
 
 @pytest.fixture
-def stopped_runtime_load(monkeypatch: pytest.MonkeyPatch) -> tuple[ExportMetadata, Mock]:
+def stopped_runtime_load(mocker) -> tuple[ExportMetadata, Mock]:
     """Stop an exported-artifact load at the runtime loader, returning the metadata it reads and the loader mock.
 
     Examples:
@@ -360,12 +356,13 @@ def stopped_runtime_load(monkeypatch: pytest.MonkeyPatch) -> tuple[ExportMetadat
         patch_size=1,
         num_windows=1,
     )
-    load_runtime = Mock(side_effect=RuntimeError("stop after runtime load"))
     # Patch the module the facade's call-time import resolves (sys.modules), not a parent-package attribute: a
     # sys.modules restore in another test can leave the two pointing at different module objects.
     context_module = importlib.import_module("rfdetr.export._runtime.context")
-    monkeypatch.setattr(context_module, "read_metadata", Mock(return_value=contract))
-    monkeypatch.setattr(context_module, "load_runtime", load_runtime)
+    mocker.patch.object(context_module, "read_metadata", return_value=contract)
+    load_runtime = mocker.patch.object(
+        context_module, "load_runtime", side_effect=RuntimeError("stop after runtime load")
+    )
     return contract, load_runtime
 
 
@@ -446,12 +443,14 @@ class TestFacadeContracts:
 
     @pytest.mark.parametrize("keyword", ["threhsold", "confidence"])
     def test_unknown_prediction_keyword_fails_before_placement(
-        self, nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch, keyword: str
+        self, nano_model: RFDETRNano, mocker, keyword: str
     ) -> None:
         """A typo must fail before a borrowed model changes device or executes."""
         facade = RFDETRInference(nano_model)
-        placement = Mock(side_effect=AssertionError("Unknown options must fail before placement."))
-        monkeypatch.setattr("rfdetr.detr._move_model_context_to_device", placement)
+        placement = mocker.patch(
+            "rfdetr.detr._move_model_context_to_device",
+            side_effect=AssertionError("Unknown options must fail before placement."),
+        )
 
         with pytest.raises(TypeError, match="unexpected keyword argument"):
             facade.predict(np.zeros((64, 64, 3), dtype=np.uint8), **{keyword: 0.9})
@@ -489,8 +488,10 @@ class TestFacadeContracts:
         facade = nano_model.inference(batch_size=2)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
-        with pytest.raises(ValueError, match=r"native_model.inference\(batch_size="):
+        with pytest.raises(ValueError) as exc_info:
             facade.predict(image)
+
+        assert "native_model.inference(batch_size=" in str(exc_info.value)
 
         replacement = nano_model.inference(batch_size=1)
         result = replacement.predict(image)
@@ -503,8 +504,10 @@ class TestFacadeContracts:
         facade = nano_model.inference(compile=False)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
-        with pytest.raises(ValueError, match=r"native_model.predict\("):
+        with pytest.raises(ValueError) as exc_info:
             facade.predict(image, shape=(128, 128))
+
+        assert "native_model.predict(" in str(exc_info.value)
 
         result = nano_model.predict(image, shape=(128, 128))
         assert isinstance(result, Detections)

@@ -94,7 +94,7 @@ class TestInstallFlags:
         A flag built another way (a different helper, a computed name) would escape the package-name check below, so the
         set of flags and the set of literal probes must be the same.
         """
-        flags = {name for name in vars(module) if re.fullmatch(r"_IS_[A-Z0-9_]+_INSTALLED", name)}
+        flags = {name for name in vars(module) if name.startswith("_IS_") and name.endswith("_INSTALLED")}
 
         assert flags == set(_probed_packages(module))
 

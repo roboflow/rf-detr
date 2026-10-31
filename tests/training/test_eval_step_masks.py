@@ -142,7 +142,7 @@ class TestEvalStepSegmentationMasks:
         assert "pred_masks" not in outputs["enc_outputs"], "encoder masks computed without a loss"
 
     @pytest.mark.parametrize("segmentation_config", [False, True])
-    def test_model_without_a_segmentation_head_is_called_with_the_images_alone(
+    def test_model_without_segmentation_head_is_called_with_images_alone(
         self, tmp_path: Path, segmentation_config: bool
     ) -> None:
         """A model without a segmentation head gets no ``all_layer_masks`` keyword with a loss, whatever the config.
@@ -168,8 +168,10 @@ class TestEvalStepSegmentationMasks:
         with torch.no_grad():
             outputs = module.model(samples)
 
-        with pytest.raises(ValueError, match="all_layer_masks=True"):
+        with pytest.raises(ValueError) as exc_info:
             module.criterion(outputs, targets)
+
+        assert "all_layer_masks=True" in str(exc_info.value)
 
     def test_criterion_without_mask_targets_takes_default_eval_outputs(self, tmp_path: Path) -> None:
         """Targets without masks need no auxiliary masks, so default eval outputs go through every layer's loss."""

@@ -192,7 +192,7 @@ coreml = [
     # guards — coremltools._TORCH_OPS_REGISTRY internals can rename across minors).
     "coremltools>=8.0,<10.0",
     # No torch cap: the parity failures once blamed on torch>=2.12 were two-stage topk near-tie
-    # flips, not a coremltools numeric bug (see tests/export/test_coreml_export.py).
+    # flips, not a coremltools numeric bug (see tests/export/coreml/test_coreml_export.py).
 ]
 openvino = [
     # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
@@ -267,6 +267,7 @@ tests = [
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
+  "pytest-mock>=3.12,<4",
   "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
   "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
   "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
@@ -277,7 +278,7 @@ tests = [
   # instead of silently skipping.
   "onnx>=1.16.0,<2.0",
   "onnxconverter-common",
-  # tests/export/test_onnx_quantize.py runs quantize_int8 end to end on a synthetic graph, which needs the runtime
+  # tests/export/onnx/test_onnx_quantize.py runs quantize_int8 end to end on a synthetic graph, which needs the runtime
   # that collects the activation ranges. Same 3.10 split as the [onnx] extra: 1.24+ ships no cp310 wheels.
   "onnxruntime<1.24; python_version < '3.11'",
   "onnxruntime; python_version >= '3.11'",
@@ -468,7 +469,7 @@ doctest_norecursedirs = [
 # doctestplus walking every test module's attributes after the TF/ai_edge_litert stack is imported by
 # the tflite export tests grows unittest.mock.call's cached child-mock graph unboundedly — observed
 # 38 GB RSS and a silent SIGKILL during collection. If that recurs, reintroduce
-# `doctest_norecursedirs = ["tests/*"]` or scope it to `tests/export/test_tflite_inference.py`.
+# `doctest_norecursedirs = ["tests/*"]` or scope it to `tests/export/tflite/test_tflite_inference.py`.
 pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",

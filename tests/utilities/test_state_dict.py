@@ -10,7 +10,6 @@ import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 import torch
@@ -23,6 +22,68 @@ from rfdetr.utilities.state_dict import (
     strip_checkpoint,
     validate_checkpoint_compatibility,
 )
+
+#: Checkpoint keys under which the patch-embedding projection weight is saved: plain, and with ``backbone_lora=True``.
+_PROJECTION_KEYS = [
+    "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight",
+    "backbone.0.encoder.base_model.model.encoder.embeddings.patch_embeddings.projection.weight",
+]
+_PROJECTION_KEY = _PROJECTION_KEYS[0]
+
+
+def _projection_checkpoint(*shape: int, key: str = _PROJECTION_KEY, **extra: object) -> dict:
+    """Build a checkpoint whose patch-embedding projection weight has the given shape.
+
+    Args:
+        *shape: Shape of the projection weight.
+        key: State-dict key the weight is stored under.
+        **extra: Additional top-level checkpoint entries, such as ``args``.
+
+    Returns:
+        A checkpoint dict with the weight under ``model[key]``.
+
+    Examples:
+        >>> _projection_checkpoint(384, 3, 16, 16)["model"][_PROJECTION_KEY].shape
+        torch.Size([384, 3, 16, 16])
+    """
+    return {**extra, "model": {key: torch.zeros(shape)}}
+
+
+def _logged_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the messages the ``rf-detr`` logger recorded in ``caplog``.
+
+    Args:
+        caplog: The pytest log-capture fixture.
+
+    Returns:
+        Formatted messages of the records emitted by the ``rf-detr`` logger.
+
+    Examples:
+        >>> record = logging.LogRecord("rf-detr", logging.WARNING, "f.py", 1, "hi", (), None)
+        >>> _logged_messages(SimpleNamespace(records=[record]))
+        ['hi']
+    """
+    return [r.getMessage() for r in caplog.records if r.name == "rf-detr"]
+
+
+def _load_checkpoint(path: Path) -> dict:
+    """Load a checkpoint saved by ``torch.save`` onto the CPU, unpickling arbitrary objects.
+
+    Args:
+        path: Checkpoint file.
+
+    Returns:
+        The saved checkpoint.
+
+    Examples:
+        >>> import tempfile
+        >>> path = Path(tempfile.mkdtemp()) / "ckpt.pth"
+        >>> torch.save({"a": 1}, path)
+        >>> _load_checkpoint(path)
+        {'a': 1}
+    """
+    return torch.load(path, map_location="cpu", weights_only=False)
+
 
 # ---------------------------------------------------------------------------
 # _make_fit_loop_state
@@ -114,196 +175,147 @@ class TestMakeFitLoopState:
 class TestValidateCheckpointCompatibility:
     """Direct unit tests for validate_checkpoint_compatibility."""
 
+    @pytest.fixture
+    def rf_detr_warnings(self, caplog, monkeypatch):
+        """Capture ``rf-detr`` logger records, which do not propagate to the root logger by default."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            yield caplog
+
     # ------------------------------------------------------------------
     # Early-return / silent-skip cases
     # ------------------------------------------------------------------
 
-    def test_no_args_key_returns_without_raising(self):
-        """Checkpoint without 'args' key must return silently."""
-        checkpoint = {"model": {}}
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
-
-    def test_ckpt_has_segmentation_head_model_does_not_skips(self):
-        """One-sided: ckpt has segmentation_head, model_args lacks it — skip, no error."""
-        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=14)
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(patch_size=14)  # no segmentation_head attribute
-        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
-
-    def test_ckpt_lacks_patch_size_model_has_it_skips(self):
-        """One-sided: ckpt has no patch_size, model has it — skip that check, no error."""
-        ckpt_args = SimpleNamespace(segmentation_head=False)  # no patch_size
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
-
-    def test_compatible_checkpoint_no_exception(self):
-        """Checkpoint with matching segmentation_head and patch_size must not raise."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
-
-    def test_compatible_segmentation_checkpoint_no_exception(self):
-        """Matching segmentation model (seg_head=True both sides) must not raise."""
-        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=16)
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=True, patch_size=16)
+    @pytest.mark.parametrize(
+        ("checkpoint", "model_args"),
+        [
+            pytest.param(
+                {"model": {}},
+                SimpleNamespace(segmentation_head=False, patch_size=14),
+                id="no-args-key",
+            ),
+            pytest.param(
+                {"args": SimpleNamespace(segmentation_head=True, patch_size=14)},
+                SimpleNamespace(patch_size=14),  # no segmentation_head attribute
+                id="ckpt-only-segmentation-head",
+            ),
+            pytest.param(
+                {"args": SimpleNamespace(segmentation_head=False)},  # no patch_size
+                SimpleNamespace(segmentation_head=False, patch_size=14),
+                id="ckpt-without-patch-size",
+            ),
+            pytest.param(
+                {"args": SimpleNamespace(segmentation_head=False, patch_size=14)},
+                SimpleNamespace(segmentation_head=False, patch_size=14),
+                id="matching-detection",
+            ),
+            pytest.param(
+                {"args": SimpleNamespace(segmentation_head=True, patch_size=16)},
+                SimpleNamespace(segmentation_head=True, patch_size=16),
+                id="matching-segmentation",
+            ),
+        ],
+    )
+    def test_compatible_or_incomplete_args_do_not_raise(self, checkpoint: dict, model_args: SimpleNamespace) -> None:
+        """Matching args, or an attribute missing on one side only, pass silently instead of raising."""
         validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
 
     # ------------------------------------------------------------------
     # segmentation_head mismatch
     # ------------------------------------------------------------------
 
-    def test_seg_ckpt_into_detection_model_raises(self):
-        """Segmentation checkpoint loaded into a detection model must raise ValueError."""
-        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=14)
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        with pytest.raises(ValueError, match="segmentation head"):
+    @pytest.mark.parametrize(
+        ("ckpt_segmentation_head", "model_segmentation_head"),
+        [
+            pytest.param(True, False, id="segmentation-ckpt-into-detection-model"),
+            pytest.param(False, True, id="detection-ckpt-into-segmentation-model"),
+        ],
+    )
+    def test_segmentation_head_mismatch_raises(
+        self, ckpt_segmentation_head: bool, model_segmentation_head: bool
+    ) -> None:
+        """A checkpoint and model that disagree on the segmentation head must raise ValueError."""
+        checkpoint = {"args": SimpleNamespace(segmentation_head=ckpt_segmentation_head, patch_size=14)}
+        model_args = SimpleNamespace(segmentation_head=model_segmentation_head, patch_size=14)
+
+        with pytest.raises(ValueError) as exc_info:
             validate_checkpoint_compatibility(checkpoint, model_args)
 
-    def test_detection_ckpt_into_seg_model_raises(self):
-        """Detection checkpoint loaded into a segmentation model must raise ValueError."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=True, patch_size=14)
-        with pytest.raises(ValueError, match="segmentation head"):
-            validate_checkpoint_compatibility(checkpoint, model_args)
+        assert "segmentation head" in str(exc_info.value)
 
     # ------------------------------------------------------------------
     # patch_size mismatch
     # ------------------------------------------------------------------
 
-    def test_patch_size_mismatch_raises_with_both_sizes(self):
+    def test_patch_size_mismatch_raises_with_both_sizes(self) -> None:
         """patch_size mismatch must raise ValueError and mention both sizes."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
-        checkpoint = {"args": ckpt_args}
+        checkpoint = {"args": SimpleNamespace(segmentation_head=False, patch_size=12)}
         model_args = SimpleNamespace(segmentation_head=False, patch_size=16)
-        with pytest.raises(ValueError, match=r"patch_size=12.*patch_size=16|patch_size=16.*patch_size=12"):
+
+        with pytest.raises(ValueError) as exc_info:
             validate_checkpoint_compatibility(checkpoint, model_args)
+
+        assert "patch_size=12" in str(exc_info.value)
+        assert "patch_size=16" in str(exc_info.value)
 
     # ------------------------------------------------------------------
     # patch_size inferred from projection weight (no "args" key)
     # ------------------------------------------------------------------
 
+    @pytest.mark.parametrize("proj_key", _PROJECTION_KEYS)
     @pytest.mark.parametrize(
-        "ckpt_patch_size,model_patch_size,should_raise",
+        "ckpt_patch_size,model_patch_size",
         [
-            pytest.param(16, 12, True, id="ckpt_16_model_12_raises"),
-            pytest.param(14, 16, True, id="ckpt_14_model_16_raises"),
-            pytest.param(16, 16, False, id="matching_16_no_raise"),
+            pytest.param(16, 12, id="ckpt_16_model_12"),
+            pytest.param(14, 16, id="ckpt_14_model_16"),
         ],
     )
-    @pytest.mark.parametrize(
-        "proj_key",
-        [
-            "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight",
-            "backbone.0.encoder.base_model.model.encoder.embeddings.patch_embeddings.projection.weight",
-        ],
-    )
-    def test_patch_size_inferred_from_projection_weight(
-        self, ckpt_patch_size: int, model_patch_size: int, should_raise: bool, proj_key: str
+    def test_projection_weight_patch_size_mismatch_raises(
+        self, ckpt_patch_size: int, model_patch_size: int, proj_key: str
     ) -> None:
-        """Projection weight shape used to infer ckpt patch_size when 'args' key absent.
+        """Projection weight shape infers the ckpt patch_size when 'args' is absent, and a mismatch raises.
 
         Regression test for #965 — pretrained COCO weights lack 'args', so the shape-based fallback must fire before
         load_state_dict raises a cryptic RuntimeError. The second key is where a ``backbone_lora=True`` run saves the
         same weight (#1540); its checkpoint args are a ``TrainConfig`` dump without ``patch_size``.
         """
-        proj_weight = torch.zeros(384, 3, ckpt_patch_size, ckpt_patch_size)
-        checkpoint = {"model": {proj_key: proj_weight}}  # no "args" key
+        checkpoint = _projection_checkpoint(384, 3, ckpt_patch_size, ckpt_patch_size, key=proj_key)  # no "args" key
         model_args = SimpleNamespace(patch_size=model_patch_size)
 
-        if should_raise:
-            with pytest.raises(
-                ValueError,
-                match=rf"patch_size={ckpt_patch_size}.*patch_size={model_patch_size}"
-                rf"|patch_size={model_patch_size}.*patch_size={ckpt_patch_size}",
-            ):
-                validate_checkpoint_compatibility(checkpoint, model_args)
-        else:
-            validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
+        with pytest.raises(ValueError) as exc_info:
+            validate_checkpoint_compatibility(checkpoint, model_args)
+
+        assert f"patch_size={ckpt_patch_size}" in str(exc_info.value)
+        assert f"patch_size={model_patch_size}" in str(exc_info.value)
+
+    @pytest.mark.parametrize("proj_key", _PROJECTION_KEYS)
+    def test_projection_weight_patch_size_match_does_not_raise(self, proj_key: str) -> None:
+        """A projection weight whose inferred patch_size equals the model's passes (see the mismatch test for #965)."""
+        checkpoint = _projection_checkpoint(384, 3, 16, 16, key=proj_key)  # no "args" key
+        model_args = SimpleNamespace(patch_size=16)
+
+        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
 
     @pytest.mark.parametrize(
         "checkpoint,model_args_kwargs",
         [
+            pytest.param({}, {"patch_size": 16}, id="no_model_key_skips"),
+            pytest.param({"model": {}}, {"patch_size": 16}, id="no_projection_key_skips"),
+            pytest.param(_projection_checkpoint(384, 3, 16, 16), {}, id="model_no_patch_size_attr_skips"),
+            # 2D/3D/5D: not a Conv2d weight, the rank guard (== 4) must skip cleanly
+            pytest.param(_projection_checkpoint(384, 3), {"patch_size": 16}, id="proj_weight_2d_skips"),
+            pytest.param(_projection_checkpoint(384, 3, 16), {"patch_size": 16}, id="proj_weight_3d_skips"),
+            pytest.param(_projection_checkpoint(384, 3, 16, 16, 16), {"patch_size": 8}, id="proj_weight_5d_skips"),
+            # Hypothetical backbones with non-square kernels, where shape[-1] would not equal patch_size
+            pytest.param(_projection_checkpoint(384, 3, 16, 14), {"patch_size": 16}, id="non_square_kernel_skips"),
+            # Projection suggests 16, but an explicit args.patch_size=14 (namespace or PTL-style dict) takes precedence
             pytest.param(
-                {},
-                {"patch_size": 16},
-                id="no_model_key_skips",
-            ),
-            pytest.param(
-                {"model": {}},
-                {"patch_size": 16},
-                id="no_projection_key_skips",
-            ),
-            pytest.param(
-                {
-                    "model": {
-                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
-                            384, 3, 16, 16
-                        )
-                    }
-                },
-                {},
-                id="model_no_patch_size_attr_skips",
-            ),
-            pytest.param(
-                {
-                    "model": {
-                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
-                            384, 3
-                        )  # 2D — not a Conv2d weight; rank guard must skip cleanly
-                    }
-                },
-                {"patch_size": 16},
-                id="proj_weight_2d_skips",
-            ),
-            pytest.param(
-                {
-                    "model": {
-                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
-                            384, 3, 16
-                        )  # 3D — not a Conv2d weight; rank guard must skip cleanly
-                    }
-                },
-                {"patch_size": 16},
-                id="proj_weight_3d_skips",
-            ),
-            pytest.param(
-                {
-                    "model": {
-                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
-                            384, 3, 16, 16, 16
-                        )  # 5D — Conv3d-like; rank guard (== 4) must skip cleanly
-                    }
-                },
-                {"patch_size": 8},
-                id="proj_weight_5d_skips",
-            ),
-            pytest.param(
-                {
-                    "args": SimpleNamespace(patch_size=14),
-                    "model": {
-                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
-                            384, 3, 16, 16
-                        )  # projection suggests 16, but args.patch_size=14 takes precedence
-                    },
-                },
+                _projection_checkpoint(384, 3, 16, 16, args=SimpleNamespace(patch_size=14)),
                 {"patch_size": 14},
                 id="args_patch_size_suppresses_projection_inference",
             ),
             pytest.param(
-                {
-                    "args": {"patch_size": 14},  # PTL-style dict args (not SimpleNamespace)
-                    "model": {
-                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
-                            384, 3, 16, 16
-                        )  # projection suggests 16, but dict args["patch_size"]=14 takes precedence
-                    },
-                },
+                _projection_checkpoint(384, 3, 16, 16, args={"patch_size": 14}),
                 {"patch_size": 14},
                 id="dict_args_patch_size_suppresses_projection_inference",
             ),
@@ -315,96 +327,54 @@ class TestValidateCheckpointCompatibility:
         """Shape-based patch_size check is skipped when key or attribute is absent.
 
         Verifies backward compatibility: missing projection key, missing model key, model_args without patch_size
-        attribute, non-4D projection weights, or an explicit args.patch_size (SimpleNamespace or dict) must all be
-        handled without error.
+        attribute, non-4D or non-square projection weights, or an explicit args.patch_size (SimpleNamespace or dict)
+        must all be handled without error.
         """
         model_args = SimpleNamespace(**model_args_kwargs)
-        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
-
-    def test_non_square_projection_kernel_skips_check(self) -> None:
-        """Non-square patch projection kernel is skipped — patch_size cannot be inferred reliably.
-
-        Guards against hypothetical future backbones with non-square Conv2d kernels where shape[-1] would not equal
-        patch_size.
-        """
-        proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
-        proj_weight = torch.zeros(384, 3, 16, 14)  # non-square: h=16, w=14
-        checkpoint = {"model": {proj_key: proj_weight}}
-        model_args = SimpleNamespace(patch_size=16)
         validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
 
     # ------------------------------------------------------------------
     # class-count mismatch warnings
     # ------------------------------------------------------------------
 
-    def test_class_count_mismatch_backbone_pretrain_warns(self, caplog):
-        """Backbone pretrain scenario: checkpoint 91 classes, model 2 — warns about re-init."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
+    @pytest.mark.parametrize(
+        ("ckpt_rows", "num_classes", "expected"),
+        [
+            pytest.param(91, 2, "re-initialized to 2 classes", id="backbone-pretrain-reinitializes-head"),
+            pytest.param(3, 90, "Pass num_classes=2", id="finetune-checkpoint-hints-num-classes"),
+        ],
+    )
+    def test_class_count_mismatch_warns(self, rf_detr_warnings, ckpt_rows: int, num_classes: int, expected: str):
+        """A checkpoint head of a different size warns, with the re-init notice or the num_classes hint."""
         checkpoint = {
-            "args": ckpt_args,
-            "model": {"class_embed.bias": torch.randn(91)},
+            "args": SimpleNamespace(segmentation_head=False, patch_size=14),
+            "model": {"class_embed.bias": torch.randn(ckpt_rows)},
         }
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=2)
+        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=num_classes)
 
-        rf_detr_logger = logging.getLogger("rf-detr")
-        prev_propagate = rf_detr_logger.propagate
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                validate_checkpoint_compatibility(checkpoint, model_args)
-        finally:
-            rf_detr_logger.propagate = prev_propagate
+        validate_checkpoint_compatibility(checkpoint, model_args)
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("re-initialized to 2 classes" in msg for msg in warning_msgs), (
-            f"Expected 're-initialized to 2 classes' warning, got: {warning_msgs}"
-        )
+        warning_msgs = _logged_messages(rf_detr_warnings)
+        assert any(expected in msg for msg in warning_msgs), f"Expected {expected!r} warning, got: {warning_msgs}"
 
-    def test_class_count_mismatch_finetune_checkpoint_warns(self, caplog):
-        """Fine-tuned checkpoint scenario: checkpoint 3 classes, model 90 — warns with num_classes hint."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        checkpoint = {
-            "args": ckpt_args,
-            "model": {"class_embed.bias": torch.randn(3)},
-        }
+    @pytest.mark.parametrize(
+        "model_entry",
+        [
+            pytest.param({"model": {"class_embed.bias": torch.zeros(91)}}, id="matching-class-count"),
+            pytest.param({}, id="no-model-key"),  # backward compat: nothing to compare against
+        ],
+    )
+    def test_class_count_without_mismatch_is_silent(self, rf_detr_warnings, model_entry: dict) -> None:
+        """A matching class count, or a checkpoint without a 'model' key, emits no warning."""
+        checkpoint = {"args": SimpleNamespace(segmentation_head=False, patch_size=14), **model_entry}
         model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
 
-        rf_detr_logger = logging.getLogger("rf-detr")
-        prev_propagate = rf_detr_logger.propagate
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                validate_checkpoint_compatibility(checkpoint, model_args)
-        finally:
-            rf_detr_logger.propagate = prev_propagate
+        validate_checkpoint_compatibility(checkpoint, model_args)
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
-        assert any("Pass num_classes=2" in msg for msg in warning_msgs), (
-            f"Expected 'Pass num_classes=2' warning, got: {warning_msgs}"
-        )
-
-    def test_class_count_match_no_warning(self, caplog):
-        """Matching class count — no warning emitted."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        checkpoint = {
-            "args": ckpt_args,
-            "model": {"class_embed.bias": torch.randn(91)},
-        }
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
-
-        rf_detr_logger = logging.getLogger("rf-detr")
-        prev_propagate = rf_detr_logger.propagate
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                validate_checkpoint_compatibility(checkpoint, model_args)
-        finally:
-            rf_detr_logger.propagate = prev_propagate
-
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        warning_msgs = _logged_messages(rf_detr_warnings)
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
 
-    def test_class_count_mismatch_explicit_larger_num_classes_warns_head_resize(self, caplog):
+    def test_class_count_mismatch_explicit_larger_num_classes_warns_head_resize(self, rf_detr_warnings):
         """A set num_classes larger than the checkpoint: the warning says the configured count is kept.
 
         `load_pretrain_weights` honors a set `num_classes` and re-expands the head after loading; the warning must not
@@ -413,28 +383,14 @@ class TestValidateCheckpointCompatibility:
         checkpoint = {"model": {"class_embed.bias": torch.randn(91)}}
         model_args = RFDETRNanoConfig(num_classes=93)
 
-        rf_detr_logger = logging.getLogger("rf-detr")
-        prev_propagate = rf_detr_logger.propagate
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                validate_checkpoint_compatibility(checkpoint, model_args)
-        finally:
-            rf_detr_logger.propagate = prev_propagate
+        validate_checkpoint_compatibility(checkpoint, model_args)
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        warning_msgs = _logged_messages(rf_detr_warnings)
         assert any(
             "Keeping num_classes=93" in msg and "grows from 90 to 93 classes" in msg and "3 added class(es)" in msg
             for msg in warning_msgs
         ), f"Expected a 'Keeping num_classes=93' resize warning, got: {warning_msgs}"
         assert not any("Using checkpoint class count" in msg for msg in warning_msgs), warning_msgs
-
-    @pytest.fixture
-    def rf_detr_warnings(self, caplog, monkeypatch):
-        """Capture ``rf-detr`` logger records, which do not propagate to the root logger by default."""
-        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
-        with caplog.at_level(logging.WARNING, logger="rf-detr"):
-            yield caplog
 
     @pytest.mark.parametrize(
         ("model_args", "ckpt_rows", "expected", "forbidden"),
@@ -483,7 +439,7 @@ class TestValidateCheckpointCompatibility:
 
         validate_checkpoint_compatibility(checkpoint, model_args)
 
-        warning_msgs = [r.getMessage() for r in rf_detr_warnings.records if r.name == "rf-detr"]
+        warning_msgs = _logged_messages(rf_detr_warnings)
         assert all(any(text in msg for msg in warning_msgs) for text in expected), warning_msgs
         assert not any(text in msg for text in forbidden for msg in warning_msgs), warning_msgs
 
@@ -500,7 +456,7 @@ class TestValidateCheckpointCompatibility:
 
         validate_checkpoint_compatibility(checkpoint, model_args)
 
-        warning_msgs = [r.getMessage() for r in rf_detr_warnings.records if r.name == "rf-detr"]
+        warning_msgs = _logged_messages(rf_detr_warnings)
         assert any("Keeping num_classes=93" in msg for msg in warning_msgs), warning_msgs
         assert not any("Using checkpoint class count" in msg for msg in warning_msgs), warning_msgs
 
@@ -543,24 +499,6 @@ class TestRemapProjectorToCrossAttn:
         assert remapped is state_dict
         assert len([key for key in remapped if key.startswith("backbone.0.cross_attn_projector.")]) == 1
 
-    def test_class_count_missing_model_key_no_warning(self, caplog):
-        """Checkpoint without 'model' key — no warning (backward compat)."""
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
-        checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
-
-        rf_detr_logger = logging.getLogger("rf-detr")
-        prev_propagate = rf_detr_logger.propagate
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                validate_checkpoint_compatibility(checkpoint, model_args)
-        finally:
-            rf_detr_logger.propagate = prev_propagate
-
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
-        assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
-
 
 class TestStripCheckpoint:
     """Tests for strip_checkpoint loop-stub backfill."""
@@ -574,18 +512,18 @@ class TestStripCheckpoint:
         torch.save(payload, ckpt_path)
         return ckpt_path
 
-    def test_strip_adds_validate_loop_stub_when_loops_present_but_missing_key(self, tmp_path) -> None:
+    def test_adds_validate_and_test_loop_stubs_when_loops_lack_them(self, tmp_path) -> None:
         """Old checkpoints with loops but no validate_loop/test_loop get stubs backfilled."""
         ckpt_path = self._make_minimal_ckpt(
             tmp_path,
             extra={"loops": {"fit_loop": {"state_dict": {}}}},
         )
         strip_checkpoint(ckpt_path)
-        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        result = _load_checkpoint(ckpt_path)
         assert result["loops"]["validate_loop"] == {"state_dict": {}}
         assert result["loops"]["test_loop"] == {"state_dict": {}}
 
-    def test_strip_preserves_existing_validate_loop_stub(self, tmp_path) -> None:
+    def test_preserves_existing_validate_loop_stub(self, tmp_path) -> None:
         """Checkpoints with validate_loop already present are not overwritten."""
         original_stub = {"state_dict": {"some_key": 1}}
         ckpt_path = self._make_minimal_ckpt(
@@ -593,33 +531,33 @@ class TestStripCheckpoint:
             extra={"loops": {"fit_loop": {"state_dict": {}}, "validate_loop": original_stub}},
         )
         strip_checkpoint(ckpt_path)
-        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        result = _load_checkpoint(ckpt_path)
         assert result["loops"]["validate_loop"] == original_stub
 
-    def test_strip_no_loops_key_leaves_loops_absent(self, tmp_path) -> None:
+    def test_leaves_loops_absent_without_loops_key(self, tmp_path) -> None:
         """Checkpoints without a loops key must not gain one after stripping."""
         ckpt_path = self._make_minimal_ckpt(tmp_path)
         strip_checkpoint(ckpt_path)
-        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        result = _load_checkpoint(ckpt_path)
         assert "loops" not in result
 
-    def test_strip_writes_extra_metadata(self, tmp_path) -> None:
+    def test_writes_extra_metadata(self, tmp_path) -> None:
         """extra_metadata key/value pairs are merged into the stripped checkpoint."""
         ckpt_path = self._make_minimal_ckpt(tmp_path)
         strip_checkpoint(ckpt_path, extra_metadata={"best_total_source": "ema"})
-        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        result = _load_checkpoint(ckpt_path)
         assert result["best_total_source"] == "ema"
 
-    def test_strip_extra_metadata_overrides_preserved_key(self, tmp_path) -> None:
+    def test_extra_metadata_overrides_preserved_key(self, tmp_path) -> None:
         """extra_metadata wins over a preserved same-named key."""
         ckpt_path = self._make_minimal_ckpt(tmp_path, extra={"rfdetr_version": "1.0.0"})
         strip_checkpoint(ckpt_path, extra_metadata={"rfdetr_version": "override"})
-        result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        result = _load_checkpoint(ckpt_path)
         assert result["rfdetr_version"] == "override"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
-    def test_strip_checkpoint_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
+    def test_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """A checkpoint saved and stripped under one umask ends with that umask's mode, not a ``0o600`` temp mode."""
         ckpt_path = self._make_minimal_ckpt(tmp_path)
         strip_checkpoint(ckpt_path)
@@ -627,20 +565,21 @@ class TestStripCheckpoint:
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.usefixtures("process_umask")  # the default 0o022, so both modes differ from a fresh file's 0o644
-    @pytest.mark.parametrize("mode", [0o600, 0o640], ids=oct)
-    def test_strip_checkpoint_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:
+    @pytest.mark.parametrize("mode", [pytest.param(0o600, id="0o600"), pytest.param(0o640, id="0o640")])
+    def test_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:
         """Stripping keeps the checkpoint's own permission bits instead of widening them to the umask's ``0o644``."""
         ckpt_path = self._make_minimal_ckpt(tmp_path)
         ckpt_path.chmod(mode)
         strip_checkpoint(ckpt_path)
         assert stat.S_IMODE(ckpt_path.stat().st_mode) == mode
 
-    def test_strip_checkpoint_cleanup_failure_does_not_mask_save_error(self, tmp_path: Path) -> None:
+    def test_cleanup_failure_does_not_mask_save_error(self, tmp_path: Path, mocker) -> None:
         """A temp file that cannot be removed after a failed save must not hide the save's own error."""
         ckpt_path = self._make_minimal_ckpt(tmp_path)
-        with (
-            patch("torch.save", side_effect=RuntimeError("save failed")),
-            patch("rfdetr.utilities.state_dict.os.remove", side_effect=PermissionError("temp file locked")),
-            pytest.raises(RuntimeError, match="save failed"),
-        ):
+        mocker.patch("torch.save", side_effect=RuntimeError("save failed"))
+        mocker.patch("rfdetr.utilities.state_dict.os.remove", side_effect=PermissionError("temp file locked"))
+
+        with pytest.raises(RuntimeError) as exc_info:
             strip_checkpoint(ckpt_path)
+
+        assert "save failed" in str(exc_info.value)

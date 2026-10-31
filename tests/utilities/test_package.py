@@ -5,11 +5,11 @@
 # ------------------------------------------------------------------------
 """Tests for package metadata helpers and structural import paths."""
 
+import importlib
 import subprocess
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import torch
@@ -19,10 +19,29 @@ from rfdetr.utilities import box_ops
 from rfdetr.utilities.package import get_sha, is_installed
 
 
+def _assert_subprocess_succeeds(command: list[str], description: str) -> None:
+    """Run ``command`` and fail with its return code and output unless it exits 0.
+
+    Args:
+        command: Program and arguments to run.
+        description: What the subprocess checks, named in the failure message.
+
+    Examples:
+        >>> _assert_subprocess_succeeds([sys.executable, "-c", "pass"], "a no-op interpreter")
+    """
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"Subprocess for {description} failed:\n"
+        f"return code: {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+
+
 class TestIsInstalled:
     """``is_installed`` answers from import metadata and never raises on an unusual ``sys.modules`` entry."""
 
-    def test_a_stub_module_without_a_spec_is_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_stub_module_without_spec_is_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A ``sys.modules`` stub is not an install, and asking about one must not raise.
 
         ``find_spec`` raises ``ValueError`` — not ``ImportError`` — for an entry whose ``__spec__`` is ``None``, which
@@ -33,7 +52,7 @@ class TestIsInstalled:
 
         assert is_installed("tensorrt") is False
 
-    def test_a_bare_directory_is_not_installed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_bare_directory_is_not_installed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A namespace package — a directory carrying the name with no module in it — is not an install.
 
         An export folder named after the format it writes is the realistic case: it sits on ``sys.path`` and answers
@@ -46,7 +65,7 @@ class TestIsInstalled:
         assert is_installed("tensorrt") is False
 
 
-def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() -> None:
+def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1(mocker) -> None:
     """A diff exit code of 1 should report uncommitted changes, not unknown."""
 
     def _fake_check_output(command: list[str], cwd: str | None = None) -> bytes:
@@ -56,46 +75,28 @@ def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() ->
             return b"feature/test\n"
         raise AssertionError(f"Unexpected command: {command!r}")
 
-    class _RunResult:
-        def __init__(self, returncode: int) -> None:
-            self.returncode = returncode
+    mocker.patch("rfdetr.utilities.package.subprocess.check_output", side_effect=_fake_check_output)
+    mocker.patch("rfdetr.utilities.package.subprocess.run", return_value=mocker.MagicMock(returncode=1))
 
-    with (
-        patch("rfdetr.utilities.package.subprocess.check_output", side_effect=_fake_check_output),
-        patch("rfdetr.utilities.package.subprocess.run", return_value=_RunResult(returncode=1)),
-    ):
-        sha = get_sha()
+    sha = get_sha()
 
     assert sha == "sha: abc123, status: has uncommitted changes, branch: feature/test"
 
 
-def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None:
+def test_backbone_import_does_not_import_peft() -> None:
     """Importing backbone.backbone must NOT pull peft into sys.modules (peft is optional).
 
-    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora): after the lazy-
-    import refactor, importing backbone at module-load time must not trigger a top-level ``from peft import PeftModel``.
+    This captures the invariant introduced in PR 1 (chore/packaging-peft-lora): after the lazy-import refactor,
+    importing backbone at module-load time must not trigger a top-level ``from peft import PeftModel``.
     """
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import sys; "
-                "import rfdetr.models.backbone.backbone; "
-                "assert 'peft' not in sys.modules, "
-                "'peft was eagerly imported by backbone.backbone'"
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+    code = (
+        "import sys; "
+        "import rfdetr.models.backbone.backbone; "
+        "assert 'peft' not in sys.modules, "
+        "'peft was eagerly imported by backbone.backbone'"
     )
-    assert result.returncode == 0, (
-        "Subprocess for backbone import failed:\n"
-        f"return code: {result.returncode}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
-    )
+
+    _assert_subprocess_succeeds([sys.executable, "-c", code], "backbone import")
 
 
 class TestImportPaths:
@@ -108,65 +109,60 @@ class TestImportPaths:
     - ``rfdetr`` (top-level) continues to export public names unchanged
     """
 
-    def test_model_context_importable_from_inference(self) -> None:
-        """ModelContext must be importable from the new rfdetr.inference module."""
-        from rfdetr.inference import ModelContext
+    @pytest.mark.parametrize(
+        ("module_name", "attribute"),
+        [
+            pytest.param("rfdetr.inference", "ModelContext", id="model-context-from-inference"),
+            pytest.param("rfdetr.inference", "_build_model_context", id="build-model-context-from-inference"),
+            pytest.param("rfdetr.variants", "RFDETRLarge", id="large-from-variants"),
+            pytest.param("rfdetr.detr", "ModelContext", id="model-context-from-detr"),
+            pytest.param("rfdetr.detr", "RFDETRLarge", id="large-from-detr"),
+            pytest.param("rfdetr.detr", "_build_model_context", id="build-model-context-from-detr"),
+            pytest.param("rfdetr", "RFDETRLarge", id="large-from-top-level"),
+            pytest.param("rfdetr", "ModelContext", id="model-context-from-top-level"),
+        ],
+    )
+    def test_name_importable_from_module(self, module_name: str, attribute: str) -> None:
+        """Each split-out name is reachable from its new module, from rfdetr.detr (backward compat) and rfdetr."""
+        obj = getattr(importlib.import_module(module_name), attribute, None)
 
-        assert ModelContext is not None
+        assert callable(obj), f"{attribute} not importable from {module_name}"
 
-    def test_build_model_context_importable_from_inference(self) -> None:
-        """_build_model_context must be importable from rfdetr.inference."""
-        from rfdetr.inference import _build_model_context
-
-        assert callable(_build_model_context)
-
-    def test_rfdetr_large_importable_from_variants(self) -> None:
-        """RFDETRLarge must be importable from the new rfdetr.variants module."""
-        from rfdetr.variants import RFDETRLarge
-
-        assert RFDETRLarge is not None
-
-    def test_variants_import_first_does_not_trigger_circular_import(self) -> None:
-        """Importing variants before detr must still preserve shared class identity."""
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "from rfdetr.variants import RFDETRLarge; "
-                    "from rfdetr.detr import RFDETRLarge as FromDetr; "
-                    "assert RFDETRLarge is FromDetr"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+    @pytest.mark.parametrize(
+        ("first_module", "second_module"),
+        [
+            pytest.param("rfdetr.variants", "rfdetr.detr", id="variants-first"),
+            pytest.param("rfdetr.detr", "rfdetr.variants", id="detr-first"),
+        ],
+    )
+    def test_import_order_preserves_class_identity(self, first_module: str, second_module: str) -> None:
+        """Importing variants before detr, or detr before variants, shares one class object and no circular import."""
+        code = (
+            f"from {first_module} import RFDETRLarge; "
+            f"from {second_module} import RFDETRLarge as Other; "
+            "assert RFDETRLarge is Other"
         )
-        assert result.returncode == 0, (
-            "Subprocess for variants-first import failed:\n"
-            f"return code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+
+        _assert_subprocess_succeeds([sys.executable, "-c", code], f"{first_module}-first import")
 
     @pytest.mark.parametrize(
         "class_name",
         [
-            pytest.param("RFDETRBase", id="base"),
-            pytest.param("RFDETRKeypointPreview", id="keypoint-preview"),
-            pytest.param("RFDETRNano", id="nano"),
-            pytest.param("RFDETRSmall", id="small"),
-            pytest.param("RFDETRMedium", id="medium"),
-            pytest.param("RFDETRLargeDeprecated", id="large-deprecated"),
-            pytest.param("RFDETRLarge", id="large"),
-            pytest.param("RFDETRSeg", id="seg-base"),
-            pytest.param("RFDETRSegPreview", id="seg-preview"),
-            pytest.param("RFDETRSegNano", id="seg-nano"),
-            pytest.param("RFDETRSegSmall", id="seg-small"),
-            pytest.param("RFDETRSegMedium", id="seg-medium"),
-            pytest.param("RFDETRSegLarge", id="seg-large"),
-            pytest.param("RFDETRSegXLarge", id="seg-xlarge"),
-            pytest.param("RFDETRSeg2XLarge", id="seg-2xlarge"),
+            "RFDETRBase",
+            "RFDETRKeypointPreview",
+            "RFDETRNano",
+            "RFDETRSmall",
+            "RFDETRMedium",
+            "RFDETRLargeDeprecated",
+            "RFDETRLarge",
+            "RFDETRSeg",
+            "RFDETRSegPreview",
+            "RFDETRSegNano",
+            "RFDETRSegSmall",
+            "RFDETRSegMedium",
+            "RFDETRSegLarge",
+            "RFDETRSegXLarge",
+            "RFDETRSeg2XLarge",
         ],
     )
     def test_all_variant_classes_importable_from_variants(self, class_name: str) -> None:
@@ -176,89 +172,33 @@ class TestImportPaths:
         cls = getattr(variants_mod, class_name, None)
         assert cls is not None, f"{class_name} not found in rfdetr.variants"
 
-    def test_model_context_backward_compat_from_detr(self) -> None:
-        """ModelContext must remain importable from rfdetr.detr (backward compat)."""
-        from rfdetr.detr import ModelContext
-
-        assert ModelContext is not None
-
-    def test_rfdetr_large_backward_compat_from_detr(self) -> None:
-        """RFDETRLarge must remain importable from rfdetr.detr (backward compat)."""
-        from rfdetr.detr import RFDETRLarge
-
-        assert RFDETRLarge is not None
-
-    def test_rfdetr_large_importable_from_top_level(self) -> None:
-        """RFDETRLarge must remain importable from rfdetr (top-level package)."""
-        from rfdetr import RFDETRLarge
-
-        assert RFDETRLarge is not None
-
-    def test_model_context_importable_from_top_level(self) -> None:
-        """ModelContext must remain importable from rfdetr (top-level package)."""
-        from rfdetr import ModelContext
-
-        assert ModelContext is not None
-
     def test_top_level_import_sets_numpy_complex_alias(self) -> None:
         """Verify rfdetr shim sets np.complex_ in a fresh interpreter with complex_ absent.
 
         Runs in a subprocess so the shim code path is actually executed — importing rfdetr inside pytest is a no-op
         because rfdetr is already cached in sys.modules.
         """
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import numpy\n"
-                    "if hasattr(numpy, 'complex_'):\n"
-                    "    del numpy.complex_\n"
-                    "import rfdetr\n"
-                    "assert hasattr(numpy, 'complex_'), 'shim did not set numpy.complex_'\n"
-                    "assert numpy.complex_ is numpy.complex128, 'complex_ must alias complex128'\n"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, (
-            "Subprocess for NumPy complex_ shim failed:\n"
-            f"return code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
+        code = (
+            "import numpy\n"
+            "if hasattr(numpy, 'complex_'):\n"
+            "    del numpy.complex_\n"
+            "import rfdetr\n"
+            "assert hasattr(numpy, 'complex_'), 'shim did not set numpy.complex_'\n"
+            "assert numpy.complex_ is numpy.complex128, 'complex_ must alias complex128'\n"
         )
 
+        _assert_subprocess_succeeds([sys.executable, "-c", code], "NumPy complex_ shim")
+
+    @pytest.mark.skipif(sys.version_info < (3, 14), reason="TorchScript remains supported before Python 3.14")
     def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
         """Python 3.14+ imports must not invoke unsupported TorchScript compilation.
 
         TorchScript remains the compatibility contract on supported earlier Python versions, where its warning does not
         represent the reported regression.
         """
-        if sys.version_info < (3, 14):
-            pytest.skip("TorchScript remains supported before Python 3.14")
+        code = "import warnings\nwarnings.filterwarnings('error', message=r'.*torch\\.jit\\.script.*')\nimport rfdetr\n"
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import warnings\n"
-                    "warnings.filterwarnings('error', message=r'.*torch\\.jit\\.script.*')\n"
-                    "import rfdetr\n"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, (
-            "Subprocess for top-level import failed:\n"
-            f"return code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+        _assert_subprocess_succeeds([sys.executable, "-c", code], "top-level import")
 
     @pytest.mark.parametrize(
         ("wrap_before_torch", "wrap_before_rfdetr"),
@@ -278,33 +218,20 @@ class TestImportPaths:
         without retrievable source (``python -c`` before Python 3.13), ``TypeError`` for a ``functools.wraps`` wrapper,
         or a TorchScript frontend error where the source parses.
         """
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import warnings\n"
-                    "_orig = warnings.warn\n"
-                    "def _wrapped(*args, **kwargs):\n"
-                    "    return _orig(*args, **kwargs)\n"
-                    f"{wrap_before_torch}"
-                    "import torch\n"
-                    f"{wrap_before_rfdetr}"
-                    "import rfdetr\n"
-                    "from rfdetr.utilities import box_ops\n"
-                    "assert box_ops.batch_sigmoid_ce_loss_jit is box_ops.batch_sigmoid_ce_loss\n"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+        code = (
+            "import warnings\n"
+            "_orig = warnings.warn\n"
+            "def _wrapped(*args, **kwargs):\n"
+            "    return _orig(*args, **kwargs)\n"
+            f"{wrap_before_torch}"
+            "import torch\n"
+            f"{wrap_before_rfdetr}"
+            "import rfdetr\n"
+            "from rfdetr.utilities import box_ops\n"
+            "assert box_ops.batch_sigmoid_ce_loss_jit is box_ops.batch_sigmoid_ce_loss\n"
         )
-        assert result.returncode == 0, (
-            "Subprocess for import under wrapped warnings.warn failed:\n"
-            f"return code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+
+        _assert_subprocess_succeeds([sys.executable, "-c", code], "import under wrapped warnings.warn")
 
     @pytest.mark.parametrize(
         "definition",
@@ -353,14 +280,7 @@ class TestImportPaths:
             encoding="utf-8",
         )
 
-        result = subprocess.run([sys.executable, str(host)], capture_output=True, text=True, check=False)
-
-        assert result.returncode == 0, (
-            "Subprocess for import under a wrapped warnings.warn failed:\n"
-            f"return code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+        _assert_subprocess_succeeds([sys.executable, str(host)], "import under a wrapped warnings.warn")
 
     @pytest.mark.parametrize(
         ("alias", "eager"),
@@ -408,18 +328,14 @@ class TestImportPaths:
             "top-level rfdetr.ModelContext and rfdetr.inference.ModelContext must be the same object"
         )
 
-    def test_build_model_context_backward_compat_from_detr(self) -> None:
-        """_build_model_context must remain importable from rfdetr.detr (backward compat)."""
-        from rfdetr.detr import _build_model_context
-
-        assert callable(_build_model_context)
-
     def test_getattr_raises_for_unknown_names(self) -> None:
         """Accessing an unknown name via rfdetr.detr must raise AttributeError."""
         import rfdetr.detr as detr_mod
 
-        with pytest.raises(AttributeError, match="has no attribute"):
+        with pytest.raises(AttributeError) as exc_info:
             _ = detr_mod._this_name_does_not_exist_12345
+
+        assert "has no attribute" in str(exc_info.value)
 
     def test_dir_includes_lazy_exports(self) -> None:
         """dir(rfdetr.detr) must include all lazy re-export names."""
@@ -429,26 +345,3 @@ class TestImportPaths:
         assert "ModelContext" in names, "ModelContext missing from dir(rfdetr.detr)"
         assert "RFDETRLarge" in names, "RFDETRLarge missing from dir(rfdetr.detr)"
         assert "RFDETRBase" in names, "RFDETRBase missing from dir(rfdetr.detr)"
-
-    def test_detr_first_import_order_preserves_identity(self) -> None:
-        """Importing detr before variants must preserve object identity for variant classes."""
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "from rfdetr.detr import RFDETRLarge; "
-                    "from rfdetr.variants import RFDETRLarge as FromVariants; "
-                    "assert RFDETRLarge is FromVariants"
-                ),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, (
-            "Subprocess for detr-first import failed:\n"
-            f"return code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )

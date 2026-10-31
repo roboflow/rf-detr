@@ -6,11 +6,11 @@
 """Tests eval-mode handling for unoptimized inference."""
 
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import PIL.Image
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr import detr as detr_module
 
@@ -70,9 +70,7 @@ class TestUnoptimizedInferenceEvalMode:
         rfdetr._ensure_eval_mode_for_unoptimized_inference()
         assert rfdetr.model.model.training is False
 
-    def test_eval_assignments_skipped_when_module_tree_is_already_in_eval_mode(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_eval_assignments_skipped_when_module_tree_is_already_in_eval_mode(self, mocker: MockerFixture) -> None:
         """A module tree already in eval mode must not have its flags reassigned.
 
         ``nn.Module.eval()`` reassigns ``training`` on every node of the tree, so re-asserting a mode the tree is
@@ -82,8 +80,7 @@ class TestUnoptimizedInferenceEvalMode:
         rfdetr._ensure_eval_mode_for_unoptimized_inference()
         assert rfdetr.model.model.training is False
 
-        train_spy = Mock(wraps=rfdetr.model.model.train)
-        monkeypatch.setattr(rfdetr.model.model, "train", train_spy)
+        train_spy = mocker.patch.object(rfdetr.model.model, "train", wraps=rfdetr.model.model.train)
 
         rfdetr._ensure_eval_mode_for_unoptimized_inference()
 

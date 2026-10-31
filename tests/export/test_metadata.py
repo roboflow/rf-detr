@@ -9,13 +9,15 @@ import hashlib
 import json
 import os
 import stat
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from typing import Any
 
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torchvision.transforms import functional
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
@@ -38,6 +40,95 @@ from tests._markers import onnx_and_onnxruntime_only, onnx_only
 
 #: Digest of the ``b"model"`` artifact bytes, as a companion records it.
 _MODEL_DIGEST = hashlib.sha256(b"model").hexdigest()
+
+
+#: Fields of a valid TFLite detection contract; the tests below override only what their scenario changes.
+_METADATA_FIELDS: dict[str, Any] = {
+    "format": "tflite",
+    "task": "detect",
+    "input_shape": (1, 3, 448, 448),
+    "outputs": {"pred_boxes": 0, "pred_logits": 1},
+    "class_names": ["object"],
+    "num_classes": 1,
+    "means": [0.485, 0.456, 0.406],
+    "stds": [0.229, 0.224, 0.225],
+    "num_select": 100,
+    "trace_alpha": 0.2,
+    "patch_size": 16,
+    "num_windows": 1,
+}
+
+
+def _make_metadata(**overrides: Any) -> ExportMetadata:
+    """Build a valid detection ``ExportMetadata`` with ``overrides`` applied on top of ``_METADATA_FIELDS``.
+
+    Examples:
+        >>> _make_metadata().format, _make_metadata(format="onnx", num_select=2).num_select
+        ('tflite', 2)
+    """
+    return ExportMetadata(**{**_METADATA_FIELDS, **overrides})
+
+
+def _make_graph(
+    model: torch.nn.Module,
+    metadata: ExportMetadata,
+    *,
+    size: int = 32,
+    output_names: tuple[str, str] = ("dets", "labels"),
+) -> ExportGraph:
+    """Build a static ``size`` x ``size`` detection ``ExportGraph`` around ``model`` that carries ``metadata``.
+
+    Examples:
+        >>> _make_graph(torch.nn.Identity(), _make_metadata()).shape
+        (32, 32)
+    """
+    return ExportGraph(
+        model=model,
+        input_tensors=torch.zeros(1, 3, size, size),
+        input_names=("input",),
+        output_names=output_names,
+        dynamic_axes=None,
+        shape=(size, size),
+        backbone_only=False,
+        metadata=metadata,
+    )
+
+
+def _make_model(
+    *,
+    class_names: list[str],
+    num_classes: int,
+    num_select: int = 100,
+    num_keypoints_per_class: Sequence[int] = (),
+    keypoints: bool = False,
+    size: str = "rfdetr-nano",
+) -> SimpleNamespace:
+    """Build a live-model double with the attributes ``metadata_from_model`` reads, for a detection or keypoint head.
+
+    Examples:
+        >>> model = _make_model(class_names=["a"], num_classes=1, num_keypoints_per_class=[0, 3], keypoints=True)
+        >>> model.model.args.num_keypoints_per_class, model.size
+        ([0, 3], 'rfdetr-nano')
+    """
+    return SimpleNamespace(
+        model_config=SimpleNamespace(
+            segmentation_head=False,
+            use_grouppose_keypoints=keypoints,
+            num_channels=3,
+            num_classes=num_classes,
+            num_keypoints_per_class=list(num_keypoints_per_class),
+            patch_size=16,
+            num_windows=1,
+        ),
+        model=SimpleNamespace(
+            args=SimpleNamespace(num_classes=num_classes, num_keypoints_per_class=list(num_keypoints_per_class)),
+            postprocess=SimpleNamespace(num_select=num_select, trace_alpha=0.2, upsample_masks_to_image_size=True),
+        ),
+        class_names=class_names,
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        size=size,
+    )
 
 
 @pytest.fixture
@@ -77,7 +168,7 @@ class TestGraphOutputOrder:
     @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
     @pytest.mark.parametrize("reverse_order", [False, True])
     def test_metadata_follows_resolved_output_order(
-        self, metadata_source: RFDETR, monkeypatch: pytest.MonkeyPatch, task: str, reverse_order: bool
+        self, metadata_source: RFDETR, mocker: MockerFixture, task: str, reverse_order: bool
     ) -> None:
         """A resolver order change must reach both named and positional metadata."""
         config = metadata_source.model_config
@@ -90,7 +181,7 @@ class TestGraphOutputOrder:
         if reverse_order:
             graph_names.reverse()
             # Simulate a future graph order change without duplicating the resolver's task rules.
-            monkeypatch.setattr("rfdetr.export.prepare.resolve_output_names", Mock(return_value=graph_names))
+            mocker.patch("rfdetr.export.prepare.resolve_output_names", return_value=graph_names)
 
         metadata = metadata_from_model(
             metadata_source, format="onnx", shape=(32, 32), batch_size=1, dynamic_batch=False
@@ -202,24 +293,11 @@ class _TinyDetector(torch.nn.Module):
 class TestSidecarMetadata:
     """Verify that sidecars stay bound to their artifacts."""
 
-    def test_sidecar_round_trip_rejects_changed_artifact(self, tmp_path: Path) -> None:
+    def test_round_trip_rejects_changed_artifact(self, tmp_path: Path) -> None:
         """A companion file identifies the exact artifact it describes."""
         artifact = tmp_path / "model.tflite"
         artifact.write_bytes(b"model-v1")
-        metadata = ExportMetadata(
-            format="litert",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="litert")
 
         write_metadata(artifact, metadata)
         assert read_metadata(artifact) == metadata
@@ -228,24 +306,11 @@ class TestSidecarMetadata:
         with pytest.raises(ValueError, match="digest"):
             read_metadata(artifact)
 
-    def test_sidecar_survives_renaming_artifact_and_companion(self, tmp_path: Path) -> None:
+    def test_survives_renaming_artifact_and_companion(self, tmp_path: Path) -> None:
         """A single-file artifact's bytes define its digest, so renaming both files is safe."""
         artifact = tmp_path / "exported_model.tflite"
         artifact.write_bytes(b"model")
-        metadata = ExportMetadata(
-            format="tflite",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata()
         companion = write_metadata(artifact, metadata)
         assert companion is not None
 
@@ -256,26 +321,13 @@ class TestSidecarMetadata:
 
         assert read_metadata(renamed_artifact) == metadata
 
-    def test_openvino_sidecar_survives_renaming_xml_and_weights(self, tmp_path: Path) -> None:
+    def test_openvino_survives_renaming_xml_and_weights(self, tmp_path: Path) -> None:
         """OpenVINO metadata binds XML and weights bytes without binding their names."""
         artifact = tmp_path / "exported_model.xml"
         weights = tmp_path / "exported_model.bin"
         artifact.write_text("<model/>", encoding="utf-8")
         weights.write_bytes(b"weights")
-        metadata = ExportMetadata(
-            format="openvino",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="openvino")
         companion = write_metadata(artifact, metadata)
         assert companion is not None
         renamed_artifact = tmp_path / "model.xml"
@@ -287,24 +339,14 @@ class TestSidecarMetadata:
 
         assert read_metadata(renamed_artifact) == metadata
 
-    def test_sparse_coco_mapping_survives_metadata_sidecar_round_trip(self, tmp_path: Path) -> None:
+    def test_sparse_coco_mapping_survives_round_trip(self, tmp_path: Path) -> None:
         """JSON sidecars preserve sparse COCO category IDs as integer keys."""
         artifact = tmp_path / "model.tflite"
         artifact.write_bytes(b"model")
-        metadata = ExportMetadata(
-            format="tflite",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
+        metadata = _make_metadata(
             class_names=list(COCO_CLASS_NAMES),
             class_id_to_name=class_id_to_name(list(COCO_CLASS_NAMES), 90, []),
             num_classes=90,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
         )
 
         write_metadata(artifact, metadata)
@@ -320,20 +362,7 @@ class TestSidecarMetadata:
         data = artifact / "Data" / "weights.bin"
         data.parent.mkdir(parents=True)
         data.write_bytes(b"weights")
-        metadata = ExportMetadata(
-            format="coreml",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="coreml")
         write_metadata(artifact, metadata)
 
         data.rename(data.with_name("renamed.bin"))
@@ -341,26 +370,13 @@ class TestSidecarMetadata:
         with pytest.raises(ValueError, match="digest"):
             read_metadata(artifact)
 
-    def test_openvino_sidecar_covers_weights_and_rejects_conflicting_override(self, tmp_path: Path) -> None:
+    def test_openvino_covers_weights_and_rejects_conflicting_override(self, tmp_path: Path) -> None:
         """An IR companion covers both model files and fixed semantics cannot change."""
         artifact = tmp_path / "model.xml"
         weights = tmp_path / "model.bin"
         artifact.write_text("<model/>", encoding="utf-8")
         weights.write_bytes(b"weights-v1")
-        metadata = ExportMetadata(
-            format="openvino",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="openvino")
 
         write_metadata(artifact, metadata)
         with pytest.raises(ValueError, match="conflicts"):
@@ -375,20 +391,7 @@ class TestSidecarMetadata:
         destination = tmp_path / "destination.tflite"
         source.write_bytes(b"source graph")
         destination.write_bytes(b"different graph")
-        metadata = ExportMetadata(
-            format="litert",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="litert")
         companion = write_metadata(source, metadata)
         assert companion is not None
         envelope = json.loads(companion.read_text(encoding="utf-8"))
@@ -407,48 +410,25 @@ class TestSidecarMetadata:
         """A companion from a newer schema asks for an upgrade instead of failing on its unknown field."""
         artifact = tmp_path / "model.tflite"
         artifact.write_bytes(b"model")
-        metadata = ExportMetadata(
-            format="tflite",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata()
         companion = write_metadata(artifact, metadata)
         assert companion is not None
         envelope = json.loads(companion.read_text(encoding="utf-8"))
         envelope["metadata"].update(schema_version=2, producer_version="9.9.9", future_field=True)
         companion.write_text(json.dumps(envelope), encoding="utf-8")
 
-        with pytest.raises(ValueError, match=r"written by rfdetr 9\.9\.9.*Upgrade rfdetr"):
+        with pytest.raises(ValueError) as exc_info:
             read_metadata(artifact)
 
+        assert "written by rfdetr 9.9.9" in str(exc_info.value)
+        assert "Upgrade rfdetr" in str(exc_info.value)
+
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
-    def test_new_sidecar_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
+    def test_new_file_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """A first sidecar gets the mode ``open()`` would give it, so other users can read it, not ``0o600``."""
         artifact = tmp_path / "model.tflite"
         artifact.write_bytes(b"model")
-        metadata = ExportMetadata(
-            format="tflite",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata()
 
         companion = write_metadata(artifact, metadata)
 
@@ -456,15 +436,13 @@ class TestSidecarMetadata:
         assert stat.S_IMODE(companion.stat().st_mode) == 0o666 & ~process_umask
 
     @pytest.mark.parametrize(
-        ("companion", "match"),
+        ("companion", "message"),
         [
-            pytest.param("{", "not valid JSON", id="truncated"),
+            ("{", "not valid JSON"),
             pytest.param("[" * 100_000, "not valid JSON", id="nested-too-deep"),
-            pytest.param("[]", "must hold a JSON object", id="not-an-object"),
-            pytest.param('{"metadata": {}}', r"missing \['artifact_sha256'\]", id="missing-digest"),
-            pytest.param(
-                json.dumps({"artifact_sha256": _MODEL_DIGEST}), r"missing \['metadata'\]", id="missing-metadata"
-            ),
+            ("[]", "must hold a JSON object"),
+            ('{"metadata": {}}', "missing ['artifact_sha256']"),
+            pytest.param(json.dumps({"artifact_sha256": _MODEL_DIGEST}), "missing ['metadata']", id="missing-metadata"),
             pytest.param(
                 json.dumps({"artifact_sha256": _MODEL_DIGEST, "metadata": []}),
                 "JSON object under 'metadata'",
@@ -472,14 +450,16 @@ class TestSidecarMetadata:
             ),
         ],
     )
-    def test_malformed_companion_raises_value_error(self, tmp_path: Path, companion: str, match: str) -> None:
+    def test_malformed_companion_raises_value_error(self, tmp_path: Path, companion: str, message: str) -> None:
         """A truncated or wrong-shaped companion raises ``ValueError``, not ``KeyError``, ``TypeError`` or recursion."""
         artifact = tmp_path / "model.tflite"
         artifact.write_bytes(b"model")
         (tmp_path / "model.tflite.rfdetr.json").write_text(companion, encoding="utf-8")
 
-        with pytest.raises(ValueError, match=match):
+        with pytest.raises(ValueError) as exc_info:
             read_metadata(artifact)
+
+        assert message in str(exc_info.value)
 
     @onnx_only
     def test_companion_conflicting_with_embedded_onnx_metadata_is_rejected(self, tmp_path: Path) -> None:
@@ -488,20 +468,7 @@ class TestSidecarMetadata:
 
         artifact = tmp_path / "model.onnx"
         onnx.save(onnx.helper.make_model(onnx.helper.make_graph([], "empty", [], [])), artifact)
-        metadata = ExportMetadata(
-            format="onnx",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="onnx", outputs={"pred_boxes": "dets", "pred_logits": "labels"})
         write_metadata(artifact, metadata)
         # A non-ONNX format takes the companion path, bound to the bytes that now embed the ONNX metadata.
         write_metadata(artifact, metadata.model_copy(update={"format": "tensorrt"}))
@@ -513,23 +480,9 @@ class TestSidecarMetadata:
 class TestResizeAntialias:
     """Verify metadata defaults and per-call overrides for exported prediction."""
 
-    def test_resize_antialias_true_validates(self) -> None:
+    def test_antialiased_resize_validates(self) -> None:
         """An antialiased resize is a valid artifact preprocessing contract."""
-        metadata = ExportMetadata(
-            format="tflite",
-            task="detect",
-            input_shape=(1, 3, 32, 32),
-            outputs={"pred_boxes": 0, "pred_logits": 1},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=2,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-            resize_antialias=True,
-        )
+        metadata = _make_metadata(input_shape=(1, 3, 32, 32), num_select=2, resize_antialias=True)
 
         assert metadata.resize_antialias is True
 
@@ -544,10 +497,10 @@ class TestResizeAntialias:
         ],
     )
     @pytest.mark.parametrize("stream", [False, True])
-    def test_export_prediction_resolves_antialias(
+    def test_prediction_resolves_antialias(
         self,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        mocker: MockerFixture,
         metadata_antialias: bool,
         prediction_kwargs: dict[str, bool | None],
         stream: bool,
@@ -572,7 +525,7 @@ class TestResizeAntialias:
         }
         runtime = SimpleNamespace(
             device=torch.device("cpu"),
-            run=Mock(
+            run=mocker.Mock(
                 return_value={
                     "pred_boxes": torch.tensor([[[0.5, 0.5, 0.5, 0.5]]]),
                     "pred_logits": torch.tensor([[[4.0, -4.0]]]),
@@ -580,9 +533,8 @@ class TestResizeAntialias:
             ),
             info={"backend": "tflite"},
         )
-        monkeypatch.setattr("rfdetr.export._runtime.context.load_runtime", Mock(return_value=runtime))
-        resize = Mock(wraps=functional.resize)
-        monkeypatch.setattr("rfdetr._prediction.core.F.resize", resize)
+        mocker.patch("rfdetr.export._runtime.context.load_runtime", return_value=runtime)
+        resize = mocker.patch("rfdetr._prediction.core.F.resize", wraps=functional.resize)
         predictor = RFDETRInference(artifact, metadata=metadata)
         image = np.zeros((32, 32, 3), dtype=np.uint8)
 
@@ -604,20 +556,12 @@ class TestMetadataCapture:
 
         Tuple-returning runtimes use output mapping order, while the source retains its named interface and semantics.
         """
-        metadata = ExportMetadata(
+        metadata = _make_metadata(
             format="onnx",
-            task="detect",
             input_shape=(1, 3, 8, 8),
             input_name="images",
             outputs={"pred_boxes": "dets", "pred_logits": "labels"},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
             num_select=2,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
         )
         original = metadata.model_dump()
 
@@ -672,25 +616,7 @@ class TestMetadataCapture:
 
     def test_backbone_metadata_survives_sidecar_round_trip(self, tmp_path: Path) -> None:
         """Backbone-only exports retain their task and empty prediction labels."""
-        model = SimpleNamespace(
-            model_config=SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=False,
-                num_channels=3,
-                num_classes=0,
-                num_keypoints_per_class=[],
-                patch_size=16,
-                num_windows=1,
-            ),
-            model=SimpleNamespace(
-                args=SimpleNamespace(num_classes=0, num_keypoints_per_class=[]),
-                postprocess=SimpleNamespace(num_select=0, trace_alpha=0.2, upsample_masks_to_image_size=True),
-            ),
-            class_names=[],
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            size="rfdetr-nano",
-        )
+        model = _make_model(class_names=[], num_classes=0, num_select=0)
         metadata = metadata_from_model(
             model,
             format="tflite",
@@ -709,29 +635,9 @@ class TestMetadataCapture:
         assert restored.class_names == []
         assert restored.outputs == {}
 
-    def test_metadata_from_model_preserves_sparse_coco_ids(
-        self,
-    ) -> None:
+    def test_metadata_from_model_preserves_sparse_coco_ids(self) -> None:
         """COCO names stay mapped to sparse category IDs, including gaps."""
-        model = SimpleNamespace(
-            model_config=SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=False,
-                num_channels=3,
-                num_classes=90,
-                num_keypoints_per_class=[],
-                patch_size=16,
-                num_windows=1,
-            ),
-            model=SimpleNamespace(
-                args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[]),
-                postprocess=SimpleNamespace(num_select=100, trace_alpha=0.2, upsample_masks_to_image_size=True),
-            ),
-            class_names=list(COCO_CLASS_NAMES),
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            size="rfdetr-nano",
-        )
+        model = _make_model(class_names=list(COCO_CLASS_NAMES), num_classes=90)
 
         metadata = metadata_from_model(model, format="onnx", shape=(448, 448), batch_size=1, dynamic_batch=False)
 
@@ -739,9 +645,7 @@ class TestMetadataCapture:
         assert metadata.class_id_to_name[90] == "toothbrush"
         assert 12 not in metadata.class_id_to_name
 
-    def test_class_id_to_name_preserves_sparse_coco_ids(
-        self,
-    ) -> None:
+    def test_class_id_to_name_preserves_sparse_coco_ids(self) -> None:
         """COCO class names use category IDs when the model includes all logit slots."""
         names = list(COCO_CLASS_NAMES)
 
@@ -752,33 +656,17 @@ class TestMetadataCapture:
         assert mapping[90] == "toothbrush"
         assert 12 not in mapping
 
-    def test_class_id_to_name_skips_background_keypoint_slot(
-        self,
-    ) -> None:
+    def test_class_id_to_name_skips_background_keypoint_slot(self) -> None:
         """Background-first keypoint names map to active slots only."""
         assert class_id_to_name(["person", "car"], 3, [0, 17, 4]) == {1: "person", 2: "car"}
 
-    def test_metadata_from_model_preserves_background_first_keypoints(
-        self,
-    ) -> None:
+    def test_metadata_from_model_preserves_background_first_keypoints(self) -> None:
         """Legacy keypoint slot zero has no class name."""
-        model = SimpleNamespace(
-            model_config=SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=True,
-                num_channels=3,
-                num_classes=2,
-                num_keypoints_per_class=[0, 3],
-                patch_size=16,
-                num_windows=1,
-            ),
-            model=SimpleNamespace(
-                args=SimpleNamespace(num_classes=2, num_keypoints_per_class=[0, 3]),
-                postprocess=SimpleNamespace(num_select=100, trace_alpha=0.2, upsample_masks_to_image_size=True),
-            ),
+        model = _make_model(
             class_names=["person"],
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
+            num_classes=2,
+            num_keypoints_per_class=[0, 3],
+            keypoints=True,
             size="rfdetr-keypoint-preview",
         )
 
@@ -808,16 +696,7 @@ class TestFormatMetadata:
         metadata = metadata_from_model(
             metadata_source, format="onnx", shape=(32, 32), batch_size=1, dynamic_batch=False
         )
-        graph = ExportGraph(
-            model=detector,
-            input_tensors=torch.zeros(1, 3, 32, 32),
-            input_names=("input",),
-            output_names=("dets", "labels"),
-            dynamic_axes=None,
-            shape=(32, 32),
-            backbone_only=False,
-            metadata=metadata,
-        )
+        graph = _make_graph(detector, metadata)
 
         artifact = OnnxExporter(OnnxConfig(output_dir=tmp_path, variant_name="rfdetr-nano", verbose=False))(graph)
         detections = RFDETRInference(artifact, device="cpu").predict(
@@ -838,30 +717,13 @@ class TestFormatMetadata:
         """Every final ONNX file, including the INT8 export's FP32 baseline, carries a usable contract."""
         import onnx  # optional dependency, gated by onnx_and_onnxruntime_only
 
-        metadata = ExportMetadata(
+        metadata = _make_metadata(
             format="tensorrt" if composed else "onnx",
-            task="detect",
             input_shape=(1, 3, 32, 32),
             outputs={"pred_boxes": "dets", "pred_logits": "labels"},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
             num_select=2,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
         )
-        graph = ExportGraph(
-            model=_TinyDetector().eval(),
-            input_tensors=torch.zeros(1, 3, 32, 32),
-            input_names=("input",),
-            output_names=("dets", "labels"),
-            dynamic_axes=None,
-            shape=(32, 32),
-            backbone_only=False,
-            metadata=metadata,
-        )
+        graph = _make_graph(_TinyDetector().eval(), metadata)
         exporter = OnnxExporter(
             OnnxConfig(
                 output_dir=tmp_path,
@@ -896,43 +758,15 @@ class TestFormatMetadata:
             assert np.isfinite(detections.xyxy).all()
             assert np.isfinite(detections.confidence).all()
 
-    @pytest.mark.parametrize(
-        ("boxes_name", "logits_name"),
-        [
-            pytest.param("dets", "labels", id="resolved-names"),
-            pytest.param("box_output", "class_output", id="metadata-names"),
-        ],
-    )
+    @pytest.mark.parametrize(("boxes_name", "logits_name"), [("dets", "labels"), ("box_output", "class_output")])
     def test_tflite_export_uses_signature_to_map_reordered_outputs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boxes_name: str, logits_name: str
+        self, tmp_path: Path, mocker: MockerFixture, boxes_name: str, logits_name: str
     ) -> None:
         """Signature tensor indices identify boxes when output detail names are generic."""
         artifact = tmp_path / "model_fp32.tflite"
-        metadata = ExportMetadata(
-            format="tflite",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": boxes_name, "pred_logits": logits_name},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
-        graph = ExportGraph(
-            model=torch.nn.Identity(),
-            input_tensors=torch.zeros(1, 3, 448, 448),
-            input_names=("input",),
-            output_names=(boxes_name, logits_name),
-            dynamic_axes=None,
-            shape=(448, 448),
-            backbone_only=False,
-            metadata=metadata,
-        )
-        interpreter = Mock()
+        metadata = _make_metadata(outputs={"pred_boxes": boxes_name, "pred_logits": logits_name})
+        graph = _make_graph(torch.nn.Identity(), metadata, size=448, output_names=(boxes_name, logits_name))
+        interpreter = mocker.Mock()
         interpreter.get_input_details.return_value = [{"index": 0, "dtype": np.float32}]
         interpreter.get_output_details.return_value = [
             {"name": "Identity", "index": 12},
@@ -943,11 +777,11 @@ class TestFormatMetadata:
             boxes_name: {"index": 11},
             logits_name: {"index": 12},
         }
-        monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", Mock(return_value=interpreter))
+        mocker.patch("rfdetr.export._tflite.inference._create_interpreter", return_value=interpreter)
         exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
-        monkeypatch.setattr(TFLiteExporter, "check_dependencies", Mock())
+        mocker.patch.object(TFLiteExporter, "check_dependencies")
         artifact.write_bytes(b"converted graph")
-        monkeypatch.setattr(exporter, "_convert", Mock(return_value=artifact))
+        mocker.patch.object(exporter, "_convert", return_value=artifact)
 
         exporter(graph)
 
@@ -967,20 +801,7 @@ class TestFormatMetadata:
         notes.key = "rfdetr_notes"
         notes.value = '{"run": 7}'
         onnx.save(model, artifact)
-        metadata = ExportMetadata(
-            format="onnx",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="onnx", outputs={"pred_boxes": "dets", "pred_logits": "labels"})
 
         write_metadata(artifact, metadata)
 
@@ -1000,20 +821,7 @@ class TestFormatMetadata:
         graph = onnx.helper.make_graph([], "empty", [], [])
         onnx.save(onnx.helper.make_model(graph), artifact)
         original = artifact.read_bytes()
-        metadata = ExportMetadata(
-            format="onnx",
-            task="detect",
-            input_shape=(1, 3, 448, 448),
-            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
-            class_names=["object"],
-            num_classes=1,
-            means=[0.485, 0.456, 0.406],
-            stds=[0.229, 0.224, 0.225],
-            num_select=100,
-            trace_alpha=0.2,
-            patch_size=16,
-            num_windows=1,
-        )
+        metadata = _make_metadata(format="onnx", outputs={"pred_boxes": "dets", "pred_logits": "labels"})
 
         def fail_after_writing_temporary_model(model: object, destination: str) -> None:
             """Simulate an interrupted save to the writer's temporary file.
@@ -1034,7 +842,7 @@ class TestFormatMetadata:
         assert not list(tmp_path.glob(".model.*.onnx"))
 
     @pytest.mark.parametrize(
-        ("update", "match"),
+        ("update", "message"),
         [
             pytest.param({"input_shape": (0, 3, 448, 448)}, "batch must be -1 or positive", id="zero-batch"),
             pytest.param({"input_shape": (-2, 3, 448, 448)}, "batch must be -1 or positive", id="batch-below-dynamic"),
@@ -1043,10 +851,10 @@ class TestFormatMetadata:
             pytest.param({"means": [0.485, 0.456]}, "means and positive stds must match", id="means-length"),
             pytest.param({"means": [float("nan"), 0.456, 0.406]}, "means and positive stds must match", id="nan-mean"),
             pytest.param({"stds": [0.229, 0.0, 0.225]}, "means and positive stds must match", id="zero-std"),
-            pytest.param({"task": "segment"}, "outputs missing semantic values.*pred_masks", id="segment-no-masks"),
+            pytest.param({"task": "segment"}, "outputs missing semantic values: ['pred_masks']", id="segment-no-masks"),
             pytest.param(
                 {"task": "keypoints", "num_keypoints_per_class": [17]},
-                "outputs missing semantic values.*pred_keypoints",
+                "outputs missing semantic values: ['pred_keypoints']",
                 id="keypoints-no-output",
             ),
             pytest.param(
@@ -1105,26 +913,15 @@ class TestFormatMetadata:
             pytest.param({"num_classes": "1"}, "Input should be a valid integer", id="strict-integer"),
         ],
     )
-    def test_rejects_contract_violations(self, update: dict[str, object], match: str) -> None:
+    def test_rejects_contract_violations(self, update: dict[str, object], message: str) -> None:
         """Metadata that cannot describe one safe prediction contract fails at construction.
 
         Each case changes one field of an otherwise valid detection payload, so the message pins the rejecting rule: an
         explicit legacy config cannot change native scaling, the schema, the output mapping, or the label layout.
         """
-        payload: dict[str, object] = {
-            "format": "onnx",
-            "task": "detect",
-            "input_shape": (1, 3, 448, 448),
-            "outputs": {"pred_boxes": "dets", "pred_logits": "labels"},
-            "class_names": ["object"],
-            "num_classes": 1,
-            "means": [0.485, 0.456, 0.406],
-            "stds": [0.229, 0.224, 0.225],
-            "num_select": 100,
-            "trace_alpha": 0.2,
-            "patch_size": 16,
-            "num_windows": 1,
-        }
+        payload = {**_METADATA_FIELDS, "format": "onnx", "outputs": {"pred_boxes": "dets", "pred_logits": "labels"}}
 
-        with pytest.raises(ValueError, match=match):
+        with pytest.raises(ValueError) as exc_info:
             ExportMetadata.model_validate({**payload, **update})
+
+        assert message in str(exc_info.value)

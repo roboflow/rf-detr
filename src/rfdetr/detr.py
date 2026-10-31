@@ -2074,7 +2074,7 @@ class RFDETR:
                 to the ExecuTorch delegate; ``backend`` is ignored (with
                 a warning) and the native ``.mlpackage`` path always runs.
                 Detection, segmentation and keypoint models all have registry-clean and numerical-parity
-                test coverage for this format (see ``tests/export/test_coreml_op_coverage.py`` /
+                test coverage for this format (see ``tests/export/coreml/test_coreml_op_coverage.py`` /
                 ``test_coreml_export.py``).
                 When ``"coreai"`` is selected the model is exported via ``torch.export`` + ``coreai-torch`` to an
                 Apple Core AI ``.aimodel`` (requires ``pip install rfdetr[coreai]``; the asset runs on iOS,

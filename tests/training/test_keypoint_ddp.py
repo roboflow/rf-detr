@@ -145,11 +145,13 @@ class _CheckWindows(Callback):
 
 
 @pytest.mark.ddp
+@pytest.mark.skipif(
+    not (torch.distributed.is_available() and torch.distributed.is_gloo_available()),
+    reason="PyTorch build lacks the Gloo backend",
+)
 @pytest.mark.parametrize("accumulation", [1, 2, 4])
 def test_keypoint_ddp_reduces_only_at_window_boundaries(tmp_path: Path, accumulation: int) -> None:
     """Real Lightning backward must suppress intermediate reductions and flush a final partial window."""
-    if not torch.distributed.is_available() or not torch.distributed.is_gloo_available():
-        pytest.skip("PyTorch build lacks the Gloo backend")
     model_config = RFDETRSmallConfig(
         pretrain_weights=None, device="cpu", use_grouppose_keypoints=True, num_keypoints_per_class=[17]
     )

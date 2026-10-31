@@ -347,8 +347,9 @@ class TestExporterCapabilityChecks:
 
     def test_notes_are_dropped_with_a_warning_when_the_artifact_has_no_metadata_slot(self) -> None:
         """Supplying notes to a format that cannot embed them warns and names the format, rather than failing."""
-        with pytest.warns(UserWarning, match=r"`notes` is not forwarded to format='probe'"):
+        with pytest.warns(UserWarning) as caught:
             _CapabilityProbe(ExportConfig(output_dir=Path("out"), notes="provenance"))
+        assert "`notes` is not forwarded to format='probe'" in str(caught[0].message)
 
     def test_no_warning_when_notes_are_absent(self) -> None:
         """A format without a metadata slot stays silent when the caller supplied no notes."""

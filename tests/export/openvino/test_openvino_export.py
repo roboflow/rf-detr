@@ -1,0 +1,1225 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Tests for direct PyTorch -> OpenVINO IR (``.xml``/``.bin``) export.
+
+Covers:
+* ``OpenVINOExporter`` — dependency-missing path, path-traversal sanitization, and the internal
+  ``ModelWrapper`` dict-output mapping (``openvino.convert_model``/``save_model`` stubbed via
+  ``sys.modules`` injection so these run without the real ``openvino`` package installed).
+* ``OpenVINOInference.__init__`` — dependency-missing path.
+* ``format="openvino"`` wiring through ``RFDETR.export()`` (heavy deps mocked, fast).
+* A real end-to-end export + numerical parity check, gated behind the ``openvino_only`` skip
+  so it only runs where the ``openvino`` package is installed.
+
+The dependency-missing tests make ``openvino`` unimportable through ``sys.modules`` (see the
+``openvino_unimportable`` fixture), so they exercise the real import failure whether or not ``openvino`` is installed.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import threading
+import types
+import warnings
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any
+from unittest import mock
+
+import numpy as np
+import pytest
+import torch
+from numpy.typing import NDArray
+from pytest_mock import MockerFixture
+
+from rfdetr import RFDETRInference
+from rfdetr.detr import RFDETR
+from rfdetr.export._openvino.exporter import ModelWrapper, OpenVINOConfig, OpenVINOExporter
+from rfdetr.export._openvino.inference import OpenVINOInference
+from rfdetr.export._runtime.adapters import load_runtime
+from rfdetr.export._runtime.metadata import ExportMetadata, read_metadata
+from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
+from tests.export._openvino_shapes import FakePartialShape
+from tests.export.conftest import (
+    _export_graph,
+    _parity_input_from_image,
+    _structured_parity_input,
+    _stub_openvino_module,
+    eager_reference_tensors,
+    max_abs_output_diffs,
+)
+
+openvino_only = pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
+
+
+def _infer_openvino_f32(xml_path: Path, input_array: NDArray[Any]) -> tuple[NDArray[Any], ...]:
+    """Run *xml_path* through the public wrapper on the CPU, which pins execution precision to float32 by default.
+
+    OpenVINO's ARM CPU plugin defaults to fp16 *execution* regardless of the IR's storage
+    precision (``compress_to_fp16``) -- confirmed by measurement: pinning this hint dropped a
+    backbone parity diff from 0.11 to 0.0059 on this repo's CI-equivalent macOS-ARM setup.
+    :class:`~rfdetr.export._openvino.inference.OpenVINOInference` sets that hint itself, so the parity
+    assertions below also cover the wrapper's default.
+
+    Args:
+        xml_path: Path to an exported OpenVINO IR ``.xml`` file.
+        input_array: C-contiguous float32 input, shaped to match the model's input layer.
+
+    Returns:
+        One NumPy array per model output, in declaration order.
+
+    Examples:
+        Requires a real exported ``.xml``/``.bin`` pair and ``openvino`` — not runnable standalone.
+        See ``TestOpenVINOEndToEnd`` for real invocations.
+
+        >>> callable(_infer_openvino_f32)
+        True
+    """
+    return OpenVINOInference(xml_path, device="CPU")(np.ascontiguousarray(input_array, dtype=np.float32))
+
+
+def _confident_query_diffs(
+    eager_tensors: list[torch.Tensor],
+    other_tensors: list[torch.Tensor],
+    top_k: int = 10,
+    sigmoid_indices: frozenset[int] = frozenset(),
+) -> list[float]:
+    """Max-abs-diff per output, restricted to the ``top_k`` highest-confidence queries.
+
+    RF-DETR's two-stage query selection ranks ~300 raw encoder proposals by objectness and keeps
+    all of them; on a real photo only a handful score as genuine detections (well-separated), and
+    the rest are low-confidence background candidates whose objectness scores sit close enough
+    together that ordinary cross-backend floating-point differences (different kernel
+    implementations -- no backend gives a bitwise guarantee) flip their relative rank and swap
+    which query slot each ends up in. That reordering is real and expected, not evidence the
+    export is wrong: comparing all ~300 raw positions swamps the signal that actually matters (do
+    the genuine detections match?) with unrelated background-candidate noise. Restricting to the
+    confident queries -- which stay positionally aligned in measurement -- is what a parity check
+    is actually for.
+
+    Args:
+        eager_tensors: Reference tensors from :func:`eager_reference_tensors`; ``eager_tensors[1]``
+            must be the per-query class-logit tensor (``dets, labels[, ...]`` output order).
+        other_tensors: Backend output tensors, same order and shapes as *eager_tensors*.
+        top_k: Number of highest-confidence queries (by eager logit max) to compare.
+        sigmoid_indices: Output indices to compare in sigmoid (probability) space instead of raw
+            logit space -- e.g. segmentation mask logits span a much wider range than boxes/labels,
+            so an equivalent raw-space tolerance would be too loose to catch real regressions.
+
+    Returns:
+        One max-abs-diff per output, computed over the ``top_k`` selected queries only.
+
+    Examples:
+        >>> boxes = torch.zeros(1, 3, 4)
+        >>> labels = torch.tensor([[[0.1, 0.2], [5.0, 0.1], [0.0, 0.0]]])
+        >>> other_boxes = boxes.clone()
+        >>> other_labels = labels.clone()
+        >>> other_boxes[0, 1] += 0.5  # perturb the only confident query (index 1)
+        >>> diffs = _confident_query_diffs([boxes, labels], [other_boxes, other_labels], top_k=1)
+        >>> round(diffs[0], 4)
+        0.5
+    """
+    scores = eager_tensors[1][0].amax(dim=-1)
+    top_indices = torch.topk(scores, top_k).indices
+    diffs = []
+    for index, (eager, other) in enumerate(zip(eager_tensors, other_tensors)):
+        eager_selected = eager[0, top_indices]
+        other_selected = other[0, top_indices].float()
+        if index in sigmoid_indices:
+            eager_selected, other_selected = eager_selected.sigmoid(), other_selected.sigmoid()
+        diffs.append((eager_selected - other_selected).abs().max().item())
+    return diffs
+
+
+def _openvino_metadata(**overrides: Any) -> ExportMetadata:
+    """Build detector ``ExportMetadata`` for an 8x8 batch-1 OpenVINO IR, with *overrides* replacing any field.
+
+    Args:
+        **overrides: Field values that replace the defaults.
+
+    Returns:
+        Metadata whose outputs are the positional ``pred_boxes``/``pred_logits`` pair.
+
+    Examples:
+        >>> _openvino_metadata(patch_size=16).patch_size
+        16
+        >>> _openvino_metadata().outputs
+        {'pred_boxes': 0, 'pred_logits': 1}
+    """
+    fields: dict[str, Any] = {
+        "format": "openvino",
+        "task": "detect",
+        "input_shape": (1, 3, 8, 8),
+        "outputs": {"pred_boxes": 0, "pred_logits": 1},
+        "means": [0.485, 0.456, 0.406],
+        "stds": [0.229, 0.224, 0.225],
+        "class_names": ["object"],
+        "num_classes": 1,
+        "num_select": 1,
+        "trace_alpha": 0.2,
+        "patch_size": 14,
+        "num_windows": 1,
+    }
+    return ExportMetadata(**{**fields, **overrides})
+
+
+# ---------------------------------------------------------------------------
+# OpenVINO metadata and the dependency-missing path
+# ---------------------------------------------------------------------------
+
+
+class TestOpenVINOMetadata:
+    """Match the prediction batch contract to the saved IR without importing OpenVINO."""
+
+    @pytest.mark.parametrize(
+        ("sizes", "static_rank", "expected_batch"),
+        [
+            pytest.param([None, 3, None, None], True, -1, id="dynamic-batch"),
+            pytest.param([1, 3, 384, 384], True, 1, id="static-batch"),
+            pytest.param([], False, 1, id="dynamic-rank-keeps-recorded-batch"),
+        ],
+    )
+    def test_metadata_matches_ir_batch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sizes: list[int | None],
+        static_rank: bool,
+        expected_batch: int,
+    ) -> None:
+        """Relax only a proven dynamic batch, preserving positional outputs and spatial preprocessing."""
+        xml_path = tmp_path / "model.xml"
+        fake_ov = types.ModuleType("openvino")
+        fake_ov.Core = mock.Mock()
+        core = fake_ov.Core.return_value
+        core.read_model.return_value.input.return_value.partial_shape = FakePartialShape(sizes, static_rank=static_rank)
+        monkeypatch.setitem(sys.modules, "openvino", fake_ov)
+        metadata = _openvino_metadata(
+            input_shape=(1, 3, 384, 384),
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+            patch_size=16,
+            num_windows=2,
+        )
+
+        result = OpenVINOExporter(OpenVINOConfig())._metadata_for_artifact(metadata, xml_path)
+
+        assert result.input_shape == (expected_batch, 3, 384, 384)
+        assert result.input_name == 0
+        assert result.outputs == {"pred_boxes": 0, "pred_logits": 1}
+        assert metadata.input_shape == (1, 3, 384, 384)
+        core.read_model.assert_called_once_with(xml_path)
+        core.read_model.return_value.input.assert_called_once_with(0)
+
+
+@pytest.fixture
+def openvino_unimportable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``import openvino`` raise ``ImportError`` for the duration of a test, whether or not it is installed.
+
+    A ``None`` entry in ``sys.modules`` makes the import statement itself raise, so the real
+    ``_check_openvino_available`` path runs instead of a monkeypatched stand-in. Tests that relied on
+    ``openvino`` simply being absent failed on any host where it is installed.
+
+    Examples:
+        Skipped as a live doctest because it needs pytest's fixture injection to run.
+
+        >>> def test_x(openvino_unimportable): ...  # doctest: +SKIP
+    """
+    monkeypatch.setitem(sys.modules, "openvino", None)
+
+
+@pytest.mark.usefixtures("openvino_unimportable")
+class TestExportOpenvinoMissingDependency:
+    """``OpenVINOExporter``'s ``ImportError`` path, with ``openvino`` made unimportable for the test."""
+
+    def test_raises_import_error_naming_pip_install_hint(self, tmp_path: Path) -> None:
+        """Missing ``openvino`` raises an ``ImportError`` that names the ``rfdetr[openvino]`` extra.
+
+        ``_check_openvino_available()`` raises a new ``ImportError`` with the actionable install hint baked into the
+        message itself (not merely logged separately), so a caller catching the exception — not just reading logs —
+        still sees the fix.
+        """
+        with pytest.raises(ImportError) as exc_info:
+            OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path))(_export_graph())
+        assert "rfdetr[openvino]" in str(exc_info.value)
+
+
+class TestOpenVINOInferenceMissingDependency:
+    """``OpenVINOInference.__init__``'s ``ImportError`` path, forced through the shared
+    ``_check_openvino_available``."""
+
+    def test_raises_import_error_before_file_check(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """A missing ``openvino`` install raises ``ImportError`` even for a nonexistent model path.
+
+        ``OpenVINOInference.__init__`` checks availability before checking ``model_path.exists()``, so a nonexistent
+        path must still surface ``ImportError`` here (never ``FileNotFoundError`` — that branch is unreachable without
+        openvino installed; see ``TestOpenVINOInferenceEndToEnd`` for the gated ``FileNotFoundError`` coverage).
+        """
+        mocker.patch(
+            "rfdetr.export._openvino.inference._check_openvino_available",
+            side_effect=ImportError('pip install "rfdetr[openvino]"'),
+        )
+        with pytest.raises(ImportError):
+            OpenVINOInference(tmp_path / "does-not-exist.xml")
+
+
+class TestOpenVINOInferenceInputValidation:
+    """``OpenVINOInference.infer()``'s dtype/contiguity boundary check (no real ``openvino`` needed).
+
+    These tests construct a compatibility facade via ``__new__`` and provide a minimal session, without a real OpenVINO
+    install.
+    """
+
+    @staticmethod
+    def _make_inference() -> OpenVINOInference:
+        """Build an ``OpenVINOInference`` with ``__init__`` skipped, for testing ``infer()`` in isolation.
+
+        Examples:
+            >>> inference = TestOpenVINOInferenceInputValidation._make_inference()
+            >>> hasattr(inference, "infer")
+            True
+        """
+        from rfdetr.export._openvino.inference import _OpenVINOSession
+
+        inference = OpenVINOInference.__new__(OpenVINOInference)
+        inference._session = _OpenVINOSession(None, None, threading.Lock(), None, [])
+        return inference
+
+    @pytest.mark.parametrize(
+        ("bad_input", "message"),
+        [
+            pytest.param(np.zeros((1, 3, 32, 32), dtype=np.float64), "float32", id="float64"),
+            pytest.param(np.zeros((1, 32, 32, 3), dtype=np.float32).transpose(0, 3, 1, 2), "contiguous", id="strided"),
+        ],
+    )
+    def test_rejects_wrong_dtype_or_layout(self, bad_input: NDArray[Any], message: str) -> None:
+        """A ``float64`` array or a non-contiguous ``float32`` view raises ``ValueError`` instead of mis-decoding."""
+        inference = self._make_inference()
+        with pytest.raises(ValueError) as exc_info:
+            inference.infer(bad_input)
+        assert message in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# OpenVINOExporter — naming, path safety, and ModelWrapper dict-output mapping
+# (openvino.convert_model/save_model stubbed; no real openvino needed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def openvino_export_stub(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """Install a fake ``openvino`` exposing ``convert_model``/``save_model`` in ``sys.modules`` and return it.
+
+    Examples:
+        Skipped as a live doctest because it needs pytest's fixture injection.
+
+        >>> def test_x(openvino_export_stub): ...  # doctest: +SKIP
+    """
+    fake_ov = _stub_openvino_module()
+    monkeypatch.setitem(sys.modules, "openvino", fake_ov)
+    return fake_ov
+
+
+class TestExportOpenvinoNaming:
+    """Output filename resolution, exercised with a stubbed ``openvino`` module."""
+
+    @pytest.mark.parametrize(
+        ("variant_name", "backbone_only", "expected_stem"),
+        [
+            (None, False, "inference_model"),
+            (None, True, "backbone_model"),
+            ("rfdetr-nano", False, "rfdetr-nano"),
+            ("rfdetr-nano", True, "rfdetr-nano-backbone"),
+        ],
+    )
+    def test_resolves_expected_stem(
+        self,
+        openvino_export_stub: types.ModuleType,
+        tmp_path: Path,
+        variant_name: str | None,
+        backbone_only: bool,
+        expected_stem: str,
+    ) -> None:
+        """Backbone and detector exports must resolve distinct, predictable ``.xml`` stems."""
+        fake_ov = openvino_export_stub
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, variant_name=variant_name, verbose=False))
+        output_xml = exporter(_export_graph(backbone_only=backbone_only))
+        assert output_xml == tmp_path / f"{expected_stem}.xml"
+        fake_ov.save_model.assert_called_once_with(mock.ANY, str(output_xml), compress_to_fp16=True)
+
+    @pytest.mark.parametrize(
+        ("variant_name", "expected"),
+        [
+            ("../../etc/passwd", "passwd"),
+            ("/absolute/path/rfdetr-nano", "rfdetr-nano"),
+            ("rfdetr-nano.xml", "rfdetr-nano"),
+            ("rfdetr-nano", "rfdetr-nano"),
+        ],
+    )
+    def test_sanitizes_variant_name_directory_components(
+        self, openvino_export_stub: types.ModuleType, tmp_path: Path, variant_name: str, expected: str
+    ) -> None:
+        """``variant_name`` must be reduced to a bare filename stem before building the output path.
+
+        Regression coverage for the same ``os.path.splitext(os.path.basename(...))`` mitigation
+        ``export_coreml`` applies (see ``tests/export/coreml/test_coreml_export.py::TestVariantNamePathSafety``);
+        ``OpenVINOExporter`` guards its ``variant_name`` the identical way.
+        """
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, variant_name=variant_name, verbose=False))
+        output_xml = exporter(_export_graph())
+        assert output_xml == tmp_path / f"{expected}.xml"
+        assert ".." not in str(output_xml).removeprefix(str(tmp_path))
+
+    @pytest.mark.parametrize(
+        ("variant_name", "output_name", "backbone_only", "expected"),
+        [
+            ("rfdetr-nano", None, False, "rfdetr-nano_int8"),
+            (None, None, False, "inference_model_int8"),
+            ("rfdetr-nano", None, True, "rfdetr-nano_int8-backbone"),
+            ("rfdetr-nano", "my-model", False, "my-model"),
+        ],
+    )
+    def test_int8_appends_suffix_unless_name_is_custom(
+        self, tmp_path: Path, variant_name: str | None, output_name: str | None, backbone_only: bool, expected: str
+    ) -> None:
+        """INT8 must not overwrite the FP32 IR written under the same name, except for a verbatim ``output_name``."""
+        exporter = OpenVINOExporter(
+            OpenVINOConfig(
+                output_dir=tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                quantization="int8",
+                calibration_data=np.zeros((1, 3, 8, 8), dtype=np.float32),
+                verbose=False,
+            )
+        )
+        assert exporter._resolve_export_name(backbone_only=backbone_only) == expected
+
+    def test_fp32_quantization_keeps_plain_stem(self, tmp_path: Path) -> None:
+        """Only ``"int8"`` changes the artifact name; ``"fp32"`` is the unquantized export."""
+        exporter = OpenVINOExporter(
+            OpenVINOConfig(output_dir=tmp_path, variant_name="rfdetr-nano", quantization="fp32")
+        )
+        assert exporter._resolve_export_name(backbone_only=False) == "rfdetr-nano"
+
+
+class TestExportOpenvinoPrecision:
+    """``precision``'s ``compress_to_fp16`` forwarding, exercised with a stubbed ``openvino`` module."""
+
+    @pytest.mark.parametrize(("precision", "expected_compress"), [("float32", False), ("float16", True)])
+    def test_precision_forwarded_as_compress_to_fp16(
+        self, openvino_export_stub: types.ModuleType, tmp_path: Path, precision: str, expected_compress: bool
+    ) -> None:
+        """``precision`` must map to ``save_model``'s ``compress_to_fp16`` flag, not silently default."""
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, precision=precision, verbose=False))
+        exporter(_export_graph())
+        assert openvino_export_stub.save_model.call_args.kwargs["compress_to_fp16"] is expected_compress
+
+    def test_invalid_precision_raises_value_error(self, tmp_path: Path) -> None:
+        """An unrecognized ``precision`` value is refused when the exporter is built, before any conversion."""
+        with pytest.raises(ValueError) as exc_info:
+            OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, precision="int8", verbose=False))
+        assert "precision must be" in str(exc_info.value)
+
+
+_RuntimeStub = tuple[types.ModuleType, mock.MagicMock]
+
+
+def _stub_openvino_runtime_module() -> _RuntimeStub:
+    """Build a fake ``openvino`` module with a mocked ``Core`` for ``OpenVINOInference`` unit tests.
+
+    Returns:
+        A ``(module, core_instance)`` pair where ``module.Core()`` returns ``core_instance``, and
+        ``core_instance.compile_model(...)`` returns a compiled-model mock with one input and one output.
+
+    Examples:
+        >>> fake_module, fake_core = _stub_openvino_runtime_module()
+        >>> fake_module.Core() is fake_core
+        True
+    """
+    fake = types.ModuleType("openvino")
+    core = mock.MagicMock(name="core")
+    compiled_model = mock.MagicMock(name="compiled_model")
+    compiled_model.inputs = [mock.MagicMock(name="input_0")]
+    compiled_model.outputs = [mock.MagicMock(name="output_0")]
+    core.read_model.return_value = mock.MagicMock(name="ov_model")
+    core.compile_model.return_value = compiled_model
+    fake.Core = mock.MagicMock(return_value=core)
+    return fake, core
+
+
+@pytest.fixture
+def openvino_relu_xml(tmp_path: Path) -> Path:
+    """Write a one-op ReLU OpenVINO IR to ``tmp_path`` and return its ``.xml`` path (needs ``openvino``).
+
+    Examples:
+        Skipped as a live doctest because it needs pytest's fixture injection and a real ``openvino`` install.
+
+        >>> def test_x(openvino_relu_xml): ...  # doctest: +SKIP
+    """
+    import openvino as ov
+
+    param = ov.opset13.parameter([1, 3], ov.Type.f32)
+    xml_path = tmp_path / "relu.xml"
+    ov.save_model(ov.Model([ov.opset13.relu(param)], [param]), xml_path)
+    return xml_path
+
+
+@pytest.fixture
+def openvino_stub_xml(tmp_path: Path) -> Path:
+    """Write a placeholder ``m.xml`` to ``tmp_path`` and return its path, for tests that stub ``openvino`` entirely.
+
+    Examples:
+        Skipped as a live doctest because it needs pytest's fixture injection.
+
+        >>> def test_x(openvino_stub_xml): ...  # doctest: +SKIP
+    """
+    xml_path = tmp_path / "m.xml"
+    xml_path.write_bytes(b"<xml/>")
+    return xml_path
+
+
+@pytest.fixture
+def openvino_runtime_stub(monkeypatch: pytest.MonkeyPatch) -> _RuntimeStub:
+    """Install a fake ``openvino`` module in ``sys.modules`` and return it with its mocked ``Core`` instance.
+
+    Examples:
+        Skipped as a live doctest because it needs pytest's fixture injection.
+
+        >>> def test_x(openvino_runtime_stub): ...  # doctest: +SKIP
+    """
+    fake_ov, core = _stub_openvino_runtime_module()
+    monkeypatch.setitem(sys.modules, "openvino", fake_ov)
+    return fake_ov, core
+
+
+def _compile_call(core: mock.MagicMock) -> tuple[str, dict[str, Any]]:
+    """Return the ``(device, properties)`` that *core*'s ``compile_model`` was last called with.
+
+    Reads the call by argument name, so a harmless switch between positional and keyword arguments does not break the
+    tests that pin the device and the compile properties.
+
+    Examples:
+        >>> core = mock.MagicMock()
+        >>> _ = core.compile_model("model", "CPU", {"A": 1})
+        >>> _compile_call(core)
+        ('CPU', {'A': 1})
+    """
+    args, kwargs = core.compile_model.call_args
+    bound = {**dict(zip(("model", "device_name", "config"), args)), **kwargs}
+    return bound["device_name"], bound.get("config", {})
+
+
+class TestOpenVINORuntimePrecision:
+    """The unified runtime loader preserves the compile precision policy."""
+
+    @pytest.mark.parametrize(
+        ("device", "runtime_options", "expected_properties"),
+        [
+            pytest.param("cpu", {}, {"INFERENCE_PRECISION_HINT": "f32"}, id="cpu-default-f32"),
+            pytest.param("npu", {}, {}, id="npu-default-no-hint"),
+            pytest.param(
+                "cpu", {"inference_precision": "float16"}, {"INFERENCE_PRECISION_HINT": "f16"}, id="cpu-float16-alias"
+            ),
+            pytest.param("cpu", {"inference_precision": None}, {}, id="cpu-no-hint"),
+        ],
+    )
+    def test_precision_hint_reaches_compile_model(
+        self,
+        openvino_stub_xml: Path,
+        openvino_runtime_stub: _RuntimeStub,
+        device: str,
+        runtime_options: dict[str, Any],
+        expected_properties: dict[str, str],
+    ) -> None:
+        """Default, aliased and disabled precision hints reach compilation through the runtime loader."""
+        _, core = openvino_runtime_stub
+        core.available_devices = ["CPU", "NPU"]
+        core.compile_model.return_value.input.return_value.partial_shape = FakePartialShape((1, 3, 8, 8))
+        core.compile_model.return_value.outputs = [object(), object()]
+
+        load_runtime(
+            openvino_stub_xml, _openvino_metadata(input_name=0, patch_size=1), device=device, options=runtime_options
+        )
+
+        assert _compile_call(core) == (device.upper(), expected_properties)
+        core.compile_model.assert_called_once()
+
+
+class TestOpenVINOInferenceDeviceAndCache:
+    """``device``, ``cache_dir`` and compile-property forwarding in ``OpenVINOInference.__init__``."""
+
+    @pytest.mark.parametrize(
+        ("device", "expected_properties"),
+        [
+            ("CPU", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("AUTO", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("GPU", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("NPU", {}),
+            ("AUTO:NPU,CPU", {}),
+        ],
+    )
+    def test_device_reaches_compile_model_and_default_hint_skips_npu(
+        self,
+        openvino_stub_xml: Path,
+        openvino_runtime_stub: _RuntimeStub,
+        device: str,
+        expected_properties: dict[str, str],
+    ) -> None:
+        """``device`` reaches ``compile_model`` unchanged; the default f32 hint is withheld from the NPU, which rejects
+        it."""
+        _, core = openvino_runtime_stub
+        OpenVINOInference(openvino_stub_xml, device=device)
+        assert _compile_call(core) == (device, expected_properties)
+
+    def test_explicit_precision_is_sent_to_npu(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """An explicit hint is never dropped for the NPU: it reaches OpenVINO, which accepts or rejects it."""
+        _, core = openvino_runtime_stub
+        OpenVINOInference(openvino_stub_xml, device="NPU", inference_precision="f32")
+        assert _compile_call(core) == ("NPU", {"INFERENCE_PRECISION_HINT": "f32"})
+
+    @pytest.mark.parametrize(
+        ("inference_precision", "expected_properties"),
+        [
+            ("bf16", {"INFERENCE_PRECISION_HINT": "bf16"}),
+            ("f16", {"INFERENCE_PRECISION_HINT": "f16"}),
+            ("float32", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("float16", {"INFERENCE_PRECISION_HINT": "f16"}),
+            ("fp32", {"INFERENCE_PRECISION_HINT": "fp32"}),
+            (None, {}),
+        ],
+    )
+    def test_precision_forwarded_to_compile_model(
+        self,
+        openvino_stub_xml: Path,
+        openvino_runtime_stub: _RuntimeStub,
+        inference_precision: str | None,
+        expected_properties: dict[str, str],
+    ) -> None:
+        """An explicit hint reaches ``compile_model``; ``float32``/``float16`` map to ``f32``/``f16``.
+
+        ``None`` passes no hint, so the device default applies. A spelling outside the documented set (``"fp32"``) is
+        not guessed at: OpenVINO rejects it at compile time.
+        """
+        _, core = openvino_runtime_stub
+        OpenVINOInference(openvino_stub_xml, inference_precision=inference_precision)
+        assert _compile_call(core) == ("AUTO", expected_properties)
+
+    @pytest.mark.parametrize(
+        ("init_kwargs", "expected_properties"),
+        [
+            pytest.param(
+                {"config": {"INFERENCE_NUM_THREADS": 4, "INFERENCE_PRECISION_HINT": "f16"}},
+                {"INFERENCE_PRECISION_HINT": "f16", "INFERENCE_NUM_THREADS": 4},
+                id="config-wins-over-default-hint",
+            ),
+            pytest.param(
+                {"inference_precision": None, "config": {"INFERENCE_PRECISION_HINT": "bf16"}},
+                {"INFERENCE_PRECISION_HINT": "bf16"},
+                id="config-hint-alone",
+            ),
+        ],
+    )
+    def test_config_reaches_compile_model(
+        self,
+        openvino_stub_xml: Path,
+        openvino_runtime_stub: _RuntimeStub,
+        init_kwargs: dict[str, Any],
+        expected_properties: dict[str, Any],
+    ) -> None:
+        """Extra compile properties reach ``compile_model`` with the precision hint; on a clash ``config`` wins.
+
+        The export cookbooks pin ``INFERENCE_NUM_THREADS`` this way, and an explicit hint in ``config`` is the caller's
+        most specific request, so the ``inference_precision`` default must not overwrite it. With no
+        ``inference_precision`` the hint in ``config`` is the only one sent.
+        """
+        _, core = openvino_runtime_stub
+        OpenVINOInference(openvino_stub_xml, **init_kwargs)
+        assert _compile_call(core) == ("AUTO", expected_properties)
+
+    def test_config_may_be_any_mapping_and_is_not_mutated(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """A read-only mapping works as ``config``, and the caller's own dict is left as it was passed."""
+        _, core = openvino_runtime_stub
+        read_only = MappingProxyType({"INFERENCE_NUM_THREADS": 2})
+        caller_dict = {"INFERENCE_NUM_THREADS": 3}
+        OpenVINOInference(openvino_stub_xml, config=read_only)
+        OpenVINOInference(openvino_stub_xml, config=caller_dict)
+        assert caller_dict == {"INFERENCE_NUM_THREADS": 3}
+        assert [call.args[2]["INFERENCE_NUM_THREADS"] for call in core.compile_model.call_args_list] == [2, 3]
+
+    @openvino_only
+    @pytest.mark.integration
+    @pytest.mark.e2e_openvino
+    def test_default_hint_is_float32_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
+        """The CPU plugin reports f32 execution for the default wrapper, even on hosts whose own default is f16/bf16."""
+        import openvino as ov
+
+        compiled = OpenVINOInference(openvino_relu_xml, device="CPU").compiled_model
+        assert compiled.get_property("INFERENCE_PRECISION_HINT") == ov.Type.f32
+
+    @openvino_only
+    @pytest.mark.integration
+    @pytest.mark.e2e_openvino
+    def test_explicit_hint_in_config_is_honoured_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
+        """An ``INFERENCE_PRECISION_HINT`` given via ``config`` reaches the CPU plugin and replaces the f32 default.
+
+        Skipped where the CPU plugin lacks FP16 compute: it then keeps f32 whatever the hint, so the read-back cannot
+        tell a dropped hint from an honoured one.
+
+        Without this the f32 test above passes on x86 hosts where OpenVINO's own default is already f32, even if the
+        wrapper dropped the hint entirely; reading back a hint that differs from the default cannot.
+        """
+        import openvino as ov
+
+        if "FP16" not in ov.Core().get_property("CPU", "OPTIMIZATION_CAPABILITIES"):
+            pytest.skip(
+                "CPU plugin has no FP16 compute (x86 without native f16): it falls back to f32 and reads back f32"
+            )
+        compiled = OpenVINOInference(
+            openvino_relu_xml, device="CPU", config={"INFERENCE_PRECISION_HINT": "f16"}
+        ).compiled_model
+        assert compiled.get_property("INFERENCE_PRECISION_HINT") == ov.Type.f16
+
+    def test_cache_dir_sets_property_before_compile(
+        self, tmp_path: Path, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """A non-``None`` ``cache_dir`` must set ``CACHE_DIR`` before ``compile_model`` is called.
+
+        OpenVINO requires ``CACHE_DIR`` set before compilation to reuse compiled kernels across process starts; setting
+        it after would silently skip caching for this compilation.
+        """
+        _, core = openvino_runtime_stub
+        call_order: list[str] = []
+        core.set_property.side_effect = lambda *_a, **_kw: call_order.append("set_property")
+        core.compile_model.side_effect = lambda *_a, **_kw: (
+            call_order.append("compile_model") or mock.MagicMock(outputs=[mock.MagicMock()])
+        )
+        OpenVINOInference(openvino_stub_xml, cache_dir=str(tmp_path / "cache"))
+        core.set_property.assert_called_once_with({"CACHE_DIR": str(tmp_path / "cache")})
+        assert call_order == ["set_property", "compile_model"]
+
+    def test_cache_dir_none_skips_set_property(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """The default ``cache_dir=None`` must not call ``set_property`` at all."""
+        _, core = openvino_runtime_stub
+        OpenVINOInference(openvino_stub_xml)
+        core.set_property.assert_not_called()
+
+
+class TestOpenVINOInferenceDeprecation:
+    """The old session facade delegates to shared functions and warns about its replacement."""
+
+    def test_legacy_facade_warns_and_runs_inference(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """The compatibility class warns at the caller and still returns owned output arrays."""
+        _, core = openvino_runtime_stub
+        output = np.array([[1.0, 2.0]], dtype=np.float32)
+        infer_request = mock.MagicMock()
+        infer_request.get_output_tensor.return_value.data = output
+        core.compile_model.return_value.create_infer_request.return_value = infer_request
+
+        with pytest.warns(FutureWarning) as caught:
+            inference = OpenVINOInference(openvino_stub_xml)
+        result = inference.infer(np.zeros((1, 3, 8, 8), dtype=np.float32))
+
+        message = str(caught[0].message)
+        assert "deprecated in v1.12.0" in message
+        assert "removed in v1.15.0" in message
+        assert "RFDETRInference(" in message
+        assert caught[0].filename == __file__
+        assert len(result) == 1
+        assert np.array_equal(result[0], output)
+        assert not np.shares_memory(result[0], output)
+
+    def test_public_predictor_is_warning_free(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """The unified runtime loader uses shared functions without constructing the deprecated facade."""
+        fake_ov, core = openvino_runtime_stub
+        fake_ov.Type = mock.Mock(f32="f32-type")
+        core.available_devices = ["CPU"]
+        core.compile_model.return_value.outputs = [object(), object()]
+        core.compile_model.return_value.input.return_value.partial_shape = FakePartialShape((None, None, None, None))
+        metadata = _openvino_metadata()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            predictor = RFDETRInference(openvino_stub_xml, metadata=metadata.model_dump(), device="cpu")
+
+        assert not [warning for warning in caught if issubclass(warning.category, (DeprecationWarning, FutureWarning))]
+        assert predictor.runtime_info["backend"] == "openvino"
+
+
+class _FixedOutputModel(torch.nn.Module):
+    """Module whose ``forward`` ignores its input and returns the *output* it was built with.
+
+    Examples:
+        >>> _FixedOutputModel((torch.ones(1),))(torch.zeros(1))[0].item()
+        1.0
+    """
+
+    def __init__(self, output: Any) -> None:
+        super().__init__()
+        self._output = output
+
+    def forward(self, x: torch.Tensor) -> Any:
+        """Return the fixed output."""
+        return self._output
+
+
+class TestModelWrapper:
+    """Verify the independently importable ``ModelWrapper`` normalizes export-mode output to a tuple.
+
+    The caller must enable export mode first. ``forward_export`` returns a tuple for the full detector and a list for
+    the backbone. A dict indicates a missing mode switch and must raise instead of being silently reshaped.
+    """
+
+    @pytest.mark.parametrize(
+        "outputs",
+        [
+            pytest.param((torch.full((1, 4), 1.0), torch.full((1, 2), 2.0)), id="detection-tuple"),
+            pytest.param(
+                (torch.full((1, 4), 1.0), torch.full((1, 2), 2.0), torch.full((1, 3, 4, 4), 3.0)),
+                id="segmentation-or-keypoint-3-tuple",
+            ),
+            pytest.param([torch.full((1, 3, 4, 4), 5.0), torch.full((1, 6, 2, 2), 6.0)], id="backbone-list"),
+        ],
+    )
+    def test_returns_tuple_of_the_same_tensors(self, outputs: tuple[torch.Tensor, ...] | list[torch.Tensor]) -> None:
+        """A tuple (detector, 3-tuple with masks/keypoints) or list (backbone) output comes back as an equal tuple.
+
+        ``forward_export`` returns a tuple for detectors, segmentation (``dets, labels, masks``) and keypoint models
+        (``dets, labels, keypoints``), and a plain ``list`` of feature maps for the backbone-only export;
+        ``convert_model`` requires a tuple, so the wrapper must pass tuples through unchanged and coerce the list.
+        """
+        wrapper = ModelWrapper(_FixedOutputModel(outputs))
+
+        result = wrapper(torch.zeros(1, 3, 8, 8))
+
+        assert isinstance(result, tuple)
+        assert len(result) == len(outputs)
+        assert all(torch.equal(got, expected) for got, expected in zip(result, outputs))
+
+    @pytest.mark.parametrize(
+        ("output", "exception", "message"),
+        [
+            pytest.param(
+                {"pred_boxes": torch.zeros(1, 4), "pred_logits": torch.zeros(1, 2)},
+                NotImplementedError,
+                "model.export()",
+                id="dict-needs-export-mode",
+            ),
+            pytest.param(torch.zeros(1, 4), TypeError, "Unsupported model output type", id="bare-tensor"),
+        ],
+    )
+    def test_rejects_unsupported_output(self, output: Any, exception: type[Exception], message: str) -> None:
+        """A dict output or a bare tensor raises instead of being reshaped silently or failing obscurely later.
+
+        A dict reaching the wrapper means the caller forgot to call ``model.export()`` first (``forward_export`` always
+        returns a tuple/list); the old behaviour silently mapped and sometimes dropped dict keys.
+        """
+        wrapper = ModelWrapper(_FixedOutputModel(output))
+
+        with pytest.raises(exception) as exc_info:
+            wrapper(torch.zeros(1, 3, 8, 8))
+
+        assert message in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# format="openvino" wiring through RFDETR.export() (heavy deps mocked)
+# ---------------------------------------------------------------------------
+
+
+def _make_rfdetr(*, segmentation_head: bool = False, use_grouppose_keypoints: bool = False) -> RFDETR:
+    """Create a minimal ``RFDETR`` instance with mocked internals (mirrors the CoreML/ExecuTorch suites).
+
+    Examples:
+        >>> obj = _make_rfdetr(segmentation_head=True)
+        >>> obj.model_config.segmentation_head, obj.size
+        (True, 'rfdetr-nano')
+    """
+    obj = RFDETR.__new__(RFDETR)
+    obj.model = mock.MagicMock()
+    obj.model.resolution = 560
+    obj.model.device = "cpu"
+    obj.model.model.to.return_value = obj.model.model
+    obj.model.args = None
+    obj.model.class_names = ["object"]
+    obj.model.postprocess.num_select = 100
+    obj.model.postprocess.trace_alpha = 0.2
+    obj.model.postprocess.upsample_masks_to_image_size = True
+    obj.means = [0.485, 0.456, 0.406]
+    obj.stds = [0.229, 0.224, 0.225]
+    obj.model_config = mock.MagicMock()
+    obj.model_config.segmentation_head = segmentation_head
+    obj.model_config.use_grouppose_keypoints = use_grouppose_keypoints
+    obj.model_config.patch_size = 14
+    obj.model_config.num_windows = 1
+    obj.model_config.num_channels = 3
+    obj.model_config.num_classes = 1
+    obj.model_config.num_keypoints_per_class = [3] if use_grouppose_keypoints else []
+    obj.size = "rfdetr-nano"
+    return obj
+
+
+class TestExportFormatParameter:
+    """Tests for ``format="openvino"`` wiring through ``RFDETR.export()``."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_export_deps(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """Mock heavy export deps so ``RFDETR.export()`` reaches the format dispatch without real work."""
+        xml_out = tmp_path / "inference_model.xml"
+        xml_out.write_bytes(b"<xml/>")
+        mocker.patch("rfdetr.export.base.write_metadata")
+        self._mock_make_infer_image = mocker.patch("rfdetr.export.prepare.make_infer_image")
+        self._mock_make_infer_image.return_value = torch.zeros(1, 3, 560, 560)
+        self._mock_export_onnx = mocker.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert")
+        self._mock_export_onnx.return_value = str(tmp_path / "inference_model.onnx")
+
+        # autospec so the patched method still records the bound exporter as its first argument — the
+        # per-format settings the converter used to receive as keyword arguments now live on that
+        # instance's `config`, and the forwarding tests below read them back off it.
+        self._mock_openvino_convert = mocker.patch(
+            "rfdetr.export._openvino.exporter.OpenVINOExporter._convert", autospec=True, return_value=str(xml_out)
+        )
+        # The CPU job has no openvino, which RFDETR.export() checks for before the forward pass.
+        mocker.patch("rfdetr.export._openvino.exporter.OpenVINOExporter.check_dependencies")
+
+    @pytest.mark.parametrize("segmentation_head", [False, True])
+    def test_dispatches_to_openvino_exporter_not_onnx(self, tmp_path: Path, segmentation_head: bool) -> None:
+        """``format="openvino"`` must dispatch to ``OpenVINOExporter`` (not the ONNX exporter)."""
+        obj = _make_rfdetr(segmentation_head=segmentation_head)
+        output_path = obj.export(format="openvino", output_dir=str(tmp_path / "out"))
+        self._mock_openvino_convert.assert_called_once()
+        self._mock_export_onnx.assert_not_called()
+        assert output_path.suffix == ".xml"
+
+    def test_onnx_format_skips_openvino_exporter(self, tmp_path: Path) -> None:
+        """``format="onnx"`` must not import/call the OpenVINO converter."""
+        _make_rfdetr().export(format="onnx", output_dir=str(tmp_path / "out"))
+        self._mock_openvino_convert.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("export_kwargs", "config_field", "expected"),
+        [({}, "variant_name", "rfdetr-nano"), ({"output_name": "my-model"}, "output_name", "my-model")],
+    )
+    def test_name_settings_forwarded_to_converter(
+        self, tmp_path: Path, export_kwargs: dict[str, str], config_field: str, expected: str
+    ) -> None:
+        """The model's ``size`` is forwarded as ``variant_name``; an explicit ``output_name`` is forwarded verbatim."""
+        _make_rfdetr().export(format="openvino", output_dir=str(tmp_path / "out"), **export_kwargs)
+        exporter = self._mock_openvino_convert.call_args.args[0]
+        assert getattr(exporter.config, config_field) == expected
+
+    def test_dynamic_batch_rejected_before_forward_pass(self, tmp_path: Path) -> None:
+        """``dynamic_batch=True`` raises ``NotImplementedError`` before ``make_infer_image`` runs the forward pass.
+
+        The converted IR is already dynamic-shape, so ``dynamic_batch=True`` has nothing to switch on; refusing it keeps
+        the format's capability flags truthful. The rejection is hoisted next to the ExecuTorch/CoreML fail-fast checks
+        so a caller does not pay for a full DINOv2 forward before hearing no.
+        """
+        obj = _make_rfdetr()
+        with pytest.raises(NotImplementedError) as exc_info:
+            obj.export(format="openvino", output_dir=str(tmp_path / "out"), dynamic_batch=True)
+        assert "dynamic_batch" in str(exc_info.value)
+        self._mock_make_infer_image.assert_not_called()
+
+    def test_notes_warns_and_is_dropped(self, tmp_path: Path) -> None:
+        """A non-``None`` ``notes`` value emits a ``UserWarning`` naming the missing metadata slot.
+
+        OpenVINO IR has no ONNX-style metadata slot; silently dropping ``notes`` would leave callers believing their
+        metadata was embedded when it was not.
+        """
+        obj = _make_rfdetr()
+        with pytest.warns(UserWarning) as caught:
+            obj.export(format="openvino", output_dir=str(tmp_path / "out"), notes="some metadata")
+        assert any("notes" in str(warning.message) for warning in caught)
+
+    # Invalid-format rejection is format-agnostic (RFDETR.export() validates before any dispatch): covered once by
+    # test_coreml_export.py::TestExportFormatParameter.test_invalid_format_raises_value_error and per format by
+    # test_registry.py::TestResolveExporter.
+
+
+@pytest.mark.usefixtures("openvino_unimportable")
+class TestExportOpenvinoMissingDependencyViaPublicAPI:
+    """``RFDETR.export(format="openvino")`` surfaces ``ImportError`` (not the registry ``ValueError``)."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_light_export_deps(self, mocker: MockerFixture) -> None:
+        """Mock only ``make_infer_image``; the OpenVINO converter itself must run for real."""
+        mocker.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560))
+
+    def test_raises_import_error_not_registry_value_error(self, tmp_path: Path) -> None:
+        """Missing ``openvino`` must surface ``ImportError`` — the format itself must be accepted.
+
+        ``format="openvino"`` must reach the real ``OpenVINOExporter`` conversion (and fail there, on the missing
+        dependency) rather than being rejected upfront by ``_resolve_export_backend``'s ``_EXPORT_FORMATS`` check.
+        """
+        obj = _make_rfdetr()
+        with pytest.raises(ImportError):
+            obj.export(format="openvino", output_dir=str(tmp_path / "out"))
+
+
+# ---------------------------------------------------------------------------
+# End-to-end (gated) — real convert + parity vs eager PyTorch
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def people_walking_image_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Download supervision's ``PEOPLE_WALKING`` asset once, shared across OpenVINO e2e tests.
+
+    The detection/segmentation/keypoint parity tests need a real photo, not the structured gradient+checkerboard input:
+    on a real trained model, a synthetic background-only image produces no confident detections, so every one of the
+    ~300 two-stage query-selection candidates sits at a similarly low objectness score. That makes their relative order
+    tip over ordinary cross-backend floating-point noise, which then dominates a positional comparison with unrelated
+    background-candidate reordering (see ``_confident_query_diffs``). A real photo gives genuine, well-separated
+    detections whose positions stay stable.
+    """
+    asset_dir = tmp_path_factory.mktemp("openvino_assets")
+    cwd = Path.cwd()
+    os.chdir(asset_dir)
+    try:
+        from supervision.assets import ImageAssets, download_assets
+
+        return Path(download_assets(ImageAssets.PEOPLE_WALKING)).resolve()
+    finally:
+        os.chdir(cwd)
+
+
+@pytest.fixture(scope="module")
+def openvino_detection_export(
+    tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
+) -> tuple[Any, torch.Tensor, Path]:
+    """Export RFDETRNano to OpenVINO IR once, shared across the gated detection e2e tests."""
+    import rfdetr
+
+    out_dir = tmp_path_factory.mktemp("openvino_nano")
+    detector = rfdetr.RFDETRNano()
+    xml_path = detector.export(output_dir=str(out_dir), format="openvino", verbose=False)
+
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    resolution = int(detector.model.resolution)
+    example = _parity_input_from_image(people_walking_image_path, resolution)
+    return model, example, Path(xml_path)
+
+
+@pytest.fixture(scope="module")
+def openvino_segmentation_export(
+    tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
+) -> tuple[Any, torch.Tensor, Path]:
+    """Export RFDETRSegNano to OpenVINO IR once, shared across the gated segmentation e2e test.
+
+    Regression coverage for M-5: the gated OpenVINO e2e suite previously covered detection and
+    backbone-only exports only, so ``ModelWrapper``'s 3-tuple (``dets, labels, masks``) path was
+    never exercised end-to-end through a real ``convert_model`` call.
+    """
+    import rfdetr
+
+    out_dir = tmp_path_factory.mktemp("openvino_seg_nano")
+    detector = rfdetr.RFDETRSegNano()
+    xml_path = detector.export(output_dir=str(out_dir), format="openvino", verbose=False)
+
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    resolution = int(detector.model.resolution)
+    example = _parity_input_from_image(people_walking_image_path, resolution)
+    return model, example, Path(xml_path)
+
+
+@pytest.fixture(scope="module")
+def openvino_keypoint_export(
+    tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
+) -> tuple[Any, torch.Tensor, Path]:
+    """Export RFDETRKeypointPreview to OpenVINO IR once, shared across the gated keypoint e2e test.
+
+    Regression coverage for M-5: the gated OpenVINO e2e suite previously covered detection and
+    backbone-only exports only, so ``ModelWrapper``'s 3-tuple (``dets, labels, keypoints``) path was
+    never exercised end-to-end through a real ``convert_model`` call.
+    """
+    import rfdetr
+
+    out_dir = tmp_path_factory.mktemp("openvino_keypoint")
+    detector = rfdetr.RFDETRKeypointPreview()
+    xml_path = detector.export(output_dir=str(out_dir), format="openvino", verbose=False)
+
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    resolution = int(detector.model.resolution)
+    example = _parity_input_from_image(people_walking_image_path, resolution)
+    return model, example, Path(xml_path)
+
+
+@pytest.fixture(scope="module")
+def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    """Export RFDETRNano's backbone-only OpenVINO IR once, shared across the gated backbone e2e test."""
+    import rfdetr
+    from rfdetr.export._backend import _BackboneExport
+
+    out_dir = tmp_path_factory.mktemp("openvino_backbone")
+    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    xml_path = detector.export(output_dir=str(out_dir), format="openvino", backbone_only=True, verbose=False)
+    backbone = detector.model.model.backbone[0].to("cpu").eval()
+    reference_model = _BackboneExport(backbone)
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return reference_model, example, Path(xml_path)
+
+
+@openvino_only
+@pytest.mark.integration
+@pytest.mark.e2e_openvino
+class TestOpenVINOEndToEnd:
+    """Real OpenVINO IR export + CPU numerical parity (``-m e2e_openvino``, requires ``openvino`` installed)."""
+
+    def test_public_predictor_accepts_two_images(
+        self,
+        openvino_detection_export: tuple[Any, torch.Tensor, Path],
+        people_walking_image_path: Path,
+    ) -> None:
+        """Saved dynamic-batch metadata lets the public predictor execute a two-image batch."""
+        _, _, xml_path = openvino_detection_export
+        predictor = RFDETRInference(xml_path, device="cpu")
+
+        results = predictor.predict([people_walking_image_path, people_walking_image_path])
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+        assert read_metadata(xml_path).input_shape[0] == -1
+
+    def test_xml_and_bin_written(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
+        """Export must write both the ``.xml`` graph and its companion ``.bin`` weights file."""
+        _, _, xml_path = openvino_detection_export
+        assert xml_path.exists()
+        assert xml_path.suffix == ".xml"
+        assert xml_path.with_suffix(".bin").exists()
+
+    def test_detection_outputs_match_pytorch(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
+        """OpenVINO detection output (boxes, logits) must match eager PyTorch on confident detections.
+
+        Compared only over the top-10 highest-confidence queries -- see ``_confident_query_diffs``
+        for why raw, unfiltered two-stage query-selection output is the wrong comparison here.
+        Measured maxima on this fixture: box ~2e-5, label ~0.01; tolerances give ~10x headroom.
+        """
+        model, example, xml_path = openvino_detection_export
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.numpy())]
+
+        assert len(ov_tensors) == 2, f"detection export must yield (boxes, logits), got {len(ov_tensors)} outputs"
+        box_diff, label_diff = _confident_query_diffs(eager_tensors, ov_tensors)
+        assert box_diff < 1e-3, f"OpenVINO detection boxes diverge from PyTorch: max abs diff {box_diff}"
+        assert label_diff < 0.1, f"OpenVINO detection logits diverge from PyTorch: max abs diff {label_diff}"
+
+    def test_batch_one_ir_accepts_larger_batch(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
+        """A default (batch-1) detection IR must run a tiled batch of 4 and match eager PyTorch for every sample.
+
+        ``dynamic_batch=True`` is refused for OpenVINO on the premise that the converted IR already takes any batch
+        size, so this pins that premise on a real IR instead of leaving it to the registry flag alone. The same image is
+        tiled four times, so each output sample must equal the batch-1 eager reference on the confident queries (see
+        ``_confident_query_diffs``).
+        """
+        model, example, xml_path = openvino_detection_export
+        batch = 4
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [
+            torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.repeat(batch, 1, 1, 1).numpy())
+        ]
+
+        assert [tensor.shape[0] for tensor in ov_tensors] == [batch] * len(ov_tensors), (
+            f"a batch-1 IR must return batch dimension {batch} for a batch-{batch} input, "
+            f"got shapes {[tuple(tensor.shape) for tensor in ov_tensors]}"
+        )
+        sample_diffs = [
+            _confident_query_diffs(eager_tensors, [tensor[index : index + 1] for tensor in ov_tensors])
+            for index in range(batch)
+        ]
+        assert max(box_diff for box_diff, _ in sample_diffs) < 1e-3, f"batch-{batch} boxes diverge: {sample_diffs}"
+        assert max(label_diff for _, label_diff in sample_diffs) < 0.1, f"batch-{batch} logits diverge: {sample_diffs}"
+
+    def test_segmentation_outputs_match_pytorch(
+        self, openvino_segmentation_export: tuple[Any, torch.Tensor, Path]
+    ) -> None:
+        """OpenVINO segmentation output (boxes, logits, masks) must match eager PyTorch on confident detections.
+
+        Exercises ``ModelWrapper``'s 3-tuple pass-through path (see
+        ``TestModelWrapper::test_returns_tuple_of_the_same_tensors`` for the unit-level
+        version) through a real ``convert_model`` + IR-inference round trip. Compared only over the
+        top-10 highest-confidence queries (see ``_confident_query_diffs``); masks are compared in
+        sigmoid (probability) space since mask logits span a much wider range than boxes/labels, so
+        an equivalent raw-space tolerance would be too loose to catch real regressions. Measured
+        maxima on this fixture: box ~2e-4, label ~0.08, mask (sigmoid) ~0.026.
+        """
+        model, example, xml_path = openvino_segmentation_export
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.numpy())]
+
+        assert len(ov_tensors) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(ov_tensors)}"
+        box_diff, label_diff, mask_diff = _confident_query_diffs(eager_tensors, ov_tensors, sigmoid_indices={2})
+        assert box_diff < 1e-3, f"OpenVINO segmentation boxes diverge from PyTorch: max abs diff {box_diff}"
+        assert label_diff < 0.1, f"OpenVINO segmentation logits diverge from PyTorch: max abs diff {label_diff}"
+        assert mask_diff < 0.05, f"OpenVINO segmentation masks diverge from PyTorch (sigmoid space): {mask_diff}"
+
+    def test_keypoint_outputs_match_pytorch(self, openvino_keypoint_export: tuple[Any, torch.Tensor, Path]) -> None:
+        """OpenVINO keypoint output (boxes, logits, keypoints) must match eager PyTorch on confident detections.
+
+        Exercises ``ModelWrapper``'s 3-tuple pass-through path (see
+        ``TestModelWrapper::test_returns_tuple_of_the_same_tensors`` for the unit-level
+        version) through a real ``convert_model`` + IR-inference round trip. Compared only over the
+        top-10 highest-confidence queries (see ``_confident_query_diffs``). Measured maxima on this
+        fixture: box ~4e-5, label ~0.008, keypoints (raw, scale up to ~20) ~0.053.
+        """
+        model, example, xml_path = openvino_keypoint_export
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.numpy())]
+
+        assert len(ov_tensors) == 3, f"keypoint export must yield (boxes, logits, keypoints), got {len(ov_tensors)}"
+        box_diff, label_diff, keypoint_diff = _confident_query_diffs(eager_tensors, ov_tensors)
+        assert box_diff < 1e-3, f"OpenVINO keypoint boxes diverge from PyTorch: max abs diff {box_diff}"
+        assert label_diff < 0.1, f"OpenVINO keypoint logits diverge from PyTorch: max abs diff {label_diff}"
+        assert keypoint_diff < 0.1, f"OpenVINO keypoints diverge from PyTorch: max abs diff {keypoint_diff}"
+
+    def test_backbone_outputs_match_pytorch(
+        self, openvino_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """OpenVINO must run every backbone feature-map output from the public backbone-only export.
+
+        No two-stage query selection is involved here (the backbone has no ``topk``), so the structured
+        gradient+checkerboard input and a plain positional comparison are fine -- unlike the
+        detection/segmentation/keypoint tests above. The tolerance is looser than a typical kernel-rounding bound
+        because OpenVINO's own float32-pinned CPU execution of this backbone measures ~0.006 max abs diff against eager
+        PyTorch (measured on this fixture, ~10x CoreML's equivalent <1e-4 for the same module) -- a real, currently-
+        unexplained precision gap specific to this backbone's OpenVINO conversion, tracked separately from this PR.
+        """
+        model, example, xml_path = openvino_backbone_export
+        assert "backbone" in xml_path.stem
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.numpy())]
+
+        diffs = max_abs_output_diffs(eager_tensors, ov_tensors, check_shape=True)
+        assert max(diffs) < 1e-2, f"OpenVINO backbone outputs diverge from PyTorch: max abs diff {max(diffs)}"
+
+
+@openvino_only
+class TestOpenVINOInferenceEndToEnd:
+    """Real ``OpenVINOInference`` behaviour gated behind an actual ``openvino`` install."""
+
+    def test_missing_model_file_raises_file_not_found(self, tmp_path: Path) -> None:
+        """A nonexistent ``.xml`` path must raise ``FileNotFoundError`` once ``openvino`` is importable.
+
+        Unreachable without ``openvino`` installed (see ``TestOpenVINOInferenceMissingDependency`` for the ungated
+        ``ImportError`` coverage of the same constructor when the import itself fails first).
+        """
+        with pytest.raises(FileNotFoundError) as exc_info:
+            OpenVINOInference(tmp_path / "does-not-exist.xml")
+        assert "Model file not found" in str(exc_info.value)

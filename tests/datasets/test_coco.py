@@ -24,16 +24,21 @@ from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
 from rfdetr.datasets.coco import (
     CocoDetection,
     ConvertCoco,
+    _build_albumentations_pipeline,
+    _build_torchvision_pipeline,
     annotated_category_ids,
     build_coco,
     build_roboflow_from_coco,
     draft_size_for_transforms,
     filter_parent_categories,
+    make_coco_transforms,
+    make_coco_transforms_square_div_64,
     scale_coco_annotation,
 )
 from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.detr import RFDETR
 from rfdetr.utilities import PackedTargets, pack_targets
+from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -65,6 +70,7 @@ class TestConvertCocoWithoutMapping:
     """Without cat2label, sparse IDs pass through unchanged — demonstrating the bug."""
 
     def test_labels_are_raw_category_ids(self):
+        """Labels keep the raw (sparse) COCO category ids when no mapping is given."""
         converter = ConvertCoco(cat2label=None)
         _, target = converter(_IMAGE, _make_target())
         # Raw COCO IDs — NOT safe to use as indices into an 80-class tensor
@@ -85,6 +91,7 @@ class TestConvertCocoWithMapping:
     """With cat2label, sparse IDs are remapped to contiguous 0-indexed labels."""
 
     def test_labels_are_remapped_to_zero_indexed(self):
+        """Sparse category ids become contiguous zero-indexed labels."""
         converter = ConvertCoco(cat2label=_CAT2LABEL)
         _, target = converter(_IMAGE, _make_target())
         # category_id 1 → 0, category_id 7 → 3
@@ -111,6 +118,7 @@ class TestConvertCocoPlainDetectionDtypeParity:
         assert [target["iscrowd"].dtype for target in packed] == [torch.int64, torch.int64]
 
     def test_all_labels_within_num_classes(self):
+        """Every remapped label is a valid class index for a model with one class per category."""
         converter = ConvertCoco(cat2label=_CAT2LABEL)
         _, target = converter(_IMAGE, _make_target())
         num_classes = len(_SPARSE_CAT_IDS)
@@ -166,6 +174,7 @@ class TestConvertCocoPlainDetectionDtypeParity:
         assert target["labels"].tolist() == [0, 2]
 
     def test_label_tensor_dtype(self):
+        """Remapped labels are an int64 tensor."""
         converter = ConvertCoco(cat2label=_CAT2LABEL)
         _, target = converter(_IMAGE, _make_target())
         assert target["labels"].dtype == torch.int64
@@ -499,129 +508,82 @@ class TestBuildO365RawGpuBackend:
             self.dataset_dir = "/nonexistent/o365"
             self.coco_path = "/nonexistent/o365"
 
-    def _call_build_o365_raw(self, augmentation_backend, square_resize_div_64=False):
+    def _call_build_o365_raw(self, mocker, augmentation_backend, square_resize_div_64=False):
         """Call build_o365_raw with mocked CocoDetection and transform builders."""
-        from unittest.mock import MagicMock, patch
-
         from rfdetr.datasets.o365 import build_o365_raw
 
         args = self._FakeArgs(augmentation_backend=augmentation_backend, square_resize_div_64=square_resize_div_64)
-        fake_dataset = MagicMock()
+        mocker.patch("rfdetr.datasets.o365.CocoDetection", return_value=mocker.MagicMock())
+        mock_transform = mocker.patch("rfdetr.datasets.o365.make_coco_transforms")
+        mock_sq_transform = mocker.patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64")
+        result = build_o365_raw("train", args, resolution=640)
+        return result, mock_transform, mock_sq_transform
 
-        with (
-            patch("rfdetr.datasets.o365.CocoDetection", return_value=fake_dataset),
-            patch("rfdetr.datasets.o365.make_coco_transforms") as mock_transform,
-            patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64") as mock_sq_transform,
-        ):
-            mock_transform.return_value = MagicMock()
-            mock_sq_transform.return_value = MagicMock()
-            result = build_o365_raw("train", args, resolution=640)
-            return result, mock_transform, mock_sq_transform
-
-    def test_cpu_backend_no_warning(self):
-        """Cpu backend does not call logger.warning with O365 content."""
-        from unittest.mock import patch
-
-        with patch("rfdetr.datasets.o365.logger") as mock_logger:
-            self._call_build_o365_raw("cpu")
+    @pytest.mark.parametrize("backend", ["cpu", "auto"])
+    def test_no_warning_when_backend_resolves_to_cpu(self, mocker, backend):
+        """The cpu backend, and auto without CUDA, emit no O365 GPU-augmentation warning."""
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False)
+        mock_logger = mocker.patch("rfdetr.datasets.o365.logger")
+        self._call_build_o365_raw(mocker, backend)
         o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
-        assert len(o365_warns) == 0, "cpu backend must not warn about O365 GPU augmentation"
+        assert len(o365_warns) == 0, f"{backend} backend without CUDA must not warn about O365 GPU augmentation"
 
-    def test_auto_backend_emits_warning(self):
+    def test_auto_backend_emits_warning(self, mocker):
         """Auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
-        from unittest.mock import patch
-
         from rfdetr.config import AugmentationBackend
 
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_available", lambda self: True),
-            patch("rfdetr.datasets.o365.logger") as mock_logger,
-        ):
-            self._call_build_o365_raw("auto")
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: True)
+        mock_logger = mocker.patch("rfdetr.datasets.o365.logger")
+        self._call_build_o365_raw(mocker, "auto")
         o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
         assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
 
-    def test_auto_backend_no_cuda_no_warning(self):
-        """Auto + no CUDA: resolves to cpu, no O365 warning emitted."""
-        from unittest.mock import patch
-
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-            patch("rfdetr.datasets.o365.logger") as mock_logger,
-        ):
-            self._call_build_o365_raw("auto")
-        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
-        assert len(o365_warns) == 0, "auto + no CUDA must not warn about O365 GPU aug"
-
-    def test_gpu_postprocess_false_for_cpu_backend(self):
-        """Cpu backend passes gpu_postprocess=False (or omits it) to make_coco_transforms."""
-        _, mock_transform, _ = self._call_build_o365_raw("cpu")
-        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
-        assert call_kwargs.get("gpu_postprocess", False) is False
-
-    def test_gpu_postprocess_true_for_auto_backend(self):
-        """Auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
-        from unittest.mock import patch
-
+    @pytest.mark.parametrize(
+        "backend,has_cuda,expected",
+        [
+            pytest.param("cpu", False, False, id="cpu"),
+            pytest.param("auto", True, True, id="auto-cuda-kornia"),
+            pytest.param("auto", False, False, id="auto-no-cuda"),
+        ],
+    )
+    def test_gpu_postprocess_follows_resolved_backend(self, mocker, backend, has_cuda, expected):
+        """gpu_postprocess is True only when the backend resolves to GPU; otherwise CPU Normalize is retained."""
         from rfdetr.config import AugmentationBackend
 
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_available", lambda self: True),
-        ):
-            _, mock_transform, _ = self._call_build_o365_raw("auto")
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=has_cuda)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: True)
+        _, mock_transform, _ = self._call_build_o365_raw(mocker, backend)
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
-        assert call_kwargs.get("gpu_postprocess", False) is True
+        assert call_kwargs.get("gpu_postprocess", False) is expected
 
-    def test_gpu_postprocess_false_for_auto_no_cuda(self):
-        """Auto + no CUDA: gpu_postprocess=False so CPU Normalize is retained."""
-        from unittest.mock import patch
-
-        with patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False):
-            _, mock_transform, _ = self._call_build_o365_raw("auto")
-        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
-        assert call_kwargs.get("gpu_postprocess", False) is False, "auto + no CUDA must not strip CPU Normalize"
-
-    def test_square_resize_uses_square_transform(self):
+    def test_square_resize_uses_square_transform(self, mocker):
         """square_resize_div_64=True delegates to make_coco_transforms_square_div_64."""
-        _, mock_transform, mock_sq_transform = self._call_build_o365_raw("cpu", square_resize_div_64=True)
+        _, mock_transform, mock_sq_transform = self._call_build_o365_raw(mocker, "cpu", square_resize_div_64=True)
         mock_sq_transform.assert_called_once()
         mock_transform.assert_not_called()
 
-    def test_gpu_backend_no_cuda_raises_runtime_error(self):
+    def test_gpu_backend_no_cuda_raises_runtime_error(self, mocker):
         """Gpu backend must fail fast when CUDA is unavailable."""
-        from unittest.mock import patch
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False)
+        with pytest.raises(RuntimeError, match="CUDA"):
+            self._call_build_o365_raw(mocker, "gpu")
 
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-            pytest.raises(RuntimeError, match="CUDA"),
-        ):
-            self._call_build_o365_raw("gpu")
-
-    def test_gpu_backend_no_kornia_raises_import_error(self):
+    def test_gpu_backend_no_kornia_raises_import_error(self, mocker):
         """Gpu backend must raise with install hint when kornia is missing."""
-        from unittest.mock import patch
-
         from rfdetr.config import AugmentationBackend
 
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
-            pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
-        ):
-            self._call_build_o365_raw("gpu")
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA)
+        with pytest.raises(ImportError, match="rfdetr\\[augment\\]"):
+            self._call_build_o365_raw(mocker, "gpu")
 
 
 class TestBuildRoboflowFromCocoBackendResolution:
     """Roboflow COCO builder should resolve backend for gpu_postprocess consistently."""
 
-    def test_auto_no_cuda_keeps_cpu_normalize(self):
+    def test_auto_no_cuda_keeps_cpu_normalize(self, mocker):
         """Auto + no CUDA must set gpu_postprocess=False."""
-        from unittest.mock import MagicMock, patch
-
-        from rfdetr.datasets.coco import build_roboflow_from_coco
-
         args = types.SimpleNamespace(
             dataset_dir="/fake/dataset",
             augmentation_backend="auto",
@@ -633,88 +595,30 @@ class TestBuildRoboflowFromCocoBackendResolution:
             num_windows=4,
             aug_config=None,
         )
-        with (
-            patch("rfdetr.datasets.coco.Path") as mock_path,
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()),
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-        ):
-            mock_path.return_value.exists.return_value = True
-            mock_transforms.return_value = MagicMock()
-            build_roboflow_from_coco("train", args, resolution=640)
+        mock_path = mocker.patch("rfdetr.datasets.coco.Path")
+        mock_transforms = mocker.patch("rfdetr.datasets.coco.make_coco_transforms")
+        mocker.patch("rfdetr.datasets.coco.CocoDetection", return_value=mocker.MagicMock())
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False)
+        mock_path.return_value.exists.return_value = True
+        build_roboflow_from_coco("train", args, resolution=640)
         assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False
 
-    def test_gpu_backend_no_cuda_raises_runtime_error(self, tmp_path: Path) -> None:
+    def test_gpu_backend_no_cuda_raises_runtime_error(self, mocker, tmp_path: Path) -> None:
         """Roboflow COCO builder fails fast when 'gpu' is requested without a CUDA device."""
-        from unittest.mock import patch
-
-        from rfdetr.datasets.coco import build_roboflow_from_coco
-
         args = _pipeline_args(tmp_path, augmentation_backend="gpu")
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-            pytest.raises(RuntimeError, match="CUDA"),
-        ):
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False)
+        with pytest.raises(RuntimeError, match="CUDA"):
             build_roboflow_from_coco("train", args, resolution=640)
 
-    def test_gpu_backend_no_kornia_raises_import_error(self, tmp_path: Path) -> None:
+    def test_gpu_backend_no_kornia_raises_import_error(self, mocker, tmp_path: Path) -> None:
         """Roboflow COCO builder fails fast with an install hint when 'gpu' is requested but kornia is missing."""
-        from unittest.mock import patch
-
         from rfdetr.config import AugmentationBackend
-        from rfdetr.datasets.coco import build_roboflow_from_coco
 
         args = _pipeline_args(tmp_path, augmentation_backend="gpu")
-        with (
-            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
-            pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
-        ):
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA)
+        with pytest.raises(ImportError, match=r"rfdetr\[augment\]"):
             build_roboflow_from_coco("train", args, resolution=640)
-
-    @pytest.mark.parametrize(
-        ("square_resize_div_64", "transform_factory"),
-        [
-            pytest.param(False, "make_coco_transforms", id="standard_resize"),
-            pytest.param(True, "make_coco_transforms_square_div_64", id="square_resize"),
-        ],
-    )
-    def test_keypoint_flip_pairs_forwarded_to_transforms(
-        self,
-        tmp_path: Path,
-        square_resize_div_64: bool,
-        transform_factory: str,
-    ) -> None:
-        """Roboflow keypoint datasets must pass flip pairs to CPU augmentation transforms."""
-        from unittest.mock import MagicMock, patch
-
-        from rfdetr.datasets.coco import build_roboflow_from_coco
-
-        args = types.SimpleNamespace(
-            dataset_dir=str(tmp_path),
-            augmentation_backend="cpu",
-            square_resize_div_64=square_resize_div_64,
-            segmentation_head=False,
-            multi_scale=False,
-            expanded_scales=False,
-            patch_size=16,
-            num_windows=4,
-            use_grouppose_keypoints=True,
-            num_keypoints_per_class=[0, 4],
-            keypoint_flip_pairs=[0, 1, 2, 3],
-            aug_config={},
-        )
-
-        with (
-            patch(f"rfdetr.datasets.coco.{transform_factory}") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_roboflow_from_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == [0, 1, 2, 3]
 
 
 class TestBuilderGpuPostprocess:
@@ -733,6 +637,7 @@ class TestBuilderGpuPostprocess:
     )
     def test_gpu_postprocess_flag(
         self,
+        mocker,
         tmp_path,
         segmentation_head,
         augmentation_backend,
@@ -740,10 +645,6 @@ class TestBuilderGpuPostprocess:
         expected_gpu_postprocess,
     ):
         """Build Roboflow COCO datasets and assert the GPU postprocess flag passed to transforms."""
-        from unittest.mock import MagicMock, patch
-
-        from rfdetr.datasets.coco import build_roboflow_from_coco
-
         annotations_dir = tmp_path / "train"
         annotations_dir.mkdir()
         (annotations_dir / "_annotations.coco.json").write_text(
@@ -761,19 +662,59 @@ class TestBuilderGpuPostprocess:
             num_windows=4,
             aug_config=None,
         )
+        mocker.patch("rfdetr.datasets.coco.resolve_backend_for_build", return_value=resolved_backend)
+        mock_transforms = mocker.patch("rfdetr.datasets.coco.make_coco_transforms")
+        mocker.patch("rfdetr.datasets.coco.CocoDetection")
 
-        with (
-            patch("rfdetr.datasets.coco.resolve_backend_for_build", return_value=resolved_backend),
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_roboflow_from_coco("train", args, resolution=640)
+        build_roboflow_from_coco("train", args, resolution=640)
 
         call_kwargs = mock_transforms.call_args.kwargs if mock_transforms.call_args else mock_transforms.call_args[1]
         assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess
+
+
+def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) -> types.SimpleNamespace:
+    """Return a namespace with all fields consumed by ``build_coco``."""
+    return types.SimpleNamespace(
+        dataset_dir=None,
+        coco_path=str(tmp_path),
+        square_resize_div_64=False,
+        segmentation_head=False,
+        multi_scale=False,
+        expanded_scales=False,
+        patch_size=16,
+        num_windows=4,
+        # Empty aug_config disables augmentation — these tests verify annotation routing, not aug.
+        aug_config={},
+        augmentation_backend="cpu",
+        use_grouppose_keypoints=use_grouppose_keypoints,
+        num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
+        keypoint_flip_pairs=[],
+    )
+
+
+def _make_roboflow_flip_args(tmp_path: Path, *, use_keypoints: bool) -> types.SimpleNamespace:
+    """Return a namespace with all fields consumed by ``build_roboflow_from_coco`` in the flip-pairs tests.
+
+    Examples:
+        >>> _make_roboflow_flip_args(Path("/tmp/ds"), use_keypoints=True).num_keypoints_per_class
+        [0, 4]
+        >>> _make_roboflow_flip_args(Path("/tmp/ds"), use_keypoints=False).use_grouppose_keypoints
+        False
+    """
+    return types.SimpleNamespace(
+        dataset_dir=str(tmp_path),
+        augmentation_backend="cpu",
+        square_resize_div_64=False,
+        segmentation_head=False,
+        multi_scale=False,
+        expanded_scales=False,
+        patch_size=16,
+        num_windows=4,
+        use_grouppose_keypoints=use_keypoints,
+        num_keypoints_per_class=[0, 4] if use_keypoints else [],
+        keypoint_flip_pairs=[],
+        aug_config={"HorizontalFlip": {"p": 0.5}},
+    )
 
 
 class TestKeypointFlipPairsNoneForwarding:
@@ -797,6 +738,7 @@ class TestKeypointFlipPairsNoneForwarding:
        ``or []`` fallback, not forward ``None`` through untouched.
     """
 
+    @pytest.mark.parametrize("builder_kind", ["roboflow", "coco"])
     @pytest.mark.parametrize(
         ("square_resize_div_64", "transform_factory"),
         [
@@ -804,200 +746,43 @@ class TestKeypointFlipPairsNoneForwarding:
             pytest.param(True, "make_coco_transforms_square_div_64", id="square_resize"),
         ],
     )
-    def test_build_roboflow_from_coco_forwards_none_for_detection(
-        self,
-        tmp_path: Path,
-        square_resize_div_64: bool,
-        transform_factory: str,
-    ) -> None:
-        """Roboflow detection datasets must forward ``keypoint_flip_pairs=None``, not ``[]``."""
-        from unittest.mock import MagicMock, patch
-
-        args = types.SimpleNamespace(
-            dataset_dir=str(tmp_path),
-            augmentation_backend="cpu",
-            square_resize_div_64=square_resize_div_64,
-            segmentation_head=False,
-            multi_scale=False,
-            expanded_scales=False,
-            patch_size=16,
-            num_windows=4,
-            use_grouppose_keypoints=False,
-            num_keypoints_per_class=[],
-            keypoint_flip_pairs=[],
-            aug_config={"HorizontalFlip": {"p": 0.5}},
-        )
-
-        with (
-            patch(f"rfdetr.datasets.coco.{transform_factory}") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_roboflow_from_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] is None
-
     @pytest.mark.parametrize(
-        ("square_resize_div_64", "transform_factory"),
+        ("use_keypoints", "configured_pairs", "expected_pairs"),
         [
-            pytest.param(False, "make_coco_transforms", id="standard_resize"),
-            pytest.param(True, "make_coco_transforms_square_div_64", id="square_resize"),
+            pytest.param(False, [], None, id="detection-forwards-none"),
+            pytest.param(True, [0, 1, 2, 3], [0, 1, 2, 3], id="keypoint-forwards-configured-pairs"),
+            pytest.param(True, [], [], id="keypoint-without-pairs-forwards-empty-list"),
+            pytest.param(True, None, [], id="keypoint-explicit-none-coerced-to-empty-list"),
         ],
     )
-    def test_build_coco_forwards_none_for_detection(
+    def test_builder_forwards_flip_pairs_sentinel(
         self,
+        mocker,
         tmp_path: Path,
+        builder_kind: str,
         square_resize_div_64: bool,
         transform_factory: str,
+        use_keypoints: bool,
+        configured_pairs: list[int] | None,
+        expected_pairs: list[int] | None,
     ) -> None:
-        """COCO-format detection datasets must forward ``keypoint_flip_pairs=None``, not ``[]``."""
-        from unittest.mock import MagicMock, patch
-
-        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
+        """Detection builds forward ``None``; keypoint builds forward the configured pairs, with ``None`` coerced to
+        ``[]``."""
+        if builder_kind == "roboflow":
+            builder = build_roboflow_from_coco
+            args = _make_roboflow_flip_args(tmp_path, use_keypoints=use_keypoints)
+        else:
+            builder = build_coco
+            args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=use_keypoints)
+            args.aug_config = {"HorizontalFlip": {"p": 0.5}}
         args.square_resize_div_64 = square_resize_div_64
-        args.aug_config = {"HorizontalFlip": {"p": 0.5}}
+        args.keypoint_flip_pairs = configured_pairs
+        mock_transforms = mocker.patch(f"rfdetr.datasets.coco.{transform_factory}")
+        mocker.patch("rfdetr.datasets.coco.CocoDetection")
 
-        with (
-            patch(f"rfdetr.datasets.coco.{transform_factory}") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
+        builder("train", args, resolution=640)
 
-            build_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] is None
-
-    def test_build_coco_forwards_flip_pairs_for_keypoint_mode(self, tmp_path: Path) -> None:
-        """COCO keypoint-mode builds must forward user-supplied flip pairs to CPU transforms."""
-        from unittest.mock import MagicMock, patch
-
-        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=True)
-        args.keypoint_flip_pairs = [0, 1, 2, 3]
-        args.aug_config = {"HorizontalFlip": {"p": 0.5}}
-
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == [0, 1, 2, 3]
-
-    def test_build_coco_forwards_empty_list_for_keypoint_mode_without_flip_pairs(self, tmp_path: Path) -> None:
-        """COCO keypoint-mode builds with no configured flip pairs must forward ``[]``, not ``None``."""
-        from unittest.mock import MagicMock, patch
-
-        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=True)
-        args.keypoint_flip_pairs = []
-
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == []
-
-    def test_build_roboflow_from_coco_forwards_empty_list_for_keypoint_mode_without_flip_pairs(
-        self, tmp_path: Path
-    ) -> None:
-        """Roboflow keypoint-mode builds with no configured flip pairs must forward ``[]``, not ``None``."""
-        from unittest.mock import MagicMock, patch
-
-        args = types.SimpleNamespace(
-            dataset_dir=str(tmp_path),
-            augmentation_backend="cpu",
-            square_resize_div_64=False,
-            segmentation_head=False,
-            multi_scale=False,
-            expanded_scales=False,
-            patch_size=16,
-            num_windows=4,
-            use_grouppose_keypoints=True,
-            num_keypoints_per_class=[0, 4],
-            keypoint_flip_pairs=[],
-            aug_config={},
-        )
-
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_roboflow_from_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == []
-
-    def test_build_coco_coerces_explicit_none_flip_pairs_to_empty_list_for_keypoint_mode(self, tmp_path: Path) -> None:
-        """A ``KeypointTrainConfig`` default of explicit ``keypoint_flip_pairs=None`` must coerce to ``[]``.
-
-        Scenario: a fresh ``KeypointTrainConfig(dataset_dir=...)`` defaults ``keypoint_flip_pairs`` to ``None``
-        (not an omitted attribute). ``getattr(args, "keypoint_flip_pairs", []) or []`` must still coerce that
-        explicit ``None`` to ``[]`` under ``include_keypoints=True``, rather than forwarding ``None`` through.
-        """
-        from unittest.mock import MagicMock, patch
-
-        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=True)
-        args.keypoint_flip_pairs = None
-
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == []
-
-    def test_build_roboflow_from_coco_coerces_explicit_none_flip_pairs_to_empty_list_for_keypoint_mode(
-        self, tmp_path: Path
-    ) -> None:
-        """Roboflow keypoint-mode builds must coerce an explicit ``None`` flip-pairs default to ``[]``.
-
-        Scenario: a fresh ``KeypointTrainConfig(dataset_dir=...)`` defaults ``keypoint_flip_pairs`` to ``None``
-        (not an omitted attribute). ``getattr(args, "keypoint_flip_pairs", []) or []`` must still coerce that
-        explicit ``None`` to ``[]`` under ``include_keypoints=True``, rather than forwarding ``None`` through.
-        """
-        from unittest.mock import MagicMock, patch
-
-        args = types.SimpleNamespace(
-            dataset_dir=str(tmp_path),
-            augmentation_backend="cpu",
-            square_resize_div_64=False,
-            segmentation_head=False,
-            multi_scale=False,
-            expanded_scales=False,
-            patch_size=16,
-            num_windows=4,
-            use_grouppose_keypoints=True,
-            num_keypoints_per_class=[0, 4],
-            keypoint_flip_pairs=None,
-            aug_config={},
-        )
-
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
-
-            build_roboflow_from_coco("train", args, resolution=640)
-
-        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == []
+        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == expected_pairs
 
 
 def _make_keypoint_annotation(
@@ -1015,26 +800,6 @@ def _make_keypoint_annotation(
         "iscrowd": 0,
         "keypoints": keypoints if keypoints is not None else [1.0, 2.0, 2.0] * 17,
     }
-
-
-def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) -> types.SimpleNamespace:
-    """Return a namespace with all fields consumed by ``build_coco``."""
-    return types.SimpleNamespace(
-        dataset_dir=None,
-        coco_path=str(tmp_path),
-        square_resize_div_64=False,
-        segmentation_head=False,
-        multi_scale=False,
-        expanded_scales=False,
-        patch_size=16,
-        num_windows=4,
-        # Empty aug_config disables augmentation — these tests verify annotation routing, not aug.
-        aug_config={},
-        augmentation_backend="cpu",
-        use_grouppose_keypoints=use_grouppose_keypoints,
-        num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
-        keypoint_flip_pairs=[],
-    )
 
 
 class TestConvertCocoKeypoints:
@@ -1163,42 +928,30 @@ class TestConvertCocoKeypoints:
 class TestBuildCocoKeypointMode:
     """COCO builder mode switch for person keypoints."""
 
-    def test_keypoint_mode_uses_person_keypoints_annotations(self, tmp_path: Path) -> None:
-        """Keypoint mode should switch train annotations to ``person_keypoints_train2017.json``."""
-        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=True)
+    @pytest.mark.parametrize(
+        "use_keypoints,ann_name,remap_category_ids",
+        [
+            pytest.param(True, "person_keypoints_train2017.json", True, id="keypoint-mode"),
+            pytest.param(False, "instances_train2017.json", False, id="default-keeps-raw-coco-ids"),
+        ],
+    )
+    def test_mode_selects_annotation_file_and_id_remapping(
+        self, mocker, tmp_path: Path, use_keypoints: bool, ann_name: str, remap_category_ids: bool
+    ) -> None:
+        """Keypoint mode trains on person keypoints and remaps ids; default mode keeps raw ids for pretrained
+        weights."""
+        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=use_keypoints)
+        mocker.patch("rfdetr.datasets.coco.make_coco_transforms", return_value=lambda image, target: (image, target))
+        mock_dataset = mocker.patch("rfdetr.datasets.coco.CocoDetection", return_value=object())
 
-        from unittest.mock import patch
-
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms", return_value=lambda image, target: (image, target)),
-            patch("rfdetr.datasets.coco.CocoDetection", return_value=object()) as mock_dataset,
-        ):
-            build_coco("train", args, resolution=640)
-
-        _, kwargs = mock_dataset.call_args
-        ann_file = Path(mock_dataset.call_args.args[1])
-        assert ann_file.parent.name == "annotations"
-        assert ann_file.name == "person_keypoints_train2017.json"
-        assert kwargs["include_keypoints"] is True
-        assert kwargs["remap_category_ids"] is True
-
-    def test_default_mode_uses_instances_annotations_with_raw_coco_ids(self, tmp_path: Path) -> None:
-        """Default COCO detection mode should keep raw sparse category IDs for pretrained checkpoints."""
-        from unittest.mock import patch
-
-        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms", return_value=lambda image, target: (image, target)),
-            patch("rfdetr.datasets.coco.CocoDetection", return_value=object()) as mock_dataset,
-        ):
-            build_coco("train", args, resolution=640)
+        build_coco("train", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
         ann_file = Path(mock_dataset.call_args.args[1])
         assert ann_file.parent.name == "annotations"
-        assert ann_file.name == "instances_train2017.json"
-        assert kwargs["include_keypoints"] is False
-        assert kwargs["remap_category_ids"] is False
+        assert ann_file.name == ann_name
+        assert kwargs["include_keypoints"] is use_keypoints
+        assert kwargs["remap_category_ids"] is remap_category_ids
 
 
 class TestBuildKeypointCat2Label:
@@ -1239,23 +992,12 @@ class TestScaleJitter:
     """``scale_jitter`` controls the resize-crop branch independently of ``aug_config``."""
 
     @pytest.mark.parametrize(
-        "scale_jitter,expected",
+        "factory",
         [
-            pytest.param(True, True, id="enabled_keeps_crop"),
-            pytest.param(False, False, id="disabled_drops_crop"),
+            pytest.param(make_coco_transforms, id="standard"),
+            pytest.param(make_coco_transforms_square_div_64, id="square_div_64"),
         ],
     )
-    def test_make_coco_transforms_forwards_scale_jitter(self, scale_jitter, expected):
-        """make_coco_transforms passes scale_jitter through to the torchvision-native resize pipeline unchanged."""
-        from unittest.mock import patch
-
-        from rfdetr.datasets.coco import make_coco_transforms
-
-        with patch("rfdetr.datasets.coco._build_train_resize_transforms") as mock_build:
-            make_coco_transforms("train", 640, scale_jitter=scale_jitter)
-
-        assert mock_build.call_args.kwargs["scale_jitter"] is expected
-
     @pytest.mark.parametrize(
         "scale_jitter,expected",
         [
@@ -1263,25 +1005,19 @@ class TestScaleJitter:
             pytest.param(False, False, id="disabled_drops_crop"),
         ],
     )
-    def test_make_coco_transforms_square_forwards_scale_jitter(self, scale_jitter, expected):
-        """make_coco_transforms_square_div_64 passes scale_jitter through to the torchvision-native resize pipeline."""
-        from unittest.mock import patch
+    def test_transform_factories_forward_scale_jitter(self, mocker, factory, scale_jitter, expected):
+        """Both transform factories pass scale_jitter through to the torchvision-native resize pipeline unchanged."""
+        mock_build = mocker.patch("rfdetr.datasets.coco._build_train_resize_transforms")
 
-        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
-
-        with patch("rfdetr.datasets.coco._build_train_resize_transforms") as mock_build:
-            make_coco_transforms_square_div_64("train", 640, scale_jitter=scale_jitter)
+        factory("train", 640, scale_jitter=scale_jitter)
 
         assert mock_build.call_args.kwargs["scale_jitter"] is expected
 
-    def test_empty_aug_config_no_longer_affects_crop_branch(self):
+    def test_empty_aug_config_no_longer_affects_crop_branch(self, mocker):
         """aug_config={} disables the augmentation stack only — crop branch stays on by default."""
-        from unittest.mock import patch
+        mock_build = mocker.patch("rfdetr.datasets.coco._build_train_resize_transforms")
 
-        from rfdetr.datasets.coco import make_coco_transforms
-
-        with patch("rfdetr.datasets.coco._build_train_resize_transforms") as mock_build:
-            make_coco_transforms("train", 640, aug_config={})
+        make_coco_transforms("train", 640, aug_config={})
 
         assert mock_build.call_args.kwargs["scale_jitter"] is True
 
@@ -1292,17 +1028,12 @@ class TestScaleJitter:
             pytest.param(False, False, id="disabled_drops_crop"),
         ],
     )
-    def test_non_empty_aug_config_forwards_scale_jitter_to_albumentations(self, scale_jitter, expected):
+    def test_non_empty_aug_config_forwards_scale_jitter_to_albumentations(self, mocker, scale_jitter, expected):
         """Non-empty aug_config routes to the Albumentations resize config with scale_jitter forwarded."""
-        from unittest.mock import MagicMock, patch
+        mock_build = mocker.patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[])
+        mocker.patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=mocker.MagicMock())
 
-        from rfdetr.datasets.coco import make_coco_transforms
-
-        with (
-            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
-            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=MagicMock()),
-        ):
-            make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 0.5}}, scale_jitter=scale_jitter)
+        make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 0.5}}, scale_jitter=scale_jitter)
 
         assert mock_build.call_args.kwargs["scale_jitter"] is expected
 
@@ -1320,16 +1051,14 @@ def _make_gradient_image(width: int, height: int) -> Image.Image:
 class TestPipelineParity:
     """Torchvision and Albumentations eval pipelines produce statistically close resize+normalize output.
 
-    Both backends use different interpolation algorithms (torchvision: BILINEAR + antialias;
-    Albumentations: cv2 INTER_LINEAR, no antialias) so exact pixel parity is not expected — see the
-    backend-switch UserWarning in ``_build_torchvision_pipeline``. This test asserts statistical
-    closeness (shape/dtype match, output distribution within tolerance) instead.
+    The backends interpolate differently (torchvision BILINEAR + antialias, Albumentations cv2 INTER_LINEAR without
+    antialias), so exact pixel parity is not expected; see the backend-switch UserWarning in
+    ``_build_torchvision_pipeline``. Shape, dtype and output distribution are compared instead.
     """
 
-    def test_eval_resize_normalize_output_stats_are_close(self) -> None:
-        """_build_torchvision_pipeline and _build_albumentations_pipeline agree on shape, dtype, and pixel stats."""
-        from rfdetr.datasets.coco import _build_albumentations_pipeline, _build_torchvision_pipeline
-
+    @pytest.mark.skipif(not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed")
+    def test_eval_resize_normalize_stats_close(self) -> None:
+        """The torchvision and Albumentations eval pipelines agree on shape, dtype, mean and std."""
         image = _make_gradient_image(120, 90)
         target = {
             "boxes": torch.tensor([[10.0, 5.0, 60.0, 45.0]]),
@@ -1359,61 +1088,76 @@ class TestPipelineParity:
         torch.testing.assert_close(tv_image.std(), albu_image.std(), atol=0.05, rtol=0)
 
 
-class TestCocoDetectionZeroAnnotations:
-    """CocoDetection correctly handles images with no annotations."""
+def _write_coco_split(
+    root: Path, images: dict[str, tuple[int, int]], annotations: List[Dict], categories: List[Dict]
+) -> Path:
+    """Write blank images and an ``annotations.json`` for a minimal COCO split.
 
-    def test_zero_annotation_sample_yields_empty_boxes_and_labels(self, tmp_path: Path) -> None:
+    Args:
+        root: Directory receiving the images and ``annotations.json``, created if missing.
+        images: File name to ``(width, height)``; image ids count up from 1 in insertion order.
+        annotations: COCO annotation dicts.
+        categories: COCO category dicts.
+
+    Returns:
+        Path of the written ``annotations.json``.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _write_coco_split(root, {"a.jpg": (4, 3)}, [], [_cat(1, "x")]).name
+        'annotations.json'
+        >>> (root / "a.jpg").exists()
+        True
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for image_id, (name, (width, height)) in enumerate(images.items(), start=1):
+        Image.new("RGB", (width, height)).save(root / name, quality=95)
+        entries.append({"id": image_id, "file_name": name, "width": width, "height": height})
+    ann_file = root / "annotations.json"
+    ann_file.write_text(
+        json.dumps({"images": entries, "annotations": annotations, "categories": categories}), encoding="utf-8"
+    )
+    return ann_file
+
+
+def _cat(category_id: object, name: str, supercategory: str = "none") -> Dict:
+    """Build a COCO category dict.
+
+    Examples:
+        >>> _cat(2, "car", "vehicle")
+        {'id': 2, 'name': 'car', 'supercategory': 'vehicle'}
+    """
+    return {"id": category_id, "name": name, "supercategory": supercategory}
+
+
+class TestCocoDetectionZeroAnnotations:
+    """CocoDetection handles images and datasets that carry no annotations."""
+
+    def test_unannotated_image_yields_empty_boxes_and_labels(self, tmp_path: Path) -> None:
         """An image with no annotations yields boxes (0, 4) float32 and labels (0,) int64 tensors."""
-        img_dir = tmp_path / "images"
-        img_dir.mkdir()
-        Image.new("RGB", (100, 100)).save(img_dir / "img1.jpg")
-        Image.new("RGB", (100, 100)).save(img_dir / "img2.jpg")
-        ann_file = tmp_path / "annotations.json"
-        ann_file.write_text(
-            json.dumps(
-                {
-                    "images": [
-                        {"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100},
-                        {"id": 2, "file_name": "img2.jpg", "width": 100, "height": 100},
-                    ],
-                    "annotations": [
-                        {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0}
-                    ],
-                    "categories": [{"id": 1, "name": "cat", "supercategory": "animal"}],
-                }
-            )
+        annotation = {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0}
+        ann_file = _write_coco_split(
+            tmp_path, {"img1.jpg": (100, 100), "img2.jpg": (100, 100)}, [annotation], [_cat(1, "cat", "animal")]
         )
-        dataset = CocoDetection(img_dir, ann_file, transforms=None)
-        zero_ann_idx = dataset.ids.index(2)
-        _, target = dataset[zero_ann_idx]
+        dataset = CocoDetection(tmp_path, ann_file, transforms=None)
+
+        _, target = dataset[dataset.ids.index(2)]
+
         assert target["boxes"].shape == torch.Size([0, 4])
         assert target["labels"].shape == torch.Size([0])
         assert target["boxes"].dtype == torch.float32
         assert target["labels"].dtype == torch.int64
 
-    def test_all_parent_hierarchy_falls_back_to_full_list_when_dataset_has_zero_annotations(
-        self, tmp_path: Path
-    ) -> None:
-        """A dataset with hierarchy categories but zero total annotations keeps every category (docstring fallback)."""
-        img_dir = tmp_path / "images"
-        img_dir.mkdir()
-        Image.new("RGB", (100, 100)).save(img_dir / "img1.jpg")
-        ann_file = tmp_path / "annotations.json"
-        ann_file.write_text(
-            json.dumps(
-                {
-                    "images": [{"id": 1, "file_name": "img1.jpg", "width": 100, "height": 100}],
-                    "annotations": [],
-                    "categories": [
-                        {"id": 1, "name": "a", "supercategory": "b"},
-                        {"id": 2, "name": "b", "supercategory": "a"},
-                    ],
-                }
-            )
-        )
-        dataset = CocoDetection(img_dir, ann_file, transforms=None, remap_category_ids=True)
-        assert dataset.cat2label == {1: 0, 2: 1}
+    def test_all_parent_categories_kept_when_dataset_has_no_annotations(self, tmp_path: Path) -> None:
+        """Hierarchy categories with zero total annotations are all kept (the documented fallback)."""
+        ann_file = _write_coco_split(tmp_path, {"img1.jpg": (100, 100)}, [], [_cat(1, "a", "b"), _cat(2, "b", "a")])
+        dataset = CocoDetection(tmp_path, ann_file, transforms=None, remap_category_ids=True)
+
         _, target = dataset[0]
+
+        assert dataset.cat2label == {1: 0, 2: 1}
         assert target["boxes"].shape == torch.Size([0, 4])
         assert target["labels"].shape == torch.Size([0])
 
@@ -1422,7 +1166,7 @@ class TestCocoDetectionDraftDecode:
     """Draft-decoded JPEG samples retain image/annotation geometry alignment."""
 
     def test_annotation_scaling_keeps_polygon_axes_and_keypoint_visibility(self) -> None:
-        """Non-square drafting must scale polygon axes without changing keypoint visibility."""
+        """Non-square drafting scales polygon axes per axis and leaves keypoint visibility unchanged."""
         annotation = {
             "bbox": [10.0, 20.0, 30.0, 40.0],
             "area": 1200.0,
@@ -1440,32 +1184,19 @@ class TestCocoDetectionDraftDecode:
         assert scaled["keypoints"] == [5.0, 5.0, 2.0, 20.0, 15.0, 0.0]
 
     def test_odd_jpeg_scales_each_annotation_axis_to_decoded_image(self, tmp_path: Path) -> None:
-        """Draft decoding an odd JPEG must use its actual x and y scale factors."""
+        """Draft decoding an odd-sized JPEG scales boxes, keypoints and area by the actual x and y factors."""
         original_width, original_height = 1921, 1081
-        image_path = tmp_path / "draft.jpg"
-        Image.new("RGB", (original_width, original_height)).save(image_path, quality=95)
-        annotation_path = tmp_path / "annotations.json"
-        annotation_path.write_text(
-            json.dumps(
-                {
-                    "images": [
-                        {"id": 1, "file_name": image_path.name, "width": original_width, "height": original_height}
-                    ],
-                    "annotations": [
-                        {
-                            "id": 1,
-                            "image_id": 1,
-                            "category_id": 1,
-                            "bbox": [100.0, 200.0, 300.0, 400.0],
-                            "area": 120000.0,
-                            "iscrowd": 0,
-                            "keypoints": [100.0, 200.0, 2.0],
-                        }
-                    ],
-                    "categories": [{"id": 1, "name": "person", "supercategory": "person"}],
-                }
-            ),
-            encoding="utf-8",
+        annotation = {
+            "id": 1,
+            "image_id": 1,
+            "category_id": 1,
+            "bbox": [100.0, 200.0, 300.0, 400.0],
+            "area": 120000.0,
+            "iscrowd": 0,
+            "keypoints": [100.0, 200.0, 2.0],
+        }
+        annotation_path = _write_coco_split(
+            tmp_path, {"draft.jpg": (original_width, original_height)}, [annotation], [_cat(1, "person", "person")]
         )
         dataset = CocoDetection(
             tmp_path,
@@ -1482,81 +1213,55 @@ class TestCocoDetectionDraftDecode:
         assert (decoded_width, decoded_height) != (original_width, original_height)
         x_scale = decoded_width / original_width
         y_scale = decoded_height / original_height
-        torch.testing.assert_close(
-            target["boxes"],
-            torch.tensor([[100.0 * x_scale, 200.0 * y_scale, 400.0 * x_scale, 600.0 * y_scale]]),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        torch.testing.assert_close(
-            target["keypoints"],
-            torch.tensor([[[100.0 * x_scale, 200.0 * y_scale, 2.0]]]),
-            rtol=1e-5,
-            atol=1e-5,
-        )
+        expected_boxes = torch.tensor([[100.0 * x_scale, 200.0 * y_scale, 400.0 * x_scale, 600.0 * y_scale]])
+        torch.testing.assert_close(target["boxes"], expected_boxes, rtol=1e-5, atol=1e-5)
+        expected_keypoints = torch.tensor([[[100.0 * x_scale, 200.0 * y_scale, 2.0]]])
+        torch.testing.assert_close(target["keypoints"], expected_keypoints, rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(target["area"], torch.tensor([120000.0 * x_scale * y_scale]), rtol=1e-5, atol=1e-5)
 
     @pytest.mark.parametrize(
-        ("image_set", "include_masks"),
-        [
-            pytest.param("val", False, id="validation"),
-            pytest.param("train", True, id="mask-training"),
-        ],
+        ("image_set", "include_masks", "expected"),
+        [("val", False, None), ("train", True, None), ("train", False, 600)],
     )
-    def test_draft_size_skips_full_resolution_contracts(self, image_set: str, include_masks: bool) -> None:
-        """Validation and mask datasets must disable draft decoding even with scale jitter."""
-        assert draft_size_for_transforms(image_set, 512, scale_jitter=True, include_masks=include_masks) is None
+    def test_draft_size_with_scale_jitter(self, image_set: str, include_masks: bool, expected: int | None) -> None:
+        """Validation and mask datasets disable draft decoding; plain training keeps the 600-pixel crop-branch floor."""
+        assert draft_size_for_transforms(image_set, 512, scale_jitter=True, include_masks=include_masks) == expected
 
-    def test_draft_size_uses_scale_jitter_floor(self) -> None:
-        """Scale jitter must preserve the crop branch's 600-pixel source floor."""
-        assert draft_size_for_transforms("train", 512, scale_jitter=True) == 600
+    @pytest.fixture
+    def mock_coco_dataset(self, mocker) -> object:
+        """Patch transforms and ``CocoDetection`` so builders run without disk access; return the dataset mock."""
+        mocker.patch("rfdetr.datasets.coco.make_coco_transforms", return_value=mocker.MagicMock())
+        return mocker.patch("rfdetr.datasets.coco.CocoDetection", return_value=mocker.MagicMock())
 
-    @pytest.mark.parametrize(
-        ("builder_name", "scale_jitter", "expected_draft_size"),
-        [
-            pytest.param("coco", False, 512, id="coco-jitter-disabled"),
-            pytest.param("coco", True, 600, id="coco-jitter-enabled"),
-            pytest.param("roboflow", False, 512, id="roboflow-jitter-disabled"),
-            pytest.param("roboflow", True, 600, id="roboflow-jitter-enabled"),
-        ],
-    )
-    def test_builders_forward_scale_jitter_to_draft_size(
-        self,
-        tmp_path: Path,
-        builder_name: str,
-        scale_jitter: bool,
-        expected_draft_size: int,
+    @pytest.mark.parametrize(("scale_jitter", "expected_draft_size"), [(False, 512), (True, 600)])
+    def test_build_coco_forwards_scale_jitter_to_draft_size(
+        self, tmp_path: Path, mock_coco_dataset: object, scale_jitter: bool, expected_draft_size: int
     ) -> None:
-        """Both COCO builders must give the draft decoder the configured jitter floor."""
-        from unittest.mock import MagicMock, patch
-
-        if builder_name == "coco":
-            args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
-            builder = build_coco
-        else:
-            args = types.SimpleNamespace(
-                dataset_dir=str(tmp_path),
-                augmentation_backend="cpu",
-                square_resize_div_64=False,
-                segmentation_head=False,
-                multi_scale=False,
-                expanded_scales=False,
-                patch_size=16,
-                num_windows=4,
-                use_grouppose_keypoints=False,
-                num_keypoints_per_class=[],
-                aug_config={},
-            )
-            builder = build_roboflow_from_coco
+        """``build_coco`` gives the draft decoder the configured jitter floor."""
+        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
         args.scale_jitter = scale_jitter
 
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms", return_value=MagicMock()),
-            patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()) as mock_dataset,
-        ):
-            builder("train", args, resolution=512)
+        build_coco("train", args, resolution=512)
 
-        assert mock_dataset.call_args.kwargs["draft_size"] == expected_draft_size
+        assert mock_coco_dataset.call_args.kwargs["draft_size"] == expected_draft_size
+
+    @pytest.mark.parametrize(("scale_jitter", "expected_draft_size"), [(False, 512), (True, 600)])
+    def test_build_roboflow_forwards_scale_jitter_to_draft_size(
+        self, tmp_path: Path, mock_coco_dataset: object, scale_jitter: bool, expected_draft_size: int
+    ) -> None:
+        """``build_roboflow_from_coco`` gives the draft decoder the configured jitter floor."""
+        args = _pipeline_args(
+            tmp_path,
+            augmentation_backend="cpu",
+            use_grouppose_keypoints=False,
+            num_keypoints_per_class=[],
+            aug_config={},
+            scale_jitter=scale_jitter,
+        )
+
+        build_roboflow_from_coco("train", args, resolution=512)
+
+        assert mock_coco_dataset.call_args.kwargs["draft_size"] == expected_draft_size
 
 
 _PHANTOM_ROOT_CATEGORIES = [
@@ -1566,6 +1271,9 @@ _PHANTOM_ROOT_CATEGORIES = [
     {"id": 3, "name": "tree", "supercategory": "eggmasses"},
     {"id": 4, "name": "trunk", "supercategory": "eggmasses"},
 ]
+
+# Annotated category ids of a Roboflow hierarchy split: the synthetic root (id 0) is either unused or annotated.
+_ROOT_ANNOTATION_CASES = [pytest.param([1, 4], id="unannotated-root"), pytest.param([0, 1], id="annotated-root")]
 
 
 def _write_roboflow_hierarchy_split(directory: Path, annotated_ids: List[int]) -> Path:
@@ -1604,182 +1312,197 @@ def _write_roboflow_hierarchy_split(directory: Path, annotated_ids: List[int]) -
     return ann_file
 
 
+def _open_hierarchy_train(tmp_path: Path, annotated_ids: List[int]) -> CocoDetection:
+    """Write a hierarchy split under ``tmp_path / "train"`` and open it with category remapping.
+
+    Examples:
+        >>> import tempfile
+        >>> _open_hierarchy_train(Path(tempfile.mkdtemp()), [1, 4]).cat2label  # doctest: +ELLIPSIS
+        loading annotations...{1: 0, 2: 1, 3: 2, 4: 3}
+    """
+    ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", annotated_ids)
+    return CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+
+
 class TestFilterParentCategories:
     """Unit tests for the grouping-category filter shared by class names, class count and label remapping."""
 
-    def test_unannotated_root_is_dropped(self) -> None:
-        """A category named as another category's supercategory and carrying no annotation is removed."""
-        result = filter_parent_categories(_PHANTOM_ROOT_CATEGORIES, {1, 2, 3, 4})
-        assert [category["name"] for category in result] == ["empty_pot", "stake", "tree", "trunk"]
+    @pytest.mark.parametrize(
+        ("categories", "annotated", "expected_ids"),
+        [
+            # A category named as another's supercategory and carrying no annotation is removed.
+            pytest.param(_PHANTOM_ROOT_CATEGORIES, {1, 2, 3, 4}, [1, 2, 3, 4], id="unannotated-root-dropped"),
+            # A parent that owns annotations stays, so its annotations keep a label slot.
+            pytest.param(_PHANTOM_ROOT_CATEGORIES, {0, 1}, [0, 1, 2, 3, 4], id="annotated-parent-kept"),
+            # Output order follows category id, matching the contiguous label indices derived from it.
+            pytest.param([_cat(2, "cat"), _cat(1, "dog")], set(), [1, 2], id="sorted-by-id"),
+            # Exports shipping string ids still match the int-keyed annotated set.
+            pytest.param([_cat("1", "vehicle"), _cat("2", "car", "vehicle")], {1, 2}, ["1", "2"], id="string-ids"),
+            # An annotated leaf keeps its slot even when an unannotated grouping node reuses its name.
+            pytest.param(
+                [_cat(1, "tree"), _cat(2, "trunk", "tree"), _cat(3, "tree", "tree")], {2, 3}, [2, 3], id="shared-name"
+            ),
+            # A category naming itself as its own supercategory is not its own parent.
+            pytest.param(
+                [_cat(1, "person", "person"), _cat(2, "vehicle"), _cat(3, "car", "vehicle")],
+                {3},
+                [1, 3],
+                id="self-referential-supercategory",
+            ),
+            # A self-referencing name that another category groups under is still dropped when unannotated.
+            pytest.param(
+                [_cat(1, "person", "person"), _cat(2, "rider", "person")],
+                {2},
+                [2],
+                id="self-referential-name-is-parent",
+            ),
+            # Some (not all, not none) categories annotated inside an all-parent cycle: only those survive.
+            pytest.param(
+                [_cat(1, "a", "c"), _cat(2, "b", "a"), _cat(3, "c", "b")], {2}, [2], id="partial-annotation-in-cycle"
+            ),
+            # Two disjoint hierarchies filtered together: the annotated root stays, the unannotated sibling drops.
+            pytest.param(
+                [
+                    _cat(0, "rootA"),
+                    _cat(1, "a1", "rootA"),
+                    _cat(2, "a2", "rootA"),
+                    _cat(5, "rootB"),
+                    _cat(6, "b1", "rootB"),
+                    _cat(7, "b2", "rootB"),
+                ],
+                {1, 2, 5, 6, 7},
+                [1, 2, 5, 6, 7],
+                id="two-independent-roots",
+            ),
+        ],
+    )
+    def test_keeps_expected_category_ids(self, categories: List[Dict], annotated: set, expected_ids: list) -> None:
+        """Unannotated grouping categories are dropped; annotated and leaf categories survive in id order."""
+        result = filter_parent_categories(categories, annotated)
 
-    def test_annotated_parent_is_kept(self) -> None:
-        """A parent category that owns annotations stays, so its annotations keep a label slot."""
-        result = filter_parent_categories(_PHANTOM_ROOT_CATEGORIES, {0, 1})
-        assert [category["id"] for category in result] == [0, 1, 2, 3, 4]
+        assert [category["id"] for category in result] == expected_ids
 
-    def test_flat_dataset_is_unchanged(self) -> None:
-        """Datasets whose supercategories are all placeholders are returned untouched."""
-        categories = [
-            {"id": 1, "name": "dog", "supercategory": "none"},
-            {"id": 2, "name": "cat", "supercategory": "none"},
-        ]
+    @pytest.mark.parametrize(
+        "categories",
+        [
+            pytest.param([_cat(1, "dog"), _cat(2, "cat")], id="flat-dataset"),
+            pytest.param([_cat(1, "a", "b"), _cat(2, "b", "a")], id="every-category-is-a-parent"),
+        ],
+    )
+    def test_returns_full_list_when_nothing_is_a_droppable_parent(self, categories: List[Dict]) -> None:
+        """Flat datasets stay untouched, and a pathological all-parent cycle keeps the full list instead of nothing."""
         assert filter_parent_categories(categories, set()) == categories
-
-    def test_result_is_sorted_by_id(self) -> None:
-        """Output order follows category id, matching the contiguous label indices derived from it."""
-        categories = [
-            {"id": 2, "name": "cat", "supercategory": "none"},
-            {"id": 1, "name": "dog", "supercategory": "none"},
-        ]
-        assert [category["id"] for category in filter_parent_categories(categories, set())] == [1, 2]
 
     def test_category_without_a_name_reports_the_offending_id(self) -> None:
         """A category missing the required ``name`` field names itself in the error instead of raising a bare id."""
-        categories = [
-            {"id": 1, "name": "vehicle", "supercategory": "none"},
-            {"id": 2, "supercategory": "vehicle"},
-        ]
-        with pytest.raises(KeyError, match="missing the required 'name' field"):
+        categories = [_cat(1, "vehicle"), {"id": 2, "supercategory": "vehicle"}]
+
+        with pytest.raises(KeyError) as exc_info:
             filter_parent_categories(categories, {1})
 
-    def test_string_category_id_matches_the_annotated_ids(self) -> None:
-        """Exports shipping string ids still match the int-keyed annotated set, so annotated parents survive."""
-        categories = [
-            {"id": "1", "name": "vehicle", "supercategory": "none"},
-            {"id": "2", "name": "car", "supercategory": "vehicle"},
-        ]
-        assert [category["id"] for category in filter_parent_categories(categories, {1, 2})] == ["1", "2"]
+        assert "missing the required 'name' field" in str(exc_info.value)
 
     def test_mixed_and_missing_ids_sort_after_numeric_categories(self) -> None:
         """Numeric IDs sort consistently even when malformed entries are present."""
-        categories = [
-            {"name": "missing", "supercategory": "none"},
-            {"id": "2", "name": "two", "supercategory": "none"},
-            {"id": 1, "name": "one", "supercategory": "none"},
-        ]
+        categories = [{"name": "missing", "supercategory": "none"}, _cat("2", "two"), _cat(1, "one")]
+
         result = filter_parent_categories(categories, set())
+
         assert [category["name"] for category in result] == ["one", "two", "missing"]
-
-    def test_categories_sharing_a_name_are_judged_by_their_own_id(self) -> None:
-        """An annotated leaf keeps its slot even when an unannotated grouping node reuses its name."""
-        categories = [
-            {"id": 1, "name": "tree", "supercategory": "none"},
-            {"id": 2, "name": "trunk", "supercategory": "tree"},
-            {"id": 3, "name": "tree", "supercategory": "tree"},
-        ]
-        assert [category["id"] for category in filter_parent_categories(categories, {2, 3})] == [2, 3]
-
-    def test_self_referential_supercategory_is_not_a_parent(self) -> None:
-        """A category naming itself as its own supercategory is not its own parent, so it keeps its label slot."""
-        categories = [
-            {"id": 1, "name": "person", "supercategory": "person"},
-            {"id": 2, "name": "vehicle", "supercategory": "none"},
-            {"id": 3, "name": "car", "supercategory": "vehicle"},
-        ]
-        assert [category["id"] for category in filter_parent_categories(categories, {3})] == [1, 3]
-
-    def test_self_referential_name_stays_a_parent_for_other_categories(self) -> None:
-        """A self-referencing name another category genuinely groups under is still dropped when unannotated."""
-        categories = [
-            {"id": 1, "name": "person", "supercategory": "person"},
-            {"id": 2, "name": "rider", "supercategory": "person"},
-        ]
-        assert [category["id"] for category in filter_parent_categories(categories, {2})] == [2]
-
-    def test_all_categories_parents_falls_back_to_full_list(self) -> None:
-        """Pathological input where every category is a parent keeps the full list instead of returning nothing."""
-        categories = [
-            {"id": 1, "name": "a", "supercategory": "b"},
-            {"id": 2, "name": "b", "supercategory": "a"},
-        ]
-        assert filter_parent_categories(categories, set()) == categories
-
-    def test_all_categories_parents_with_partial_annotation_keeps_only_annotated(self) -> None:
-        """When some (not all, not none) categories in an all-parent cycle are annotated, only those survive."""
-        categories = [
-            {"id": 1, "name": "a", "supercategory": "c"},
-            {"id": 2, "name": "b", "supercategory": "a"},
-            {"id": 3, "name": "c", "supercategory": "b"},
-        ]
-        result = filter_parent_categories(categories, {2})
-        assert [category["id"] for category in result] == [2]
-
-    def test_two_independent_grouping_roots_in_one_call(self) -> None:
-        """Two disjoint hierarchies filtered together: the annotated root stays, the unannotated sibling root drops."""
-        categories = [
-            {"id": 0, "name": "rootA", "supercategory": "none"},
-            {"id": 1, "name": "a1", "supercategory": "rootA"},
-            {"id": 2, "name": "a2", "supercategory": "rootA"},
-            {"id": 5, "name": "rootB", "supercategory": "none"},
-            {"id": 6, "name": "b1", "supercategory": "rootB"},
-            {"id": 7, "name": "b2", "supercategory": "rootB"},
-        ]
-        result = filter_parent_categories(categories, {1, 2, 5, 6, 7})
-        assert [category["id"] for category in result] == [1, 2, 5, 6, 7]
 
 
 class TestAnnotatedCategoryIds:
     """Unit tests for collecting the annotated category ids of a parsed COCO file."""
 
-    def test_ids_collected_from_annotations(self) -> None:
-        """Every distinct ``category_id`` referenced by an annotation is reported once."""
-        coco_data = {"annotations": [{"category_id": 3}, {"category_id": 3}, {"category_id": 5}]}
-        assert annotated_category_ids(coco_data) == {3, 5}
+    @pytest.mark.parametrize(
+        ("coco_data", "expected"),
+        [
+            # Every distinct ``category_id`` referenced by an annotation is reported once.
+            pytest.param(
+                {"annotations": [{"category_id": 3}, {"category_id": 3}, {"category_id": 5}]}, {3, 5}, id="distinct"
+            ),
+            # A category-only annotation file reports no annotated categories.
+            pytest.param({"categories": _PHANTOM_ROOT_CATEGORIES}, set(), id="missing-annotations-key"),
+        ],
+    )
+    def test_collects_distinct_annotated_ids(self, coco_data: dict, expected: set) -> None:
+        """The annotated category ids of a COCO dict are returned as a set, empty without annotations."""
+        assert annotated_category_ids(coco_data) == expected
 
-    def test_missing_annotations_key_yields_empty_set(self) -> None:
-        """A category-only annotation file reports no annotated categories."""
-        assert annotated_category_ids({"categories": _PHANTOM_ROOT_CATEGORIES}) == set()
 
+class TestRootCategoryLabelSpace:
+    """Roboflow COCO exports prepend a root category; count, remap and names agree whether or not it is annotated."""
 
-class TestPhantomRootConsistency:
-    """Roboflow COCO exports prepend an unannotated root category; count, remap and names must agree without it."""
+    @pytest.mark.parametrize(
+        ("annotated_ids", "expected"),
+        [
+            pytest.param([1, 4], {1: 0, 2: 1, 3: 2, 4: 3}, id="unannotated-root"),
+            pytest.param([0, 1], {0: 0, 1: 1, 2: 2, 3: 3, 4: 4}, id="annotated-root"),
+        ],
+    )
+    def test_cat2label_gives_an_unannotated_root_no_slot(
+        self, tmp_path: Path, annotated_ids: List[int], expected: Dict[int, int]
+    ) -> None:
+        """An unannotated root consumes no label slot; an annotated root keeps its identity slot."""
+        assert _open_hierarchy_train(tmp_path, annotated_ids).cat2label == expected
 
-    def test_cat2label_skips_unannotated_root(self, tmp_path: Path) -> None:
-        """The synthetic root consumes no label slot, so real classes start at index 0."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        assert dataset.cat2label == {1: 0, 2: 1, 3: 2, 4: 3}
-
-    def test_label2cat_is_exposed_for_the_evaluator(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("annotated_ids", "expected"),
+        [
+            pytest.param([1, 4], {0: 1, 1: 2, 2: 3, 3: 4}, id="unannotated-root"),
+            pytest.param([0, 1], {0: 0, 1: 1, 2: 2, 3: 3, 4: 4}, id="annotated-root"),
+        ],
+    )
+    def test_label2cat_is_exposed_for_the_evaluator(
+        self, tmp_path: Path, annotated_ids: List[int], expected: Dict[int, int]
+    ) -> None:
         """The reverse mapping reaches the COCO API object so predictions convert back to original ids."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        assert dataset.coco.label2cat == {0: 1, 1: 2, 2: 3, 3: 4}
+        assert _open_hierarchy_train(tmp_path, annotated_ids).coco.label2cat == expected
 
-    def test_labels_use_filtered_indices(self, tmp_path: Path) -> None:
-        """Targets carry the filtered label indices rather than the root-shifted ones."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        _, target = dataset[0]
-        assert target["labels"].tolist() == [0, 3]
+    @pytest.mark.parametrize(
+        ("annotated_ids", "expected"),
+        [pytest.param([1, 4], [0, 3], id="unannotated-root"), pytest.param([0, 1], [0, 1], id="annotated-root")],
+    )
+    def test_targets_carry_filtered_label_indices(
+        self, tmp_path: Path, annotated_ids: List[int], expected: List[int]
+    ) -> None:
+        """Targets carry the filtered label indices rather than root-shifted ones; an annotated root keeps its slot."""
+        _, target = _open_hierarchy_train(tmp_path, annotated_ids)[0]
 
-    def test_detected_num_classes_matches_cat2label(self, tmp_path: Path) -> None:
+        assert target["labels"].tolist() == expected
+
+    @pytest.mark.parametrize("annotated_ids", _ROOT_ANNOTATION_CASES)
+    def test_detected_num_classes_matches_cat2label(self, tmp_path: Path, annotated_ids: List[int]) -> None:
         """The auto-detected head size equals the number of label slots the remapping actually uses."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        dataset = _open_hierarchy_train(tmp_path, annotated_ids)
+
         detected = RFDETR._detect_num_classes_for_training(str(tmp_path))
+
         assert detected == len(set(dataset.cat2label.values()))
 
-    def test_class_names_and_class_count_share_one_basis(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("annotated_ids", _ROOT_ANNOTATION_CASES)
+    def test_class_names_and_class_count_share_one_basis(self, tmp_path: Path, annotated_ids: List[int]) -> None:
         """The detected head size and the loaded class names come from one filtered category list, so they agree."""
-        _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        _write_roboflow_hierarchy_split(tmp_path / "train", annotated_ids)
+
         assert RFDETR._detect_num_classes_for_training(str(tmp_path)) == len(RFDETR._load_classes(str(tmp_path)))
 
-    def test_load_classes_matches_cat2label_order(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("annotated_ids", _ROOT_ANNOTATION_CASES)
+    def test_load_classes_matches_cat2label_order(self, tmp_path: Path, annotated_ids: List[int]) -> None:
         """Class names line up positionally with the label indices assigned by the remapping."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        dataset = _open_hierarchy_train(tmp_path, annotated_ids)
+
         names = RFDETR._load_classes(str(tmp_path))
+
         assert names == [dataset.coco.cats[dataset.label2cat[label]]["name"] for label in range(len(names))]
 
 
 class TestDetectNumClassesWebDataset:
-    """A packed webdataset shard directory carries the answer directly, without a raw annotation file to read.
+    """A packed webdataset shard directory carries the class count directly, without a raw annotation file to read.
 
-    Regression coverage for class-count autodetection: _detect_num_classes_for_training previously had no
-    webdataset-aware branch, so a shard directory (no train/_annotations.coco.json, no data.yaml) always fell
-    through to _load_classes, raised FileNotFoundError, and was swallowed at logger.debug by the caller
-    (_align_num_classes_from_dataset) -- num_classes auto-detection silently never worked for this dataset_file.
+    Regression: ``_detect_num_classes_for_training`` once had no webdataset branch, so a shard directory fell through
+    to ``_load_classes``, raised FileNotFoundError that the caller swallowed at debug level, and auto-detection never
+    worked for this ``dataset_file``.
     """
 
     def test_remap_policy_matches_the_filtered_category_count(self, tmp_path: Path) -> None:
@@ -1788,6 +1511,7 @@ class TestDetectNumClassesWebDataset:
         dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="remap")
+
         assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == len(set(dataset.cat2label.values()))
 
     def test_raw_policy_uses_max_category_id_plus_one(self, tmp_path: Path) -> None:
@@ -1795,6 +1519,7 @@ class TestDetectNumClassesWebDataset:
         ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="raw")
+
         assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
 
     def test_raw_policy_retains_unannotated_declared_category(self, tmp_path: Path) -> None:
@@ -1802,6 +1527,7 @@ class TestDetectNumClassesWebDataset:
         ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1])
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, category_ids="raw")
+
         assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
 
     def test_keypoint_mode_does_not_read_the_shard_index(self, tmp_path: Path) -> None:
@@ -1809,6 +1535,7 @@ class TestDetectNumClassesWebDataset:
         ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train")
+
         with pytest.raises(FileNotFoundError):
             RFDETR._detect_num_classes_for_training(str(shard_dir), use_grouppose_keypoints=True)
 
@@ -1816,24 +1543,24 @@ class TestDetectNumClassesWebDataset:
 class TestCrossSplitLabelSpace:
     """Val/test splits must reuse the train label space whatever their own annotation coverage is."""
 
-    def test_val_split_reuses_the_train_label_mapping(self, tmp_path: Path) -> None:
-        """A grouping category annotated in train only keeps its train label slot in val instead of shifting it."""
+    @pytest.fixture
+    def train_val_args(self, tmp_path: Path) -> types.SimpleNamespace:
+        """Builder args for a root whose train split annotates ids [0, 1] while val annotates only [1]."""
         _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
         _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
-        args = _pipeline_args(tmp_path)
+        return _pipeline_args(tmp_path)
 
-        train_dataset = build_roboflow_from_coco("train", args, resolution=64)
-        val_dataset = build_roboflow_from_coco("val", args, resolution=64)
+    def test_val_split_reuses_the_train_label_mapping(self, train_val_args: types.SimpleNamespace) -> None:
+        """A grouping category annotated in train only keeps its train label slot in val instead of shifting it."""
+        train_dataset = build_roboflow_from_coco("train", train_val_args, resolution=64)
+        val_dataset = build_roboflow_from_coco("val", train_val_args, resolution=64)
 
         assert val_dataset.cat2label == train_dataset.cat2label
 
-    def test_val_targets_use_train_label_indices(self, tmp_path: Path) -> None:
+    def test_val_targets_use_train_label_indices(self, train_val_args: types.SimpleNamespace) -> None:
         """Val targets carry the label index training assigned, not the one val's own coverage would produce."""
-        _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
-        _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
-        args = _pipeline_args(tmp_path)
+        val_dataset = build_roboflow_from_coco("val", train_val_args, resolution=64)
 
-        val_dataset = build_roboflow_from_coco("val", args, resolution=64)
         _, target = val_dataset[0]
 
         assert target["labels"].tolist() == [1]
@@ -1853,38 +1580,7 @@ class TestCrossSplitLabelSpace:
         """Supplying a mapping while remapping is disabled fails loudly instead of silently ignoring it."""
         ann_file = _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
 
-        with pytest.raises(ValueError, match="remap_category_ids"):
+        with pytest.raises(ValueError) as exc_info:
             CocoDetection(tmp_path / "valid", ann_file, transforms=None, cat2label={1: 0})
 
-    def test_annotated_parent_keeps_its_label_slot(self, tmp_path: Path) -> None:
-        """A parent category carrying annotations is not dropped, so converting its annotations does not raise."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        _, target = dataset[0]
-        assert target["labels"].tolist() == [0, 1]
-
-    def test_cat2label_keeps_annotated_root(self, tmp_path: Path) -> None:
-        """When the root itself carries annotations, every category keeps its identity label slot."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        assert dataset.cat2label == {0: 0, 1: 1, 2: 2, 3: 3, 4: 4}
-
-    def test_label2cat_is_exposed_for_the_evaluator_when_root_is_annotated(self, tmp_path: Path) -> None:
-        """The reverse mapping still reaches the COCO API object when the root is kept, not just when it is dropped."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        assert dataset.coco.label2cat == {0: 0, 1: 1, 2: 2, 3: 3, 4: 4}
-
-    def test_detected_num_classes_matches_cat2label_when_root_is_annotated(self, tmp_path: Path) -> None:
-        """The auto-detected head size still equals the number of label slots when the root keeps its slot."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        detected = RFDETR._detect_num_classes_for_training(str(tmp_path))
-        assert detected == len(set(dataset.cat2label.values()))
-
-    def test_load_classes_matches_cat2label_order_when_root_is_annotated(self, tmp_path: Path) -> None:
-        """Class names still line up positionally with label indices when the root keeps its slot."""
-        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
-        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
-        names = RFDETR._load_classes(str(tmp_path))
-        assert names == [dataset.coco.cats[dataset.label2cat[label]]["name"] for label in range(len(names))]
+        assert "remap_category_ids" in str(exc_info.value)

@@ -18,9 +18,10 @@ return the loss unscaled; dividing it again scales every accumulated gradient by
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 from pytorch_lightning import Callback, Trainer
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
@@ -47,7 +48,7 @@ class TestAutomaticOptimizationAccumulationScaling:
 
     @pytest.mark.parametrize("accumulate_grad_batches", [1, 2, 4])
     def test_accumulated_gradient_is_mean_of_microbatch_gradients(
-        self, tmp_path: Path, accumulate_grad_batches: int
+        self, tmp_path: Path, mocker: MockerFixture, accumulate_grad_batches: int
     ) -> None:
         """``N`` microbatches at ``accumulate_grad_batches=N`` must leave a gradient of ``1.0`` on ``dummy``."""
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=3)
@@ -62,30 +63,28 @@ class TestAutomaticOptimizationAccumulationScaling:
         )
         capture = _CaptureGradient()
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = Trainer(
-                fast_dev_run=accumulate_grad_batches,
-                accelerator="cpu",
-                enable_progress_bar=False,
-                enable_model_summary=False,
-                logger=False,
-                accumulate_grad_batches=accumulate_grad_batches,
-                gradient_clip_val=0.0,
-                callbacks=[capture],
-            )
-            trainer.fit(module, datamodule)
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+        )
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20))
+        mocker.patch(
+            "rfdetr.training.module_model.get_param_dict", side_effect=lambda args, model: _make_param_dicts(model)
+        )
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = Trainer(
+            fast_dev_run=accumulate_grad_batches,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            accumulate_grad_batches=accumulate_grad_batches,
+            gradient_clip_val=0.0,
+            callbacks=[capture],
+        )
+
+        trainer.fit(module, datamodule)
 
         assert capture.grad == pytest.approx(1.0)

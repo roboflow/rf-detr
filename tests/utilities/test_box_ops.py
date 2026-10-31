@@ -176,22 +176,22 @@ def test_elementwise_generalized_box_iou_empty_input_returns_empty() -> None:
     assert giou.shape == (0,)
 
 
-def test_elementwise_box_iou_rejects_unequal_length() -> None:
-    """Mismatched operand lengths raise ValueError instead of silently broadcasting a length-1 side."""
+@pytest.mark.parametrize(
+    "iou_fn",
+    [
+        pytest.param(elementwise_box_iou, id="elementwise_box_iou"),
+        pytest.param(elementwise_generalized_box_iou, id="elementwise_generalized_box_iou"),
+    ],
+)
+def test_elementwise_rejects_unequal_length(iou_fn) -> None:
+    """Mismatched operand lengths raise ValueError instead of silently broadcasting a length-1 side (IoU and GIoU)."""
     boxes1 = _random_xyxy_boxes(3, seed=4)
     boxes2 = _random_xyxy_boxes(1, seed=5)
 
-    with pytest.raises(ValueError, match="same length"):
-        elementwise_box_iou(boxes1, boxes2)
+    with pytest.raises(ValueError) as exc_info:
+        iou_fn(boxes1, boxes2)
 
-
-def test_elementwise_generalized_box_iou_rejects_unequal_length() -> None:
-    """The GIoU variant also raises ValueError on mismatched operand lengths."""
-    boxes1 = _random_xyxy_boxes(3, seed=4)
-    boxes2 = _random_xyxy_boxes(1, seed=5)
-
-    with pytest.raises(ValueError, match="same length"):
-        elementwise_generalized_box_iou(boxes1, boxes2)
+    assert "same length" in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -213,46 +213,29 @@ def test_zero_area_boxes_are_finite(iou_fn) -> None:
     assert all(torch.isfinite(t).all() for t in tensors)
 
 
-def test_masks_to_boxes_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:
-    """`masks_to_boxes` should call `torch.meshgrid` with explicit ij indexing."""
-    original_meshgrid = torch.meshgrid
-    call_count = 0
-
-    def _meshgrid_with_indexing_assertion(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if kwargs.get("indexing") != "ij":
-            raise AssertionError("torch.meshgrid must be called with indexing='ij'")
-        return original_meshgrid(*args, **kwargs)
-
-    monkeypatch.setattr(torch, "meshgrid", _meshgrid_with_indexing_assertion)
-
+def test_masks_to_boxes_passes_ij_indexing_to_meshgrid(mocker) -> None:
+    """`masks_to_boxes` should call `torch.meshgrid` once, with explicit ij indexing."""
+    meshgrid = mocker.patch.object(torch, "meshgrid", wraps=torch.meshgrid)
     masks = torch.zeros((1, 2, 3), dtype=torch.bool)
     masks[0, 0, 1] = True
     masks[0, 1, 2] = True
 
     boxes = masks_to_boxes(masks)
 
-    assert call_count == 1
+    assert meshgrid.call_count == 1
+    assert meshgrid.call_args.kwargs.get("indexing") == "ij"
     assert boxes.shape == (1, 4)
 
 
-def test_masks_to_boxes_builds_grid_on_masks_device(monkeypatch) -> None:
+def test_masks_to_boxes_builds_grid_on_masks_device(mocker) -> None:
     """`masks_to_boxes` should construct arange tensors on the same device as masks."""
-    original_arange = torch.arange
-    observed_devices = []
-
-    def _arange_with_device_capture(*args, **kwargs):
-        observed_devices.append(kwargs.get("device"))
-        return original_arange(*args, **kwargs)
-
-    monkeypatch.setattr(torch, "arange", _arange_with_device_capture)
-
+    arange = mocker.patch.object(torch, "arange", wraps=torch.arange)
     masks = torch.zeros((1, 2, 3), dtype=torch.bool)
     masks[0, 1, 2] = True
 
     boxes = masks_to_boxes(masks)
 
+    observed_devices = [call.kwargs.get("device") for call in arange.call_args_list]
     assert boxes.shape == (1, 4)
     assert observed_devices
     assert all(device == masks.device for device in observed_devices)
@@ -271,6 +254,22 @@ def _assert_compiled_matches_eager(actual: torch.Tensor, expected: torch.Tensor)
         assert torch.equal(actual, expected), "compiled L1 cost drifted from the eager result on CPU"
     else:
         torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
+
+def _compile_l1_cost(fullgraph: bool = False):
+    """Compile ``pairwise_box_l1_cost`` with dynamic shapes and CUDA graphs off.
+
+    Args:
+        fullgraph: Whether a graph break is an error.
+
+    Returns:
+        The compiled callable; compilation itself runs on its first call.
+
+    Examples:
+        >>> callable(_compile_l1_cost())
+        True
+    """
+    return torch.compile(pairwise_box_l1_cost, dynamic=True, fullgraph=fullgraph, options={"triton.cudagraphs": False})
 
 
 class TestPairwiseBoxL1Cost:
@@ -321,7 +320,7 @@ class TestPairwiseBoxL1Cost:
         assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
 
     def test_realized_chunk_width_matches_computed_formula_when_wider_than_one(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, mocker
     ) -> None:
         """A chunk width greater than 1 pins the chunking formula, not just per-chunk correctness.
 
@@ -335,23 +334,16 @@ class TestPairwiseBoxL1Cost:
         boxes1 = _random_xyxy_boxes(2, seed=13).reshape(2, 1, 4)
         boxes2 = _random_xyxy_boxes(2 * 23, seed=14).reshape(2, 23, 4)
 
-        observed_calls: list[tuple[int, ...]] = []
-        real_range = range
-
-        def _spy_range(*args: int) -> range:
-            observed_calls.append(args)
-            return real_range(*args)
-
-        monkeypatch.setattr(box_ops, "range", _spy_range, raising=False)
+        range_spy = mocker.patch.object(box_ops, "range", create=True, side_effect=range)
 
         cost = pairwise_box_l1_cost(boxes1, boxes2)
 
         assert torch.equal(cost, torch.cdist(boxes1, boxes2, p=1))
-        assert observed_calls == [(0, 23, 7)]
+        assert range_spy.call_args_list == [mocker.call(0, 23, 7)]
 
     @pytest.mark.parametrize(
         "budget",
-        [pytest.param(2**31, id="single-shot"), pytest.param(64, id="chunked")],
+        [2**31, 64],  # a budget that fits everything in one shot, and one that forces chunking
     )
     def test_matches_cdist_when_leading_dimensions_broadcast(
         self, budget: int, monkeypatch: pytest.MonkeyPatch
@@ -383,20 +375,21 @@ class TestPairwiseBoxL1Cost:
 
         assert torch.equal(cost, torch.cdist(boxes1, boxes2, p=1))
 
-    def test_empty_target_set_returns_empty_cost(self) -> None:
-        """An image with no ground-truth boxes contributes zero columns, not an error."""
-        boxes1 = _random_xyxy_boxes(5, seed=7)
-        boxes2 = torch.zeros((0, 4))
+    @pytest.mark.parametrize(
+        ("queries", "targets"),
+        [
+            pytest.param(5, 0, id="no-targets"),  # an image with no ground-truth boxes contributes zero columns
+            pytest.param(0, 3, id="no-queries"),  # no predictions means no rows
+        ],
+    )
+    def test_empty_side_gives_empty_cost_of_matching_shape(self, queries: int, targets: int) -> None:
+        """An empty query or target set yields a cost matrix with zero rows or columns, not an error."""
+        boxes1 = _random_xyxy_boxes(queries, seed=7)
+        boxes2 = _random_xyxy_boxes(targets, seed=8)
 
         cost = pairwise_box_l1_cost(boxes1, boxes2)
 
-        assert cost.shape == (5, 0)
-
-    def test_empty_query_set_returns_empty_cost(self) -> None:
-        """Symmetric guard: no predictions means no rows."""
-        cost = pairwise_box_l1_cost(torch.zeros((0, 4)), _random_xyxy_boxes(3, seed=8))
-
-        assert cost.shape == (0, 3)
+        assert cost.shape == (queries, targets)
 
     def test_preserves_dtype_and_device(self) -> None:
         """A float32/float64 cost inherits the boxes' dtype, which the criterion relies on downstream."""
@@ -462,7 +455,7 @@ class TestPairwiseBoxL1Cost:
 
     @pytest.mark.parametrize(
         "budget",
-        [pytest.param(2**31, id="single-shot"), pytest.param(64, id="chunked")],
+        [2**31, 64],  # a budget that fits everything in one shot, and one that forces chunking
     )
     def test_matches_cdist_under_no_grad(self, budget: int, monkeypatch: pytest.MonkeyPatch) -> None:
         """The no-grad reduction, which both matcher call sites take, still equals `torch.cdist`.
@@ -522,12 +515,7 @@ class TestPairwiseBoxL1Cost:
         torch.manual_seed(723)
         torch._dynamo.reset()
         graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
-        compiled_cost = torch.compile(
-            pairwise_box_l1_cost,
-            dynamic=True,
-            fullgraph=True,
-            options={"triton.cudagraphs": False},
-        )
+        compiled_cost = _compile_l1_cost(fullgraph=True)
 
         for batch, queries, targets in ((2, 5, 13), (3, 7, 11)):
             boxes1 = torch.rand(batch, queries, 4, device=device)
@@ -560,12 +548,7 @@ class TestPairwiseBoxL1Cost:
         torch.manual_seed(726)
         torch._dynamo.reset()
         graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
-        compiled_cost = torch.compile(
-            pairwise_box_l1_cost,
-            dynamic=True,
-            fullgraph=False,
-            options={"triton.cudagraphs": False},
-        )
+        compiled_cost = _compile_l1_cost()
 
         # (batch, queries, targets); first call pins targets == 4 to probe duck-size binding to the
         # box feature-width dimension, then sweeps T in {0, 1, >=2} and batch in {1, 4, n}.
@@ -584,23 +567,16 @@ class TestPairwiseBoxL1Cost:
 
     @requires_cpu_inductor
     @torch.no_grad()
-    def test_torch_compile_zero_targets_returns_correctly_shaped_empty_cost(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_torch_compile_zero_targets_keeps_eager_shape_and_dtype(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A compiled call with zero targets matches the eager zero-fill contract, not just a non-crash.
 
-        `test_zero_width_feature_axis_returns_zeros` and `test_empty_target_set_returns_empty_cost` pin this shape and
-        dtype contract for the eager function; the compiled callable must preserve it rather than tracing a graph that
-        happens to avoid an exception while returning a mismatched shape or dtype.
+        `test_zero_width_feature_axis_returns_zeros` and `test_empty_side_gives_empty_cost_of_matching_shape` pin this
+        shape and dtype contract for the eager function; the compiled callable must preserve it rather than tracing a
+        graph that happens to avoid an exception while returning a mismatched shape or dtype.
         """
         monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
         torch.manual_seed(727)
-        compiled_cost = torch.compile(
-            pairwise_box_l1_cost,
-            dynamic=True,
-            fullgraph=False,
-            options={"triton.cudagraphs": False},
-        )
+        compiled_cost = _compile_l1_cost()
         boxes1 = torch.rand(3, 5, 4)
         boxes2 = torch.rand(3, 0, 4)
 
@@ -636,12 +612,7 @@ class TestPairwiseBoxL1Cost:
         """
         monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
         torch.manual_seed(724)
-        compiled_cost = torch.compile(
-            pairwise_box_l1_cost,
-            dynamic=True,
-            fullgraph=True,
-            options={"triton.cudagraphs": False},
-        )
+        compiled_cost = _compile_l1_cost(fullgraph=True)
         boxes1 = torch.rand(2, 5, 4, device=device, dtype=torch.bfloat16)
         boxes2 = torch.rand(2, 13, 4, device=device, dtype=torch.bfloat16)
 
@@ -667,12 +638,7 @@ class TestPairwiseBoxL1Cost:
         """
         monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
         torch.manual_seed(725)
-        compiled_cost = torch.compile(
-            pairwise_box_l1_cost,
-            dynamic=True,
-            fullgraph=False,
-            options={"triton.cudagraphs": False},
-        )
+        compiled_cost = _compile_l1_cost()
         pred_boxes = torch.rand(2, 5, 4, dtype=torch.bfloat16)
         target_boxes = torch.rand(2, 13, 4, dtype=torch.float32)
 
@@ -694,7 +660,7 @@ class TestPairwiseBoxL1Cost:
         that, which a whole random matrix also catches at the bit level.
         """
         torch._dynamo.reset()
-        compiled_cost = torch.compile(pairwise_box_l1_cost, dynamic=True, options={"triton.cudagraphs": False})
+        compiled_cost = _compile_l1_cost()
         tiny = 2.0**-24  # half a float32 ULP at 1.0: absorbed by ``1.0 + tiny`` but not by ``tiny + tiny``
         query = torch.zeros(1, 1, 4)
         near_tie = torch.tensor([[[1.0, tiny, tiny, 0.0], [tiny, tiny, 1.0, 0.0]]])

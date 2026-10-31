@@ -212,8 +212,10 @@ def test_update_rejects_a_mask_stack_with_a_channel_dimension() -> None:
     """A ``(K, 1, H, W)`` stack, the layout ``PostProcess`` returns before the callback squeezes it, must raise."""
     metric = OnePassCocoMeanAveragePrecision(**_KWARGS)
 
-    with pytest.raises(ValueError, match=r"masks must have shape \(K, H, W\), got \(2, 1, 8, 8\)"):
+    with pytest.raises(ValueError) as exc_info:
         metric.update(*_segmentation_batch(torch.ones((2, 1, 8, 8), dtype=torch.bool)))
+
+    assert "masks must have shape (K, H, W), got (2, 1, 8, 8)" in str(exc_info.value)
 
 
 def _state_case(case: str, device: str = "cpu") -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
