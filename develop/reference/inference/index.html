@@ -3703,6 +3703,9 @@ batching request. The returned dictionary is independent of the source.</p>
 <p>The CoreML <code>cpu_and_gpu</code> and <code>cpu_and_ne</code> values are preferences; Core ML may still run on the CPU.</p>
 <p>A live model owns its device policy. Omit <code>device</code> for that source;
 configure the native model itself to select its device.</p>
+<p>A checkpoint loaded on MPS takes the MPS rewrites of :meth:<code>RFDETR.inference</code>: fused deformable sampling and
+LayerScale folded into the Linear before it. Its predictions match the unmodified model's to float rounding,
+not bit for bit. A live model is never rewritten.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>

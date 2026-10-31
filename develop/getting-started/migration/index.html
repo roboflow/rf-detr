@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T16:48:08">
+  <meta property="article:modified_time" content="2026-10-31T22:55:44">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T16:48:08",
+    "dateModified": "2026-10-31T22:55:44",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3766,7 +3766,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
 </span></code></pre></div>
-<p>The defaults remain TorchScript compilation, batch size 1 and float32. Pass <code>compile=False</code> for eager CPU inference. The removed <code>inplace</code> keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy <code>remove_optimized_model()</code> and <code>is_optimized_inplace</code> APIs remain for legacy model state and do not manage predictor lifetime. Direct <code>RFDETRInference(live_model)</code> construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.</p>
+<p>The defaults are batch size 1 and float32, compiled with TorchScript, or with inductor on Apple Silicon (MPS) when the installed PyTorch has its MPS code generator; pass <code>compile_backend="torchscript"</code> there to keep TorchScript. Pass <code>compile=False</code> for eager CPU inference. The removed <code>inplace</code> keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy <code>remove_optimized_model()</code> and <code>is_optimized_inplace</code> APIs remain for legacy model state and do not manage predictor lifetime. Direct <code>RFDETRInference(live_model)</code> construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.</p>
 <hr />
 <h2 id="upgrade-111-112">Upgrade 1.11 → 1.12<a class="headerlink" href="#upgrade-111-112" title="Permanent link">&para;</a></h2>
 <p>For new image-prediction integrations, use the shared <a href="../../learn/inference/"><code>RFDETRInference</code></a> API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.</p>
@@ -4559,7 +4559,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 16:48:08 UTC">2026-10-30 16:48:08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 31, 2026 22:55:44 UTC">2026-10-31 22:55:44</span>
   </span>
 
     

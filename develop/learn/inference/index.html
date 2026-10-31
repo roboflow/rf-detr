@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-31T17:00:19">
+  <meta property="article:modified_time" content="2026-10-31T22:55:44">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-31T17:00:19",
+    "dateModified": "2026-10-31T22:55:44",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3136,16 +3136,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
 </span></code></pre></div>
-<p>The native factory defaults to TorchScript compilation, batch size 1, and float32. Pass <code>compile=False</code> for a CPU-safe eager predictor. Compilation settings such as <code>batch_size</code>, <code>dtype</code>, and <code>compile_backend</code> belong to each returned predictor; the factory does not change the source model. The removed <code>inplace</code> keyword is rejected. <code>remove_optimized_model()</code> and <code>is_optimized_inplace</code> remain only for legacy model state and do not manage predictor lifetime.</p>
+<p>The native factory defaults to inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass <code>compile=False</code> for a CPU-safe eager predictor. Compilation settings such as <code>batch_size</code>, <code>dtype</code>, and <code>compile_backend</code> belong to each returned predictor; the factory does not change the source model. The removed <code>inplace</code> keyword is rejected. <code>remove_optimized_model()</code> and <code>is_optimized_inplace</code> remain only for legacy model state and do not manage predictor lifetime.</p>
 <h3 id="choose-a-fast-route">Choose a fast route<a class="headerlink" href="#choose-a-fast-route" title="Permanent link">&para;</a></h3>
-<p><code>model.inference()</code> is the fast native route. <code>RFDETRInference(model)</code> and a <code>.pth</code>, <code>.pt</code>, or <code>.ckpt</code> path passed to <code>RFDETRInference</code> run the eager model, which is slower per image than the default TorchScript predictor. For a checkpoint, load it with <code>RFDETR.from_checkpoint()</code> and call <code>inference()</code> on the result.</p>
-<p>On Apple Silicon, <code>compile_backend="inductor"</code> can be faster than the default TorchScript backend; measure both with your model, batch size and resolution. Compilation takes several seconds and runs again for each new input shape, so prefer it for long runs at one batch size and resolution. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.</p>
+<p><code>model.inference()</code> is the fast native route. <code>RFDETRInference(model)</code> and a <code>.pth</code>, <code>.pt</code>, or <code>.ckpt</code> path passed to <code>RFDETRInference</code> run the eager model, which is slower per image than a compiled predictor. For a checkpoint, load it with <code>RFDETR.from_checkpoint()</code> and call <code>inference()</code> on the result. On MPS, a checkpoint path passed to <code>RFDETRInference</code> takes the same model rewrites as <code>inference()</code> (see below); a live model never does.</p>
+<p>On Apple Silicon, <code>inference()</code> compiles with inductor by default when the installed PyTorch has its MPS code generator, which can be faster than TorchScript; pass <code>compile_backend="torchscript"</code> to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"mps"</span><span class="p">)</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">compile_backend</span><span class="o">=</span><span class="s2">"inductor"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>  <span class="c1"># inductor, the default on MPS</span>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">images</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"images"</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.jpg"</span><span class="p">))</span>
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">images</span> <span class="o">=</span> <span class="n">images</span><span class="p">[:</span> <span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">)</span> <span class="o">//</span> <span class="mi">8</span> <span class="o">*</span> <span class="mi">8</span><span class="p">]</span>  <span class="c1"># Whole batches only; predict the rest with a compile=False predictor.</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">if</span> <span class="ow">not</span> <span class="n">images</span><span class="p">:</span>
@@ -3249,7 +3249,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 31, 2026 17:00:19 UTC">2026-10-31 17:00:19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 31, 2026 22:55:44 UTC">2026-10-31 22:55:44</span>
   </span>
 
     

@@ -3067,6 +3067,18 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>On MPS, <code>RFDETR.inference()</code> compiles with inductor when <code>compile_backend</code> is not given, and when the installed PyTorch has an MPS code generator for it; every other device keeps TorchScript. The first predictor takes longer to build (several seconds, and again for each new input shape); pass <code>compile_backend="torchscript"</code> for the previous default.</p>
+</li>
+<li>
+<p>On MPS, <code>RFDETRInference("weights.pth")</code> (or a <code>.pt</code> or <code>.ckpt</code> path) applies the same model rewrites as <code>RFDETR.inference()</code> to the model it loads: fused deformable sampling and LayerScale folded into the Linear before it. Predictions match the unmodified checkpoint to float rounding, not bit for bit. A live model passed to <code>RFDETRInference</code> is never rewritten.</p>
+</li>
+<li>
+<p>Exported runtimes, such as Core ML or ONNX Runtime, now decode the next batch of image files on worker threads while the current batch runs, like native models on an accelerator; a native model on the CPU still decodes inline. Results are unchanged.</p>
+</li>
+<li>
+<p>On non-CUDA accelerators such as MPS, prediction no longer waits on the device per image: a batch's detection boxes, scores and labels reach the host in one copy before the per-image threshold filter, and image normalization reuses its mean and std tensors instead of rebuilding and checking them on the device every batch. Results are unchanged.</p>
+</li>
+<li>
 <p>On MPS, <code>RFDETR.inference()</code> builds a faster predictor: its copy of the model samples deformable attention with PyTorch's fused <code>F.grid_sample</code> instead of the gather-based sampler kept for training, and, for TorchScript and <code>compile=False</code> predictors, folds each DINOv2 LayerScale into the Linear layer before it. At float32, predictions match the source model to float rounding, not bit for bit, and half precision can differ by more; the source model, other devices, the inductor backend's LayerScale and exports are unchanged.</p>
 </li>
 <li>
