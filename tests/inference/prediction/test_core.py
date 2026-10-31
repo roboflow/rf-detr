@@ -16,6 +16,7 @@ import PIL.Image
 import pytest
 import supervision as sv
 import torch
+from torchvision.transforms.functional import normalize
 
 from rfdetr import RFDETRInference, RFDETRNano, RFDETRSegNano
 from rfdetr._prediction import core
@@ -1223,8 +1224,6 @@ class TestNormalizationTensors:
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
     def test_matches_torchvision_normalize(self, dtype: torch.dtype) -> None:
         """Subtracting the cached mean and dividing by the cached std reproduces ``normalize`` bit for bit."""
-        from torchvision.transforms.functional import normalize
-
         means, stds = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
         batch = torch.rand(2, 3, 8, 8, generator=torch.Generator().manual_seed(0)).to(dtype)
         mean, std = core._normalization_tensors(means, stds, dtype, torch.device("cpu"))
