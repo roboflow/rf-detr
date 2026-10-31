@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import functools
 import io
 import operator
 import os
@@ -240,6 +241,27 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """
     widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
     return widened.div_(scale)
+
+
+@functools.lru_cache(maxsize=8)
+def _uint8_scale(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Return the ``255`` divisor :func:`_uint8_chw_to_float` takes, built once per device and dtype.
+
+    Creating it on an accelerator is a blocking host-to-device copy (about 0.1 ms on MPS), paid on every batch before
+    this cache. The tensor is only ever read.
+
+    Args:
+        device: Device the image tensors are on.
+        dtype: Floating-point dtype they are widened to.
+
+    Returns:
+        A 0-dim tensor holding ``255``.
+
+    Examples:
+        >>> _uint8_scale(torch.device("cpu"), torch.float32)
+        tensor(255.)
+    """
+    return torch.tensor(255, device=device, dtype=dtype)
 
 
 def _copy_rows_to_cpu_once(
@@ -561,10 +583,12 @@ def _predict_stream(
         # Eager results each keep a full source image, so large finite sources warn before decoding starts.
         warn_on_retained_frames=warn_on_live and include_source_image,
     )
-    # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A model on
-    # the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
-    # slowed the forward pass by more than the overlap saved.
-    decode_ahead = num_channels == 3 and context.device.type != "cpu" and has_only_finite_images(images)
+    # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A native model
+    # on the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
+    # slowed the forward pass by more than the overlap saved. Exported runtimes report a CPU context device whatever
+    # hardware they run on, and decode ahead: Core ML gained 18% from it and ONNX Runtime on the CPU lost nothing.
+    native_on_cpu = context.device.type == "cpu" and context.runtime_info.get("backend") == "pytorch"
+    decode_ahead = num_channels == 3 and not native_on_cpu and has_only_finite_images(images)
     pool = ThreadPoolExecutor(_DECODE_WORKERS, thread_name_prefix="rfdetr-decode") if decode_ahead else None
     batches = source_batches if pool is None else _decode_ahead(source_batches, pool)
     try:
@@ -755,8 +779,6 @@ def _predict_batch(
     # original code checked range before shape for a given image, and raising it eagerly here
     # would flip that precedence for any tensor that is invalid on both axes at once.
     pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
-    # Built lazily on the first uint8 image, then shared by the rest of the batch.
-    uint8_scale: torch.Tensor | None = None
 
     # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
     # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
@@ -891,9 +913,7 @@ def _predict_batch(
         non_blocking = preprocess_device.type == "cuda"
         img_tensor = img_tensor.to(preprocess_device, non_blocking=non_blocking)
         if deferred_widen:
-            if uint8_scale is None:
-                uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
-            img_tensor = _uint8_chw_to_float(img_tensor, uint8_scale)
+            img_tensor = _uint8_chw_to_float(img_tensor, _uint8_scale(img_tensor.device, torch.get_default_dtype()))
         processed_images.append(img_tensor)
 
     # Force the range-check results to Python bools only now, after every image's conversion,
@@ -926,8 +946,9 @@ def _predict_batch(
         batch_tensor = batch_tensor.to(context.device)
     batch_tensor = F.normalize(batch_tensor, context.means, context.stds)
 
-    predictions = context.run(batch_tensor)
+    # Copied to the device before the forward pass is queued: on MPS, building it after the forward measured slower.
     target_sizes = torch.tensor(orig_sizes, device=context.device)
+    predictions = context.run(batch_tensor)
     # `score_floor` is the single threshold, or the lowest per-class one, the loosest bound: the pre-filter in
     # ``postprocess`` then never drops a row that the per-class filter below keeps.
     results = context.postprocess(predictions, target_sizes=target_sizes, score_threshold=score_floor)

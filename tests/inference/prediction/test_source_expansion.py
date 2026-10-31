@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Prediction from manifests and optional source adapters."""
 
+import dataclasses
 import io
 import tempfile
 import threading
@@ -711,8 +712,11 @@ class TestDecodeAhead:
                 next(batches)
 
     @staticmethod
-    def _decode_threads(root: Path, device: str) -> tuple[list[list[int]], list[str]]:
+    def _decode_threads(root: Path, device: str, backend: str = "pytorch") -> tuple[list[list[int]], list[str]]:
         """Predict five PNG files from ``root`` in batches of two and return their source pixels and decode threads.
+
+        ``backend`` is the runtime the prediction context reports; any value but ``"pytorch"`` stands for an exported
+        runtime.
 
         Examples:
             >>> import tempfile
@@ -735,7 +739,15 @@ class TestDecodeAhead:
 
         model = _DummyRFDETR()
         model.model.device = torch.device(device)
-        with patch.object(core, "_decode_local_image", recording_decode):
+        native_context = model._prediction_context
+
+        def reported_context() -> core.PredictionContext:
+            return dataclasses.replace(native_context(), runtime_info={"backend": backend, "device": device})
+
+        with (
+            patch.object(core, "_decode_local_image", recording_decode),
+            patch.object(model, "_prediction_context", reported_context),
+        ):
             results = RFDETRInference(model).predict(root, batch=2)
         return _source_pixels(results), threads
 
@@ -754,6 +766,14 @@ class TestDecodeAhead:
 
         assert pixels == [[index * 30, 20, 30] for index in range(5)]
         assert threads == [threading.main_thread().name] * 5
+
+    def test_exported_runtime_decodes_off_the_main_thread(self, tmp_path: Path) -> None:
+        """An exported runtime reports a CPU context whatever hardware it runs on, and still decodes ahead."""
+        pixels, threads = self._decode_threads(tmp_path, "cpu", backend="coreml")
+
+        assert pixels == [[index * 30, 20, 30] for index in range(5)]
+        assert len(threads) == 5
+        assert threading.main_thread().name not in threads
 
     @pytest.mark.parametrize(
         "source,expected",

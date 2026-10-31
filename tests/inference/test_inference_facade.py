@@ -19,7 +19,7 @@ import torch
 from PIL import Image
 from supervision import Detections, KeyPoints
 
-from rfdetr.detr import RFDETR
+from rfdetr.detr import RFDETR, _default_compile_backend
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -648,15 +648,16 @@ class TestMpsSnapshotRewrites:
     @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
     @pytest.mark.parametrize("compile", [False, True])
     def test_mps_snapshot_matches_the_source(self, mps_scaled_nano_model: RFDETRNano, compile: bool) -> None:
-        """An MPS snapshot, eager or the default TorchScript trace, predicts what the source predicts.
+        """An MPS snapshot, eager or a TorchScript trace, predicts what the source predicts.
 
         The LayerScales hold distinct non-unit values, so folding into the wrong Linear changes the outputs; the
-        ``compile=True`` case builds the default predictor, the traced copy of the rewritten snapshot.
+        ``compile=True`` case builds the traced copy of the rewritten snapshot.
         """
         image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
         expected = mps_scaled_nano_model.predict(image, threshold=0.0)
 
-        actual = mps_scaled_nano_model.inference(compile=compile).predict(image, threshold=0.0)
+        predictor = mps_scaled_nano_model.inference(compile=compile, compile_backend="torchscript")
+        actual = predictor.predict(image, threshold=0.0)
 
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
@@ -698,3 +699,113 @@ class TestMpsSnapshotRewrites:
             if isinstance(module, WindowedDinov2WithRegistersLayer)
         )
         assert torch.all(snapshot_layer.attention.output.dense.weight[0] == 2**-28)
+
+
+@pytest.fixture
+def scaled_checkpoint(nano_model: RFDETRNano, tmp_path: Path) -> Path:
+    """Save the small model, with distinct non-unit LayerScales, as a native checkpoint.
+
+    Random weights leave every LayerScale at 1.0, where folding into the wrong Linear changes nothing.
+
+    Examples:
+        The pytest runner must create this fixture before a test can use it.
+
+        >>> scaled_checkpoint(nano_model, tmp_path)  # doctest: +SKIP
+    """
+    with torch.no_grad():
+        for module in nano_model.model.model.modules():
+            if isinstance(module, Dinov2WithRegistersLayerScale):
+                module.lambda1.copy_(torch.linspace(0.5, 1.5, module.lambda1.numel()))
+    checkpoint = tmp_path / "model.pth"
+    torch.save(
+        {
+            "model": nano_model.model.model.state_dict(),
+            "model_config": nano_model.model_config.model_dump(),
+            "model_name": "RFDETRNano",
+            "args": {"class_names": ["cat", "dog"], "num_classes": 2},
+        },
+        checkpoint,
+    )
+    return checkpoint
+
+
+class TestMpsCheckpointRewrites:
+    """A checkpoint the facade loads on MPS belongs to it and takes the snapshot rewrites; a live model never does."""
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_checkpoint_model_is_rewritten(self, scaled_checkpoint: Path) -> None:
+        """The loaded model samples with ``F.grid_sample`` and has its LayerScales folded."""
+        facade = RFDETRInference(scaled_checkpoint, device="mps")
+
+        assert facade._native_model is not None
+        assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_checkpoint_matches_the_unrewritten_model(self, scaled_checkpoint: Path) -> None:
+        """The rewritten checkpoint model predicts what the same weights predict without the rewrites."""
+        image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        expected = RFDETR.from_checkpoint(scaled_checkpoint, device="mps").predict(image, threshold=0.0)
+
+        actual = RFDETRInference(scaled_checkpoint, device="mps").predict(image, threshold=0.0)
+
+        np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_borrowed_mps_model_is_not_rewritten(self, mps_nano_model: RFDETRNano) -> None:
+        """A live model passed to the facade stays trainable: no sampler swap, no folded LayerScale."""
+        RFDETRInference(mps_nano_model).predict(np.zeros((64, 64, 3), dtype=np.uint8))
+
+        assert _snapshot_rewrites(mps_nano_model.model.model) == (False, False)
+
+    def test_cpu_checkpoint_model_is_not_rewritten(self, scaled_checkpoint: Path) -> None:
+        """Off MPS the loaded model keeps the training sampler and the LayerScale modules."""
+        facade = RFDETRInference(scaled_checkpoint, device="cpu")
+
+        assert facade._native_model is not None
+        assert _snapshot_rewrites(facade._native_model.model.model) == (False, False)
+
+
+class TestDefaultCompileBackend:
+    """``inference()`` without ``compile_backend`` compiles with inductor on MPS and TorchScript elsewhere."""
+
+    @pytest.mark.parametrize(
+        ("device", "codegen_installed", "expected"),
+        [
+            ("mps", True, "inductor"),
+            ("mps", False, "torchscript"),
+            ("cpu", True, "torchscript"),
+            ("cuda", True, "torchscript"),
+        ],
+    )
+    def test_backend_per_device(
+        self, monkeypatch: pytest.MonkeyPatch, device: str, codegen_installed: bool, expected: str
+    ) -> None:
+        """Inductor only on MPS, and only when the installed PyTorch has its MPS code generator."""
+        monkeypatch.setattr("rfdetr.detr.is_installed", lambda name: codegen_installed)
+
+        assert _default_compile_backend(torch.device(device)) == expected
+
+    def test_cpu_default_traces(self, nano_model: RFDETRNano) -> None:
+        """The CPU default stays a TorchScript trace."""
+        predictor = nano_model.inference()
+
+        assert predictor._native_model is not None
+        assert isinstance(predictor._native_model.model.inference_model, torch.jit.ScriptModule)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_default_compiles_with_inductor(
+        self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The MPS default goes through ``torch.compile``; a TorchScript trace would bypass it."""
+        compiled: list[torch.nn.Module] = []
+
+        def fake_compile(module: torch.nn.Module, **_: object) -> torch.nn.Module:
+            compiled.append(module)
+            return module
+
+        monkeypatch.setattr(torch, "compile", fake_compile)
+        monkeypatch.setattr("rfdetr.detr.is_installed", lambda name: True)
+        mps_nano_model.inference()
+
+        assert len(compiled) == 1
