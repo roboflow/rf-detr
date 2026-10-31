@@ -1135,3 +1135,35 @@ class TestPredictInputTypeReturnShape:
         model = _DummyRFDETR()
         result = model.predict(img)
         assert isinstance(result, sv.Detections)
+
+
+class TestCopyRowsToCpuOnce:
+    """Detection rows cross to the host in one copy on accelerators whose copies block."""
+
+    @pytest.mark.parametrize("num_rows", [0, 1, 7])
+    def test_matches_separate_copies(self, num_rows: int) -> None:
+        """Values, dtypes, shapes and contiguity equal three separate ``.cpu()`` copies."""
+        generator = torch.Generator().manual_seed(num_rows)
+        boxes = torch.rand(num_rows, 4, generator=generator) * 640
+        scores = torch.rand(num_rows, generator=generator).half()
+        # The largest id stays exact: float32 represents every integer up to 2**24.
+        labels = torch.randint(0, 2**24, (num_rows,), generator=generator)
+
+        boxes_cpu, scores_cpu, labels_cpu = core._copy_rows_to_cpu_once(boxes, scores, labels)
+
+        for got, want in ((boxes_cpu, boxes.float()), (scores_cpu, scores.float()), (labels_cpu, labels)):
+            assert got.dtype == want.dtype
+            assert torch.equal(got, want)
+            assert got.is_contiguous()
+            assert got.device.type == "cpu"
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_rows_match_cpu_rows(self) -> None:
+        """Rows produced on MPS match the same rows copied separately."""
+        boxes = torch.rand(5, 4, device="mps")
+        scores = torch.rand(5, device="mps")
+        labels = torch.arange(5, device="mps")
+
+        packed = core._copy_rows_to_cpu_once(boxes, scores, labels)
+
+        assert all(torch.equal(got, want.cpu()) for got, want in zip(packed, (boxes, scores, labels)))

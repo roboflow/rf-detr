@@ -162,7 +162,7 @@ An empty collection of sources is quiet; an empty location is loud. A text or CS
 
 ## Batching and frame stride
 
-Use `batch` to set the number of finite images or frames per forward pass. The default, `batch=None`, runs a BCHW tensor or a list of images as one forward pass and predicts other expanded sources one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass. RF-DETR predicts the final partial batch when the source length is not divisible by `batch`. An inference-compiled model may require the batch size used during compilation.
+Use `batch` to set the number of finite images or frames per forward pass. The default, `batch=None`, runs a BCHW tensor or a list of images as one forward pass, predicts a directory or glob in batches of eight when results are collected (`stream=False`) and the model accepts any batch size, and predicts other expanded or streamed sources one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass. RF-DETR predicts the final partial batch when the source length is not divisible by `batch`. An inference-compiled model may require the batch size used during compilation.
 
 Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. For live sources, the latest-frame policy can still skip frames when prediction is slower than capture.
 

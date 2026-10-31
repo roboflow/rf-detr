@@ -696,26 +696,21 @@ class TestPostProcessMasks:
             "threshold was applied batch-wide instead of per image"
         )
 
-    @pytest.mark.parametrize("head", ["boxes", "keypoints"])
-    def test_score_threshold_is_ignored_outside_the_mask_path(self, head):
-        """The box-only and keypoint heads must return the same thing with and without the argument.
+    def test_score_threshold_is_ignored_by_the_keypoint_path(self):
+        """The keypoint head must return the same thing with and without the argument.
 
-        ``predict()`` passes the threshold for every model, so the two heads that cannot use it have to ignore it rather
-        than fail. The keypoint path rewrites scores after selection (uncertainty fusion), so filtering on the pre-
-        fusion scores would not match the caller's own filter, and the box-only path has no per-detection resize to
-        skip.
+        ``predict()`` passes the threshold for every model, so a head that cannot use it has to ignore it rather than
+        fail. The keypoint path rewrites scores after selection (uncertainty fusion), so filtering on the pre-fusion
+        scores would not match the caller's own filter.
         """
         batch, num_queries, num_classes = 1, 4, 2
         outputs = {
             "pred_logits": torch.randn(batch, num_queries, num_classes),
             "pred_boxes": torch.rand(batch, num_queries, 4),
-        }
-        kwargs = {}
-        if head == "keypoints":
             # (B, Q, num_keypoint_classes * max_num_keypoints, D) with D >= 7 so precision is emitted.
-            outputs["pred_keypoints"] = torch.randn(batch, num_queries, 6, 7)
-            kwargs["num_keypoints_per_class"] = [3, 3]
-        postprocess = PostProcess(num_select=num_queries, **kwargs)
+            "pred_keypoints": torch.randn(batch, num_queries, 6, 7),
+        }
+        postprocess = PostProcess(num_select=num_queries, num_keypoints_per_class=[3, 3])
         target_sizes = torch.tensor([[128, 128]])
 
         baseline = postprocess(outputs, target_sizes)[0]
@@ -724,3 +719,87 @@ class TestPostProcessMasks:
         assert baseline.keys() == with_threshold.keys()
         for key in baseline:
             torch.testing.assert_close(baseline[key], with_threshold[key], rtol=0.0, atol=0.0, equal_nan=True)
+
+
+class TestPostProcessBoxScoreThreshold:
+    """The box-only path drops the rows a caller's threshold discards, without a full sort, on CPU."""
+
+    @staticmethod
+    def _box_outputs(batch: int = 2, num_queries: int = 30, num_classes: int = 7, seed: int = 0):
+        """Return box-only model outputs whose logits hold repeated values, so stable tie order matters.
+
+        Examples:
+            >>> outputs, sizes = TestPostProcessBoxScoreThreshold._box_outputs(batch=1)
+            >>> outputs["pred_logits"].shape, sizes.shape
+            (torch.Size([1, 30, 7]), torch.Size([1, 2]))
+        """
+        generator = torch.Generator().manual_seed(seed)
+        # Rounded to one decimal so many query/class pairs share a score.
+        logits = (torch.randn(batch, num_queries, num_classes, generator=generator) * 2).round(decimals=1)
+        boxes = torch.rand(batch, num_queries, 4, generator=generator)
+        sizes = torch.tensor([[480, 640], [360, 500]][:batch] + [[100, 100]] * max(batch - 2, 0))
+        return {"pred_logits": logits, "pred_boxes": boxes}, sizes
+
+    @staticmethod
+    def _filtered_full_path(postprocess, outputs, sizes, threshold):
+        """Run the full-sort path, then keep the rows above ``threshold`` as ``predict()`` does.
+
+        Examples:
+            >>> outputs, sizes = TestPostProcessBoxScoreThreshold._box_outputs(batch=1)
+            >>> rows = TestPostProcessBoxScoreThreshold._filtered_full_path(PostProcess(10), outputs, sizes, 1.0)
+            >>> rows[0]["scores"].numel()
+            0
+        """
+        results = []
+        for result in postprocess(outputs, sizes):
+            keep = result["scores"] > threshold
+            results.append({key: value[keep] for key, value in result.items()})
+        return results
+
+    @pytest.mark.parametrize("threshold", [0.0, 0.5, 0.9, 1.0])
+    @pytest.mark.parametrize("num_select", [5, 300])
+    def test_matches_full_sort_filtered_by_threshold(self, threshold, num_select):
+        """Rows, their order and their values equal the full stable sort followed by the caller's filter.
+
+        ``num_select=5`` makes more rows pass than the top-k keeps, so the full sort still decides which survive;
+        ``num_select=300`` exceeds the 210 query/class pairs, so every passing row is kept.
+        """
+        postprocess = PostProcess(num_select=num_select)
+        outputs, sizes = self._box_outputs()
+
+        expected = self._filtered_full_path(postprocess, outputs, sizes, threshold)
+        actual = postprocess(outputs, sizes, score_threshold=threshold)
+
+        assert len(actual) == len(expected)
+        for got, want in zip(actual, expected):
+            assert got.keys() == want.keys()
+            for key in want:
+                assert torch.equal(got[key], want[key]), key
+
+    def test_each_image_keeps_its_own_rows(self):
+        """A batch keeps a different number of rows per image, not one count padded across the batch."""
+        postprocess = PostProcess(num_select=300)
+        outputs, sizes = self._box_outputs()
+        outputs["pred_logits"][1] -= 3.0
+
+        results = postprocess(outputs, sizes, score_threshold=0.5)
+
+        counts = [int((outputs["pred_logits"][i].sigmoid() > 0.5).sum()) for i in range(2)]
+        assert [len(result["scores"]) for result in results] == counts
+        assert counts[0] > counts[1]
+
+    def test_does_not_sort_every_score_when_few_rows_pass(self, monkeypatch):
+        """With fewer passing rows than ``num_select``, only those rows are sorted, not every query/class pair."""
+        pp = PostProcess(num_select=300)
+        outputs, sizes = self._box_outputs(batch=1, num_queries=300, num_classes=91)
+        sorted_lengths = []
+        original = torch.argsort
+
+        def recording_argsort(tensor, *args, **kwargs):
+            sorted_lengths.append(tensor.shape[-1])
+            return original(tensor, *args, **kwargs)
+
+        monkeypatch.setattr(postprocess.torch, "argsort", recording_argsort)
+        result = pp(outputs, sizes, score_threshold=0.999)[0]
+
+        assert sorted_lengths == [len(result["scores"])]

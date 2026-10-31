@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import supervision as sv
+import torch
 from PIL import Image
 
 from rfdetr.inference import RFDETRInference
@@ -642,3 +643,233 @@ class TestSourceRouting:
             predictions = list(results)
         assert len(predictions) == 1
         open_capture.assert_called_once_with(str(video))
+
+
+class TestDecodeAhead:
+    """Finite file sources decode the next batch on worker threads while the current batch runs."""
+
+    @staticmethod
+    def _recording_batches(batches: list[list[Any]], pulls: list[int], error: Exception | None = None):
+        """Yield ``batches`` and record how many have been pulled, optionally raising after the last one.
+
+        Examples:
+            >>> pulls = []
+            >>> list(TestDecodeAhead._recording_batches([["a"], ["b"]], pulls)), pulls
+            ([['a'], ['b']], [1, 2])
+        """
+        for batch in batches:
+            pulls.append(len(pulls) + 1)
+            yield batch
+        if error is not None:
+            raise error
+
+    def test_next_batch_is_pulled_and_submitted_before_the_current_one_is_used(self, tmp_path: Path) -> None:
+        """When batch k reaches the caller, batch k+1 has already left the source and its decode was submitted."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rfdetr._prediction import core
+
+        paths = []
+        for name in ("a.jpg", "b.png", "c.jpg"):
+            Image.new("RGB", (8, 6), (1, 2, 3)).save(tmp_path / name)
+            paths.append(str(tmp_path / name))
+        pulls: list[int] = []
+        with ThreadPoolExecutor(2) as pool:
+            batches = core._decode_ahead(self._recording_batches([paths[:2], paths[2:]], pulls), pool)
+            first = next(batches)
+            assert pulls == [1, 2]
+            second = next(batches)
+            assert next(batches, None) is None
+        assert [item.path for item in first + second] == paths
+        assert all(isinstance(item, core._PrefetchedImage) for item in first + second)
+        assert all(item.decoded.result().shape == (3, 6, 8) for item in first + second)
+
+    def test_non_file_items_pass_through(self) -> None:
+        """In-memory images and URLs are not decoded ahead; they keep their own path through ``_predict_batch``."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rfdetr._prediction import core
+
+        image = Image.new("RGB", (4, 4))
+        array = np.zeros((4, 4, 3), dtype=np.uint8)
+        url = "https://example.com/image.jpg"
+        with ThreadPoolExecutor(1) as pool:
+            (batch,) = core._decode_ahead(iter([[image, array, url]]), pool)
+        assert batch[0] is image and batch[1] is array and batch[2] == url
+
+    def test_source_error_is_raised_after_the_current_batch(self) -> None:
+        """A source that fails while the next batch is read still hands over the batch before it first."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rfdetr._prediction import core
+
+        array = np.zeros((4, 4, 3), dtype=np.uint8)
+        with ThreadPoolExecutor(1) as pool:
+            batches = core._decode_ahead(self._recording_batches([[array]], [], FileNotFoundError("gone")), pool)
+            assert next(batches)[0] is array
+            with pytest.raises(FileNotFoundError, match="gone"):
+                next(batches)
+
+    @staticmethod
+    def _decode_threads(root: Path, device: str) -> tuple[list[list[int]], list[str]]:
+        """Predict five PNG files from ``root`` in batches of two and return their source pixels and decode threads.
+
+        Examples:
+            >>> import tempfile
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     pixels, threads = TestDecodeAhead._decode_threads(Path(directory), "cpu")
+            >>> pixels[0], len(threads)
+            ([0, 20, 30], 5)
+        """
+        from rfdetr._prediction import core
+
+        for index in range(5):
+            # PNG keeps the pixel exact; JPEG would round it.
+            Image.new("RGB", (32, 24), (index * 30, 20, 30)).save(root / f"{index}.png")
+        threads: list[str] = []
+        original = core._decode_local_image
+
+        def recording_decode(path: str):
+            threads.append(threading.current_thread().name)
+            return original(path)
+
+        model = _DummyRFDETR()
+        model.model.device = torch.device(device)
+        with patch.object(core, "_decode_local_image", recording_decode):
+            results = RFDETRInference(model).predict(root, batch=2)
+        return _source_pixels(results), threads
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="decode-ahead runs only for accelerator models")
+    def test_accelerator_directory_predictions_match_and_decode_off_the_main_thread(self, tmp_path: Path) -> None:
+        """On an accelerator, a directory returns the same images in the same order, decoded by worker threads."""
+        pixels, threads = self._decode_threads(tmp_path, "mps")
+
+        assert pixels == [[index * 30, 20, 30] for index in range(5)]
+        assert len(threads) == 5
+        assert threading.main_thread().name not in threads
+
+    def test_cpu_model_decodes_on_the_main_thread(self, tmp_path: Path) -> None:
+        """A CPU forward pass already uses every core, so decode threads would compete with it."""
+        pixels, threads = self._decode_threads(tmp_path, "cpu")
+
+        assert pixels == [[index * 30, 20, 30] for index in range(5)]
+        assert threads == [threading.main_thread().name] * 5
+
+    @pytest.mark.parametrize(
+        "source,expected",
+        [
+            pytest.param("images", True, id="directory"),
+            pytest.param("images/*.png", True, id="glob"),
+            pytest.param("images/a.png", True, id="file"),
+            pytest.param(["images/a.png", "images"], True, id="list-of-files"),
+            pytest.param(0, False, id="camera"),
+            pytest.param(["images/a.png", 0], False, id="list-with-camera"),
+            pytest.param("sources.txt", False, id="manifest"),
+            pytest.param("clip.mp4", False, id="video"),
+            pytest.param("rtsp://host/stream", False, id="live"),
+        ],
+    )
+    def test_only_finite_image_sources_decode_ahead(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Any, expected: bool
+    ) -> None:
+        """Live, video and manifest sources keep reading one batch at a time, so a live frame is never read early."""
+        from rfdetr._prediction.sources import has_only_finite_images
+
+        (tmp_path / "images").mkdir()
+        Image.new("RGB", (4, 4)).save(tmp_path / "images" / "a.png")
+        (tmp_path / "sources.txt").write_text("images/a.png\n")
+        (tmp_path / "clip.mp4").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        assert has_only_finite_images(source) is expected
+
+
+class TestDefaultEagerBatch:
+    """``batch=None`` predicts an eager directory or glob in batches of eight on a model without a fixed batch size."""
+
+    @staticmethod
+    def _batch_sizes(
+        source: Any, *, stream: bool = False, context_overrides: dict[str, Any] | None = None
+    ) -> list[int]:
+        """Predict ``source`` with ``batch=None`` and return the size of every batch that reached the model.
+
+        Examples:
+            >>> TestDefaultEagerBatch._batch_sizes(np.zeros((4, 4, 3), dtype=np.uint8))
+            [1]
+        """
+        from dataclasses import replace
+
+        from rfdetr._prediction import core
+
+        model = _DummyRFDETR()
+        sizes: list[int] = []
+        original = core._predict_batch
+
+        def recording_predict_batch(context_factory, images, *args):
+            sizes.append(len(images) if isinstance(images, list) else 1)
+            return original(context_factory, images, *args)
+
+        def context_factory():
+            return replace(model._prediction_context(), **(context_overrides or {}))
+
+        with patch.object(core, "_predict_batch", recording_predict_batch):
+            results = core.predict(context_factory, source, stream=stream)
+            if stream:
+                list(results)
+        return sizes
+
+    @staticmethod
+    def _image_dir(root: Path, count: int = 10) -> Path:
+        """Write ``count`` small PNG files into ``root / "images"`` and return that directory.
+
+        Examples:
+            >>> import tempfile
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     len(list(TestDefaultEagerBatch._image_dir(Path(directory), 2).iterdir()))
+            2
+        """
+        images = root / "images"
+        images.mkdir()
+        for index in range(count):
+            Image.new("RGB", (16, 12), (index, 0, 0)).save(images / f"{index:02d}.png")
+        return images
+
+    def test_eager_directory_runs_in_batches_of_eight(self, tmp_path: Path) -> None:
+        """Ten files run as one batch of eight and a final partial batch of two."""
+        assert self._batch_sizes(self._image_dir(tmp_path)) == [8, 2]
+
+    def test_eager_glob_runs_in_batches_of_eight(self, tmp_path: Path) -> None:
+        """A glob is a finite file source like a directory."""
+        self._image_dir(tmp_path)
+        assert self._batch_sizes(str(tmp_path / "images" / "*.png")) == [8, 2]
+
+    def test_streamed_directory_keeps_one_image_per_batch(self, tmp_path: Path) -> None:
+        """``stream=True`` yields the first result after one image, not after a full batch."""
+        assert self._batch_sizes(self._image_dir(tmp_path), stream=True) == [1] * 10
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            pytest.param({"batch_size": 1}, id="compiled-snapshot"),
+            pytest.param({"fixed_shape": True}, id="export-dynamic-batch"),
+            pytest.param({"fixed_shape": True, "max_batch_size": 4}, id="export-max-batch"),
+        ],
+    )
+    def test_fixed_batch_contexts_keep_one_image_per_batch(self, tmp_path: Path, overrides: dict[str, Any]) -> None:
+        """Compiled snapshots and exports keep the one-image default instead of failing a batch-size check."""
+        assert self._batch_sizes(self._image_dir(tmp_path), context_overrides=overrides) == [1] * 10
+
+    def test_manifest_keeps_one_image_per_batch(self, tmp_path: Path) -> None:
+        """A manifest may name live sources, so it keeps the one-image default."""
+        self._image_dir(tmp_path, count=3)
+        manifest = tmp_path / "sources.txt"
+        manifest.write_text("images/00.png\nimages/01.png\nimages/02.png\n")
+        assert self._batch_sizes(manifest) == [1, 1, 1]
+
+    def test_compiled_snapshot_context_reports_its_batch_size(self) -> None:
+        """A snapshot compiled for a batch size reports it, so the default batch never exceeds it."""
+        model = _DummyRFDETR()
+        model._optimized_has_been_compiled = True
+        model._optimized_batch_size = 4
+
+        assert model._prediction_context().batch_size == 4
