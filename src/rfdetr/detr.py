@@ -1755,8 +1755,9 @@ class RFDETR:
                 ``"torchscript"`` everywhere else. ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally
                 freezes the trace and captures its fixed-shape CUDA work for replay, cloning graph-owned outputs before
                 returning them. It is CUDA-only and retains a graph-private memory pool. ``"inductor"`` uses
-                ``torch.compile(mode="reduce-overhead")`` and warms up the result before returning. On CUDA, this
-                includes a second call and synchronization for CUDA Graph Trees. Compilation support and setup cost
+                ``torch.compile``, with ``mode="reduce-overhead"`` on CUDA and the default mode elsewhere, and warms up
+                the result before returning. On CUDA, this includes a second call and synchronization for CUDA Graph
+                Trees. Compilation support and setup cost
                 depend on the installed PyTorch version and device. TorchScript freezing does not guarantee
                 bit-identical numerics. Create CUDA graph predictors before serving threads start: capture synchronizes
                 the device and empties process-wide CUDA and pinned-host caches.
@@ -1845,12 +1846,18 @@ class RFDETR:
                         inference_model = torch.jit.freeze(inference_model)
                         inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
                 else:
-                    inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                    # `reduce-overhead` only adds CUDA graph trees; elsewhere it records nothing and warns on compile.
+                    inference_model = torch.compile(
+                        inference_model, mode="reduce-overhead" if device.type == "cuda" else "default"
+                    )
                     with torch.inference_mode():
-                        inference_model(dummy_input)
+                        # `predict()` passes inference tensors, and dynamo guards on that: a warm-up input built
+                        # outside inference mode makes the first prediction compile again.
+                        warmup_input = dummy_input.clone()
+                        inference_model(warmup_input)
                         if device.type == "cuda":
                             # CUDA Graph Trees reserve memory on the first call and record on the second.
-                            inference_model(dummy_input)
+                            inference_model(warmup_input)
                             torch.cuda.synchronize(device)
 
         snapshot.model.inference_model = inference_model

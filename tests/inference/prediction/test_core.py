@@ -1172,14 +1172,19 @@ class TestCopyRowsToCpuOnce:
 class TestCopyResultsToCpuOnce:
     """A batch's detection rows cross to the host in one copy and keep each tensor's own dtype."""
 
-    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16, torch.float64])
     def test_matches_separate_copies(self, dtype: torch.dtype) -> None:
-        """Values, dtypes and contiguity equal separate ``.cpu()`` copies, for images with and without rows."""
+        """Values, dtypes and contiguity equal separate ``.cpu()`` copies, for images with and without rows.
+
+        float64 is the case a float32 packing would round: a score just above the threshold would land on it and be
+        dropped by the strict ``>`` filter that follows.
+        """
         generator = torch.Generator().manual_seed(0)
         results = [
             {
-                "boxes": (torch.rand(num_rows, 4, generator=generator) * 640).to(dtype),
-                "scores": torch.rand(num_rows, generator=generator).to(dtype),
+                # Drawn in float64 so the float64 case carries bits that float32 cannot hold.
+                "boxes": (torch.rand(num_rows, 4, generator=generator, dtype=torch.float64) * 640).to(dtype),
+                "scores": torch.rand(num_rows, generator=generator, dtype=torch.float64).to(dtype),
                 # The largest id stays exact: float32 represents every integer up to 2**24.
                 "labels": torch.randint(0, 2**24, (num_rows,), generator=generator),
             }
@@ -1225,6 +1230,18 @@ class TestNormalizationTensors:
         mean, std = core._normalization_tensors(means, stds, dtype, torch.device("cpu"))
 
         assert torch.equal(batch.clone().sub_(mean).div_(std), normalize(batch, list(means), list(stds)))
+
+    def test_builds_on_the_host_under_another_default_device(self) -> None:
+        """The tensors are built and checked on the CPU whatever the process default device is.
+
+        ``torch.set_default_device("mps")`` would otherwise put the float64 tensors of a float64 CPU batch on MPS, which
+        has no float64. The meta device stands in for it on any host; the uncached function is called so a cached entry
+        cannot hide the device the tensors are built on.
+        """
+        with torch.device("meta"):
+            mean, std = core._normalization_tensors.__wrapped__((0.5,), (0.25,), torch.float64, torch.device("cpu"))
+
+        assert (mean.device.type, std.device.type) == ("cpu", "cpu")
 
     def test_std_that_rounds_to_zero_raises(self) -> None:
         """A std that underflows to zero in the batch dtype is refused, as ``normalize`` refuses it."""

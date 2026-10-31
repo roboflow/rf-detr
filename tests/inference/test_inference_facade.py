@@ -27,10 +27,16 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersLayer,
 )
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+from rfdetr.utilities.imports import _IS_TORCH_INDUCTOR_MPS_INSTALLED
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 
 from .helpers import _DummyModel, _DummyRFDETR
+
+_skip_without_mps_inductor = pytest.mark.skipif(
+    not (torch.backends.mps.is_available() and _IS_TORCH_INDUCTOR_MPS_INSTALLED),
+    reason="needs an MPS device and PyTorch's MPS inductor code generator",
+)
 
 
 @pytest.fixture
@@ -809,3 +815,36 @@ class TestDefaultCompileBackend:
         mps_nano_model.inference()
 
         assert len(compiled) == 1
+
+    def test_inductor_off_cuda_compiles_without_cuda_graphs(
+        self, nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Off CUDA, inductor compiles in the default mode, not ``reduce-overhead``.
+
+        ``reduce-overhead`` only adds CUDA graph trees. On MPS, the default inductor device, it records nothing and logs
+        a warning on every compile, so the mode is kept for CUDA alone.
+        """
+        modes: list[object] = []
+
+        def fake_compile(module: torch.nn.Module, mode: object = None, **_: object) -> torch.nn.Module:
+            modes.append(mode)
+            return module
+
+        monkeypatch.setattr(torch, "compile", fake_compile)
+        nano_model.inference(compile_backend="inductor")
+
+        assert modes == ["default"]
+
+    @_skip_without_mps_inductor
+    def test_mps_default_predicts_without_recompiling(
+        self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The first ``predict()`` reuses the graph compiled during warm-up.
+
+        Prediction runs under ``torch.inference_mode()``. A warm-up input built outside it fails dynamo's dispatch-key
+        guard, so the first real prediction compiled again, taking about a second instead of milliseconds.
+        """
+        predictor = mps_nano_model.inference()
+        monkeypatch.setattr(torch._dynamo.config, "error_on_recompile", True)
+
+        predictor.predict(np.zeros((64, 64, 3), dtype=np.uint8))

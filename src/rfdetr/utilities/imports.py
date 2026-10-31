@@ -20,6 +20,8 @@ from rfdetr.utilities.package import is_installed
 
 #: Whether the optional torch-xla package is installed.
 _IS_TORCH_XLA_INSTALLED = is_installed("torch_xla")
+#: Whether the installed PyTorch has inductor's MPS code generator, which ``RFDETR.inference()`` compiles with on MPS.
+_IS_TORCH_INDUCTOR_MPS_INSTALLED = is_installed("torch._inductor.codegen.mps")
 #: Whether the optional Transformer Engine package is installed. The probe is deliberately the top-level package: a
 #: ``transformer_engine.pytorch`` probe would import the parent at collection, and a Transformer Engine install whose
 #: PyTorch binding fails to import must surface as a test error rather than a silent skip.

@@ -291,10 +291,12 @@ def _normalization_tensors(
         >>> mean.shape, std.flatten().tolist()
         (torch.Size([1, 1, 1]), [0.25])
     """
-    std = torch.as_tensor(stds, dtype=dtype)
+    # Explicitly on the CPU: the process default device could be an accelerator, where the check would sync and a
+    # float64 batch would ask MPS for a dtype it lacks.
+    std = torch.as_tensor(stds, dtype=dtype, device="cpu")
     if (std == 0).any():
         raise ValueError(f"std evaluated to zero after conversion to {dtype}, leading to division by zero.")
-    mean = torch.as_tensor(means, dtype=dtype)
+    mean = torch.as_tensor(means, dtype=dtype, device="cpu")
     return mean.to(device).view(-1, 1, 1), std.to(device).view(-1, 1, 1)
 
 
@@ -303,8 +305,9 @@ def _copy_results_to_cpu_once(results: list[dict[str, torch.Tensor]]) -> list[di
 
     The per-image filter that follows would otherwise sync twice per image on a synchronous accelerator such as MPS:
     once to size its ``nonzero`` index and once to copy the kept rows. After this copy it runs on the CPU, where neither
-    waits. Every tensor gets its own dtype back; float16 and bfloat16 values, and class ids below 2**24, round-trip
-    exactly through float32.
+    waits. The rows are packed in float32, or float64 when the scores or boxes are float64, so every value round-trips
+    exactly: float16 and bfloat16 values, and class ids below 2**24, fit in float32. Every tensor gets its own dtype
+    back, unlike :func:`_copy_rows_to_cpu_once`, which returns float32 boxes and scores for the keypoint and mask paths.
 
     Args:
         results: Per-image dictionaries holding ``boxes`` ``(N, 4)``, ``scores`` ``(N,)`` and ``labels`` ``(N,)``.
@@ -317,9 +320,16 @@ def _copy_results_to_cpu_once(results: list[dict[str, torch.Tensor]]) -> list[di
         >>> [result["labels"].tolist() for result in _copy_results_to_cpu_once([rows, rows])]
         [[3, 90], [3, 90]]
     """
+    # The threshold filter compares the scores after this copy, so a float32 packing of float64 scores would round a
+    # score just above the threshold onto it and drop the row.
+    dtype = torch.promote_types(
+        torch.promote_types(torch.float32, results[0]["scores"].dtype), results[0]["boxes"].dtype
+    )
     packed = torch.cat(
         [
-            torch.cat([r["boxes"].float(), r["scores"].float().unsqueeze(1), r["labels"].float().unsqueeze(1)], dim=1)
+            torch.cat(
+                [r["boxes"].to(dtype), r["scores"].to(dtype).unsqueeze(1), r["labels"].to(dtype).unsqueeze(1)], dim=1
+            )
             for r in results
         ]
     ).cpu()
@@ -340,7 +350,9 @@ def _copy_rows_to_cpu_once(
 
     Accelerators other than CUDA (MPS among them) copy to the host synchronously, so each ``.cpu()`` waits on its own;
     packing the three into one float32 tensor pays that wait once. Labels round-trip exactly through float32 because
-    class ids stay far below 2**24, the largest integer it represents without rounding.
+    class ids stay far below 2**24, the largest integer it represents without rounding. Unlike
+    :func:`_copy_results_to_cpu_once`, it runs after the threshold filter and returns float32 boxes and scores, which is
+    what the keypoint and mask paths that call it convert to NumPy.
 
     Args:
         boxes: ``(N, 4)`` boxes.
