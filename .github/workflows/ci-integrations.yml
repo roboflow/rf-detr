@@ -3,8 +3,10 @@ name: Integration Tests
 on:
   push:
     branches: ["main", "release/*", "develop"]
+    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
     branches: ["main", "release/*", "develop"]
+    paths-ignore: ["docs/**", "**/*.md"]
 
 permissions:
   contents: read
@@ -19,6 +21,9 @@ jobs:
     name: Download fresh model weights
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: model-weights-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     env:
       RF_HOME: ${{ github.workspace }}/.roboflow
       HF_HOME: ${{ github.workspace }}/.huggingface
@@ -26,6 +31,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -61,6 +68,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -161,6 +170,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -277,7 +288,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5.5.4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"
@@ -293,8 +304,10 @@ jobs:
   tensorrt-parity:
     name: TensorRT parity
     # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
-    # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml).
-    runs-on: Roboflow-GPU-VM-Runner
+    # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml). The runner is
+    # self-hosted, so pull requests from forks never run here.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: arc-gpu-runner-set
     # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
     timeout-minutes: 35
     concurrency:
@@ -309,6 +322,8 @@ jobs:
         run: nvidia-smi
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -433,8 +448,8 @@ jobs:
             --junitxml="${RUNNER_TEMP}/tensorrt-e2e.xml"
 
       - name: 🔎 Fail on unexpected skips
-        # A skipped parity test is a false green. The only skip this runner may produce is the AMPERE_PLUS one: the T4
-        # runner is compute capability 7.5, below the 8.0 that level needs. Anything else (a missing lean runtime, no
+        # A skipped parity test is a false green. The AMPERE_PLUS skip stays allowed for GPUs below compute capability
+        # 8.0; the L4 runner is 8.9, so it builds that level. Anything else (a missing lean runtime, no
         # HardwareCompatibilityLevel member, a TensorRT too old for the host-code refusal) means coverage silently
         # vanished, so fail red. Cross-GPU and cross-release engine loading is not CI-verified: this job builds and
         # loads on one GPU with one TensorRT release.
@@ -487,6 +502,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -538,6 +555,7 @@ jobs:
     # all 15 — the per-row breakdown lives in the Actions UI (each row's own check run), not here.
     needs: [export-parity, tensorrt-parity]
     if: always()
+    timeout-minutes: 5
     steps:
       - name: 📋 Display export job results
         run: |
