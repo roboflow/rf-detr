@@ -26,6 +26,8 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     Dinov2WithRegistersLayerScale,
     WindowedDinov2WithRegistersLayer,
 )
+from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 
 from .helpers import _DummyModel, _DummyRFDETR
@@ -610,9 +612,6 @@ def _snapshot_rewrites(module: torch.nn.Module) -> tuple[bool, bool]:
         >>> _snapshot_rewrites(torch.nn.Identity())
         (False, True)
     """
-    from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-    from rfdetr.utilities.tensors import _native_grid_sample
-
     samplers = [module.grid_sample for module in module.modules() if isinstance(module, MSDeformAttn)]
     native = bool(samplers) and all(sampler is _native_grid_sample for sampler in samplers)
     folded = not any(isinstance(child, Dinov2WithRegistersLayerScale) for child in module.modules())
