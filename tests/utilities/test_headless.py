@@ -11,7 +11,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from rfdetr._prediction.streams import _import_cv2
 from rfdetr.visualize.training import _ensure_headless_backend
