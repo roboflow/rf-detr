@@ -255,7 +255,7 @@ def _native_grid_sample(
 
     :func:`_bilinear_grid_sample` keeps a gather-based path on MPS because ``F.grid_sample`` has no MPS backward. An
     inference-only copy of a model, such as the snapshot :meth:`rfdetr.detr.RFDETR.inference` builds, can use the fused
-    kernel instead: on MPS it is faster and matches the gather path to float rounding.
+    kernel instead: on MPS it is faster and, at float32, matches the gather path to float rounding.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.

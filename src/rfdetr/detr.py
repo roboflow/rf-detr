@@ -1690,9 +1690,10 @@ class RFDETR:
         source concurrently with snapshot creation. An existing legacy optimized runtime is not copied; the current
         base weights are the source of truth.
 
-        On MPS, the snapshot samples deformable attention with the fused ``F.grid_sample`` and, unless
-        ``compile_backend="inductor"``, folds each DINOv2 LayerScale into the Linear layer before it. Its predictions
-        match the source model's to float rounding, not bit for bit.
+        On MPS, the snapshot samples deformable attention with the fused ``F.grid_sample`` and, for TorchScript and
+        ``compile=False`` predictors, folds each DINOv2 LayerScale into the Linear layer before it. At float32 its
+        predictions match the source model's to float rounding, not bit for bit; in half precision they can differ by
+        more, while staying at least as close to float32 as the source's.
 
         Capture the return value and call ``predictor.predict(images)``. Calling ``model.predict(images)`` continues
         to use the source model. Each factory call allocates its own weight copy; release a predictor to release its

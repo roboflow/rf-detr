@@ -45,11 +45,14 @@ from rfdetr import RFDETRSmall
 
 model = RFDETRSmall(device="mps")
 predictor = model.inference(compile_backend="inductor", batch_size=8)
-images = sorted(Path("images").glob("*.jpg"))[:64]  # A multiple of the compiled batch size.
+images = sorted(Path("images").glob("*.jpg"))
+images = images[: len(images) // 8 * 8]  # Whole batches only; predict the rest with a compile=False predictor.
+if not images:
+    raise ValueError("Need at least eight images for one compiled batch of 8.")
 results = predictor.predict(images, batch=8)
 ```
 
-On MPS, the predictor also samples the decoder's deformable attention with PyTorch's fused `grid_sample` and, for TorchScript and eager predictors, folds the backbone's LayerScale weights into the Linear layers before them. Only the predictor's copy of the model changes; its predictions match the source model's to float rounding.
+On MPS, the predictor also samples the decoder's deformable attention with PyTorch's fused `grid_sample` and, for TorchScript and eager predictors, folds the backbone's LayerScale weights into the Linear layers before them. Only the predictor's copy of the model changes; at float32 its predictions match the source model's to float rounding, and in half precision they can differ by more.
 
 For the borrowed live-model behavior, construct `RFDETRInference(model)` directly. That facade reads the model's current state on every prediction, so it observes later training or optimization changes; configure the model's device and omit `device`, `metadata`, and `runtime_options` for this source. This mode does not promise safety when training mutates the model concurrently with prediction.
 
