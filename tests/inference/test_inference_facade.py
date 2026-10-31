@@ -22,7 +22,10 @@ from supervision import Detections, KeyPoints
 from rfdetr.detr import RFDETR
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
-from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersLayer
+from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    Dinov2WithRegistersLayerScale,
+    WindowedDinov2WithRegistersLayer,
+)
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 
 from .helpers import _DummyModel, _DummyRFDETR
@@ -64,6 +67,24 @@ def mps_nano_model() -> RFDETRNano:
         num_select=4,
         num_classes=2,
     )
+
+
+@pytest.fixture
+def mps_scaled_nano_model(mps_nano_model: RFDETRNano) -> RFDETRNano:
+    """Give every DINOv2 LayerScale of the MPS model distinct non-unit values.
+
+    Random weights leave every LayerScale at 1.0, where folding into the wrong Linear changes nothing.
+
+    Examples:
+        The pytest runner must create this fixture before a test can use it.
+
+        >>> mps_scaled_nano_model(mps_nano_model)  # doctest: +SKIP
+    """
+    with torch.no_grad():
+        for module in mps_nano_model.model.model.modules():
+            if isinstance(module, Dinov2WithRegistersLayerScale):
+                module.lambda1.copy_(torch.linspace(0.5, 1.5, module.lambda1.numel()))
+    return mps_nano_model
 
 
 class TestInferenceSnapshot:
@@ -573,8 +594,9 @@ def _snapshot_module(predictor: RFDETRInference) -> torch.nn.Module:
     """Return the eager module a ``compile=False`` (or uncompiled) predictor runs.
 
     Examples:
-        >>> _snapshot_module  # doctest: +ELLIPSIS
-        <function _snapshot_module at ...>
+        Needs a predictor built from a model, which a standalone doctest cannot create.
+
+        >>> _snapshot_module(predictor)  # doctest: +SKIP
     """
     native = predictor._native_model
     assert native is not None
@@ -588,7 +610,6 @@ def _snapshot_rewrites(module: torch.nn.Module) -> tuple[bool, bool]:
         >>> _snapshot_rewrites(torch.nn.Identity())
         (False, True)
     """
-    from rfdetr.models.backbone.dinov2_with_windowed_attn import Dinov2WithRegistersLayerScale
     from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
     from rfdetr.utilities.tensors import _native_grid_sample
 
@@ -607,25 +628,39 @@ class TestMpsSnapshotRewrites:
 
         assert _snapshot_rewrites(_snapshot_module(predictor)) == (False, False)
 
-    def test_source_model_is_not_rewritten(self, nano_model: RFDETRNano) -> None:
-        """Only the snapshot copy changes, never the trainable source."""
-        nano_model.inference(compile=False)
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_source_model_is_not_rewritten(self, mps_nano_model: RFDETRNano) -> None:
+        """Only the snapshot copy changes, never the trainable source.
 
-        assert _snapshot_rewrites(nano_model.model.model) == (False, False)
+        Runs on MPS, the only device where ``inference()`` rewrites anything, so a rewrite leaking into the source fails
+        here.
+        """
+        mps_nano_model.inference(compile=False)
+
+        assert _snapshot_rewrites(mps_nano_model.model.model) == (False, False)
 
     @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
-    def test_mps_eager_snapshot_is_rewritten_and_matches_the_source(self, mps_nano_model: RFDETRNano) -> None:
-        """An MPS snapshot uses both rewrites and predicts what the source predicts, to float rounding."""
-        image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
-        expected = mps_nano_model.predict(image, threshold=0.0)
-
+    def test_mps_eager_snapshot_is_rewritten(self, mps_nano_model: RFDETRNano) -> None:
+        """An MPS ``compile=False`` snapshot samples with ``F.grid_sample`` and has its LayerScales folded."""
         predictor = mps_nano_model.inference(compile=False)
-        actual = predictor.predict(image, threshold=0.0)
 
         assert _snapshot_rewrites(_snapshot_module(predictor)) == (True, True)
-        assert _snapshot_rewrites(mps_nano_model.model.model) == (False, False)
-        np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-4)
-        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-2)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @pytest.mark.parametrize("compile", [False, True])
+    def test_mps_snapshot_matches_the_source(self, mps_scaled_nano_model: RFDETRNano, compile: bool) -> None:
+        """An MPS snapshot, eager or the default TorchScript trace, predicts what the source predicts.
+
+        The LayerScales hold distinct non-unit values, so folding into the wrong Linear changes the outputs; the
+        ``compile=True`` case builds the default predictor, the traced copy of the rewritten snapshot.
+        """
+        image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        expected = mps_scaled_nano_model.predict(image, threshold=0.0)
+
+        actual = mps_scaled_nano_model.inference(compile=compile).predict(image, threshold=0.0)
+
+        np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
 
     @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
     def test_mps_inductor_snapshot_keeps_layer_scales(
