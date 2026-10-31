@@ -31,6 +31,9 @@ requires_cpu_inductor = pytest.mark.skipif(
 requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 cuda_marks = [pytest.mark.gpu, requires_cuda]
 
+#: Skip a test node when no Apple MPS device is present. MPS runs on the macOS CPU CI runners, so no ``gpu`` marker.
+requires_mps = pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+
 #: Skip a test node that drives a real XLA device when ``torch_xla`` is not installed (the ``xla`` extra). Pair it with
 #: ``@pytest.mark.xla`` so the XLA CI job selects it.
 requires_torch_xla = pytest.mark.skipif(

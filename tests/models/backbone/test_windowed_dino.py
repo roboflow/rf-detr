@@ -10,12 +10,14 @@ import torch
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     Dinov2WithRegistersAttention,
+    Dinov2WithRegistersLayerScale,
     Dinov2WithRegistersSdpaAttention,
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
     WindowedDinov2WithRegistersModel,
     _find_pruneable_heads_and_indices,
+    _fold_layer_scales,
     _get_aligned_output_features_output_indices,
 )
 
@@ -565,3 +567,39 @@ class TestSetAttnImplementationPreservesWeights:
         for layer in model.encoder.layer:
             assert isinstance(layer.attention, Dinov2WithRegistersAttention)
             assert not isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+
+
+class TestFoldLayerScales:
+    """Folding each LayerScale into the Linear that feeds it keeps the backbone's output."""
+
+    @pytest.mark.parametrize("use_swiglu_ffn", [False, True])
+    @pytest.mark.parametrize("num_windows", [1, 2])
+    def test_folded_backbone_matches_and_has_no_layer_scales(self, use_swiglu_ffn: bool, num_windows: int) -> None:
+        """Outputs agree to float rounding, and every LayerScale is gone, for both MLP kinds and windowed attention."""
+        torch.manual_seed(0)
+        config = _minimal_backbone_config(
+            num_hidden_layers=2, use_swiglu_ffn=use_swiglu_ffn, num_windows=num_windows, window_block_indexes=[0]
+        )
+        model = WindowedDinov2WithRegistersModel(config).eval()
+        with torch.no_grad():
+            for module in model.modules():
+                if isinstance(module, Dinov2WithRegistersLayerScale):
+                    module.lambda1.uniform_(0.5, 1.5)
+        pixel_values = torch.randn(2, 3, 64, 64)
+        with torch.no_grad():
+            expected = model(pixel_values).last_hidden_state
+
+            folded = _fold_layer_scales(model)
+            actual = model(pixel_values).last_hidden_state
+
+        assert folded == 4
+        assert not any(isinstance(module, Dinov2WithRegistersLayerScale) for module in model.modules())
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+
+    def test_module_without_layer_scales_is_unchanged(self) -> None:
+        """A module holding no DINOv2 layer folds nothing."""
+        module = torch.nn.Linear(4, 4)
+        weight = module.weight.detach().clone()
+
+        assert _fold_layer_scales(module) == 0
+        assert torch.equal(module.weight, weight)

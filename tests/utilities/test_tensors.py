@@ -27,12 +27,13 @@ from rfdetr.utilities.tensors import (
     NestedTensor,
     PackedTargets,
     _bilinear_grid_sample,
+    _native_grid_sample,
     _nearest_grid_sample,
     make_collate_fn,
     nested_tensor_from_tensor_list,
     pack_targets,
 )
-from tests._markers import requires_torch_xla
+from tests._markers import requires_mps, requires_torch_xla
 
 
 def _grid_sample_reference(
@@ -1459,3 +1460,32 @@ class TestNearestGridSampleXLAExecution:
 
         expected = _nearest_reference(input.cpu(), grid.cpu(), "zeros", False)
         assert torch.equal(actual.cpu(), expected)
+
+
+class TestNativeGridSample:
+    """The inference sampler is ``F.grid_sample`` on every device, matching the training sampler's values."""
+
+    @pytest.mark.parametrize("padding_mode", ["zeros", "border"])
+    @pytest.mark.parametrize("align_corners", [False, True])
+    def test_matches_f_grid_sample_on_cpu(self, padding_mode: str, align_corners: bool) -> None:
+        """On the CPU it is exactly ``F.grid_sample`` in bilinear mode."""
+        generator = torch.Generator().manual_seed(0)
+        value = torch.randn(2, 4, 5, 7, generator=generator)
+        grid = torch.rand(2, 3, 6, 2, generator=generator) * 2.4 - 1.2
+
+        actual = _native_grid_sample(value, grid, padding_mode=padding_mode, align_corners=align_corners)
+        expected = F.grid_sample(value, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @requires_mps
+    def test_matches_the_gather_sampler_on_mps(self) -> None:
+        """On MPS it agrees with the gather-based training sampler to float rounding."""
+        generator = torch.Generator().manual_seed(0)
+        value = torch.randn(2, 8, 12, 16, generator=generator).to("mps")
+        grid = (torch.rand(2, 20, 4, 2, generator=generator) * 2.4 - 1.2).to("mps")
+
+        actual = _native_grid_sample(value, grid)
+        expected = _bilinear_grid_sample(value, grid)
+
+        torch.testing.assert_close(actual.cpu(), expected.cpu(), rtol=1e-5, atol=1e-5)

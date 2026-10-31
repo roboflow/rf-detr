@@ -475,7 +475,7 @@ class TestModelInferenceCompile:
 
         with (
             patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', or 'inductor'"),
+            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', 'inductor' or None"),
         ):
             rfdetr.inference(compile=True, compile_backend="unknown")  # type: ignore[arg-type]
 

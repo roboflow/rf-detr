@@ -27,6 +27,9 @@ from rfdetr.detr import RFDETR
 
 from ..helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
 
+#: Zero mean and unit std for three channels, what a patched ``_normalization_tensors`` returns.
+_UNIT_NORMALIZATION = (torch.zeros(3, 1, 1), torch.ones(3, 1, 1))
+
 
 class TestPredictImagePinning:
     """``predict()`` should pin CPU-resident image tensors before an accelerator transfer.
@@ -1051,10 +1054,10 @@ class TestPredictNegativeStrideNumpy:
 def forbid_range_scan(mocker: MockerFixture) -> None:
     """Make any pixel-range scan (``Tensor.any``) fail the test.
 
-    ``torchvision.normalize`` has its own unrelated ``std.any()`` guard, so it is replaced to isolate the image-range
-    scans.
+    ``_normalization_tensors`` checks its std with ``Tensor.any()`` whenever its cache is cold, so it is replaced to
+    isolate the image-range scans, whatever ran before the test.
     """
-    mocker.patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28))
+    mocker.patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION)
     mocker.patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan"))
 
 
