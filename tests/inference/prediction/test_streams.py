@@ -508,6 +508,8 @@ class TestLivePredictions:
         """Image-only installations receive an actionable optional-dependency error."""
         with patch.dict("sys.modules", {"cv2": None}):
             with pytest.raises(
-                ImportError, match=r'requires OpenCV\. Install it with `uv pip install "rfdetr\[stream\]"`'
+                ImportError,
+                match=r'requires OpenCV\. Install it with `uv pip install "rfdetr\[stream\]"` '
+                r'or `pip install "rfdetr\[headless\]"`\.',
             ):
                 next(RFDETRInference(_DummyRFDETR()).predict(0, stream=True))
