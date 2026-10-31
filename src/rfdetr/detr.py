@@ -1778,7 +1778,7 @@ class RFDETR:
                 # The snapshot never runs backward, so it can take MPS's fused `F.grid_sample` instead of the gather
                 # path the training sampler keeps for its missing MPS backward. Folding LayerScale into the Linears
                 # before it drops two multiplies per backbone block for TorchScript and eager; inductor fuses them
-                # already, and measured slower with them folded.
+                # already, and folding measured no gain there.
                 for module in inference_model.modules():
                     if isinstance(module, MSDeformAttn):
                         module.grid_sample = _native_grid_sample

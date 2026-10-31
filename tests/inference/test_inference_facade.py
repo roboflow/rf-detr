@@ -666,7 +666,7 @@ class TestMpsSnapshotRewrites:
     def test_mps_inductor_snapshot_keeps_layer_scales(
         self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Inductor fuses the LayerScale multiply itself and ran slower with it folded, so only the sampler changes."""
+        """Inductor fuses the LayerScale multiply itself and folding measured no gain, so only the sampler changes."""
         compiled: list[torch.nn.Module] = []
 
         def fake_compile(module: torch.nn.Module, **_: object) -> torch.nn.Module:

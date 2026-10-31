@@ -34,9 +34,9 @@ The native factory defaults to TorchScript compilation, batch size 1, and float3
 
 ### Choose a fast route
 
-`model.inference()` is the fast native route. `RFDETRInference(model)` and a `.pth`, `.pt`, or `.ckpt` path passed to `RFDETRInference` run the eager model, which took about 1.5 times as long per image as the default TorchScript predictor for `RFDETRNano` on an Apple M4 Max. For a checkpoint, load it with `RFDETR.from_checkpoint()` and call `inference()` on the result.
+`model.inference()` is the fast native route. `RFDETRInference(model)` and a `.pth`, `.pt`, or `.ckpt` path passed to `RFDETRInference` run the eager model, which is slower per image than the default TorchScript predictor. For a checkpoint, load it with `RFDETR.from_checkpoint()` and call `inference()` on the result.
 
-On Apple Silicon, `compile_backend="inductor"` was faster than the default TorchScript backend in the same measurements: about 20% more images per second for `RFDETRNano` in batches of 16, and about 40% more one image at a time. Compilation takes several seconds and runs again for each new input shape, so prefer it for long runs at one batch size and resolution. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.
+On Apple Silicon, `compile_backend="inductor"` can be faster than the default TorchScript backend; measure both with your model, batch size and resolution. Compilation takes several seconds and runs again for each new input shape, so prefer it for long runs at one batch size and resolution. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.
 
 ```python
 from pathlib import Path
