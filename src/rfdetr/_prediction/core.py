@@ -11,7 +11,8 @@ import io
 import operator
 import os
 import re
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -32,7 +33,7 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
-from rfdetr._prediction.sources import is_expanded_source, iter_source_batches
+from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source, iter_source_batches
 from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
@@ -241,6 +242,32 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return widened.div_(scale)
 
 
+def _copy_rows_to_cpu_once(
+    boxes: torch.Tensor, scores: torch.Tensor, labels: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Copy one image's boxes, scores and labels to the CPU in a single transfer.
+
+    Accelerators other than CUDA (MPS among them) copy to the host synchronously, so each ``.cpu()`` waits on its own;
+    packing the three into one float32 tensor pays that wait once. Labels round-trip exactly through float32 because
+    class ids stay far below 2**24, the largest integer it represents without rounding.
+
+    Args:
+        boxes: ``(N, 4)`` boxes.
+        scores: ``(N,)`` scores.
+        labels: ``(N,)`` integer class ids.
+
+    Returns:
+        Contiguous CPU tensors: float32 boxes, float32 scores, and labels in their own dtype.
+
+    Examples:
+        >>> boxes, scores, labels = _copy_rows_to_cpu_once(torch.ones(2, 4), torch.ones(2), torch.tensor([3, 90]))
+        >>> boxes.shape, scores.dtype, labels.tolist()
+        (torch.Size([2, 4]), torch.float32, [3, 90])
+    """
+    packed = torch.cat([boxes.float(), scores.float().unsqueeze(1), labels.float().unsqueeze(1)], dim=1).cpu()
+    return packed[:, :4].contiguous(), packed[:, 4].contiguous(), packed[:, 5].to(labels.dtype)
+
+
 def _validate_shape_dims(
     shape: object,
     block_size: int,
@@ -404,7 +431,8 @@ def predict(
         include_source_image: Store source pixels in each result.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         stream: Yield results on demand instead of collecting them.
-        batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch and
+        batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch, an eager
+            directory or glob (or a list of them) in batches of eight when the model has no fixed batch size, and
             other expanded or streamed sources one image or frame at a time. An integer bounds every batch.
         vid_stride: Read every Nth video frame.
         stream_buffer: Queue live frames instead of retaining the latest frame.
@@ -424,10 +452,10 @@ def predict(
         # The generator below starts only at its first `next()`, after it has opened its source and decoded a batch, so
         # a threshold the model cannot apply is refused here, when `predict` is called. Every batch checks it again
         # against its own context, which a live model may have changed in between.
-        _class_thresholds(threshold, context_factory())
+        context = context_factory()
+        _class_thresholds(threshold, context)
         if batch is None:
-            # A BCHW tensor already is one batch; split it only when the caller bounds the batch size.
-            batch = max(images.shape[0], 1) if isinstance(images, torch.Tensor) and images.ndim == 4 else 1
+            batch = _default_batch(images, context, stream=stream)
         results = _predict_stream(
             context_factory,
             images,
@@ -443,6 +471,39 @@ def predict(
         )
         return results if stream else list(results)
     return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+
+
+#: Images per batch when ``batch=None`` predicts an eager directory or glob on a model without a fixed batch size.
+_DEFAULT_EAGER_BATCH = 8
+
+
+def _default_batch(images: _PredictionInput, context: PredictionContext, *, stream: bool) -> int:
+    """Choose the batch size for an expanded or streamed source when the caller passes ``batch=None``.
+
+    A BCHW tensor already is one batch. An eager directory or glob runs in batches of :data:`_DEFAULT_EAGER_BATCH` on a
+    model that accepts any batch size; its results are collected anyway, so batching costs no latency. Streamed
+    sources keep one image per batch, so the first result arrives after one image, and a compiled snapshot or export
+    keeps it because its batch size is fixed or bounded.
+
+    Args:
+        images: The prediction source.
+        context: The model's current prediction rules.
+        stream: Whether results are yielded on demand.
+
+    Returns:
+        The number of images per batch.
+
+    Examples:
+        >>> _default_batch(torch.zeros(3, 3, 8, 8), None, stream=True)
+        3
+    """
+    if isinstance(images, torch.Tensor) and images.ndim == 4:
+        # Split a BCHW tensor only when the caller bounds the batch size.
+        return max(images.shape[0], 1)
+    flexible_batch = not context.fixed_shape and context.batch_size is None and context.max_batch_size is None
+    if not stream and flexible_batch and has_only_finite_images(images):
+        return _DEFAULT_EAGER_BATCH
+    return 1
 
 
 def _predict_stream(
@@ -465,6 +526,11 @@ def _predict_stream(
     one-channel models. Each batch runs through :func:`_predict_batch`, which re-reads the context. Closing the
     generator closes the source reader.
 
+    A source with no live input (see :func:`~rfdetr._prediction.sources.has_only_finite_images`) is read one batch
+    ahead for three-channel models on an accelerator: the next batch's image files decode on worker threads while the
+    current batch runs, so at most two batches of decoded images are held at once. Live sources, and models whose
+    context device is the CPU, keep reading one batch at a time.
+
     Args:
         context_factory: Read current execution rules when a batch starts.
         images: Image data, paths, collections, videos, or live sources.
@@ -482,6 +548,8 @@ def _predict_stream(
     Yields:
         One result per input image or frame, in source order.
     """
+    context = context_factory()
+    num_channels = context.config.num_channels
     source_batches = iter_source_batches(
         images,
         batch=batch,
@@ -489,24 +557,98 @@ def _predict_stream(
         stream_buffer=stream_buffer,
         warn_on_live=warn_on_live,
         # Frame sources decode RGB; the model's channel count decides whether they convert to grayscale.
-        num_channels=context_factory().config.num_channels,
+        num_channels=num_channels,
         # Eager results each keep a full source image, so large finite sources warn before decoding starts.
         warn_on_retained_frames=warn_on_live and include_source_image,
     )
+    # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A model on
+    # the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
+    # slowed the forward pass by more than the overlap saved.
+    decode_ahead = num_channels == 3 and context.device.type != "cpu" and has_only_finite_images(images)
+    pool = ThreadPoolExecutor(_DECODE_WORKERS, thread_name_prefix="rfdetr-decode") if decode_ahead else None
+    batches = source_batches if pool is None else _decode_ahead(source_batches, pool)
     try:
-        for image_batch in source_batches:
+        for image_batch in batches:
             results = _predict_batch(
                 context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias
             )
             yield from cast("list[_PredictionResult]", results)
     finally:
+        if pool is not None:
+            # Decodes already queued for a batch nobody will read are dropped; running ones finish first.
+            pool.shutdown(wait=True, cancel_futures=True)
         source_batches.close()
+
+
+#: Worker threads decoding the next batch's image files. File reads and torchvision's decoder release the GIL.
+_DECODE_WORKERS = 4
+
+
+@dataclass(frozen=True)
+class _PrefetchedImage:
+    """A local image path whose RGB decode was submitted to a worker thread ahead of its batch.
+
+    Attributes:
+        path: The image path, used as is when the decode returns ``None`` (Pillow fallback) or is not wanted.
+        decoded: The pending :func:`_decode_local_image` result.
+    """
+
+    path: str
+    decoded: Future[torch.Tensor | None]
+
+
+def _decode_ahead(
+    source_batches: Iterator[list[_ImageInput]], pool: ThreadPoolExecutor
+) -> Generator[list[_ImageInput | _PrefetchedImage], None, None]:
+    """Yield each batch after reading the next one from the source and submitting its file decodes.
+
+    Local file paths become :class:`_PrefetchedImage` entries; every other item passes through unchanged. A source error
+    raised while the next batch is read is re-raised after the current batch is yielded, where the serial loop raised
+    it.
+
+    Args:
+        source_batches: Batches from :func:`~rfdetr._prediction.sources.iter_source_batches`.
+        pool: Executor running :func:`_decode_local_image`.
+
+    Yields:
+        The source's batches, in order, with their local image files decoding in ``pool``.
+
+    Examples:
+        >>> from concurrent.futures import ThreadPoolExecutor
+        >>> with ThreadPoolExecutor(1) as pool:
+        ...     list(_decode_ahead(iter([["https://example.com/a.jpg"]]), pool))
+        [['https://example.com/a.jpg']]
+    """
+
+    def submit(image_batch: list[_ImageInput]) -> list[_ImageInput | _PrefetchedImage]:
+        scheduled: list[_ImageInput | _PrefetchedImage] = []
+        for item in image_batch:
+            if isinstance(item, (str, os.PathLike)) and urlparse(os.fspath(item)).scheme not in ("http", "https"):
+                path = os.fspath(item)
+                scheduled.append(_PrefetchedImage(path, pool.submit(_decode_local_image, path)))
+            else:
+                scheduled.append(item)
+        return scheduled
+
+    upcoming = next(source_batches, None)
+    scheduled = None if upcoming is None else submit(upcoming)
+    while scheduled is not None:
+        current = scheduled
+        deferred_error: Exception | None = None
+        try:
+            upcoming = next(source_batches, None)
+        except Exception as error:  # re-raised below, after the batch the serial loop would have finished first
+            deferred_error, upcoming = error, None
+        scheduled = None if upcoming is None else submit(upcoming)
+        yield current
+        if deferred_error is not None:
+            raise deferred_error
 
 
 @torch.inference_mode()
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
-    images: _PredictionInput | list[_ImageInput],
+    images: _PredictionInput | list[_ImageInput | _PrefetchedImage],
     threshold: _ThresholdInput,
     shape: tuple[int, int] | None,
     patch_size: int | None,
@@ -544,7 +686,9 @@ def _predict_batch(
     """
     from supervision import Detections, KeyPoints
 
-    images = _as_collection(images)
+    if not isinstance(images, list):
+        # A list, including a batch with decode-ahead entries, already is a collection.
+        images = _as_collection(images)
     if isinstance(images, (list, tuple)) and not images:
         raise ValueError("At least one image is required.")
 
@@ -625,6 +769,9 @@ def _predict_batch(
     for img_input in images:
         img: Any = img_input
         decoded_local_file = False
+        prefetched: Future[torch.Tensor | None] | None = None
+        if isinstance(img, _PrefetchedImage):
+            img, prefetched = img.path, img.decoded
         if isinstance(img, os.PathLike):
             img = os.fspath(img)
         if isinstance(img, str):
@@ -635,7 +782,7 @@ def _predict_batch(
             elif context.config.num_channels == 3:
                 # The fast decoder is RGB-only. Keep grayscale on Pillow so files and PIL inputs use the same
                 # luminance conversion; a grayscale codec path needs pixel-parity and latency evidence first.
-                decoded = _decode_local_image(img)
+                decoded = prefetched.result() if prefetched is not None else _decode_local_image(img)
                 if decoded is not None:
                     img = decoded
                     decoded_local_file = True
@@ -867,9 +1014,13 @@ def _predict_batch(
         # can't happen with today's callers) — holds only as long as `postprocess()`
         # never returns fields split across devices.
         is_cuda = boxes.is_cuda
-        boxes_cpu = boxes.float().to("cpu", non_blocking=is_cuda)
-        scores_cpu = scores.float().to("cpu", non_blocking=is_cuda)
-        labels_cpu = labels.to("cpu", non_blocking=is_cuda)
+        if boxes.device.type in ("cuda", "cpu"):
+            boxes_cpu = boxes.float().to("cpu", non_blocking=is_cuda)
+            scores_cpu = scores.float().to("cpu", non_blocking=is_cuda)
+            labels_cpu = labels.to("cpu", non_blocking=is_cuda)
+        else:
+            # A synchronous accelerator blocks on every copy; pay that wait once for the three row tensors.
+            boxes_cpu, scores_cpu, labels_cpu = _copy_rows_to_cpu_once(boxes, scores, labels)
         keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
         masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda) if masks is not None else None
         keypoint_precision_cpu = (
