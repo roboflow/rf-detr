@@ -70,6 +70,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Exported runtimes, such as Core ML or ONNX Runtime, now decode the next batch of image files on worker threads while the current batch runs, like native models on an accelerator; a native model on the CPU still decodes inline. Results are unchanged.
 
+- On non-CUDA accelerators such as MPS, prediction no longer waits on the device per image: a batch's detection boxes, scores and labels reach the host in one copy before the per-image threshold filter, and image normalization reuses its mean and std tensors instead of rebuilding and checking them on the device every batch. Results are unchanged.
+
 - On MPS, `RFDETR.inference()` builds a faster predictor: its copy of the model samples deformable attention with PyTorch's fused `F.grid_sample` instead of the gather-based sampler kept for training, and, for TorchScript and `compile=False` predictors, folds each DINOv2 LayerScale into the Linear layer before it. At float32, predictions match the source model to float rounding, not bit for bit, and half precision can differ by more; the source model, other devices, the inductor backend's LayerScale and exports are unchanged.
 
 - On an accelerator such as CUDA or MPS, `RFDETRInference.predict()` decodes the next batch of image files on worker threads while the current batch runs, for directories, globs, image files and lists of them predicted in batches; results are unchanged. Cameras, live URLs, screens, videos named directly, manifests and models predicting on the CPU keep reading one batch at a time.

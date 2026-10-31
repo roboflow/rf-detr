@@ -1167,3 +1167,66 @@ class TestCopyRowsToCpuOnce:
         packed = core._copy_rows_to_cpu_once(boxes, scores, labels)
 
         assert all(torch.equal(got, want.cpu()) for got, want in zip(packed, (boxes, scores, labels)))
+
+
+class TestCopyResultsToCpuOnce:
+    """A batch's detection rows cross to the host in one copy and keep each tensor's own dtype."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+    def test_matches_separate_copies(self, dtype: torch.dtype) -> None:
+        """Values, dtypes and contiguity equal separate ``.cpu()`` copies, for images with and without rows."""
+        generator = torch.Generator().manual_seed(0)
+        results = [
+            {
+                "boxes": (torch.rand(num_rows, 4, generator=generator) * 640).to(dtype),
+                "scores": torch.rand(num_rows, generator=generator).to(dtype),
+                # The largest id stays exact: float32 represents every integer up to 2**24.
+                "labels": torch.randint(0, 2**24, (num_rows,), generator=generator),
+            }
+            for num_rows in (3, 0, 5)
+        ]
+
+        copied = core._copy_results_to_cpu_once(results)
+
+        for got, want in zip(copied, results):
+            assert got.keys() == want.keys()
+            for key in want:
+                assert got[key].dtype == want[key].dtype
+                assert torch.equal(got[key], want[key])
+                assert got[key].is_contiguous()
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_results_match_cpu_copies(self) -> None:
+        """Rows produced on MPS come back equal to their own ``.cpu()`` copies."""
+        results = [
+            {
+                "boxes": torch.rand(4, 4, device="mps"),
+                "scores": torch.rand(4, device="mps"),
+                "labels": torch.arange(4, device="mps"),
+            }
+            for _ in range(2)
+        ]
+
+        copied = core._copy_results_to_cpu_once(results)
+
+        assert all(torch.equal(got[key], want[key].cpu()) for got, want in zip(copied, results) for key in want)
+
+
+class TestNormalizationTensors:
+    """The cached mean and std normalize a batch exactly as torchvision's ``normalize`` does."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_matches_torchvision_normalize(self, dtype: torch.dtype) -> None:
+        """Subtracting the cached mean and dividing by the cached std reproduces ``normalize`` bit for bit."""
+        from torchvision.transforms.functional import normalize
+
+        means, stds = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+        batch = torch.rand(2, 3, 8, 8, generator=torch.Generator().manual_seed(0)).to(dtype)
+        mean, std = core._normalization_tensors(means, stds, dtype, torch.device("cpu"))
+
+        assert torch.equal(batch.clone().sub_(mean).div_(std), normalize(batch, list(means), list(stds)))
+
+    def test_std_that_rounds_to_zero_raises(self) -> None:
+        """A std that underflows to zero in the batch dtype is refused, as ``normalize`` refuses it."""
+        with pytest.raises(ValueError, match="std evaluated to zero after conversion to torch.float16"):
+            core._normalization_tensors((0.5,), (1e-8,), torch.float16, torch.device("cpu"))
