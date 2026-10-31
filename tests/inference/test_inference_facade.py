@@ -864,15 +864,16 @@ class TestDefaultCompileBackend:
         assert modes == ["default"]
 
     @_skip_without_mps_inductor
-    def test_mps_default_predicts_without_recompiling(
-        self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_mps_default_predicts_without_recompiling(self, mps_nano_model: RFDETRNano) -> None:
         """The first ``predict()`` reuses the graph compiled during warm-up.
 
         Prediction runs under ``torch.inference_mode()``. A warm-up input built outside it fails dynamo's dispatch-key
         guard, so the first real prediction compiled again, taking about a second instead of milliseconds.
+
+        Uses dynamo's own ``config.patch``: from pytest 9.2, ``monkeypatch`` undoes a setting missing from the config
+        module's ``__dict__`` with ``delattr``, which hides it from dynamo for the rest of the session.
         """
         predictor = mps_nano_model.inference()
-        monkeypatch.setattr(torch._dynamo.config, "error_on_recompile", True)
 
-        predictor.predict(np.zeros((64, 64, 3), dtype=np.uint8))
+        with torch._dynamo.config.patch(error_on_recompile=True):
+            predictor.predict(np.zeros((64, 64, 3), dtype=np.uint8))
