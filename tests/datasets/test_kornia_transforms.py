@@ -609,6 +609,35 @@ class TestUnpackBoxes:
         valid_tensor = torch.tensor(valid_mask, dtype=torch.bool)
         return boxes_tensor, valid_tensor, original_targets, image_height, image_width
 
+    def test_boxes_follow_masks_and_empty_masks_drop_instances(self):
+        """Boxes become the tight mask extent; an instance whose mask vanished is dropped; box-only stays."""
+        from rfdetr.datasets.kornia_transforms import unpack_boxes
+
+        boxes_aug = [[[0.0, 0.0, 90.0, 90.0], [10.0, 10.0, 40.0, 40.0], [50.0, 50.0, 70.0, 70.0]]]
+        valid = [[True, True, True]]
+        masks_in = torch.zeros(3, 100, 100, dtype=torch.bool)
+        masks_in[0, 20:30, 20:60] = True
+        masks_in[1, 10:40, 10:40] = True
+        masks_aug = torch.zeros(1, 3, 100, 100)
+        masks_aug[0, 0, 20:30, 20:60] = 1.0
+        targets = [
+            {
+                "boxes": torch.tensor([[20.0, 20.0, 60.0, 30.0], [10.0, 10.0, 40.0, 40.0], [50.0, 50.0, 70.0, 70.0]]),
+                "labels": torch.tensor([1, 2, 3]),
+                "area": torch.tensor([400.0, 900.0, 400.0]),
+                "iscrowd": torch.tensor([0, 0, 1]),
+                "masks": masks_in,
+            }
+        ]
+        boxes_t, valid_t, tgts, height, width = self._make_inputs(boxes_aug, valid, targets)
+
+        result = unpack_boxes(boxes_t, valid_t, tgts, height, width, masks_aug=masks_aug)
+
+        assert result[0]["labels"].tolist() == [1, 3]
+        assert result[0]["iscrowd"].tolist() == [0, 1]
+        assert result[0]["boxes"].tolist() == [[20.0, 20.0, 60.0, 30.0], [50.0, 50.0, 70.0, 70.0]]
+        assert result[0]["masks"].shape == (2, 100, 100)
+
     def test_all_boxes_removed_after_aug(self):
         """When all augmented boxes are zero-area, output targets have empty boxes."""
         from rfdetr.datasets.kornia_transforms import unpack_boxes

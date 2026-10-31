@@ -1249,6 +1249,170 @@ class TestAlbumentationsWrapper:
         assert aug_target["labels"].tolist() == [1]
         assert aug_target["masks"].shape[0] == 1
 
+    @pytest.mark.parametrize("rotate_method", ["largest_box", "ellipse"])
+    def test_geometric_transform_recomputes_boxes_from_masks(self, rotate_method):
+        """Geometric transforms recompute tight boxes from transformed masks, per instance (#1636)."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.Affine(rotate=(45, 45), rotate_method=rotate_method, p=1.0))
+
+        masks = np.zeros((3, 200, 200), dtype=bool)
+        masks[0, 90:110, 20:100] = True
+        masks[1, 20:100, 150:160] = True
+        masks[2, 150:160, 100:180] = True
+        boxes = [[20.0, 90.0, 100.0, 110.0], [150.0, 20.0, 160.0, 100.0], [100.0, 150.0, 180.0, 160.0]]
+        target = {
+            "boxes": torch.tensor(boxes, dtype=torch.float32),
+            "labels": torch.tensor([1, 2, 3], dtype=torch.long),
+            "masks": torch.as_tensor(masks, dtype=torch.bool),
+            "area": torch.tensor([1600.0, 800.0, 800.0], dtype=torch.float32),
+            "iscrowd": torch.tensor([0, 1, 0]),
+        }
+        _, aug_target = wrapper(Image.new("RGB", (200, 200)), target)
+
+        out_masks = aug_target["masks"].numpy()
+        assert out_masks.shape[0] == len(aug_target["labels"]) == len(aug_target["iscrowd"]) >= 1
+        for mask, box in zip(out_masks, aug_target["boxes"].tolist()):
+            ys, xs = np.where(mask)
+            assert box == [float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)]
+        expected_area = (aug_target["boxes"][:, 2] - aug_target["boxes"][:, 0]) * (
+            aug_target["boxes"][:, 3] - aug_target["boxes"][:, 1]
+        )
+        torch.testing.assert_close(aug_target["area"], expected_area)
+
+    def test_geometric_transform_drops_ghost_box_with_empty_mask(self):
+        """A partly visible box whose mask left the canvas is dropped; the other instance stays aligned (#1636)."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.Affine(translate_px={"x": 15, "y": 0}, p=1.0))
+
+        masks = torch.zeros((3, 100, 100), dtype=torch.uint8)
+        masks[0, 10:20, 88:95] = 1  # ghost: box stays partly inside, mask is shifted off the canvas
+        masks[1, 50:70, 10:30] = 1
+        masks[2, 70:90, 40:60] = 1
+        target = {
+            "boxes": torch.tensor(
+                [[60.0, 10.0, 95.0, 40.0], [10.0, 50.0, 30.0, 70.0], [40.0, 70.0, 60.0, 90.0]], dtype=torch.float32
+            ),
+            "labels": torch.tensor([1, 2, 3], dtype=torch.long),
+            "masks": masks,
+            "area": torch.tensor([1050.0, 400.0, 400.0], dtype=torch.float32),
+            "iscrowd": torch.tensor([0, 1, 0]),
+        }
+        _, aug_target = wrapper(Image.new("RGB", (100, 100)), target)
+
+        assert aug_target["labels"].tolist() == [2, 3]
+        assert aug_target["iscrowd"].tolist() == [1, 0]
+        assert aug_target["masks"].shape == (2, 100, 100)
+        assert aug_target["boxes"].tolist() == [[25.0, 50.0, 45.0, 70.0], [55.0, 70.0, 75.0, 90.0]]
+        assert aug_target["area"].tolist() == [400.0, 400.0]
+
+    def test_geometric_transform_keeps_box_only_instance(self):
+        """An instance without any mask foreground (box-only annotation) keeps its transformed box (#1558)."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.HorizontalFlip(p=1.0))
+
+        masks = torch.zeros((2, 100, 100), dtype=torch.uint8)
+        masks[0, 20:40, 10:30] = 1
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0], [60.0, 60.0, 80.0, 90.0]], dtype=torch.float32),
+            "labels": torch.tensor([1, 2], dtype=torch.long),
+            "masks": masks,
+        }
+        _, aug_target = wrapper(Image.new("RGB", (100, 100)), target)
+
+        assert aug_target["labels"].tolist() == [1, 2]
+        torch.testing.assert_close(aug_target["boxes"][1], torch.tensor([20.0, 60.0, 40.0, 90.0]))
+        assert not aug_target["masks"][1].any()
+
+    def test_geometric_transform_drops_mask_lost_to_downscale(self):
+        """A thin object whose mask vanishes under nearest-neighbour downscale is dropped, not kept as a ghost."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.Resize(25, 25, p=1.0))
+
+        masks = torch.zeros((2, 100, 100), dtype=torch.uint8)
+        masks[0, 50, 10:90] = 1  # 1 px high line: erased by 4x nearest downscale
+        masks[1, 20:60, 20:60] = 1
+        target = {
+            "boxes": torch.tensor([[10.0, 50.0, 90.0, 51.0], [20.0, 20.0, 60.0, 60.0]], dtype=torch.float32),
+            "labels": torch.tensor([1, 2], dtype=torch.long),
+            "masks": masks,
+        }
+        _, aug_target = wrapper(Image.new("RGB", (100, 100)), target)
+
+        assert aug_target["labels"].tolist() == [2]
+        assert aug_target["masks"].shape == (1, 25, 25)
+
+    def test_geometric_transform_reflected_copies_keep_albumentations_boxes(self):
+        """Instances duplicated by a reflecting border mode keep their own boxes, not one union box."""
+        import albumentations as alb
+        import cv2
+
+        wrapper = AlbumentationsWrapper(
+            alb.Affine(translate_px={"x": 30, "y": 0}, border_mode=cv2.BORDER_REFLECT_101, p=1.0)
+        )
+
+        masks = torch.zeros((1, 100, 100), dtype=torch.uint8)
+        masks[0, 10:20, 40:50] = 1
+        target = {
+            "boxes": torch.tensor([[40.0, 10.0, 50.0, 20.0]], dtype=torch.float32),
+            "labels": torch.tensor([1], dtype=torch.long),
+            "masks": masks,
+        }
+        _, aug_target = wrapper(Image.new("RGB", (100, 100)), target)
+
+        widths = (aug_target["boxes"][:, 2] - aug_target["boxes"][:, 0]).tolist()
+        assert all(width <= 10.0 for width in widths)
+
+    def test_geometric_transform_box_only_instance_keeps_alignment_with_masked_instance(self):
+        """A box-only instance beside a masked one keeps its Albumentations box and per-instance fields (#1558)."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.Affine(translate_px={"x": 5, "y": 5}, p=1.0))
+
+        height, width = 100, 100
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[1, 50:70, 50:70] = 1
+        target = {
+            "boxes": torch.tensor([[10.0, 10.0, 30.0, 30.0], [50.0, 50.0, 70.0, 70.0]], dtype=torch.float32),
+            "labels": torch.tensor([10, 20], dtype=torch.long),
+            "masks": masks,
+            "area": torch.tensor([400.0, 400.0], dtype=torch.float32),
+        }
+        _, aug_target = wrapper(Image.new("RGB", (width, height)), target)
+
+        assert aug_target["labels"].tolist() == [10, 20]
+        torch.testing.assert_close(
+            aug_target["boxes"], torch.tensor([[15.0, 15.0, 35.0, 35.0], [55.0, 55.0, 75.0, 75.0]])
+        )
+        assert aug_target["masks"].shape == (2, height, width)
+        assert not aug_target["masks"][0].any()
+        assert aug_target["masks"][1].any()
+        assert aug_target["area"].tolist() == [400.0, 400.0]
+
+    def test_geometric_transform_all_empty_masks_clears_target(self):
+        """When every mask leaves the canvas while a partly visible box remains, the target is cleared (#1636)."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.Affine(translate_px={"x": 15, "y": 0}, p=1.0))
+
+        masks = torch.zeros((1, 100, 100), dtype=torch.uint8)
+        masks[0, 10:20, 88:95] = 1
+        target = {
+            "boxes": torch.tensor([[60.0, 10.0, 95.0, 40.0]], dtype=torch.float32),
+            "labels": torch.tensor([1], dtype=torch.long),
+            "masks": masks,
+            "area": torch.tensor([1050.0], dtype=torch.float32),
+        }
+        _, aug_target = wrapper(Image.new("RGB", (100, 100)), target)
+
+        assert aug_target["boxes"].shape == (0, 4)
+        assert aug_target["labels"].shape == (0,)
+        assert aug_target["masks"].shape == (0, 100, 100)
+        assert aug_target["area"].shape == (0,)
+
 
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""

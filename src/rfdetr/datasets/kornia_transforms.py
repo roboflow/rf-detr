@@ -1513,6 +1513,11 @@ def unpack_boxes(
         heights = boxes_i[:, 3] - boxes_i[:, 1]
         keep = v & (widths > 0) & (heights > 0)
 
+        if masks_aug is not None:
+            boxes_i, keep = _sync_boxes_with_masks(
+                boxes_i, keep, masks_aug[i, :n_orig] > _MASK_BINARIZE_THRESHOLD, t.get("masks")
+            )
+
         t["boxes"] = boxes_i[keep]
         if "labels" in t:
             t["labels"] = t["labels"][keep]
@@ -1538,6 +1543,49 @@ def unpack_boxes(
         new_targets.append(t)
 
     return new_targets
+
+
+def _sync_boxes_with_masks(
+    boxes: Tensor, keep: Tensor, masks_aug: Tensor, masks_in: Tensor | None
+) -> tuple[Tensor, Tensor]:
+    """Re-derive boxes from augmented masks and drop instances whose mask left the canvas.
+
+    Kornia moves a box by its corners only, so after a rotation the box drifts from its mask, and a partly visible box
+    can survive around an empty mask. For every instance whose input mask had foreground, the box becomes the tight
+    extent of the augmented mask (exclusive end) and an empty augmented mask drops the instance. Box-only instances
+    (empty input mask) keep the Kornia box.
+
+    Args:
+        boxes: Clamped augmented boxes ``[N, 4]`` in xyxy format.
+        keep: Boolean keep flags ``[N]`` from the box checks.
+        masks_aug: Binarized augmented masks ``[N, H, W]``.
+        masks_in: Input masks ``[N, H, W]`` from the target, or ``None`` when absent.
+
+    Returns:
+        Tuple of boxes ``[N, 4]`` and keep flags ``[N]``.
+
+    Examples:
+        >>> masks = torch.zeros(2, 10, 10, dtype=torch.bool)
+        >>> masks[0, 2:5, 3:8] = True
+        >>> boxes = torch.tensor([[0.0, 0.0, 9.0, 9.0], [0.0, 0.0, 4.0, 4.0]])
+        >>> out_boxes, keep = _sync_boxes_with_masks(boxes, torch.tensor([True, True]), masks, masks.clone())
+        >>> out_boxes[0].tolist(), keep.tolist()
+        ([3.0, 2.0, 8.0, 5.0], [True, True])
+    """
+    if masks_in is None or masks_in.shape[0] != masks_aug.shape[0]:
+        return boxes, keep
+    height, width = masks_aug.shape[1:]
+    rows = masks_aug.any(dim=2)
+    cols = masks_aug.any(dim=1)
+    has_foreground = rows.any(dim=1)
+    y_min = rows.int().argmax(dim=1)
+    y_max = height - rows.flip(1).int().argmax(dim=1)
+    x_min = cols.int().argmax(dim=1)
+    x_max = width - cols.flip(1).int().argmax(dim=1)
+    mask_boxes = torch.stack([x_min, y_min, x_max, y_max], dim=1).to(boxes.dtype)
+    had_mask = masks_in.to(masks_aug.device).flatten(1).any(dim=1)
+    boxes = torch.where((had_mask & has_foreground)[:, None], mask_boxes, boxes)
+    return boxes, keep & (~had_mask | has_foreground)
 
 
 def _check_keypoint_inputs(keypoints_aug: Tensor | None, keypoint_visibility: Tensor | None, valid: Tensor) -> None:

@@ -413,6 +413,11 @@ class AlbumentationsWrapper:
     transforms (for example ``OneOf`` and ``Sequential``). For geometric transforms, bbox_params are automatically
     configured to handle coordinate transformations, clip boxes to image boundaries, and remove invalid boxes.
 
+    Note:
+        When masks are present, a geometric transform re-derives each box from its transformed mask (exclusive end,
+        pixel-snapped) and drops instances whose non-empty mask became empty. Box-only instances (empty input mask)
+        keep the Albumentations box.
+
     Args:
         transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
         keypoint_flip_pairs: Joint index pairs for left/right swapping after a horizontal flip.
@@ -857,13 +862,76 @@ class AlbumentationsWrapper:
                     result[key] = [value[i] for i in kept_idxs]
         return result
 
+    @staticmethod
+    def _sync_boxes_with_masks(
+        masks_aug: list[NDArray[Any]],
+        bboxes_aug: Any,
+        kept_idxs: list[int],
+        category_ids: list[int],
+        input_has_mask: NDArray[np.bool_],
+    ) -> tuple[NDArray[np.bool_], NDArray[np.float32], list[int], list[int]]:
+        """Re-derive boxes from transformed masks and drop instances whose mask left the canvas.
+
+        Albumentations moves a box by its four corners only, so after a rotation or warp the box drifts from the
+        mask, and an object pushed off the canvas can keep a partly visible box around an empty mask. For every
+        instance that had foreground before the transform: drop it when its transformed mask is empty, otherwise
+        replace its box by the mask's tight extent (exclusive end, as in ``pascal_voc``). Box-only instances (empty
+        input mask, e.g. COCO annotations without a polygon) and source instances that appear more than once
+        (reflecting border modes, whose copies share one composite mask) keep the Albumentations box.
+
+        Args:
+            masks_aug: Transformed masks, one per entry of ``kept_idxs``.
+            bboxes_aug: Albumentations boxes aligned with ``kept_idxs``, shape ``(K, 4)``.
+            kept_idxs: Original instance indices that survived the transform.
+            category_ids: Category ids aligned with ``kept_idxs``.
+            input_has_mask: Per original instance, whether its input mask had foreground.
+
+        Returns:
+            Tuple of stacked boolean masks ``(M, H, W)``, boxes ``(M, 4)``, ``kept_idxs`` and ``category_ids`` after
+            pruning.
+
+        >>> masks = [np.zeros((10, 10), dtype=np.uint8), np.zeros((10, 10), dtype=np.uint8)]
+        >>> masks[1][2:5, 3:8] = 1
+        >>> boxes = np.array([[0, 0, 4, 4], [0, 0, 9, 9]], dtype=np.float32)
+        >>> out = AlbumentationsWrapper._sync_boxes_with_masks(masks, boxes, [0, 1], [7, 8], np.array([True, True]))
+        >>> out[1].tolist(), out[2], out[3]
+        ([[3.0, 2.0, 8.0, 5.0]], [1], [8])
+        """
+        if len(masks_aug) == 0:
+            return np.zeros((0, 0, 0), dtype=bool), np.zeros((0, 4), dtype=np.float32), [], []
+        stack: NDArray[np.bool_] = np.stack(masks_aug) > 0
+        height, width = stack.shape[1:]
+        rows: NDArray[np.bool_] = np.asarray(stack.any(axis=2))
+        cols: NDArray[np.bool_] = np.asarray(stack.any(axis=1))
+        has_foreground = rows.any(axis=1)
+        y_min = rows.argmax(axis=1)
+        y_max = height - rows[:, ::-1].argmax(axis=1)
+        x_min = cols.argmax(axis=1)
+        x_max = width - cols[:, ::-1].argmax(axis=1)
+        mask_boxes = np.stack([x_min, y_min, x_max, y_max], axis=1).astype(np.float32)
+
+        original = np.asarray(kept_idxs, dtype=np.int64)
+        repeated = np.array([kept_idxs.count(i) > 1 for i in kept_idxs], dtype=bool)
+        had_mask = input_has_mask[original]
+        keep = ~had_mask | has_foreground
+        use_mask_box = had_mask & has_foreground & ~repeated
+        boxes = np.where(use_mask_box[:, None], mask_boxes, np.asarray(bboxes_aug, dtype=np.float32).reshape(-1, 4))
+        keep_positions = np.flatnonzero(keep).tolist()
+        return (
+            stack[keep],
+            boxes[keep].astype(np.float32),
+            [kept_idxs[i] for i in keep_positions],
+            [category_ids[i] for i in keep_positions],
+        )
+
     def _apply_geometric_transform(
         self, image_np: NDArray[np.uint8], target: dict[str, Any], labels: list[int]
     ) -> tuple[Image.Image, dict[str, Any]]:
         """Apply geometric transform to image with boxes and optionally masks.
 
         Converts data to Albumentations format, applies the transform, and converts back to RF-DETR format. Handles box
-        removal and per-instance field filtering.
+        removal and per-instance field filtering. With masks, boxes are re-derived from the transformed masks and
+        instances whose mask became empty are dropped (see ``_sync_boxes_with_masks``).
 
         Args:
             image_np: Numpy array of image in HWC format.
@@ -928,7 +996,17 @@ class AlbumentationsWrapper:
         augmented = self.transform(**transform_kwargs)
         target_out: dict[str, Any] = target.copy()
         bboxes_aug = augmented["bboxes"]
+        category_ids = augmented["category_ids"]
         kept_idxs = [int(idx) for idx in augmented.get("idxs", idxs)]
+
+        masks_stack = None
+        if masks_list is not None and "masks" in augmented:
+            input_has_mask = np.asarray(masks_np.reshape(num_boxes, -1).any(axis=1))
+            masks_aug = [augmented["masks"][int(i)] for i in kept_idxs]
+            masks_stack, bboxes_aug, kept_idxs, category_ids = self._sync_boxes_with_masks(
+                masks_aug, bboxes_aug, kept_idxs, category_ids, input_has_mask
+            )
+
         # Update target with transformed boxes and labels
         if len(bboxes_aug) == 0:
             target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
@@ -940,7 +1018,7 @@ class AlbumentationsWrapper:
                 target_out["masks"] = torch.zeros((0, aug_height, aug_width), dtype=torch.bool)
         else:
             target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
-            target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
+            target_out["labels"] = torch.tensor(category_ids, dtype=torch.long)
             target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
             # Recompute area from the transformed box coordinates so it stays consistent with
             # the new image scale (e.g. after resize the original COCO area values are stale).
@@ -949,15 +1027,9 @@ class AlbumentationsWrapper:
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             if keypoints_np is not None:
                 target_out["keypoints"] = self._resolve_keypoint_swap(augmented, kept_idxs, keypoints_np)
+            if masks_list is not None and "masks" in augmented:
+                target_out["masks"] = torch.as_tensor(masks_stack, dtype=torch.bool)
         image_out = Image.fromarray(augmented["image"])
-        if masks_list is not None and "masks" in augmented:
-            height, width = augmented["image"].shape[:2]
-            masks_aug = augmented["masks"]
-            masks_aug = [masks_aug[int(i)] for i in kept_idxs]
-            if len(masks_aug) == 0:
-                target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
-            else:
-                target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
         return image_out, target_out
 
     def __call__(
