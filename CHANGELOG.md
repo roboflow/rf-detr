@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- The `headless` extra (`pip install "rfdetr[headless]"`) installs `opencv-python-headless` for servers, CI, and Docker containers without GUI or display dependencies ([#531](https://github.com/roboflow/rf-detr/issues/531)).
+
 - Public `rfdetr.RFDETRInference` provides shared image prediction from a live `RFDETR` model, native checkpoint or supported full export, with common preprocessing and decoded Supervision detections or keypoints. ([#1563](https://github.com/roboflow/rf-detr/pull/1563))
 
 - Exported artifacts carry versioned inference metadata: embedded in ONNX files and written as `<artifact-name>.rfdetr.json` sidecars for other formats. `RFDETRInference` uses it to validate the artifact interface and recover prediction semantics; sidecars include an artifact digest to detect stale metadata. ([#1563](https://github.com/roboflow/rf-detr/pull/1563))

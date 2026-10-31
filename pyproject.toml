@@ -48,6 +48,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+headless = [
+    "opencv-python-headless>=4.8.1.78",
+]
 stream = [
     "opencv-python-headless>=4.8.1.78",  # Same cv2 distribution albumentations ([augment]) requires; two would both own cv2
     "mss>=9",                         # Desktop capture

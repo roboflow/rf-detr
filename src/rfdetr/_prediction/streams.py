@@ -54,7 +54,8 @@ def _import_cv2(task: str) -> ModuleType:
         import cv2
     except ImportError as error:
         raise ImportError(
-            f'{task} prediction requires OpenCV. Install it with `uv pip install "rfdetr[stream]"`.'
+            f"{task} prediction requires OpenCV. Install it with "
+            '`uv pip install "rfdetr[stream]"` or `pip install "rfdetr[headless]"`.'
         ) from error
     return cv2
 
