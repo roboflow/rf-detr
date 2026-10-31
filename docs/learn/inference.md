@@ -30,13 +30,13 @@ predictor = model.inference(compile=False)
 results = predictor.predict("image.jpg")
 ```
 
-The native factory defaults to inductor compilation on Apple Silicon (MPS) and TorchScript compilation on every other device, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
+The native factory defaults to inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
 
 ### Choose a fast route
 
 `model.inference()` is the fast native route. `RFDETRInference(model)` and a `.pth`, `.pt`, or `.ckpt` path passed to `RFDETRInference` run the eager model, which is slower per image than a compiled predictor. For a checkpoint, load it with `RFDETR.from_checkpoint()` and call `inference()` on the result. On MPS, a checkpoint path passed to `RFDETRInference` takes the same model rewrites as `inference()` (see below); a live model never does.
 
-On Apple Silicon, `inference()` compiles with inductor by default, which can be faster than TorchScript; pass `compile_backend="torchscript"` to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.
+On Apple Silicon, `inference()` compiles with inductor by default when the installed PyTorch has its MPS code generator, which can be faster than TorchScript; pass `compile_backend="torchscript"` to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.
 
 ```python
 from pathlib import Path
