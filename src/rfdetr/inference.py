@@ -76,6 +76,10 @@ class RFDETRInference:
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
 
+        A checkpoint loaded on MPS takes the MPS rewrites of :meth:`RFDETR.inference`: fused deformable sampling and
+        LayerScale folded into the Linear before it. Its predictions match the unmodified model's to float rounding,
+        not bit for bit. A live model is never rewritten.
+
         Args:
             source: A live RFDETR model or a checkpoint or exported artifact path.
             device: Runtime device, as a string or ``torch.device`` (converted with ``str()``), or ``"auto"`` to
@@ -102,7 +106,7 @@ class RFDETRInference:
                 refuses a device or runtime option.
         """
         # Keep RFDETR imports local because detr imports ModelContext from this module.
-        from rfdetr.detr import RFDETR
+        from rfdetr.detr import RFDETR, _rewrite_for_mps_prediction
 
         # Format loaders compare device strings; RFDETR itself also accepts a torch.device.
         device = str(device)
@@ -122,6 +126,10 @@ class RFDETRInference:
             if device != "auto":
                 checkpoint_options["device"] = device
             native_model = RFDETR.from_checkpoint(path, **checkpoint_options)
+            if torch.device(native_model.model.device).type == "mps" and native_model.model.model is not None:
+                # Unlike a borrowed live model, this one belongs to the facade and never trains, so it takes the same
+                # MPS rewrites as an `inference()` snapshot.
+                _rewrite_for_mps_prediction(native_model.model.model, fold_layer_scales=True)
             self._set_native_model(native_model, "auto", None, None)
             return
 

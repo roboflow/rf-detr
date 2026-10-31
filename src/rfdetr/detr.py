@@ -58,6 +58,7 @@ from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_proc
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import is_installed
 from rfdetr.utilities.tensors import _native_grid_sample
 
 if TYPE_CHECKING:
@@ -258,6 +259,52 @@ _MODULE_MOVE_LOCKS: WeakKeyDictionary[Any, threading.Lock] = WeakKeyDictionary()
 #: Source and streaming options that only :meth:`RFDETRInference.predict` takes; ``RFDETR.predict`` refuses them
 #: instead of silently ignoring them as other unknown keyword arguments.
 _SOURCE_PREDICT_OPTIONS = frozenset({"stream", "batch", "vid_stride", "stream_buffer"})
+
+
+def _rewrite_for_mps_prediction(model: torch.nn.Module, *, fold_layer_scales: bool) -> None:
+    """Prepare a prediction-only model for MPS: fused deformable sampling and, optionally, folded LayerScale.
+
+    Only for a model this code owns and never trains again. The training sampler gathers bilinear samples by hand
+    because MPS has no ``F.grid_sample`` backward; a model that only predicts can take the fused kernel instead.
+    Folding LayerScale into the Linear before it drops two multiplies per backbone block. Inductor fuses those
+    already and measured no gain from folding, so its callers pass ``fold_layer_scales=False``.
+
+    Args:
+        model: The prediction model to rewrite in place.
+        fold_layer_scales: Fold each DINOv2 LayerScale into the Linear layer before it.
+
+    Examples:
+        Skipped when run as a doctest: requires model weights.
+
+        >>> from rfdetr import RFDETRNano  # doctest: +SKIP
+        >>> _rewrite_for_mps_prediction(RFDETRNano().model.model, fold_layer_scales=True)  # doctest: +SKIP
+    """
+    for module in model.modules():
+        if isinstance(module, MSDeformAttn):
+            module.grid_sample = _native_grid_sample
+    if fold_layer_scales:
+        _fold_layer_scales(model)
+
+
+def _default_compile_backend(device: torch.device) -> Literal["torchscript", "inductor"]:
+    """Pick the compile backend :meth:`RFDETR.inference` uses when the caller names none.
+
+    Inductor on MPS, when the installed PyTorch has an MPS code generator for it; TorchScript everywhere else. On the
+    CPU, inductor compiled for about 18 s and ran slower than TorchScript.
+
+    Args:
+        device: The device the snapshot runs on.
+
+    Returns:
+        The backend name.
+
+    Examples:
+        >>> _default_compile_backend(torch.device("cpu"))
+        'torchscript'
+    """
+    if device.type == "mps" and is_installed("torch._inductor.codegen.mps"):
+        return "inductor"
+    return "torchscript"
 
 
 def _device_move_lock(module: Any) -> threading.Lock:
@@ -1680,7 +1727,7 @@ class RFDETR:
         batch_size: int = 1,
         dtype: torch.dtype | str = torch.float32,
         *,
-        compile_backend: Literal["torchscript", "cudagraph", "inductor"] = "torchscript",
+        compile_backend: Literal["torchscript", "cudagraph", "inductor"] | None = None,
     ) -> RFDETRInference:
         """Create an independent, optimized predictor from the current base weights.
 
@@ -1704,11 +1751,13 @@ class RFDETR:
                 export-mode forward, with a fixed resolution and flexible batch size.
             batch_size: Positive batch size for compilation. Ignored when ``compile=False``.
             dtype: Floating-point dtype for the snapshot, as a ``torch.dtype`` or its string name.
-            compile_backend: ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally freezes the trace
-                and captures its fixed-shape CUDA work for replay, cloning graph-owned outputs before returning them.
-                It is CUDA-only and retains a graph-private memory pool. ``"inductor"`` uses
-                ``torch.compile(mode="reduce-overhead")`` and warms up the result before returning. On CUDA, this
-                includes a second call and synchronization for CUDA Graph Trees. Compilation support and setup cost
+            compile_backend: ``None`` picks ``"inductor"`` on MPS, when the installed PyTorch can compile for it, and
+                ``"torchscript"`` everywhere else. ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally
+                freezes the trace and captures its fixed-shape CUDA work for replay, cloning graph-owned outputs before
+                returning them. It is CUDA-only and retains a graph-private memory pool. ``"inductor"`` uses
+                ``torch.compile``, with ``mode="reduce-overhead"`` on CUDA and the default mode elsewhere, and warms up
+                the result before returning. On CUDA, this includes a second call and synchronization for CUDA Graph
+                Trees. Compilation support and setup cost
                 depend on the installed PyTorch version and device. TorchScript freezing does not guarantee
                 bit-identical numerics. Create CUDA graph predictors before serving threads start: capture synchronizes
                 the device and empties process-wide CUDA and pinned-host caches.
@@ -1741,13 +1790,15 @@ class RFDETR:
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
         if not dtype.is_floating_point:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
-        if compile_backend not in ("torchscript", "cudagraph", "inductor"):
+        if compile_backend not in (None, "torchscript", "cudagraph", "inductor"):
             raise ValueError(
-                f"compile_backend must be 'torchscript', 'cudagraph', or 'inductor', got {compile_backend!r}"
+                f"compile_backend must be 'torchscript', 'cudagraph', 'inductor' or None, got {compile_backend!r}"
             )
         if compile and (isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError("batch_size must be a positive integer when compile=True.")
         device = torch.device(self.model.device)
+        if compile_backend is None:
+            compile_backend = _default_compile_backend(device)
         if compile and compile_backend == "cudagraph" and device.type != "cuda":
             raise ValueError("compile_backend='cudagraph' requires a CUDA device.")
         source_model = self.model.model
@@ -1775,15 +1826,10 @@ class RFDETR:
             # widening afterwards would keep products that underflowed in float16.
             inference_model = inference_model.to(dtype=dtype)
             if device.type == "mps":
-                # The snapshot never runs backward, so it can take MPS's fused `F.grid_sample` instead of the gather
-                # path the training sampler keeps for its missing MPS backward. Folding LayerScale into the Linears
-                # before it drops two multiplies per backbone block for TorchScript and eager; inductor fuses them
-                # already, and folding measured no gain there.
-                for module in inference_model.modules():
-                    if isinstance(module, MSDeformAttn):
-                        module.grid_sample = _native_grid_sample
-                if not (compile and compile_backend == "inductor"):
-                    _fold_layer_scales(inference_model)
+                # The snapshot never runs backward.
+                _rewrite_for_mps_prediction(
+                    inference_model, fold_layer_scales=not (compile and compile_backend == "inductor")
+                )
             if compile:
                 dummy_input = torch.randn(
                     batch_size,
@@ -1800,12 +1846,18 @@ class RFDETR:
                         inference_model = torch.jit.freeze(inference_model)
                         inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
                 else:
-                    inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                    # `reduce-overhead` only adds CUDA graph trees; elsewhere it records nothing and warns on compile.
+                    inference_model = torch.compile(
+                        inference_model, mode="reduce-overhead" if device.type == "cuda" else "default"
+                    )
                     with torch.inference_mode():
-                        inference_model(dummy_input)
+                        # `predict()` passes inference tensors, and dynamo guards on that: a warm-up input built
+                        # outside inference mode makes the first prediction compile again.
+                        warmup_input = dummy_input.clone()
+                        inference_model(warmup_input)
                         if device.type == "cuda":
                             # CUDA Graph Trees reserve memory on the first call and record on the second.
-                            inference_model(dummy_input)
+                            inference_model(warmup_input)
                             torch.cuda.synchronize(device)
 
         snapshot.model.inference_model = inference_model

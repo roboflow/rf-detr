@@ -27,6 +27,9 @@ from rfdetr.detr import RFDETR
 
 from ..helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
 
+#: Zero mean and unit std for three channels, what a patched ``_normalization_tensors`` returns.
+_UNIT_NORMALIZATION = (torch.zeros(3, 1, 1), torch.ones(3, 1, 1))
+
 
 class TestPredictImagePinning:
     """``predict()`` should pin CPU-resident image tensors before an accelerator transfer.
@@ -1067,10 +1070,10 @@ class TestPredictPixelRangeValidation:
         """PIL conversion and uint8 NumPy scaling already guarantee values in [0, 1]."""
         model = _DummyRFDETR()
 
-        # ``torchvision.normalize`` has its own unrelated ``std.any()`` guard, so replace it to isolate the image-range
-        # scans exercised by this test.
+        # ``_normalization_tensors`` checks its std with ``Tensor.any()`` whenever its cache is cold, so replace it to
+        # isolate the image-range scans exercised by this test, whatever ran before it.
         with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(image, include_source_image=False)
@@ -1090,7 +1093,7 @@ class TestPredictPixelRangeValidation:
 
         monkeypatch.setattr(requests, "get", fake_get)
         with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict("https://example.com/image.png", include_source_image=False)
@@ -1111,7 +1114,7 @@ class TestPredictPixelRangeValidation:
         model = _DummyRFDETR()
 
         with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(str(img_path), include_source_image=False)
@@ -1131,7 +1134,7 @@ class TestPredictPixelRangeValidation:
         image = PIL.Image.new("RGB", (8, 8), color=(255, 255, 255))
 
         with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(image)

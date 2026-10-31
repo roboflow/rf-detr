@@ -16,6 +16,7 @@ import PIL.Image
 import pytest
 import supervision as sv
 import torch
+from torchvision.transforms.functional import normalize
 
 from rfdetr import RFDETRInference, RFDETRNano, RFDETRSegNano
 from rfdetr._prediction import core
@@ -1167,3 +1168,81 @@ class TestCopyRowsToCpuOnce:
         packed = core._copy_rows_to_cpu_once(boxes, scores, labels)
 
         assert all(torch.equal(got, want.cpu()) for got, want in zip(packed, (boxes, scores, labels)))
+
+
+class TestCopyResultsToCpuOnce:
+    """A batch's detection rows cross to the host in one copy and keep each tensor's own dtype."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16, torch.float64])
+    def test_matches_separate_copies(self, dtype: torch.dtype) -> None:
+        """Values, dtypes and contiguity equal separate ``.cpu()`` copies, for images with and without rows.
+
+        float64 is the case a float32 packing would round: a score just above the threshold would land on it and be
+        dropped by the strict ``>`` filter that follows.
+        """
+        generator = torch.Generator().manual_seed(0)
+        results = [
+            {
+                # Drawn in float64 so the float64 case carries bits that float32 cannot hold.
+                "boxes": (torch.rand(num_rows, 4, generator=generator, dtype=torch.float64) * 640).to(dtype),
+                "scores": torch.rand(num_rows, generator=generator, dtype=torch.float64).to(dtype),
+                # The largest id stays exact: float32 represents every integer up to 2**24.
+                "labels": torch.randint(0, 2**24, (num_rows,), generator=generator),
+            }
+            for num_rows in (3, 0, 5)
+        ]
+
+        copied = core._copy_results_to_cpu_once(results)
+
+        for got, want in zip(copied, results):
+            assert got.keys() == want.keys()
+            for key in want:
+                assert got[key].dtype == want[key].dtype
+                assert torch.equal(got[key], want[key])
+                assert got[key].is_contiguous()
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_results_match_cpu_copies(self) -> None:
+        """Rows produced on MPS come back equal to their own ``.cpu()`` copies."""
+        results = [
+            {
+                "boxes": torch.rand(4, 4, device="mps"),
+                "scores": torch.rand(4, device="mps"),
+                "labels": torch.arange(4, device="mps"),
+            }
+            for _ in range(2)
+        ]
+
+        copied = core._copy_results_to_cpu_once(results)
+
+        assert all(torch.equal(got[key], want[key].cpu()) for got, want in zip(copied, results) for key in want)
+
+
+class TestNormalizationTensors:
+    """The cached mean and std normalize a batch exactly as torchvision's ``normalize`` does."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_matches_torchvision_normalize(self, dtype: torch.dtype) -> None:
+        """Subtracting the cached mean and dividing by the cached std reproduces ``normalize`` bit for bit."""
+        means, stds = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+        batch = torch.rand(2, 3, 8, 8, generator=torch.Generator().manual_seed(0)).to(dtype)
+        mean, std = core._normalization_tensors(means, stds, dtype, torch.device("cpu"))
+
+        assert torch.equal(batch.clone().sub_(mean).div_(std), normalize(batch, list(means), list(stds)))
+
+    def test_builds_on_the_host_under_another_default_device(self) -> None:
+        """The tensors are built and checked on the CPU whatever the process default device is.
+
+        ``torch.set_default_device("mps")`` would otherwise put the float64 tensors of a float64 CPU batch on MPS, which
+        has no float64. The meta device stands in for it on any host; the uncached function is called so a cached entry
+        cannot hide the device the tensors are built on.
+        """
+        with torch.device("meta"):
+            mean, std = core._normalization_tensors.__wrapped__((0.5,), (0.25,), torch.float64, torch.device("cpu"))
+
+        assert (mean.device.type, std.device.type) == ("cpu", "cpu")
+
+    def test_std_that_rounds_to_zero_raises(self) -> None:
+        """A std that underflows to zero in the batch dtype is refused, as ``normalize`` refuses it."""
+        with pytest.raises(ValueError, match="std evaluated to zero after conversion to torch.float16"):
+            core._normalization_tensors((0.5,), (1e-8,), torch.float16, torch.device("cpu"))
