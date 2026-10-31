@@ -22,6 +22,7 @@ from supervision import Detections, KeyPoints
 from rfdetr.detr import RFDETR
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
+from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersLayer
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 
 from .helpers import _DummyModel, _DummyRFDETR
@@ -641,3 +642,25 @@ class TestMpsSnapshotRewrites:
         mps_nano_model.inference(compile_backend="inductor")
 
         assert _snapshot_rewrites(compiled[0]) == (True, False)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_mps_fold_runs_in_the_snapshot_dtype(self, mps_nano_model: RFDETRNano) -> None:
+        """A float16 source widened to a float32 snapshot folds LayerScale in float32.
+
+        A weight and a LayerScale of ``2**-14`` multiply to ``2**-28``, which underflows to zero in float16 but is exact
+        in float32. Folding before the dtype cast would zero the row the snapshot later widens.
+        """
+        source = mps_nano_model.model.model.half()
+        layer = next(module for module in source.modules() if isinstance(module, WindowedDinov2WithRegistersLayer))
+        with torch.no_grad():
+            layer.attention.output.dense.weight[0].fill_(2**-14)
+            layer.layer_scale1.lambda1[0] = 2**-14
+
+        predictor = mps_nano_model.inference(compile=False, dtype=torch.float32)
+
+        snapshot_layer = next(
+            module
+            for module in _snapshot_module(predictor).modules()
+            if isinstance(module, WindowedDinov2WithRegistersLayer)
+        )
+        assert torch.all(snapshot_layer.attention.output.dense.weight[0] == 2**-28)

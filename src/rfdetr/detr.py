@@ -1770,6 +1770,9 @@ class RFDETR:
             inference_model = inference_model.to(device=device)
             inference_model.eval()
             inference_model.export()
+            # Cast before the MPS rewrites so LayerScale folds in the snapshot's dtype: folding a float16 source and
+            # widening afterwards would keep products that underflowed in float16.
+            inference_model = inference_model.to(dtype=dtype)
             if device.type == "mps":
                 # The snapshot never runs backward, so it can take MPS's fused `F.grid_sample` instead of the gather
                 # path the training sampler keeps for its missing MPS backward. Folding LayerScale into the Linears
@@ -1780,7 +1783,6 @@ class RFDETR:
                         module.grid_sample = _native_grid_sample
                 if not (compile and compile_backend == "inductor"):
                     _fold_layer_scales(inference_model)
-            inference_model = inference_model.to(dtype=dtype)
             if compile:
                 dummy_input = torch.randn(
                     batch_size,
