@@ -3067,6 +3067,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>On an accelerator such as CUDA or MPS, <code>RFDETRInference.predict()</code> decodes the next batch of image files on worker threads while the current batch runs, for directories, globs, image files and lists of them predicted in batches; results are unchanged. Cameras, live URLs, screens, videos named directly, manifests and models predicting on the CPU keep reading one batch at a time.</p>
+</li>
+<li>
+<p><code>RFDETRInference.predict()</code> with <code>batch=None</code> now predicts an eager (<code>stream=False</code>) directory or glob, or a list of them, in batches of eight on a model without a fixed batch size; it ran one image per batch before. Batched results can differ from single-image ones by floating-point rounding. Streamed calls, manifests, compiled snapshots and exports keep one image per batch; pass <code>batch=1</code> to keep the previous behaviour.</p>
+</li>
+<li>
+<p>On non-CUDA accelerators such as MPS, prediction copies each image's boxes, scores and labels to the host in one transfer instead of three. On CPU, the box-only <code>PostProcess</code> path given <code>score_threshold</code> returns only the rows above it and sorts only those rows instead of every query/class pair, which cuts post-processing of exported models from about 1.6 ms to 0.1 ms per image; predicted detections are unchanged.</p>
+</li>
+<li>
 <p><code>eval_backend="vernier"</code> (the default) requires <code>vernier&gt;=0.6.0</code>, whose <code>compute()</code> on RF-DETR validation state is 2.6× faster than <code>"ufcoco"</code> for boxes and 5.3× for boxes and masks, with identical metrics.</p>
 </li>
 <li>

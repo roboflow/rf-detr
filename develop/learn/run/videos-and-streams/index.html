@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T13:13:07">
+  <meta property="article:modified_time" content="2026-10-31T08:18:48">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T13:13:07",
+    "dateModified": "2026-10-31T08:18:48",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3333,7 +3333,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Live sources also run with <code>stream=False</code>. This call stores every result in memory and warns after source resolution identifies a live input. This includes live sources inside text and CSV manifests. Recorded YouTube videos are finite and do not trigger this warning. Use <code>stream=True</code> to keep memory use bounded.</p>
 <p>An empty collection of sources is quiet; an empty location is loud. A text or CSV manifest with no entries, and a tensor batch with no frames, return <code>[]</code> with <code>stream=False</code> and yield nothing with <code>stream=True</code>. An empty list or tuple yields nothing with <code>stream=True</code> and raises <code>ValueError</code> with <code>stream=False</code>. A directory or glob without supported files raises <code>FileNotFoundError</code>, and a <code>.streams</code> file without sources raises <code>ValueError</code>, in both modes.</p>
 <h2 id="batching-and-frame-stride">Batching and frame stride<a class="headerlink" href="#batching-and-frame-stride" title="Permanent link">&para;</a></h2>
-<p>Use <code>batch</code> to set the number of finite images or frames per forward pass. The default, <code>batch=None</code>, runs a BCHW tensor or a list of images as one forward pass and predicts other expanded sources one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass. RF-DETR predicts the final partial batch when the source length is not divisible by <code>batch</code>. An inference-compiled model may require the batch size used during compilation.</p>
+<p>Use <code>batch</code> to set the number of finite images or frames per forward pass. The default, <code>batch=None</code>, runs a BCHW tensor or a list of images as one forward pass, predicts a directory or glob in batches of eight when results are collected (<code>stream=False</code>) and the model accepts any batch size, and predicts other expanded or streamed sources one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass. RF-DETR predicts the final partial batch when the source length is not divisible by <code>batch</code>. An inference-compiled model may require the batch size used during compilation.</p>
 <p>Set <code>vid_stride</code> to capture every Nth frame for prediction. It defaults to <code>1</code>. For live sources, the latest-frame policy can still skip frames when prediction is slower than capture.</p>
 <h2 id="live-capture-behavior">Live capture behavior<a class="headerlink" href="#live-capture-behavior" title="Permanent link">&para;</a></h2>
 <p>Pass an integer webcam index, a numeric camera index as text, or an explicit live stream URL as the source. RF-DETR treats RTSP, RTSPS, RTMP, TCP, UDP, and SRT URLs as live streams. When the installed OpenCV cannot open the URL, for example because it lacks support for the protocol, RF-DETR raises <code>ValueError: Could not open the video source.</code> For HTTP URLs, use <code>.m3u8</code>, <code>.mjpg</code>, or <code>.mjpeg</code> to identify a live stream. An extensionless HTTP URL is treated as an image by default. Put an extensionless live HTTP URL in a <code>.streams</code> file.</p>
@@ -3362,7 +3362,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 13:13:07 UTC">2026-10-30 13:13:07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 31, 2026 08:18:48 UTC">2026-10-31 08:18:48</span>
   </span>
 
     
