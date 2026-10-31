@@ -668,6 +668,22 @@ class TestMpsSnapshotRewrites:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
 
+    @_skip_without_mps_inductor
+    def test_mps_default_snapshot_matches_the_source(self, mps_scaled_nano_model: RFDETRNano) -> None:
+        """The default MPS predictor, compiled by inductor, predicts what the source predicts.
+
+        The other parity cases pin TorchScript or replace ``torch.compile``; this one runs the shipped default, so a
+        wrong inductor kernel or a sampler rewrite that breaks under inductor fails here. The LayerScales hold distinct
+        non-unit values, as in the TorchScript case.
+        """
+        image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        expected = mps_scaled_nano_model.predict(image, threshold=0.0)
+
+        actual = mps_scaled_nano_model.inference().predict(image, threshold=0.0)
+
+        np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
+
     @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
     def test_mps_inductor_snapshot_keeps_layer_scales(
         self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
@@ -744,6 +760,19 @@ class TestMpsCheckpointRewrites:
         facade = RFDETRInference(scaled_checkpoint, device="mps")
 
         assert facade._native_model is not None
+        assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    def test_auto_device_checkpoint_on_mps_is_rewritten(self, scaled_checkpoint: Path) -> None:
+        """The default ``device="auto"`` resolves to MPS on Apple Silicon and takes the rewrites there.
+
+        The facade passes no device to ``from_checkpoint`` for ``"auto"``, a separate branch from an explicit
+        ``device="mps"``; this is the call most Mac users make.
+        """
+        facade = RFDETRInference(scaled_checkpoint)
+
+        assert facade._native_model is not None
+        assert torch.device(facade._native_model.model.device).type == "mps"
         assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
 
     @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
