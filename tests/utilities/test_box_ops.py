@@ -16,7 +16,7 @@ from rfdetr.utilities.box_ops import (
     masks_to_boxes,
     pairwise_box_l1_cost,
 )
-from tests._markers import requires_cpu_inductor
+from tests._markers import _cuda_marks, _requires_cpu_inductor, _requires_cuda, _requires_cuda_bf16
 
 
 def _random_xyxy_boxes(n: int, seed: int = 0) -> torch.Tensor:
@@ -494,10 +494,10 @@ class TestPairwiseBoxL1Cost:
     @pytest.mark.parametrize(
         "device",
         [
-            pytest.param("cpu", marks=requires_cpu_inductor),
+            pytest.param("cpu", marks=_requires_cpu_inductor),
             pytest.param(
                 "cuda",
-                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
+                marks=_cuda_marks,
             ),
         ],
     )
@@ -528,7 +528,7 @@ class TestPairwiseBoxL1Cost:
 
         assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before == 1
 
-    @requires_cpu_inductor
+    @_requires_cpu_inductor
     @torch.no_grad()
     def test_torch_compile_graph_count_stays_bounded_across_specialization_traps(
         self, monkeypatch: pytest.MonkeyPatch
@@ -565,7 +565,7 @@ class TestPairwiseBoxL1Cost:
 
         assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before <= 6
 
-    @requires_cpu_inductor
+    @_requires_cpu_inductor
     @torch.no_grad()
     def test_torch_compile_zero_targets_keeps_eager_shape_and_dtype(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A compiled call with zero targets matches the eager zero-fill contract, not just a non-crash.
@@ -588,15 +588,12 @@ class TestPairwiseBoxL1Cost:
     @pytest.mark.parametrize(
         "device",
         [
-            pytest.param("cpu", marks=requires_cpu_inductor),
+            pytest.param("cpu", marks=_requires_cpu_inductor),
             pytest.param(
                 "cuda",
                 marks=[
                     pytest.mark.gpu,
-                    pytest.mark.skipif(
-                        not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(),
-                        reason="CUDA BF16 unavailable",
-                    ),
+                    _requires_cuda_bf16,
                 ],
             ),
         ],
@@ -623,7 +620,7 @@ class TestPairwiseBoxL1Cost:
         assert actual.dtype is torch.float32
         _assert_compiled_matches_eager(actual, expected)
 
-    @requires_cpu_inductor
+    @_requires_cpu_inductor
     @torch.no_grad()
     def test_torch_compile_matches_eager_for_bfloat16_pred_boxes_and_float32_targets_pair(
         self, monkeypatch: pytest.MonkeyPatch
@@ -649,7 +646,7 @@ class TestPairwiseBoxL1Cost:
         assert actual.dtype is torch.float32
         _assert_compiled_matches_eager(actual, expected)
 
-    @requires_cpu_inductor
+    @_requires_cpu_inductor
     @torch.no_grad()
     def test_torch_compile_preserves_coordinate_addition_order_on_near_ties(self) -> None:
         """A reassociated four-term sum rounds differently and would flip a near-tied Hungarian choice.
@@ -678,7 +675,7 @@ class TestPairwiseBoxL1Cost:
         assert torch.equal(compiled_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @_requires_cuda
     def test_matches_cdist_on_cuda_at_matcher_scale(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Equality has to hold on the device and at the shape that motivated the change.
 
@@ -701,7 +698,7 @@ class TestPairwiseBoxL1Cost:
         torch.testing.assert_close(single_shot, torch.cdist(boxes1, boxes2, p=1))
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @_requires_cuda
     def test_matches_cdist_on_cuda_when_chunking_is_required_at_matcher_scale(self) -> None:
         """The chunked branch, not just the single-shot one, has to hold on CUDA at matcher scale.
 

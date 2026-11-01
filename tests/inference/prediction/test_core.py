@@ -27,7 +27,7 @@ from rfdetr.detr import RFDETR
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
-from tests._markers import requires_mps
+from tests._markers import _requires_mps
 
 from ..helpers import _DummyModel, _DummyRFDETR
 
@@ -1093,7 +1093,7 @@ class TestCopyRowsToCpuOnce:
             assert got.is_contiguous()
             assert got.device.type == "cpu"
 
-    @requires_mps
+    @_requires_mps
     def test_mps_rows_match_cpu_rows(self) -> None:
         """Rows produced on MPS match the same rows copied separately."""
         boxes = torch.rand(5, 4, device="mps")
@@ -1136,7 +1136,7 @@ class TestCopyResultsToCpuOnce:
                 assert torch.equal(got[key], want[key])
                 assert got[key].is_contiguous()
 
-    @requires_mps
+    @_requires_mps
     def test_mps_results_match_cpu_copies(self) -> None:
         """Rows produced on MPS come back equal to their own ``.cpu()`` copies."""
         results = [

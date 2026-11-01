@@ -67,8 +67,8 @@ def _coreai_runtime_available() -> bool:
     return int(platform.mac_ver()[0].split(".")[0] or 0) >= 27
 
 
-coreai_only = pytest.mark.skipif(not _IS_COREAI_TORCH_AVAILABLE, reason="coreai-torch not installed")
-coreai_runtime_only = pytest.mark.skipif(
+_requires_coreai_torch = pytest.mark.skipif(not _IS_COREAI_TORCH_AVAILABLE, reason="coreai-torch not installed")
+_requires_coreai_runtime = pytest.mark.skipif(
     not _coreai_runtime_available(), reason="running .aimodel assets needs the Core AI runtime (macOS 27+)"
 )
 
@@ -392,7 +392,7 @@ class TestCheckCoreaiTorchAvailable:
         monkeypatch.setattr("rfdetr.export._coreai.exporter._IS_COREAI_TORCH_AVAILABLE", False)
         assert _check_coreai_torch_available(raise_error=False) is False
 
-    @coreai_only
+    @_requires_coreai_torch
     def test_returns_true_when_installed(self) -> None:
         """An installed ``coreai-torch`` is reported as available."""
         assert _check_coreai_torch_available() is True
@@ -747,8 +747,8 @@ def coreai_export(
     return model, example, Path(aimodel_path), output_names
 
 
-@coreai_only
-@coreai_runtime_only
+@_requires_coreai_torch
+@_requires_coreai_runtime
 @pytest.mark.integration
 @pytest.mark.e2e_coreai
 class TestCoreAIEndToEnd:

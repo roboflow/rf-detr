@@ -38,14 +38,10 @@ from rfdetr.datasets.kornia_transforms import (
     unpack_boxes,
 )
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
-from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED, _IS_KORNIA_INSTALLED
+from tests._markers import _requires_albumentations, _requires_kornia
 
 #: Skip every test in a class that calls into ``kornia_transforms`` directly (optional extra not installed in CPU CI);
 #: classes that only exercise backend-selection logic without importing Kornia stay undecorated and keep running.
-kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed; skip Kornia pipeline tests")
-albumentations_only = pytest.mark.skipif(
-    not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed; skip cross-backend parity tests"
-)
 
 
 def _sharpness_sampler_range(transform: torch.nn.Module) -> tuple[float, float]:
@@ -117,7 +113,7 @@ def _logged_messages(logger_method: Any) -> list[str]:
     ]
 
 
-@kornia_only
+@_requires_kornia
 class TestBuildKorniaPipeline:
     """build_kornia_pipeline returns a valid pipeline for every preset and rejects unknown transform keys."""
 
@@ -176,7 +172,7 @@ class TestBuildKorniaPipeline:
         assert torch.allclose(out[:, 0], out[:, 1], atol=1e-5)
         assert torch.allclose(out[:, 1], out[:, 2], atol=1e-5)
 
-    @albumentations_only
+    @_requires_albumentations
     def test_to_gray_accepted_by_both_backends(self):
         """The same config is readable by the Albumentations backend too (issue #1227).
 
@@ -314,7 +310,7 @@ class TestBuildKorniaPipeline:
             pytest.param("CLAHE", {"clip_limit": 4.0, "tile_grid_size": (8, 8)}, id="clahe"),
         ],
     )
-    @albumentations_only
+    @_requires_albumentations
     def test_pixel_transforms_accepted_by_both_backends(self, name, params):
         """The same config builds on either backend, which is the gap issue #1252 reports."""
         config = {name: params}
@@ -460,7 +456,7 @@ class TestBuildKorniaPipeline:
             pytest.param([1.0, 4.0], id="list-pair"),
         ],
     )
-    @albumentations_only
+    @_requires_albumentations
     def test_clahe_clip_limit_matches_albumentations(
         self, configured: float | tuple[float, float] | list[float]
     ) -> None:
@@ -497,7 +493,7 @@ class TestBuildKorniaPipeline:
         assert "2-element" in str(exc_info.value)
 
 
-@kornia_only
+@_requires_kornia
 class TestCollateBoxes:
     """collate_boxes packs variable-length boxes into [B, N_max, 4] with mask."""
 
@@ -544,7 +540,7 @@ class TestCollateBoxes:
         assert valid[1].tolist() == [True, True, True], f"Image 1 valid mask wrong: {valid[1].tolist()}"
 
 
-@kornia_only
+@_requires_kornia
 class TestUnpackBoxes:
     """unpack_boxes writes augmented boxes back and removes zero-area entries."""
 
@@ -682,7 +678,7 @@ class TestUnpackBoxes:
         assert result_boxes[0, 3].item() <= image_height, f"y2 not clamped to <= {image_height}"
 
 
-@kornia_only
+@_requires_kornia
 class TestRotateFactory:
     """Rotate factory translates limit (scalar or tuple) to K.RandomRotation(degrees=...)."""
 
@@ -750,7 +746,7 @@ class TestGpuPostprocessFlag:
         )
 
 
-@kornia_only
+@_requires_kornia
 class TestGaussianBlurMinKernel:
     """_make_gaussian_blur enforces kernel_size >= 3 regardless of blur_limit."""
 
@@ -771,7 +767,7 @@ class TestGaussianBlurMinKernel:
         assert (int(ks[0]), int(ks[1])) == (3, 3)
 
 
-@kornia_only
+@_requires_kornia
 class TestKorniaPipelineForwardPass:
     """build_kornia_pipeline output passes through without shape/dtype errors."""
 
@@ -852,7 +848,7 @@ class TestCollateMasks:
         assert masks_padded.max() == pytest.approx(0.0), "Targets without masks key must produce all-zero output"
 
 
-@kornia_only
+@_requires_kornia
 class TestBuildKorniaPipelineWithMasks:
     """build_kornia_pipeline(with_masks=True) includes mask in data_keys."""
 
@@ -922,7 +918,7 @@ class TestBuildKorniaPipelineWithMasks:
         )
 
 
-@kornia_only
+@_requires_kornia
 class TestKeypointTargetTransport:
     """Keypoints retain visibility and instance alignment through GPU augmentation."""
 
@@ -1368,7 +1364,7 @@ class TestUnpackBoxesWithMasks:
         assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"
 
 
-@kornia_only
+@_requires_kornia
 class TestGaussNoiseStdRangeWarning:
     """_make_gauss_noise warns when the configured std range is non-degenerate (GPU uses a fixed upper-bound std)."""
 
@@ -1389,7 +1385,7 @@ class TestGaussNoiseStdRangeWarning:
         assert mock_warning.call_count == expected_calls
 
 
-@kornia_only
+@_requires_kornia
 class TestToGrayDroppedParamsWarning:
     """_make_to_gray warns when passed method/num_output_channels, which have no Kornia equivalent."""
 
@@ -1472,7 +1468,7 @@ class TestResolveBackendForBuild:
         assert "rfdetr[augment]" in str(exc_info.value)
 
 
-@kornia_only
+@_requires_kornia
 class TestPerspectiveFactory:
     """`Perspective` on the Kornia backend (issue #1252).
 
@@ -1538,12 +1534,12 @@ class TestPerspectiveFactory:
         assert "Unknown augmentation key" in str(exc_info.value)
 
 
-@kornia_only
+@_requires_kornia
 class TestGaussianDefaultsMatchAlbumentations:
     """Unspecified Gaussian defaults must align to Albumentations bounds while documenting known sampling
     differences."""
 
-    @albumentations_only
+    @_requires_albumentations
     def test_blur_sigma_default_matches_albumentations(self):
         """An unspecified sigma must equal albumentations' GaussianBlur sigma_limit default."""
         import albumentations
@@ -1571,7 +1567,7 @@ class TestGaussianDefaultsMatchAlbumentations:
 
         assert tuple(float(value) for value in transform._param_generator.sigma) == pytest.approx((1.25, 1.5))
 
-    @albumentations_only
+    @_requires_albumentations
     def test_noise_std_default_matches_albumentations(self) -> None:
         """An unspecified std_range must equal albumentations' GaussNoise std_range default."""
         import albumentations
@@ -1623,7 +1619,7 @@ def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
     return resolved
 
 
-@kornia_only
+@_requires_kornia
 class TestAffinePixelTranslation:
     """Pixel translation must move image and training targets together."""
 
@@ -1751,7 +1747,7 @@ class TestAffinePixelTranslation:
             pytest.param(0, 0, id="constant-nearest"),
         ],
     )
-    @albumentations_only
+    @_requires_albumentations
     def test_fixed_translation_matches_albumentations_geometry(self, border_mode: int, interpolation: int) -> None:
         """Image, box, and mask geometry matches the CPU backend on a non-square input."""
         import albumentations
@@ -1975,7 +1971,7 @@ def _translated_batch(images: torch.Tensor, border_mode: int, offsets: list[tupl
     return transform, params, matrix
 
 
-@kornia_only
+@_requires_kornia
 class TestAffinePixelTranslationBatchAlignment:
     """Every image, box, and mask in a batch must move by its own sampled offset, matching a NumPy oracle.
 
@@ -2052,7 +2048,7 @@ class TestAffinePixelTranslationBatchAlignment:
             pytest.param((-2, 2), id="mixed-signs"),
         ],
     )
-    @albumentations_only
+    @_requires_albumentations
     def test_in_frame_translation_matches_albumentations(self, offset: tuple[int, int], border_mode: int) -> None:
         """Image, box, and mask geometry matches the CPU backend for in-frame shifts on both axes.
 
@@ -2094,7 +2090,7 @@ class TestAffinePixelTranslationBatchAlignment:
         torch.testing.assert_close(masks_out, cpu_masks, rtol=0, atol=0)
 
 
-@kornia_only
+@_requires_kornia
 class TestAffineScalarParameters:
     """Scalar ``Affine`` ranges must not lose an axis or fail in the Kornia backend."""
 
@@ -2118,7 +2114,7 @@ class TestAffineScalarParameters:
         assert min(horizontal) < 0 < max(horizontal), horizontal
         assert min(vertical) < 0 < max(vertical), vertical
 
-    @albumentations_only
+    @_requires_albumentations
     def test_scalar_translate_percent_warns_about_the_cpu_distribution(self, mocker) -> None:
         """A fixed positive CPU scalar must not silently become signed GPU sampling."""
         import albumentations
@@ -2193,7 +2189,7 @@ class TestAffineScalarParameters:
             _make_affine({parameter: value, "p": 1.0})
 
 
-@kornia_only
+@_requires_kornia
 class TestShiftScaleRotateFactory:
     """`ShiftScaleRotate` on the Kornia backend (issue #1252).
 
@@ -2276,7 +2272,7 @@ class TestShiftScaleRotateFactory:
         assert not warn.called, _logged_messages(warn)
 
 
-@kornia_only
+@_requires_kornia
 class TestResolutionPreservingGeometry:
     """Perspective and ShiftScaleRotate keep the output resolution and move boxes with the image (issue #1252)."""
 

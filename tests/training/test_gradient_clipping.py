@@ -35,7 +35,7 @@ from pytorch_lightning.plugins.precision import MixedPrecision
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
-from tests._markers import requires_torch_xla
+from tests._markers import _requires_torch_xla
 
 from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
@@ -167,6 +167,12 @@ def _fit(
     return module
 
 
+#: Skip a test node that needs ``torch.amp.GradScaler(device, ...)`` (torch 2.3+).
+_requires_device_grad_scaler = pytest.mark.skipif(
+    not _HAS_DEVICE_AGNOSTIC_GRAD_SCALER, reason="torch.amp.GradScaler(device, ...) needs torch>=2.3"
+)
+
+
 class TestClipBeforeOptimizerStep:
     """The optimizer must consume the true gradient clipped to ``clip_max_norm``, whatever the precision plugin."""
 
@@ -179,9 +185,7 @@ class TestClipBeforeOptimizerStep:
             "fp32",
             pytest.param(
                 "fp16-mixed-gradscaler",
-                marks=pytest.mark.skipif(
-                    not _HAS_DEVICE_AGNOSTIC_GRAD_SCALER, reason="torch.amp.GradScaler(device, ...) needs torch>=2.3"
-                ),
+                marks=_requires_device_grad_scaler,
             ),
             "bf16-mixed",
         ],
@@ -284,7 +288,7 @@ class _OverflowCriterion(_KeypointCriterion):
         return {key: value * float("inf") for key, value in super().__call__(outputs, targets, num_boxes).items()}
 
 
-@pytest.mark.skipif(not _HAS_DEVICE_AGNOSTIC_GRAD_SCALER, reason="torch.amp.GradScaler(device, ...) needs torch>=2.3")
+@_requires_device_grad_scaler
 def test_overflowing_loss_skips_optimizer_step_and_backs_off_scale(tmp_path: Path, mocker: MockerFixture) -> None:
     """An overflowing (non-finite) loss makes the ``GradScaler`` skip the update, back off its scale, and keep
     parameters finite.
@@ -331,7 +335,7 @@ def test_zero_clip_max_norm_disables_clipping_on_manual_path(tmp_path: Path, moc
 
 
 @pytest.mark.xla
-@requires_torch_xla
+@_requires_torch_xla
 def test_xla_reduces_gradients_before_manual_clipping(tmp_path: Path, mocker: MockerFixture) -> None:
     """The XLA precision closure must reduce a local gradient before RF-DETR clips it.
 

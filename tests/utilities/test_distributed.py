@@ -14,7 +14,7 @@ import torch
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from rfdetr.utilities.distributed import _is_launcher_main_process, all_gather
-from tests._markers import requires_torch_xla
+from tests._markers import _requires_torch_xla
 
 _RANK_ENV_VARS = (
     "RANK",
@@ -232,7 +232,7 @@ def _xla_all_gather_worker(_local_index: int) -> None:
     assert {item["rank"] for item in result} == set(range(world_size))
 
 
-@requires_torch_xla
+@_requires_torch_xla
 @pytest.mark.xla
 def test_all_gather_multiprocess_xla_collective_routing() -> None:
     """all_gather(device=<xla device>) round-trips per-rank data through ProcessGroupXla under real multiprocess XLA.

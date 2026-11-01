@@ -30,12 +30,16 @@ import torch.nn.functional as F  # noqa: N812
 from rfdetr import RFDETRSegNano
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 
+#: Skip a test node that needs ``coremltools``.
+_requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools")
+
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.e2e_coreml,
-    pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools"),
+    _requires_coremltools,
 ]
-coreml_runtime_only = pytest.mark.skipif(sys.platform != "darwin", reason="needs the macOS Core ML runtime")
+_requires_macos = pytest.mark.skipif(sys.platform != "darwin", reason="needs the macOS Core ML runtime")
 
 # Core ML runs smaller resizes on the CPU, where the Neural Engine's offset never shows.
 _UPSAMPLE_INPUT_SHAPE = (1, 256, 36, 36)
@@ -187,7 +191,7 @@ def test_upsample_becomes_matmuls_with_constant_right_operands(precision: str) -
     assert matmul_operands_are_constant == [(False, True), (False, True)]
 
 
-@coreml_runtime_only
+@_requires_macos
 def test_rewritten_upsample_matmuls_prefer_neural_engine() -> None:
     """Under ``CPU_AND_NE`` both matmuls of the rewritten fp16 upsample prefer the Neural Engine.
 
@@ -205,7 +209,7 @@ def test_rewritten_upsample_matmuls_prefer_neural_engine() -> None:
     assert all("NeuralEngine" in device for device in matmul_devices)
 
 
-@coreml_runtime_only
+@_requires_macos
 @_INPUT_SHAPES
 @pytest.mark.parametrize("align_corners", [False, True])
 @_PRECISIONS
@@ -222,7 +226,7 @@ def test_rewritten_upsample_predicts_like_torch(
     _assert_predicts_like_torch(model, input_shape, align_corners)
 
 
-@coreml_runtime_only
+@_requires_macos
 @_INPUT_SHAPES
 @pytest.mark.parametrize("align_corners", [False, True])
 def test_rewritten_upsample_predicts_like_torch_on_neural_engine(

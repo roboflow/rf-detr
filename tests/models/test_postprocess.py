@@ -14,9 +14,7 @@ import torch.nn.functional as F  # noqa: N812
 from rfdetr.models import postprocess
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities import box_ops
-from tests._markers import requires_torch_xla
-
-_skip_without_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+from tests._markers import _cuda_marks, _requires_cuda, _requires_torch_xla
 
 
 def _cyclic_mask_case(
@@ -216,7 +214,7 @@ class TestGatherAndScaleBoxes:
         assert torch.equal(boxes[0, 2], expected[1])
 
     @pytest.mark.gpu
-    @_skip_without_cuda
+    @_requires_cuda
     def test_cuda_matches_cpu_for_duplicated_indices(self, duplicate_query_boxes):
         """Box selection is an arithmetic-free row copy, so CUDA must reproduce the CPU result bit-for-bit even with
         duplicated and out-of-order indices."""
@@ -288,7 +286,7 @@ class TestPostProcessMasks:
         expected = torch.tensor([[True, False], [False, True]])
         assert torch.equal(results[0]["masks"].squeeze(1)[0], expected)
 
-    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=[pytest.mark.gpu, _skip_without_cuda])])
+    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=_cuda_marks)])
     @pytest.mark.parametrize(
         ("batch", "upsample", "expected_calls"),
         [
@@ -414,7 +412,7 @@ class TestPostProcessMasks:
         [
             pytest.param("cpu", 48),
             # Five chunks reach the preallocated CUDA branch; low-K CUDA selections keep the list/concat path.
-            pytest.param("cuda", 160, marks=[pytest.mark.gpu, _skip_without_cuda]),
+            pytest.param("cuda", 160, marks=_cuda_marks),
         ],
     )
     def test_upsample_writes_chunks_into_preallocated_result_without_final_cat(
@@ -466,7 +464,7 @@ class TestPostProcessMasks:
         PostProcess._postprocess_masks(*args, upsample_masks_to_image_size=True)
 
     @pytest.mark.gpu
-    @_skip_without_cuda
+    @_requires_cuda
     def test_upsample_on_cuda_uses_legacy_path_for_low_k_memory_regression(self, mocker):
         """Low-K CUDA selections retain the lower-peak list/concat strategy."""
         args = _cyclic_mask_case(4, 100, device="cuda")  # four chunks cover shipped SegNano/SegSmall defaults
@@ -478,7 +476,7 @@ class TestPostProcessMasks:
         assert result.shape == (100, 1, 64, 64)
 
     @pytest.mark.xla
-    @requires_torch_xla
+    @_requires_torch_xla
     def test_upsample_on_xla_uses_supported_fallback(self):
         """XLA exercises mask postprocessing without dispatching the unverified ``out=`` overload."""
         import torch_xla
