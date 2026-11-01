@@ -62,6 +62,7 @@ class TestPredictImagePinning:
         real_to = torch.Tensor.to
         real_tensor = torch.tensor
         pinned_inputs: list[torch.Tensor] = []
+        constructed_tensors: list[torch.Tensor] = []
         cuda_transfer_sources: list[torch.Tensor] = []
         model_inputs: list[torch.Tensor] = []
 
@@ -72,6 +73,8 @@ class TestPredictImagePinning:
                 This test-local closure requires its enclosing tensors.
                 >>> pin_spy(source_tensors[0])  # doctest: +SKIP
             """
+            if any(self is constructed for constructed in constructed_tensors):
+                return self
             source_index = next(
                 (index for index, source_tensor in enumerate(source_tensors) if self is source_tensor),
                 None,
@@ -87,6 +90,8 @@ class TestPredictImagePinning:
                 This test-local closure requires its enclosing tensors.
                 >>> to_spy(pinned_tensors[0], torch.device("cuda"), non_blocking=True)  # doctest: +SKIP
             """
+            if any(self is constructed for constructed in constructed_tensors):
+                return self
             if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
                 cuda_transfer_sources.append(self)
                 transfer_index = next(
@@ -100,7 +105,7 @@ class TestPredictImagePinning:
             return real_to(self, *args, **kwargs)
 
         def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
-            """Redirect CUDA target-size construction to CPU for the simulated transfer.
+            """Redirect CUDA target-size construction to CPU and remember it, so the image spies let it through.
 
             Examples:
                 This test-local closure requires the captured real tensor constructor.
@@ -109,7 +114,9 @@ class TestPredictImagePinning:
             device = kwargs.get("device")
             if isinstance(device, torch.device) and device.type == "cuda":
                 kwargs["device"] = torch.device("cpu")
-            return real_tensor(data, **kwargs)
+            constructed = real_tensor(data, **kwargs)
+            constructed_tensors.append(constructed)
+            return constructed
 
         model_module = model.model.model
         assert model_module is not None
@@ -152,6 +159,47 @@ class TestPredictImagePinning:
         torch.cuda.synchronize()
 
         assert torch.equal(plain, pinned)
+
+    def test_target_sizes_reach_cuda_from_pinned_memory_non_blocking(self, mocker: MockerFixture) -> None:
+        """The source sizes cross to CUDA from a pinned buffer without waiting, as the images do.
+
+        A pageable copy would make the host wait for the transfer before the forward pass is queued. CUDA allocation is
+        intercepted so this runs in CPU-only CI.
+        """
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda", 0)
+        real_to = torch.Tensor.to
+        real_tensor = torch.tensor
+        pinned_sizes: list[list[list[int]]] = []
+        size_transfers: list[tuple[list[list[int]], object]] = []
+
+        def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
+            """Build tensors meant for CUDA on the CPU instead."""
+            if isinstance(kwargs.get("device"), torch.device) and kwargs["device"].type == "cuda":
+                kwargs["device"] = torch.device("cpu")
+            return real_tensor(data, **kwargs)
+
+        def pin_spy(self: torch.Tensor) -> torch.Tensor:
+            """Record pinning the integer sizes tensor and return it unchanged."""
+            if self.dtype == torch.int64:
+                pinned_sizes.append(self.tolist())
+            return self
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record CUDA transfers of the integer sizes tensor and keep every CUDA-bound tensor on the CPU."""
+            if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
+                if self.dtype == torch.int64:
+                    size_transfers.append((self.tolist(), kwargs.get("non_blocking")))
+                return self
+            return real_to(self, *args, **kwargs)
+
+        mocker.patch.object(torch, "tensor", tensor_spy)
+        mocker.patch.object(torch.Tensor, "pin_memory", pin_spy)
+        mocker.patch.object(torch.Tensor, "to", to_spy)
+        model.predict(np.full((17, 29, 3), 127, dtype=np.uint8))
+
+        assert pinned_sizes == [[[17, 29]]]
+        assert size_transfers == [([[17, 29]], True)]
 
     @pytest.mark.gpu
     def test_already_cuda_tensor_input_is_not_pinned(self, mocker: MockerFixture) -> None:
@@ -797,6 +845,7 @@ class TestPredictUint8Conversion:
         real_tensor = torch.tensor
         real_converter = core._uint8_image_to_chw_view
         chw_views: list[torch.Tensor] = []
+        constructed_tensors: list[torch.Tensor] = []
         pinned_sources: list[torch.Tensor] = []
         pinned_tensors: list[torch.Tensor] = []
         transfer_sources: list[torch.Tensor] = []
@@ -821,6 +870,8 @@ class TestPredictUint8Conversion:
                 This test-local closure requires its enclosing capture list.
                 >>> pin_memory_spy(torch.zeros(3))  # doctest: +SKIP
             """
+            if any(self is constructed for constructed in constructed_tensors):
+                return self
             pinned_sources.append(self)
             pinned_tensor = self.clone()
             pinned_tensors.append(pinned_tensor)
@@ -833,6 +884,8 @@ class TestPredictUint8Conversion:
                 This test-local closure requires its enclosing capture list.
                 >>> to_spy(torch.zeros(3), torch.device("cuda"))  # doctest: +SKIP
             """
+            if any(self is constructed for constructed in constructed_tensors):
+                return self
             if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
                 transfer_sources.append(self)
                 transfer_non_blocking.append(bool(kwargs.get("non_blocking", False)))
@@ -841,7 +894,7 @@ class TestPredictUint8Conversion:
             return real_to(self, *args, **kwargs)
 
         def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
-            """Redirect CUDA target-size construction to CPU for the simulated transfer.
+            """Redirect CUDA target-size construction to CPU and remember it, so the image spies let it through.
 
             Examples:
                 This test-local closure requires the captured real tensor constructor.
@@ -850,7 +903,9 @@ class TestPredictUint8Conversion:
             device = kwargs.get("device")
             if isinstance(device, torch.device) and device.type == "cuda":
                 kwargs["device"] = torch.device("cpu")
-            return real_tensor(data, **kwargs)
+            constructed = real_tensor(data, **kwargs)
+            constructed_tensors.append(constructed)
+            return constructed
 
         mocker.patch("rfdetr._prediction.core._uint8_image_to_chw_view", converter_spy)
         mocker.patch.object(torch.Tensor, "pin_memory", pin_memory_spy)

@@ -10,9 +10,11 @@ import io
 import tempfile
 import threading
 import warnings
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -26,7 +28,7 @@ from pytest_mock import MockerFixture
 from rfdetr._prediction import core
 from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
-from tests._markers import requires_mps
+from tests._markers import requires_cuda, requires_mps
 
 from ..helpers import _DummyRFDETR, _requires_opencv
 
@@ -715,6 +717,27 @@ class TestDecodeAhead:
             with pytest.raises(FileNotFoundError, match="gone"):
                 next(batches)
 
+    def test_single_image_batches_keep_every_decode_worker_busy(self) -> None:
+        """At batch size one, the first batch reaches the caller with one decode per worker already read behind it.
+
+        Reading one batch ahead left all but one decode worker idle while the model ran a single image.
+        """
+        array = np.zeros((4, 4, 3), dtype=np.uint8)
+        pulls: list[int] = []
+        with ThreadPoolExecutor(1) as pool:
+            batches = core._decode_ahead(self._recording_batches([[array]] * 8, pulls), pool)
+            next(batches)
+            assert len(pulls) == 1 + core._DECODE_WORKERS
+
+    def test_source_error_is_raised_after_every_batch_read_before_it(self) -> None:
+        """A source failing while several batches are read ahead still hands over each of them before raising."""
+        array = np.zeros((4, 4, 3), dtype=np.uint8)
+        with ThreadPoolExecutor(1) as pool:
+            batches = core._decode_ahead(self._recording_batches([[array]] * 3, [], FileNotFoundError("gone")), pool)
+            assert len([next(batches), next(batches), next(batches)]) == 3
+            with pytest.raises(FileNotFoundError, match="gone"):
+                next(batches)
+
     @staticmethod
     def _decode_threads(
         mocker: MockerFixture, root: Path, device: str, backend: str = "pytorch"
@@ -805,6 +828,147 @@ class TestDecodeAhead:
         monkeypatch.chdir(tmp_path)
 
         assert has_only_finite_images(source) is expected
+
+
+class TestPreparedAhead:
+    """On CUDA, a finite source builds each batch's model input while the batch before it runs."""
+
+    @staticmethod
+    def _recording_prepare(events: list[str], failing: str | None = None) -> Callable[[list[str]], SimpleNamespace]:
+        """Return a ``prepare`` stand-in recording each batch it builds, whose ``run`` records the forward pass.
+
+        Each batch holds one label, which stands in for the batch tensor; the label ``failing`` raises ``ValueError``.
+
+        Examples:
+            >>> events = []
+            >>> prepared = TestPreparedAhead._recording_prepare(events)(["a"])
+            >>> prepared.context.run(prepared.batch_tensor), events
+            ({}, ['prepare a', 'run a'])
+        """
+
+        def run(batch: str) -> dict[str, torch.Tensor]:
+            """Record the forward pass of ``batch``."""
+            events.append(f"run {batch}")
+            return {}
+
+        def prepare(images: list[str]) -> SimpleNamespace:
+            """Record building ``images``, raising for the ``failing`` label."""
+            (label,) = images
+            events.append(f"prepare {label}")
+            if label == failing:
+                raise ValueError(f"bad image {label}")
+            return SimpleNamespace(context=SimpleNamespace(run=run), batch_tensor=label)
+
+        return prepare
+
+    def test_native_model_prepares_next_batch_between_forward_and_decode(self, mocker: MockerFixture) -> None:
+        """A native forward pass is queued, the next batch is prepared, and only then do the results wait for it.
+
+        Post-processing is the first step that waits for the device, so preparing the next batch before it keeps the
+        host busy while the device runs the forward pass.
+        """
+        events: list[str] = []
+        mocker.patch.object(
+            core,
+            "_decode_batch",
+            side_effect=lambda prepared, _: events.append(f"decode {prepared.batch_tensor}") or [prepared.batch_tensor],
+        )
+        results = core._predict_prepared_ahead(
+            iter([["a"], ["b"]]), self._recording_prepare(events), torch.device("cuda"), in_worker=False
+        )
+
+        assert list(results) == ["a", "b"]
+        assert events == ["prepare a", "run a", "prepare b", "decode a", "run b", "decode b"]
+
+    def test_error_preparing_next_batch_is_raised_after_current_results(self, mocker: MockerFixture) -> None:
+        """An invalid image in the next batch still lets the current batch's results reach the caller first.
+
+        The serial loop raised it when it reached that batch, after yielding every result before it.
+        """
+        mocker.patch.object(core, "_decode_batch", side_effect=lambda prepared, _: [prepared.batch_tensor])
+        results = core._predict_prepared_ahead(
+            iter([["a"], ["b"]]), self._recording_prepare([], failing="b"), torch.device("cuda"), in_worker=False
+        )
+
+        assert next(results) == "a"
+        with pytest.raises(ValueError, match="bad image b"):
+            next(results)
+
+    @pytest.mark.parametrize(
+        "device,backend,expected",
+        [
+            pytest.param("cuda", "pytorch", [False], id="cuda-native"),
+            pytest.param("cuda", "tensorrt", [True], id="cuda-export"),
+            pytest.param("cpu", "pytorch", [], id="cpu-native"),
+            pytest.param("cpu", "onnxruntime", [], id="cpu-export"),
+            pytest.param("mps", "pytorch", [], id="mps-native"),
+        ],
+    )
+    def test_only_cuda_contexts_prepare_ahead(
+        self, tmp_path: Path, mocker: MockerFixture, device: str, backend: str, expected: list[bool]
+    ) -> None:
+        """Only a CUDA context prepares ahead, on a worker for an exported runtime; every other device runs serially.
+
+        The prediction functions are replaced, so no device is touched: this checks the routing alone.
+        """
+        Image.new("RGB", (8, 6)).save(tmp_path / "a.png")
+        context = dataclasses.replace(
+            _DummyRFDETR()._prediction_context(),
+            device=torch.device(device),
+            runtime_info={"backend": backend, "device": device},
+        )
+        in_worker_flags: list[bool] = []
+
+        def predict_prepared_ahead(*args: Any, in_worker: bool) -> Any:
+            """Record the worker choice and predict nothing."""
+            in_worker_flags.append(in_worker)
+            return iter([])
+
+        mocker.patch.object(core, "_predict_prepared_ahead", side_effect=predict_prepared_ahead)
+        mocker.patch.object(core, "_predict_batch", return_value=[])
+        results = core._predict_stream(
+            lambda: context,
+            str(tmp_path),
+            0.5,
+            None,
+            None,
+            True,
+            antialias=None,
+            batch=1,
+            vid_stride=1,
+            stream_buffer=False,
+            warn_on_live=False,
+        )
+
+        assert list(results) == []
+        assert in_worker_flags == expected
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize("backend", ["pytorch", "tensorrt"])
+    def test_cuda_directory_matches_one_serial_batch(self, tmp_path: Path, mocker: MockerFixture, backend: str) -> None:
+        """Preparing ahead, on this thread or on a worker's stream, returns exactly what one serial batch returns.
+
+        ``tensorrt`` makes the native dummy model report an exported runtime, which routes it to the worker path.
+        """
+        images = TestDefaultEagerBatch._image_dir(tmp_path, 5)
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda")
+        native_context = model._prediction_context
+        mocker.patch.object(
+            model,
+            "_prediction_context",
+            side_effect=lambda: dataclasses.replace(native_context(), runtime_info={"backend": backend}),
+        )
+        predictor = RFDETRInference(model)
+        paths = sorted(str(path) for path in images.iterdir())
+        expected = core._predict_batch(predictor._prediction_context, paths, 0.5, None, None, True, None)
+
+        actual = predictor.predict(images, batch=2)
+
+        assert _source_pixels(actual) == _source_pixels(expected)
+        assert [result.xyxy.tolist() for result in actual] == [result.xyxy.tolist() for result in expected]
+        assert [result.confidence.tolist() for result in actual] == [result.confidence.tolist() for result in expected]
 
 
 class TestDefaultEagerBatch:
