@@ -27,7 +27,6 @@ from rfdetr.export.imports import (
 from tests._markers import _requires_coreai_runtime, _requires_onnx_and_onnxruntime, _requires_openvino
 from tests.export.conftest import _prediction_image, _prediction_model_for_task, assert_prediction_roundtrip
 
-#: Skip an OpenVINO round trip when the package that both converts and runs the model is absent.
 #: Skip an onnx2tf round trip unless some TFLite interpreter can run the converted model.
 _requires_tflite_runtime = pytest.mark.skipif(
     not _IS_ONNX2TF_AVAILABLE

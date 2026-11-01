@@ -14,8 +14,6 @@ import torch
 
 from tests._markers import _requires_kornia
 
-#: Skip tests that construct ``PixelTranslatedAffine``, which subclasses Kornia (optional extra).
-
 
 @_requires_kornia
 class TestPixelTranslatedAffineInverse:

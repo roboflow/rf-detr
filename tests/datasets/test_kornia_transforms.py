@@ -40,9 +40,6 @@ from rfdetr.datasets.kornia_transforms import (
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from tests._markers import _requires_albumentations, _requires_kornia
 
-#: Skip every test in a class that calls into ``kornia_transforms`` directly (optional extra not installed in CPU CI);
-#: classes that only exercise backend-selection logic without importing Kornia stay undecorated and keep running.
-
 
 def _sharpness_sampler_range(transform: torch.nn.Module) -> tuple[float, float]:
     """Read the sampled ``sharpness`` range off a Kornia ``RandomSharpness`` transform.
