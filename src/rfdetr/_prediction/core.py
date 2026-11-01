@@ -514,6 +514,7 @@ def predict(
     batch: int | None = None,
     vid_stride: int = 1,
     stream_buffer: bool = False,
+    prepare_ahead: bool = False,
 ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
 
@@ -539,6 +540,9 @@ def predict(
             other expanded or streamed sources one image or frame at a time. An integer bounds every batch.
         vid_stride: Read every Nth video frame.
         stream_buffer: Queue live frames instead of retaining the latest frame.
+        prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs. That reads the
+            next batch's context before the current batch's results are yielded, so pass it only when nothing changes
+            the model between batches, as for a predictor that owns its model or runtime.
 
     Returns:
         A lazy generator, a scalar image result, or a list of results.
@@ -574,6 +578,7 @@ def predict(
             vid_stride=vid_stride,
             stream_buffer=stream_buffer,
             warn_on_live=not stream,
+            prepare_ahead=prepare_ahead,
         )
         return results if stream else list(results)
     return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)

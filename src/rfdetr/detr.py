@@ -1868,7 +1868,7 @@ class RFDETR:
         snapshot._optimized_resolution = snapshot.model.resolution
         snapshot._optimized_dtype = dtype
         snapshot._optimized_inplace = False
-        return RFDETRInference(snapshot)
+        return RFDETRInference._from_owned_model(snapshot)
 
     def remove_optimized_model(self) -> None:
         """Clear legacy optimization state on this RFDETR instance.

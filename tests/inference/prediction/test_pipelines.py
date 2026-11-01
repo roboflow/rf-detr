@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -263,22 +264,88 @@ class TestPreparedAhead:
         with pytest.raises(ValueError, match="bad image b"):
             next(results)
 
+    def test_error_preparing_a_batch_never_read_is_logged_at_debug_level(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Closing the stream before a batch that failed to prepare logs that error instead of dropping it silently.
+
+        The serial loop would never have prepared that batch, so the error is not raised; a debug record keeps it
+        findable.
+        """
+        # The package logger does not propagate by default, so caplog only sees it once propagation is enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        mocker.patch.object(pipelines, "_decode_batch", side_effect=lambda prepared, _: [prepared.batch_tensor])
+        results = pipelines._predict_prepared_ahead(
+            iter([["a"], ["b"]]), self._recording_prepare([], failing="b"), torch.device("cuda"), in_worker=False
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            next(results)
+            results.close()
+
+        (record,) = caplog.records
+        assert record.levelno == logging.DEBUG
+        assert record.exc_info is not None
+        assert str(record.exc_info[1]) == "bad image b"
+
+    def test_batch_holding_cuda_tensor_is_prepared_on_the_caller_thread(self, mocker: MockerFixture) -> None:
+        """An exported runtime's worker never prepares a batch holding a CUDA tensor; a host-only batch goes to it.
+
+        The worker prepares on a CUDA stream that does not wait for the caller's, so it could read a CUDA input before
+        the kernels writing it finish. The CUDA stream API is replaced, so this checks the routing alone on any host.
+        """
+        mocker.patch.object(torch.cuda, "Stream")
+        mocker.patch.object(torch.cuda, "Event")
+        mocker.patch.object(torch.cuda, "stream")
+        mocker.patch.object(torch.cuda, "current_stream")
+        mocker.patch.object(pipelines, "_decode_batch", side_effect=lambda prepared, _: [prepared.label])
+        cuda_image = mocker.Mock(spec=torch.Tensor, is_cuda=True)
+        caller_thread = threading.current_thread().name
+        prepare_threads: list[str] = []
+
+        def prepare(images: list[Any]) -> SimpleNamespace:
+            """Record the thread preparing ``images`` and return a batch whose tensors accept ``record_stream``."""
+            prepare_threads.append(threading.current_thread().name)
+            label = "cuda" if images[0] is cuda_image else "host"
+            return SimpleNamespace(
+                context=SimpleNamespace(run=lambda batch: {}),
+                batch_tensor=mocker.Mock(),
+                target_sizes=mocker.Mock(),
+                label=label,
+            )
+
+        results = pipelines._predict_prepared_ahead(
+            iter([[cuda_image], ["host.png"]]), prepare, torch.device("cuda"), in_worker=True
+        )
+
+        assert list(results) == ["cuda", "host"]
+        assert prepare_threads[0] == caller_thread
+        assert prepare_threads[1].startswith("rfdetr-prepare")
+
     @pytest.mark.parametrize(
-        "device,backend,expected",
+        "device,backend,prepare_ahead,expected",
         [
-            pytest.param("cuda", "pytorch", [False], id="cuda-native"),
-            pytest.param("cuda", "tensorrt", [True], id="cuda-export"),
-            pytest.param("cpu", "pytorch", [], id="cpu-native"),
-            pytest.param("cpu", "onnxruntime", [], id="cpu-export"),
-            pytest.param("mps", "pytorch", [], id="mps-native"),
+            pytest.param("cuda", "pytorch", True, [False], id="cuda-native"),
+            pytest.param("cuda", "tensorrt", True, [True], id="cuda-export"),
+            pytest.param("cuda", "pytorch", False, [], id="cuda-borrowed"),
+            pytest.param("cpu", "pytorch", True, [], id="cpu-native"),
+            pytest.param("cpu", "onnxruntime", True, [], id="cpu-export"),
+            pytest.param("mps", "pytorch", True, [], id="mps-native"),
         ],
     )
     def test_only_cuda_contexts_prepare_ahead(
-        self, tmp_path: Path, mocker: MockerFixture, device: str, backend: str, expected: list[bool]
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
+        device: str,
+        backend: str,
+        prepare_ahead: bool,
+        expected: list[bool],
     ) -> None:
-        """Only a CUDA context prepares ahead, on a worker for an exported runtime; every other device runs serially.
+        """Only an owned CUDA context prepares ahead, on a worker for an exported runtime; all others run serially.
 
-        The prediction functions are replaced, so no device is touched: this checks the routing alone.
+        A borrowed live model must read its state when each batch starts, so it runs serially on CUDA too. The
+        prediction functions are replaced, so no device is touched: this checks the routing alone.
         """
         Image.new("RGB", (8, 6)).save(tmp_path / "a.png")
         context = dataclasses.replace(
@@ -307,10 +374,94 @@ class TestPreparedAhead:
             vid_stride=1,
             stream_buffer=False,
             warn_on_live=False,
+            prepare_ahead=prepare_ahead,
         )
 
         assert list(results) == []
         assert in_worker_flags == expected
+
+    @pytest.mark.parametrize(
+        "device,backend,prepare_ahead,expected_calls",
+        [
+            pytest.param("cuda", "pytorch", True, 1, id="cuda-native"),
+            pytest.param("cuda", "tensorrt", True, 1, id="cuda-export"),
+            pytest.param("cuda", "pytorch", False, 1, id="cuda-borrowed"),
+            pytest.param("cpu", "onnxruntime", True, 1, id="cpu-export"),
+            pytest.param("cpu", "pytorch", True, 0, id="cpu-native"),
+        ],
+    )
+    def test_source_is_classified_at_most_once(
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
+        device: str,
+        backend: str,
+        prepare_ahead: bool,
+        expected_calls: int,
+    ) -> None:
+        """Deciding to decode or prepare ahead checks the source on disk once, and never for a native CPU model.
+
+        Classifying a source checks every path, directory and glob in it, so checking it for each decision doubled that
+        work on CUDA. A native CPU model reads one batch at a time and needs no check.
+        """
+        Image.new("RGB", (8, 6)).save(tmp_path / "a.png")
+        context = dataclasses.replace(
+            _DummyRFDETR()._prediction_context(),
+            device=torch.device(device),
+            runtime_info={"backend": backend, "device": device},
+        )
+        mocker.patch.object(pipelines, "_predict_prepared_ahead", return_value=iter([]))
+        mocker.patch.object(pipelines, "_predict_batch", return_value=[])
+        classify = mocker.spy(pipelines, "has_only_finite_images")
+        results = pipelines._predict_stream(
+            lambda: context,
+            str(tmp_path),
+            0.5,
+            None,
+            None,
+            True,
+            antialias=None,
+            batch=1,
+            vid_stride=1,
+            stream_buffer=False,
+            warn_on_live=False,
+            prepare_ahead=prepare_ahead,
+        )
+
+        assert list(results) == []
+        assert classify.call_count == expected_calls
+
+    @pytest.mark.parametrize(
+        "build_predictor,expected_prepared_ahead",
+        [
+            pytest.param(RFDETRInference, 0, id="borrowed"),
+            pytest.param(RFDETRInference._from_owned_model, 1, id="owned"),
+        ],
+    )
+    def test_only_an_owned_predictor_prepares_ahead_on_cuda(
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
+        build_predictor: Callable[[_DummyRFDETR], RFDETRInference],
+        expected_prepared_ahead: int,
+    ) -> None:
+        """A borrowed live model runs each CUDA batch serially; a predictor owning its model prepares the next ahead.
+
+        Preparing ahead reads the next batch's model state before the current batch's results reach the caller, who may
+        change a borrowed model in between. The CUDA device is only reported and the prediction functions are replaced,
+        so this checks the routing alone on any host.
+        """
+        Image.new("RGB", (8, 6)).save(tmp_path / "a.png")
+        model = _DummyRFDETR()
+        context = dataclasses.replace(model._prediction_context(), device=torch.device("cuda"))
+        mocker.patch.object(model, "_prediction_context", return_value=context)
+        prepared_ahead = mocker.patch.object(pipelines, "_predict_prepared_ahead", return_value=iter([]))
+        serial = mocker.patch.object(pipelines, "_predict_batch", return_value=[])
+
+        build_predictor(model).predict(tmp_path, batch=1)
+
+        assert prepared_ahead.call_count == expected_prepared_ahead
+        assert serial.call_count == 1 - expected_prepared_ahead
 
     @pytest.mark.gpu
     @_requires_cuda
@@ -318,7 +469,8 @@ class TestPreparedAhead:
     def test_cuda_directory_matches_one_serial_batch(self, tmp_path: Path, mocker: MockerFixture, backend: str) -> None:
         """Preparing ahead, on this thread or on a worker's stream, returns exactly what one serial batch returns.
 
-        ``tensorrt`` makes the native dummy model report an exported runtime, which routes it to the worker path.
+        ``tensorrt`` makes the native dummy model report an exported runtime, which routes it to the worker path. The
+        predictor owns the model, as one loaded from a path does; a borrowed model would not prepare ahead at all.
         """
         images = _image_dir(tmp_path, 5)
         model = _DummyRFDETR()
@@ -329,7 +481,7 @@ class TestPreparedAhead:
             "_prediction_context",
             side_effect=lambda: dataclasses.replace(native_context(), runtime_info={"backend": backend}),
         )
-        predictor = RFDETRInference(model)
+        predictor = RFDETRInference._from_owned_model(model)
         paths = sorted(str(path) for path in images.iterdir())
         expected = core._predict_batch(predictor._prediction_context, paths, 0.5, None, None, True, None)
 
@@ -338,3 +490,37 @@ class TestPreparedAhead:
         assert _source_pixels(actual) == _source_pixels(expected)
         assert [result.xyxy.tolist() for result in actual] == [result.xyxy.tolist() for result in expected]
         assert [result.confidence.tolist() for result in actual] == [result.confidence.tolist() for result in expected]
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    def test_cuda_tensor_still_being_written_matches_one_serial_batch(self, mocker: MockerFixture) -> None:
+        """A CUDA input whose write is still queued on the caller's stream reaches an exported runtime with its values.
+
+        The caller queues a long kernel and then the write, so the input is not written yet when ``predict`` starts. A
+        worker preparing it on its own stream would read it before the write, and its source pixels would differ.
+        ``tensorrt`` makes the native dummy model report an exported runtime, and owning the model lets the predictor
+        prepare ahead, which routes it to the worker path.
+        """
+        model = _DummyRFDETR()
+        model.model.device = torch.device("cuda")
+        native_context = model._prediction_context
+        mocker.patch.object(
+            model,
+            "_prediction_context",
+            side_effect=lambda: dataclasses.replace(native_context(), runtime_info={"backend": "tensorrt"}),
+        )
+        predictor = RFDETRInference._from_owned_model(model)
+        values = torch.linspace(0.1, 0.9, 4, device="cuda").view(4, 1, 1, 1).expand(4, 3, 12, 16).contiguous()
+        images = torch.zeros_like(values)
+        torch.cuda.synchronize()
+        # Keeps the caller's stream busy for a while, so the copy queued behind it has not run when prediction starts.
+        torch.cuda._sleep(1 << 30)
+        images.copy_(values)
+
+        actual = predictor.predict(images, batch=2)
+
+        torch.cuda.synchronize()
+        expected = core._predict_batch(
+            predictor._prediction_context, list(values.unbind(0)), 0.5, None, None, True, None
+        )
+        assert _source_pixels(actual) == _source_pixels(expected)

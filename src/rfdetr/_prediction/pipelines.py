@@ -33,9 +33,12 @@ from rfdetr._prediction.core import (
 )
 from rfdetr._prediction.sources import has_only_finite_images, iter_source_batches
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
+from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
     from rfdetr._prediction.types import _PredictionResult
+
+logger = get_logger()
 
 
 def _predict_stream(
@@ -51,6 +54,7 @@ def _predict_stream(
     vid_stride: int,
     stream_buffer: bool,
     warn_on_live: bool,
+    prepare_ahead: bool,
 ) -> Generator[_PredictionResult, None, None]:
     """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
 
@@ -62,6 +66,11 @@ def _predict_stream(
     ahead for three-channel models on an accelerator: the next batch's image files decode on worker threads while the
     current batch runs, so at most two batches of decoded images are held at once. Live sources, and models whose
     context device is the CPU, keep reading one batch at a time.
+
+    With ``prepare_ahead``, such a source on a CUDA context also builds each batch's model input while the batch before
+    it runs (see :func:`_predict_prepared_ahead`). That reads the next batch's context before the current batch's
+    results are yielded, so it is set only for a model or runtime that nothing changes between batches; a borrowed
+    live model runs each batch through :func:`_predict_batch` once the batch before it is yielded.
 
     Args:
         context_factory: Read current execution rules when a batch starts.
@@ -76,6 +85,8 @@ def _predict_stream(
         stream_buffer: Queue live frames instead of retaining the latest frame.
         warn_on_live: Warn about memory growth from live sources and large finite sources; set for eager callers, whose
             results accumulate.
+        prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs; set only when the
+            predictor owns its model or runtime.
 
     Yields:
         One result per input image or frame, in source order.
@@ -98,11 +109,15 @@ def _predict_stream(
     # slowed the forward pass by more than the overlap saved. Exported runtimes report a CPU context device whatever
     # hardware they run on, and decode ahead: Core ML gained 18% from it and ONNX Runtime on the CPU lost nothing.
     native_on_cpu = context.device.type == "cpu" and context.runtime_info.get("backend") == "pytorch"
-    decode_ahead = num_channels == 3 and not native_on_cpu and has_only_finite_images(images)
+    on_cuda = context.device.type == "cuda"
+    may_run_ahead = (prepare_ahead and on_cuda) or (num_channels == 3 and not native_on_cpu)
+    # Classified once, and only when a batch could run ahead: it checks every path, directory and glob on disk.
+    finite = may_run_ahead and has_only_finite_images(images)
+    decode_ahead = num_channels == 3 and not native_on_cpu and finite
     pool = ThreadPoolExecutor(_DECODE_WORKERS, thread_name_prefix="rfdetr-decode") if decode_ahead else None
     batches = source_batches if pool is None else _decode_ahead(source_batches, pool)
     try:
-        if context.device.type == "cuda" and has_only_finite_images(images):
+        if prepare_ahead and on_cuda and finite:
             prepare = functools.partial(
                 _prepare_batch,
                 context_factory,
@@ -217,10 +232,16 @@ def _predict_prepared_ahead(
     A native model queues its forward pass without waiting for it, so this thread prepares the next batch right after
     queuing the forward pass, before post-processing waits for it. An exported runtime waits for its own execution, so
     a worker thread prepares the next batch on a CUDA stream of its own while it runs; the current stream waits for
-    that stream's event before the input is used. Each batch runs the same operations as :func:`_predict_batch`, so
-    the results are the same. At most one prepared batch waits beside the one running. An error raised while reading
-    or preparing the next batch is raised after the current batch's results are yielded, where the serial loop raised
-    it.
+    that stream's event before the input is used. A batch holding a CUDA tensor is prepared on this thread and the
+    current stream instead: the worker's stream does not wait for the caller's, so it could read the tensor before the
+    kernels writing it finish. Each batch runs the same operations as :func:`_predict_batch`, so the results are the
+    same. At most one prepared batch waits beside the one running. An error raised while reading or preparing the next
+    batch is raised after the current batch's results are yielded, where the serial loop raised it.
+
+    Closing the generator, or an error raised to the caller, waits for a batch the worker is already preparing to
+    finish, which can take as long as reading its images (an image URL allows 30 s per read): returning earlier would
+    leave a thread queuing work on the side stream after prediction ended. An error raised while preparing a batch
+    nobody reads any more is logged at debug level.
 
     Args:
         batches: The source's batches.
@@ -247,17 +268,22 @@ def _predict_prepared_ahead(
             images = next(batches, None)
             if images is None:
                 return None
-            if worker is not None:
+            # Work queued on the caller's stream, such as the kernels producing a CUDA tensor input, is ordered only
+            # before work on that same stream.
+            if worker is not None and not any(isinstance(image, torch.Tensor) and image.is_cuda for image in images):
                 return worker.submit(prepare_on_side_stream, images)
             future.set_result((prepare(images), None))
         except Exception as error:  # raised by `result()` below, after the current batch's results
             future.set_exception(error)
         return future
 
+    pending: Future[tuple[_PreparedBatch, torch.cuda.Event | None]] | None = None
     try:
         pending = start()
         while pending is not None:
-            prepared, ready = pending.result()
+            # Cleared first, so `finally` sees only a batch whose result nobody read.
+            current, pending = pending, None
+            prepared, ready = current.result()
             if ready is not None:
                 stream = torch.cuda.current_stream(device)
                 stream.wait_event(ready)
@@ -273,4 +299,8 @@ def _predict_prepared_ahead(
             yield from cast("list[_PredictionResult]", _decode_batch(prepared, predictions))
     finally:
         if worker is not None:
+            # Waits for a prepare already running, so no thread queues side-stream work after prediction ends.
             worker.shutdown(wait=True, cancel_futures=True)
+        abandoned = pending.exception() if pending is not None and pending.done() and not pending.cancelled() else None
+        if abandoned is not None:
+            logger.debug("Dropped the error from preparing a batch that prediction stopped before.", exc_info=abandoned)
