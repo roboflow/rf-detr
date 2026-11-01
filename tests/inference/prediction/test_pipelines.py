@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -238,11 +239,13 @@ class TestPreparedAhead:
         host busy while the device runs the forward pass.
         """
         events: list[str] = []
-        mocker.patch.object(
-            pipelines,
-            "_decode_batch",
-            side_effect=lambda prepared, _: events.append(f"decode {prepared.batch_tensor}") or [prepared.batch_tensor],
-        )
+
+        def record_decode(prepared: Any, _: object) -> list[Any]:
+            """Record decoding ``prepared`` and return its input as the batch's only result."""
+            events.append(f"decode {prepared.batch_tensor}")
+            return [prepared.batch_tensor]
+
+        mocker.patch.object(pipelines, "_decode_batch", side_effect=record_decode)
         results = pipelines._predict_prepared_ahead(
             iter([["a"], ["b"]]), self._recording_prepare(events), torch.device("cuda"), in_worker=False
         )
@@ -321,6 +324,166 @@ class TestPreparedAhead:
         assert list(results) == ["cuda", "host"]
         assert prepare_threads[0] == caller_thread
         assert prepare_threads[1].startswith("rfdetr-prepare")
+
+    @pytest.fixture
+    def caller_stream(self, mocker: MockerFixture) -> Mock:
+        """Replace the CUDA stream API so the worker path runs on any host, and return the caller's stream."""
+        mocker.patch.object(torch.cuda, "Stream")
+        mocker.patch.object(torch.cuda, "Event")
+        mocker.patch.object(torch.cuda, "stream")
+        mocker.patch.object(pipelines, "_decode_batch", side_effect=lambda prepared, _: [prepared.label])
+        return mocker.patch.object(torch.cuda, "current_stream").return_value
+
+    @staticmethod
+    def _stream_batch(label: str, events: list[str]) -> SimpleNamespace:
+        """Return a prepared batch named ``label`` whose tensors accept ``record_stream`` and whose run is recorded.
+
+        Examples:
+            >>> events = []
+            >>> prepared = TestPreparedAhead._stream_batch("a", events)
+            >>> prepared.context.run(prepared.batch_tensor), events
+            ({}, ['run a'])
+        """
+
+        def run(batch: Any) -> dict[str, torch.Tensor]:
+            """Record the forward pass of the batch named ``label``."""
+            events.append(f"run {label}")
+            return {}
+
+        return SimpleNamespace(context=SimpleNamespace(run=run), batch_tensor=Mock(), target_sizes=Mock(), label=label)
+
+    def test_worker_batch_is_used_only_after_the_caller_stream_waits_for_it(self, caller_stream: Mock) -> None:
+        """The caller's stream waits for the worker stream's event before the forward pass reads the prepared input.
+
+        Both tensors are allocated on the worker's stream, so each is also recorded on the caller's stream: otherwise
+        the allocator could hand their memory back to the worker's stream while the forward pass still reads it.
+        """
+        events: list[str] = []
+        caller_stream.wait_event.side_effect = lambda ready: events.append("wait")
+        prepared = self._stream_batch("a", events)
+        results = pipelines._predict_prepared_ahead(
+            iter([["a"]]), lambda images: prepared, torch.device("cuda"), in_worker=True
+        )
+
+        assert list(results) == ["a"]
+        assert events == ["wait", "run a"]
+        caller_stream.wait_event.assert_called_once_with(torch.cuda.Event.return_value)
+        prepared.batch_tensor.record_stream.assert_called_once_with(caller_stream)
+        prepared.target_sizes.record_stream.assert_called_once_with(caller_stream)
+
+    @pytest.mark.parametrize("in_worker", [False, True])
+    @pytest.mark.parametrize(
+        "batches,expected",
+        [
+            pytest.param([], [], id="empty-source"),
+            pytest.param([["a"]], ["a"], id="single-batch"),
+            pytest.param([["a", "b"], ["c"]], ["a+b", "c"], id="partial-final-batch"),
+        ],
+    )
+    def test_every_batch_is_predicted_once_in_order(
+        self, caller_stream: Mock, in_worker: bool, batches: list[list[str]], expected: list[str]
+    ) -> None:
+        """Preparing ahead yields each batch's results once, in source order, whatever the number and size of batches.
+
+        An empty source must end without preparing anything, and a short last batch must not wait for a batch after it.
+        """
+        results = pipelines._predict_prepared_ahead(
+            iter(batches),
+            lambda images: self._stream_batch("+".join(images), []),
+            torch.device("cuda"),
+            in_worker=in_worker,
+        )
+
+        assert list(results) == expected
+
+    @pytest.mark.parametrize("in_worker", [False, True])
+    @pytest.mark.parametrize(
+        "error", [pytest.param(ValueError, id="value-error"), pytest.param(OSError, id="os-error")]
+    )
+    def test_error_preparing_first_batch_is_raised_before_any_result(
+        self, caller_stream: Mock, in_worker: bool, error: type[Exception]
+    ) -> None:
+        """An unreadable first batch raises its own error, of any type, before a result is yielded.
+
+        The serial loop raised it at the first batch too; a worker must hand the error back, not swallow it.
+        """
+
+        def prepare(images: list[str]) -> SimpleNamespace:
+            """Fail to read every batch."""
+            raise error(f"unreadable {images[0]}")
+
+        results = pipelines._predict_prepared_ahead(
+            iter([["a"], ["b"]]), prepare, torch.device("cuda"), in_worker=in_worker
+        )
+
+        with pytest.raises(error, match="unreadable a"):
+            next(results)
+
+    @pytest.mark.parametrize(
+        "error", [pytest.param(ValueError, id="value-error"), pytest.param(OSError, id="os-error")]
+    )
+    def test_worker_error_preparing_next_batch_is_raised_after_current_results(
+        self, caller_stream: Mock, error: type[Exception]
+    ) -> None:
+        """An error the worker raised for the next batch reaches the caller after the current batch's results.
+
+        The serial loop raised it when it reached that batch, after yielding every result before it.
+        """
+
+        def prepare(images: list[str]) -> SimpleNamespace:
+            """Prepare batch ``a`` and fail to read batch ``b``."""
+            (label,) = images
+            if label == "b":
+                raise error("unreadable b")
+            return self._stream_batch(label, [])
+
+        results = pipelines._predict_prepared_ahead(iter([["a"], ["b"]]), prepare, torch.device("cuda"), in_worker=True)
+
+        assert next(results) == "a"
+        with pytest.raises(error, match="unreadable b"):
+            next(results)
+
+    def test_closing_early_ends_the_worker_thread(self, caller_stream: Mock) -> None:
+        """Closing the results after the first batch stops the worker thread instead of leaving it running.
+
+        The worker is already preparing the second batch then, so closing waits for it and shuts the worker down.
+        """
+        prepare_threads: list[threading.Thread] = []
+
+        def prepare(images: list[str]) -> SimpleNamespace:
+            """Record the preparing thread and return the batch."""
+            prepare_threads.append(threading.current_thread())
+            return self._stream_batch(images[0], [])
+
+        results = pipelines._predict_prepared_ahead(
+            iter([["a"], ["b"], ["c"]]), prepare, torch.device("cuda"), in_worker=True
+        )
+        next(results)
+        results.close()
+
+        assert prepare_threads
+        assert not any(thread.is_alive() for thread in prepare_threads)
+
+    def test_consumer_error_ends_the_worker_thread(self, caller_stream: Mock) -> None:
+        """An error raised into the results by their consumer stops the worker thread and reaches the caller.
+
+        A consumer failing mid-stream is the other way prediction ends early, and must leave no thread behind either.
+        """
+        prepare_threads: list[threading.Thread] = []
+
+        def prepare(images: list[str]) -> SimpleNamespace:
+            """Record the preparing thread and return the batch."""
+            prepare_threads.append(threading.current_thread())
+            return self._stream_batch(images[0], [])
+
+        results = pipelines._predict_prepared_ahead(
+            iter([["a"], ["b"], ["c"]]), prepare, torch.device("cuda"), in_worker=True
+        )
+        next(results)
+
+        with pytest.raises(RuntimeError, match="consumer failed"):
+            results.throw(RuntimeError("consumer failed"))
+        assert not any(thread.is_alive() for thread in prepare_threads)
 
     @pytest.mark.parametrize(
         "device,backend,prepare_ahead,expected",

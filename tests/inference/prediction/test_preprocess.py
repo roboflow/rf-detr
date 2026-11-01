@@ -180,15 +180,15 @@ class TestPredictImagePinning:
             return real_tensor(data, **kwargs)
 
         def pin_spy(self: torch.Tensor) -> torch.Tensor:
-            """Record pinning the integer sizes tensor and return it unchanged."""
-            if self.dtype == torch.int64:
+            """Record pinning the batch's ``(1, 2)`` integer sizes tensor and return it unchanged."""
+            if self.dtype == torch.int64 and self.shape == (1, 2):
                 pinned_sizes.append(self.tolist())
             return self
 
         def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
-            """Record CUDA transfers of the integer sizes tensor and keep every CUDA-bound tensor on the CPU."""
+            """Record CUDA transfers of the batch's sizes tensor and keep every CUDA-bound tensor on the CPU."""
             if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
-                if self.dtype == torch.int64:
+                if self.dtype == torch.int64 and self.shape == (1, 2):
                     size_transfers.append((self.tolist(), kwargs.get("non_blocking")))
                 return self
             return real_to(self, *args, **kwargs)
@@ -203,17 +203,32 @@ class TestPredictImagePinning:
 
     @pytest.mark.gpu
     def test_already_cuda_tensor_input_is_not_pinned(self, mocker: MockerFixture) -> None:
-        """A tensor the caller already placed on the accelerator must never be routed through pin_memory()."""
+        """A tensor the caller already placed on the accelerator must never be routed through pin_memory().
+
+        The batch's source sizes are still built on the CPU and pinned before they cross to CUDA, so the spy records
+        every receiver and pins it for real instead of refusing every call.
+        """
         model = _DummyRFDETR()
         model.model.device = torch.device("cuda", 0)
         tensor = torch.rand(3, 48, 64, device="cuda")
-        pin_spy = mocker.patch.object(
-            torch.Tensor, "pin_memory", side_effect=AssertionError("pin_memory() must not be called on a CUDA tensor")
-        )
+        real_pin = torch.Tensor.pin_memory
+        pinned_on_cuda: list[bool] = []
+
+        def pin_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record whether the tensor being pinned is on CUDA, then pin it as the real method does.
+
+            Examples:
+                This test-local closure requires CUDA and is covered by the enclosing GPU test:
+                >>> pin_spy(torch.zeros(3))  # doctest: +SKIP
+            """
+            pinned_on_cuda.append(self.is_cuda)
+            return real_pin(self, *args, **kwargs)
+
+        mocker.patch.object(torch.Tensor, "pin_memory", pin_spy)
 
         model.predict(tensor)  # must not raise: pin_memory() on a CUDA tensor would itself raise RuntimeError
 
-        pin_spy.assert_not_called()
+        assert not any(pinned_on_cuda)
 
     def test_cpu_target_device_does_not_pin(self, mocker: MockerFixture) -> None:
         """A CPU-only target device gets no benefit from pinning, so it must be skipped entirely."""
