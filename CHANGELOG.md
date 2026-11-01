@@ -64,7 +64,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- On MPS, `RFDETR.inference()` compiles with inductor when `compile_backend` is not given, and when the installed PyTorch has an MPS code generator for it; every other device keeps TorchScript. The first predictor takes longer to build (several seconds, and again for each new input shape); pass `compile_backend="torchscript"` for the previous default.
+- On MPS, `RFDETR.inference()` compiles with inductor when `compile_backend` is not given, and when the installed PyTorch has an MPS code generator for it; CUDA captures a CUDA graph (next entry) and every other device keeps TorchScript. The first predictor takes longer to build (several seconds, and again for each new input shape); pass `compile_backend="torchscript"` for the previous default.
+
+- On CUDA, `RFDETR.inference()` captures a CUDA graph (`compile_backend="cudagraph"`) when `compile_backend` is not given, instead of tracing with TorchScript alone, which removes the per-kernel launch cost of each forward pass. The capture runs when the predictor is built: it synchronizes the device, empties the process-wide CUDA and pinned-host caches and keeps a graph-private memory pool, so build predictors before serving threads start. A failed capture can leave CUDA random-number state unusable until the process restarts. Pass `compile_backend="torchscript"` for the previous default.
+
+- `RFDETRInference.predict()` without `batch` runs a directory or glob in batches of eight, or of the export's `max_batch_size` when that is smaller, on an export with a dynamic batch axis (ONNX, OpenVINO, a dynamic-batch TensorRT engine); it ran one image per batch. Streams and fixed-batch exports keep one image per batch. A TensorRT fp16 engine's outputs can change slightly with the batch size; pass `batch=1` for the previous behavior.
+
+- With ONNX Runtime's CUDA execution provider, `RFDETRInference` preprocesses each batch on the GPU and hands it, and freshly allocated outputs, to ONNX Runtime through IO binding instead of copying both through host memory. It keeps the host path when PyTorch cannot see the GPU or an output has a dynamic axis other than the batch. The CPU provider is unchanged.
 
 - On MPS, `RFDETRInference("weights.pth")` (or a `.pt` or `.ckpt` path) applies the same model rewrites as `RFDETR.inference()` to the model it loads: fused deformable sampling and LayerScale folded into the Linear before it. Predictions match the unmodified checkpoint to float rounding, not bit for bit. A live model passed to `RFDETRInference` is never rewritten.
 
