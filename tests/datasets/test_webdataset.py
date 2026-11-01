@@ -55,13 +55,15 @@ from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PYTORCH_LIGHT
 from rfdetr.utilities.tensors import make_collate_fn
 from tests.datasets._memory import peak_traced_bytes
 
-webdataset_only = pytest.mark.skipif(
+_requires_webdataset = pytest.mark.skipif(
     not _IS_WEBDATASET_INSTALLED, reason="webdataset not installed; skip streaming tests (optional `data` extra)"
 )
-pytorch_lightning_only = pytest.mark.skipif(
+_requires_pytorch_lightning = pytest.mark.skipif(
     not _IS_PYTORCH_LIGHTNING_INSTALLED, reason="pytorch_lightning not installed; skip DataModule tests"
 )
-matplotlib_only = pytest.mark.skipif(not _IS_MATPLOTLIB_INSTALLED, reason="matplotlib not installed; skip sample grid")
+_requires_matplotlib = pytest.mark.skipif(
+    not _IS_MATPLOTLIB_INSTALLED, reason="matplotlib not installed; skip sample grid"
+)
 
 _CATEGORIES = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
 
@@ -697,7 +699,7 @@ def _pack(tmp_path: Path, **kwargs: Any) -> Path:
     return shard_dir
 
 
-@webdataset_only
+@_requires_webdataset
 class TestWebDatasetDetection:
     """Streaming a packed split reproduces the loose-file dataset it was packed from."""
 
@@ -966,7 +968,7 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
             tar.addfile(member, BytesIO(payload))
 
 
-@webdataset_only
+@_requires_webdataset
 class TestStreamingShuffle:
     """Shard-order shuffling has to stay a partition within an epoch and change between epochs."""
 
@@ -1119,7 +1121,7 @@ class TestPlanSamplesPerWorker:
         assert "cannot fill one accumulation window" in str(exc_info.value)
 
 
-@webdataset_only
+@_requires_webdataset
 class TestBuildWebdatasetLoader:
     """Training plans a fixed epoch; evaluation passes over every sample exactly once."""
 
@@ -1446,7 +1448,7 @@ def _id_collate(batch: list[tuple[Any, Any]]) -> list[int]:
     return [int(target["image_id"]) for _, target in batch]
 
 
-@webdataset_only
+@_requires_webdataset
 class TestBuildWebdataset:
     """The dataset builder mirrors the loose-file builders' conventions."""
 
@@ -1642,8 +1644,8 @@ def _setup_datamodule(tmp_path: Path, split_counts: dict[str, int], stage: str =
     return module
 
 
-@webdataset_only
-@pytorch_lightning_only
+@_requires_webdataset
+@_requires_pytorch_lightning
 class TestDataModuleStreaming:
     """The DataModule routes a streaming split away from the sampler-based loaders."""
 
@@ -1709,7 +1711,7 @@ class TestDataModuleStreaming:
         """The data module reports the class names recorded in the shard index."""
         assert datamodule.class_names == ["cat", "dog"]
 
-    @matplotlib_only
+    @_requires_matplotlib
     def test_sample_grid_rejects_a_streaming_split(self, datamodule: Any) -> None:
         """Drawing a sample grid needs a map-style dataset, so a streaming split raises TypeError."""
         with pytest.raises(TypeError) as exc_info:

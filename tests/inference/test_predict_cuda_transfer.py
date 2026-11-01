@@ -21,13 +21,11 @@ import torch
 from pytest_mock import MockerFixture
 
 from rfdetr import ClassThresholds
+from tests._markers import _requires_cuda, _requires_two_cuda_devices
 
 from .helpers import _BaseFakeRFDETR, _DummyModel
 
-pytestmark = [
-    pytest.mark.gpu,
-    pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA"),
-]
+pytestmark = pytest.mark.gpu
 
 _NUM_KEYPOINTS = 4
 _MASK_SIZE = 4
@@ -75,6 +73,7 @@ class _CudaDummyRFDETR(_BaseFakeRFDETR):
         )
 
 
+@_requires_cuda
 class TestPredictCudaTransfer:
     """Verifies the batched CUDA->CPU transfer is complete, ordered, non-blocking, and correctly synchronized."""
 
@@ -204,7 +203,7 @@ class TestPredictCudaTransfer:
             f"expected every CUDA->CPU transfer to use non_blocking=True, got: {cpu_bound_calls}"
         )
 
-    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires a second CUDA device")
+    @_requires_two_cuda_devices
     def test_synchronize_distinguishes_result_device_from_process_current_device(self, mocker: MockerFixture) -> None:
         """The sync must target `boxes.device`, not `torch.cuda.current_device()`, when the two differ.
 

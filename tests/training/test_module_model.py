@@ -34,11 +34,12 @@ from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.imports import _IS_PYTORCH_OPTIMIZER_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
+from tests._markers import _requires_cuda
 
 from .helpers import _fake_postprocess as _helpers_fake_postprocess
 from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
-pytorch_optimizer_only = pytest.mark.skipif(
+_requires_pytorch_optimizer = pytest.mark.skipif(
     not _IS_PYTORCH_OPTIMIZER_INSTALLED, reason="pytorch_optimizer not installed"
 )
 
@@ -397,6 +398,13 @@ def make_batch():
     return _make_batch
 
 
+#: Skip a test node that replays Inductor CUDA graph trees.
+_requires_cudagraph_trees = pytest.mark.skipif(
+    not torch.cuda.is_available() or not hasattr(torch.compiler, "cudagraph_mark_step_begin"),
+    reason="combined cudagraph regression requires CUDA graph-tree support",
+)
+
+
 class TestInit:
     """Tests for RFDETRModelModule.__init__.
 
@@ -467,7 +475,7 @@ class TestInit:
             assert torch._dynamo.config.suppress_errors is False
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="compiled multi-scale regression requires CUDA")
+    @_requires_cuda
     def test_compiled_multi_scale_forward_backward_across_resolutions(self, tmp_path):
         """The real compiled CUDA module must backpropagate finite losses at two resized multi-scale resolutions."""
         torch.manual_seed(0)
@@ -506,7 +514,7 @@ class TestInit:
         assert len(resized_shapes) == 2
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="static compiled-loss regression requires CUDA")
+    @_requires_cuda
     def test_static_compile_runs_compiled_batched_losses_through_training_step(self, tmp_path: Path) -> None:
         """A real RF-DETR Nano training step statically compiles the model and reaches the compiled loss graph.
 
@@ -565,10 +573,7 @@ class TestInit:
         assert torch.allclose(loss.detach(), fallback_loss.detach(), rtol=1e-4, atol=1e-6)
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(
-        not torch.cuda.is_available() or not hasattr(torch.compiler, "cudagraph_mark_step_begin"),
-        reason="combined cudagraph regression requires CUDA graph-tree support",
-    )
+    @_requires_cudagraph_trees
     def test_compiled_cudagraph_trees_replay_two_optimizer_steps(self, mocker, tmp_path: Path) -> None:
         """Combined compilation and CUDA graph trees must preserve finite gradients across optimizer replays."""
         torch.manual_seed(0)
@@ -2860,7 +2865,7 @@ class TestConfigureOptimizers:
             module.configure_optimizers()
         assert "Could not import optimizer" in str(exc_info.value)
 
-    @pytorch_optimizer_only
+    @_requires_pytorch_optimizer
     def test_real_import_path_optimizer_smoke(self, mocker, tmp_path):
         """A real pytorch-optimizer optimizer can be built via its import path when installed."""
         mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")

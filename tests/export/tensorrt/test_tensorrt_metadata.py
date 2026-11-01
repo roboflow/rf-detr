@@ -49,6 +49,7 @@ from rfdetr.export._tensorrt.metadata import (
 from rfdetr.export.base import serialize_notes
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.package import get_version
+from tests._markers import _requires_mkfifo, _requires_posix_permissions, _requires_symlink_privilege
 
 #: The exact top-level keys of schema version 1. A test that asserts this set fails when a key is added or dropped
 #: without the schema version and the docs following.
@@ -456,7 +457,7 @@ class TestIsEngineDescription:
             pytest.param(
                 getattr(os, "mkfifo", None),
                 id="named pipe",
-                marks=pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX-only"),
+                marks=_requires_mkfifo,
             ),
         ],
     )
@@ -588,7 +589,7 @@ class TestWriteEngineMetadata:
         assert previous.read_text() == '{"previous": true}'
         assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json", "model.trt"]
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     def test_the_sidecar_takes_the_engines_permission_bits(self, tmp_path: Path) -> None:
         """``mkstemp`` creates files owner-only; a consumer running as another user must still be able to read it."""
         engine = tmp_path / "model.trt"
@@ -599,7 +600,7 @@ class TestWriteEngineMetadata:
 
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership")
+    @_requires_posix_permissions
     def test_the_sidecar_takes_the_engines_group(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A service that reads the engine through its group must be able to read the description the same way."""
         engine = tmp_path / "model.trt"
@@ -611,7 +612,7 @@ class TestWriteEngineMetadata:
 
         assert calls == [(-1, engine.stat().st_gid)]
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     def test_the_engines_mode_is_set_before_any_content_is_written(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -636,7 +637,7 @@ class TestWriteEngineMetadata:
         assert sizes == [0]
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     @pytest.mark.parametrize("refused", ["fchmod", "fchown"])
     def test_a_filesystem_that_refuses_the_permission_change_still_gets_the_description(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: str
@@ -650,7 +651,7 @@ class TestWriteEngineMetadata:
 
         assert json.loads(path.read_text())["schema_version"] == 1
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     def test_a_refused_permission_change_leaves_a_readable_mode_and_warns_with_it(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -729,7 +730,7 @@ class TestWriteEngineMetadata:
         precisions = [json.loads((tmp_path / name).read_text())["build"]["precision"] for name in ("a.json", "b.json")]
         assert precisions == ["fp16", "fp32"]
 
-    @pytest.mark.skipif(os.name == "nt", reason="the permission change this hooks is skipped on Windows")
+    @_requires_posix_permissions
     def test_two_writers_of_the_same_sidecar_leave_one_complete_document_and_no_temporary_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -780,7 +781,7 @@ class TestWriteEngineMetadata:
         assert previous.read_text() == '{"previous": true}'
         assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json", "model.trt"]
 
-    @pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+    @_requires_symlink_privilege
     def test_a_sidecar_that_is_a_symlink_to_a_file_is_replaced_not_followed(self, tmp_path: Path) -> None:
         """``os.replace`` swaps the link itself, so the file the link pointed at keeps its content.
 
@@ -800,7 +801,7 @@ class TestWriteEngineMetadata:
         assert json.loads(sidecar.read_text())["schema_version"] == 1
         assert linked_to.read_text() == '{"shared": true}'
 
-    @pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+    @_requires_symlink_privilege
     def test_a_sidecar_that_is_a_dangling_symlink_is_replaced_and_its_target_is_not_created(
         self, tmp_path: Path
     ) -> None:
@@ -836,7 +837,7 @@ class TestWriteEngineMetadata:
 
         unlink.assert_called_once()
 
-    @pytest.mark.skipif(os.name == "nt", reason="permissions are copied from the engine on POSIX only")
+    @_requires_posix_permissions
     def test_a_missing_engine_still_gets_its_description_and_a_warning(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

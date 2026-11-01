@@ -24,7 +24,7 @@ from pytest_mock import MockerFixture
 from rfdetr._prediction import core, pipelines
 from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
-from tests._markers import requires_cuda, requires_mps
+from tests._markers import _requires_cuda, _requires_mps
 
 from ..helpers import _DummyRFDETR, _image_dir, _source_pixels
 
@@ -146,7 +146,7 @@ class TestDecodeAhead:
         results = RFDETRInference(model).predict(root, batch=2)
         return _source_pixels(results), threads
 
-    @requires_mps
+    @_requires_mps
     def test_accelerator_directory_predictions_match_and_decode_off_the_main_thread(
         self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
@@ -313,7 +313,7 @@ class TestPreparedAhead:
         assert in_worker_flags == expected
 
     @pytest.mark.gpu
-    @requires_cuda
+    @_requires_cuda
     @pytest.mark.parametrize("backend", ["pytorch", "tensorrt"])
     def test_cuda_directory_matches_one_serial_batch(self, tmp_path: Path, mocker: MockerFixture, backend: str) -> None:
         """Preparing ahead, on this thread or on a worker's stream, returns exactly what one serial batch returns.

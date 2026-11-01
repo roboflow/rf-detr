@@ -12,7 +12,6 @@ real dataset or GPU is required.
 Chapter 1 gate: these must pass before Chapter 2 begins.
 """
 
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -26,6 +25,7 @@ from rfdetr.training import build_trainer
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from tests._markers import _requires_gloo_spawn
 
 from .helpers import (
     _fake_postprocess,
@@ -280,7 +280,7 @@ class TestMultiScaleHookPropagation:
 
 
 @pytest.mark.ddp
-@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@_requires_gloo_spawn
 def test_ddp_spawn_fit_runs_without_error(patched_ddp_builders, base_model_config, base_train_config):
     """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
 
@@ -304,7 +304,7 @@ def test_ddp_spawn_fit_runs_without_error(patched_ddp_builders, base_model_confi
 
 
 @pytest.mark.ddp
-@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@_requires_gloo_spawn
 @pytest.mark.timeout(300)
 def test_ddp_spawn_run_test_completes(patched_ddp_builders, base_model_config, base_train_config):
     """``run_test=True`` under ``ddp_spawn`` must finish ``fit`` and leave the best checkpoint behind.
@@ -334,7 +334,7 @@ def test_ddp_spawn_run_test_completes(patched_ddp_builders, base_model_config, b
 
 
 @pytest.mark.ddp
-@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@_requires_gloo_spawn
 def test_ddp_spawn_multi_scale_mutation_propagates(patched_ddp_builders, base_model_config, base_train_config):
     """ddp_spawn with multi_scale=True must propagate on_train_batch_start resize to training_step.
 
@@ -390,7 +390,7 @@ class _DDPMinStepsModule(RFDETRModelModule):
 
 
 @pytest.mark.ddp
-@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@_requires_gloo_spawn
 @pytest.mark.parametrize("trainer_grad_accum_steps", [1, 2])
 def test_ddp_spawn_preserves_minimum_optimizer_steps(
     patched_ddp_builders,
@@ -472,7 +472,7 @@ class _DDPValImageCountModule(RFDETRModelModule):
 
 
 @pytest.mark.ddp
-@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@_requires_gloo_spawn
 @pytest.mark.parametrize("val_images", [3, 1])
 def test_ddp_spawn_validation_scores_each_image_once(
     patched_ddp_builders, base_model_config, base_train_config, val_images: int

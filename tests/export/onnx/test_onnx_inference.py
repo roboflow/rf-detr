@@ -21,7 +21,7 @@ import pytest
 from PIL import Image as PILImage
 
 from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
-from tests._markers import onnx_and_onnxruntime_only
+from tests._markers import _requires_onnx_and_onnxruntime
 
 _INPUT_SHAPE = [1, 3, 224, 224]
 
@@ -200,7 +200,7 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
     return onnx_path
 
 
-@onnx_and_onnxruntime_only
+@_requires_onnx_and_onnxruntime
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestCreateOnnxSession:

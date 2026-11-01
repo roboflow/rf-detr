@@ -58,7 +58,11 @@ class TestAdaptInputConv:
         torch.testing.assert_close(adapted_weight, expected_weight)
 
 
-@pytest.mark.skipif(not is_installed("peft"), reason="backbone_lora requires the optional peft package")
+#: Skip a test node that needs ``peft`` for ``backbone_lora``.
+_requires_peft = pytest.mark.skipif(not is_installed("peft"), reason="backbone_lora requires the optional peft package")
+
+
+@_requires_peft
 class TestBuildModelContextLoraChannels:
     """``_build_model_context`` adapts DINOv2's patch embedding even when LoRA has wrapped the encoder."""
 
