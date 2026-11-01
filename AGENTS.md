@@ -398,6 +398,17 @@ GitHub Actions workflows in `.github/workflows/`:
 
 **Concurrency:** PRs cancel in-progress runs on new pushes
 
+**Workflow rules (keep when adding or editing a workflow):**
+
+- Every PR-triggered workflow (or each of its jobs, where a job needs its own queue) has a `concurrency` group keyed on `github.ref` that cancels superseded pull request runs.
+- Every job sets `timeout-minutes`, including guardian jobs; a hung job otherwise runs for six hours.
+- GPU jobs run on the self-hosted `arc-gpu-runner-set` (one NVIDIA L4, compute capability 8.9) and must skip pull requests from forks: `github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository`. Leave CPU jobs on GitHub-hosted runners.
+- Use `paths` / `paths-ignore` only on workflows whose checks are not required by branch protection (`Testing`, `testing-guardian` and `Test docs build` are required, so their workflows must always trigger). Integration Tests ignores docs-only changes; Mypy and Test GitHub Scripts list the paths they read.
+- `actions/checkout` sets `persist-credentials: false` unless a later step pushes with the checkout's credentials.
+- Pin every action to a full commit SHA with an exact `# vX.Y.Z` comment; Dependabot (`.github/dependabot.yml`) keeps the pins current.
+- Pass `inputs.*`, `github.actor`, event payload fields and matrix values to `run:` scripts through `env:`, never by expanding `${{ }}` inside the script.
+- `actions/upload-artifact` sets `retention-days` (1 for artifacts consumed in the same run, at most 7 otherwise).
+
 **Pretrained weights cache:** `try-all-models` never restores caches and disables uv caching, so every matrix leg tests live downloads. The independent `cache-model-weights` job also downloads fresh weights on every run: `.github/scripts/download_model_weights.py` instantiates each supported model on CPU without inference or checkpoint round-trips. Only on pushes to `develop` does that job save the shared archive through `.github/actions/cache-model-weights`, which also downloads the test-session DINOv2 snapshot through Hugging Face. Publication requires successful initialization of every model in the downloader, but does not wait for the smoke matrix. The reusable action computes cache keys in Bash using Git object hashes and sets common directories with shell `echo`. Each successful push uses a fresh run/attempt suffix. Every other test job calls the action with `save: "false"` after dependencies and before tests, including every export row, TensorRT, Roboflow, XLA, legacy generation/compatibility, GitHub helper tests and the docs build test. These readers have no dependency on the publisher and download normally on a miss. The action sets `RF_HOME` to `${{ github.workspace }}/.roboflow` and owns `.huggingface` paths, identical archive patterns and cross-OS settings. Legacy checkpoint generation also runs from `RF_HOME` so historical releases that use the working directory share the restored weights. Key prefixes fingerprint the committed weight registry (`src/rfdetr/assets/model_weights.py`, including its MD5 checksums) and `pyproject.toml` using Git object hashes, with no OS/Python/job/format dimensions. Core and Plus jobs share the same source-based cache scope. Never save model caches from PR jobs or broaden fallback across different source fingerprints.
 
 ## Additional Resources
