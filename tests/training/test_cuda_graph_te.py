@@ -166,13 +166,6 @@ def _fp8_samples(value: float, *, device: torch.device | str, batch_size: int = 
     )
 
 
-#: Skip a test node that checks the error raised when Transformer Engine is absent.
-_requires_no_transformer_engine = pytest.mark.skipif(
-    _IS_TRANSFORMER_ENGINE_INSTALLED,
-    reason="transformer_engine is installed in this environment; cannot exercise the absent-package path",
-)
-
-
 class TestTransformerEngineCaptureBoundary:
     """CPU tests for Transformer Engine selection and fatal-capture behavior."""
 
@@ -212,7 +205,10 @@ class TestTransformerEngineCaptureBoundary:
             "clone_param_grads_on_return": True,
         }
 
-    @_requires_no_transformer_engine
+    @pytest.mark.skipif(
+        _IS_TRANSFORMER_ENGINE_INSTALLED,
+        reason="transformer_engine is installed in this environment; cannot exercise the absent-package path",
+    )
     def test_runner_fp8_without_transformer_engine_raises_module_not_found_error(self) -> None:
         """A genuinely absent Transformer Engine fails construction with a clear import error.
 

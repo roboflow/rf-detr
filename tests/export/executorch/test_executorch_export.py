@@ -46,7 +46,7 @@ from tests._online import is_online
 from tests.export.conftest import _make_rfdetr, _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
 from tests.export.coreml.test_coreml_export import _MULTICLASS_KEYPOINT_SCHEMA, _assert_well_conditioned
 
-_executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
+executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
 _EXPORTER_MODULE = "rfdetr.export._executorch.exporter"
 
@@ -1264,7 +1264,7 @@ class _TinyConvNet(torch.nn.Module):
         return (self.head(self.conv(pixel_values).mean(dim=(2, 3))),)
 
 
-@_executorch_only
+@executorch_only
 @pytest.mark.integration
 @pytest.mark.e2e_executorch
 class TestExecutorchXnnpackRuntimeSmoke:
@@ -1295,7 +1295,7 @@ class TestExecutorchXnnpackRuntimeSmoke:
         torch.testing.assert_close(runtime, eager, atol=1e-5, rtol=1e-5)
 
 
-@_executorch_only
+@executorch_only
 @pytest.mark.integration
 @pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:

@@ -273,14 +273,8 @@ def test_cuda_graph_replay_matches_eager_outputs_and_accumulated_gradients() -> 
     assert len(runner._graphed_cache) == 1
 
 
-#: Skip a test node that needs ``torch.nn.attention.sdpa_kernel`` (torch 2.3+).
-_requires_sdpa_kernel = pytest.mark.skipif(
-    sdpa_kernel is None, reason="torch.nn.attention.sdpa_kernel needs torch>=2.3"
-)
-
-
 @pytest.mark.gpu
-@_requires_sdpa_kernel
+@pytest.mark.skipif(sdpa_kernel is None, reason="torch.nn.attention.sdpa_kernel needs torch>=2.3")
 def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(tf32_disabled: None) -> None:
     """Real Nano capture must compose with its eager criterion, accumulation, and parameter updates.
 

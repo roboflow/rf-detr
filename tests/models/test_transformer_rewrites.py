@@ -30,7 +30,7 @@ from rfdetr.models.transformer import (
     _module_call_is_plain,
     gen_sineembed_for_position,
 )
-from tests._markers import _requires_cuda
+from tests._markers import requires_cuda
 from tests.models._transformer_support import (
     EAGER_CUDA,
     decoder_layer,
@@ -159,7 +159,7 @@ class TestLinearReLUAutograd:
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@requires_cuda
 class TestNonFp32SourcesKeepThePreviousOps:
     """Autocast casts only fp32 matmul inputs, so a cast folded into a non-fp32 source would change the ops."""
 

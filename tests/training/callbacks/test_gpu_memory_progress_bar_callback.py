@@ -23,7 +23,6 @@ from rfdetr.training.callbacks.gpu_memory_progress_bar import (
 )
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
-from tests._markers import _requires_cuda
 
 from ..helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
@@ -443,7 +442,7 @@ class TestProgressBarEndToEnd:
         assert all(key not in metrics for metrics in captured)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize("key", ["max_mem", "free_mem"])
     def test_cuda_fit_shows_gpu_metric_in_rendered_postfix(
         self,

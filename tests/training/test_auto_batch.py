@@ -19,7 +19,6 @@ from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training import auto_batch, build_trainer
 from rfdetr.training.auto_batch import AutoBatchResult
-from tests._markers import _requires_cuda
 
 
 class _TinyModule(torch.nn.Module):
@@ -593,7 +592,7 @@ class TestBuildShadowOptimizer:
 
         assert optimizer.param_groups[0]["lr"] == 5e-2
 
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="fused AdamW requires CUDA")
     def test_forwards_fused(self):
         """Fused reaches the shadow AdamW so its step-time temporary memory matches the real optimizer's.
 
@@ -929,7 +928,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(mocker: MockerF
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for segmentation probe")
 def test_probe_step_with_real_segmentation_criterion(tmp_path):
     """Run one probe step with real segmentation model and criterion so loss_masks and t['masks'] are exercised."""
     from rfdetr._namespace import _namespace_from_configs

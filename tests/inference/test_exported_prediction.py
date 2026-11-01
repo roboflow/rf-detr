@@ -16,7 +16,7 @@ from supervision import Detections, KeyPoints
 
 from rfdetr import ClassThresholds, RFDETRInference
 from rfdetr.detr import RFDETR
-from tests._markers import _onnx_and_onnxruntime_only
+from tests._markers import onnx_and_onnxruntime_only
 
 from .helpers import _requires_opencv
 
@@ -215,7 +215,7 @@ def exported_segmentation(exported_detection: tuple[Path, dict[str, object]]) ->
     return path, dict(metadata, task="segment", outputs={**outputs, "pred_masks": "task_output"})
 
 
-@_onnx_and_onnxruntime_only
+@onnx_and_onnxruntime_only
 class TestInferenceCapabilities:
     """The public constructor returns an inference-only type."""
 
@@ -227,7 +227,7 @@ class TestInferenceCapabilities:
         assert not isinstance(model, RFDETR)
 
 
-@_onnx_and_onnxruntime_only
+@onnx_and_onnxruntime_only
 class TestExportedPrediction:
     """A real runtime returns the existing Supervision prediction contract."""
 
@@ -643,7 +643,7 @@ class TestExportedPrediction:
             assert np.asarray(result.data["covariance"]).shape == (1, 1, 2, 2)
 
 
-@_onnx_and_onnxruntime_only
+@onnx_and_onnxruntime_only
 class TestExportedStreaming:
     """Exported runtimes use the same source expansion as native models."""
 

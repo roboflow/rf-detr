@@ -29,7 +29,7 @@ from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE, torch_ops
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._coreml.torch_ops import ensure_coreml_torch_op_patches
 
-_coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
+coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
 # Known Nano registry gaps *after* ``ensure_coreml_torch_op_patches``. Keep empty;
 # fix new kinds (or add them here deliberately) before merge.
@@ -166,7 +166,7 @@ def registry(_restore_coreml_torch_op_registry: None) -> dict[str, Any]:
     return _TORCH_OPS_REGISTRY.name_to_func_mapping
 
 
-@_coreml_only
+@coreml_only
 @pytest.mark.usefixtures("_restore_coreml_torch_op_registry")
 class TestEnsureCoremlTorchOpPatches:
     """Package-local coremltools registry patches."""
@@ -204,7 +204,7 @@ class TestEnsureCoremlTorchOpPatches:
         assert gaps == Counter()
 
 
-@_coreml_only
+@coreml_only
 @pytest.mark.usefixtures("_restore_coreml_torch_op_registry")
 class TestUnsupportedCoremlOps:
     """Checklist against the real coremltools registry."""

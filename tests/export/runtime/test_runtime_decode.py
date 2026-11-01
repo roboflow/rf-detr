@@ -19,7 +19,7 @@ import torch
 
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.models.postprocess import PostProcess
-from tests._markers import _cuda_marks
+from tests._markers import cuda_marks
 
 
 class TestDecodeDetections:
@@ -66,7 +66,7 @@ class TestDecodeDetections:
 
         np.testing.assert_allclose(decoded.confidence, [1.0 / (1.0 + np.exp(-2.0))], rtol=1e-6)
 
-    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=_cuda_marks)])
+    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=cuda_marks)])
     def test_fp16_threshold_matches_torch_sigmoid(self, device: str) -> None:
         """An FP16 score just above 0.75 must survive like PyTorch's CPU and CUDA sigmoid.
 

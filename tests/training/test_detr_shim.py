@@ -38,7 +38,6 @@ from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
-from tests._markers import _requires_posix_permissions
 from tests.inference.helpers import _DummyRFDETR
 
 # ---------------------------------------------------------------------------
@@ -1834,7 +1833,7 @@ class TestSaveTrainingConfig:
             self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_class_names=[_UnserializableValue()])
         assert _count_config_write_warnings(caplog.records) == 1
 
-    @_requires_posix_permissions
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True)
     def test_training_config_json_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """training_config.json gets the mode ``open()`` would give it, not the temp file's owner-only ``0o600``."""
@@ -1842,7 +1841,7 @@ class TestSaveTrainingConfig:
         _save_training_config(_make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"])
         assert stat.S_IMODE((output_dir / "training_config.json").stat().st_mode) == 0o666 & ~process_umask
 
-    @_requires_posix_permissions
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.usefixtures("process_umask")  # the default 0o022, so both modes differ from a fresh file's 0o644
     @pytest.mark.parametrize("mode", [0o600, 0o640])
     def test_rewritten_training_config_json_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:

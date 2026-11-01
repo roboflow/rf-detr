@@ -33,7 +33,7 @@ from rfdetr.utilities.tensors import (
     nested_tensor_from_tensor_list,
     pack_targets,
 )
-from tests._markers import _requires_cuda, _requires_mps, _requires_torch_xla
+from tests._markers import requires_mps, requires_torch_xla
 
 
 def _grid_sample_reference(
@@ -402,7 +402,7 @@ class TestBilinearGridSampleDeviceRouting:
 class TestBilinearGridSampleXLAExecution:
     """Real torch_xla PJRT execution -- proves the gather path takes no aten:: CPU fallback (T1 lane, WP2)."""
 
-    @_requires_torch_xla
+    @requires_torch_xla
     @pytest.mark.xla
     def test_gather_path_no_cpu_fallback_on_real_xla_device(self, seed):
         """On a real XLA device (any PJRT backend) the gather path runs with zero aten:: fallback ops."""
@@ -752,7 +752,7 @@ class TestNestedTensorNoPadding:
         assert nested.to(torch.device("cpu")).no_padding is True
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_pin_memory_preserves_flag(self) -> None:
         """``pin_memory`` likewise keeps the flag attached to the batch."""
         nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
@@ -924,7 +924,7 @@ class TestPackedTargets:
         assert hasattr(PackedTargets, "pin_memory")
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_pin_memory_actually_pins_every_field(self) -> None:
         """pin_memory() must pin each field's storage, not merely exist as a method."""
         packed = pack_targets(self._batch())
@@ -933,7 +933,7 @@ class TestPackedTargets:
         assert all(tensor.is_pinned() for tensor in pinned.fields.values())
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_pytorch_pin_memory_worker_routes_through_our_pin_memory(self) -> None:
         """The real DataLoader pin-memory dispatcher (torch/utils/data/_utils/pin_memory.py) must call
         PackedTargets.pin_memory() and keep the batch packed, not merely satisfy hasattr() in isolation."""
@@ -1108,7 +1108,7 @@ class TestPackedTargets:
         assert packed.fields["boxes"][0].item() == 1.0
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_to_list_transfers_pinned_views_directly_to_cuda(self) -> None:
         """Direct materialisation must preserve values and ownership across a non-blocking CUDA transfer."""
         packed = pack_targets(self._batch())
@@ -1124,7 +1124,7 @@ class TestPackedTargets:
         assert torch.equal(pinned.fields["labels"], torch.tensor([3, 7, 5]))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_to_list_bounds_the_transient_cuda_peak_for_a_mask_field(self) -> None:
         """``to_list``'s docstring claims the avoided duplicate "can be large for segmentation masks" -- pin that claim
         on the actual CUDA peak with a mask field, not just on values or ownership."""
@@ -1176,7 +1176,7 @@ class TestPackedTargets:
         assert torch.equal(same_device.fields["labels"], torch.tensor([3, 7, 5]))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_to_moves_every_field_and_keeps_the_batch_packed_on_cuda(self) -> None:
         """A genuine device change must move every field and return a new packed batch, not a materialised list."""
         packed = pack_targets(self._batch())
@@ -1439,7 +1439,7 @@ class TestNearestGridSampleLowPrecision:
 class TestNearestGridSampleXLAExecution:
     """Real torch_xla PJRT execution -- proves the nearest gather path takes no aten:: CPU fallback."""
 
-    @_requires_torch_xla
+    @requires_torch_xla
     @pytest.mark.xla
     def test_nearest_gather_path_no_cpu_fallback_on_real_xla_device(self, seed: int) -> None:
         """``point_sample(mode="nearest")`` used to lower to aten::grid_sampler_2d on XLA."""
@@ -1478,7 +1478,7 @@ class TestNativeGridSample:
 
         assert torch.equal(actual, expected)
 
-    @_requires_mps
+    @requires_mps
     def test_matches_the_gather_sampler_on_mps(self) -> None:
         """On MPS it agrees with the gather-based training sampler to float rounding."""
         generator = torch.Generator().manual_seed(0)

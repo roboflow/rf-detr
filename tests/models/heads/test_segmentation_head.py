@@ -28,7 +28,7 @@ from rfdetr.models.heads.segmentation import (
     point_sample,
 )
 from rfdetr.utilities.tensors import _nearest_grid_sample
-from tests._markers import _cuda_marks, _onnx_only, _requires_cuda
+from tests._markers import onnx_only
 
 
 @pytest.fixture(autouse=True)
@@ -71,7 +71,7 @@ _DEVICES = [
     pytest.param(
         "cuda",
         id="gpu",
-        marks=_cuda_marks,
+        marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")],
     ),
 ]
 
@@ -86,7 +86,7 @@ def test_depthwise_conv_block_forward(device: str) -> None:
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 @pytest.mark.usefixtures("force_depthwise_workaround")
 def test_depthwise_conv_forward_disables_cudnn_on_cuda(cudnn_flag_calls: list[bool]) -> None:
     """On CUDA, forward must run with cuDNN disabled.
@@ -120,7 +120,7 @@ def test_depthwise_conv_forward_skips_cudnn_flags_on_cpu(cudnn_flag_calls: list[
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 @pytest.mark.usefixtures("force_depthwise_workaround")
 def test_depthwise_conv_backward_disables_cudnn_on_cuda(cudnn_flag_calls: list[bool]) -> None:
     """Backward pass must also run with cuDNN disabled on CUDA (issue #731).
@@ -423,7 +423,7 @@ class TestCudnnDisabledConcurrency:
         assert torch.backends.cudnn.enabled is True
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
     def test_restores_flag_under_concurrent_overlapping_calls_gpu(self, mocker) -> None:
         """GPU mirror: overlapping ``_DepthwiseConvWithoutCuDNN.apply()`` calls on real CUDA tensors.
 
@@ -522,7 +522,7 @@ class TestCudnnDepthwiseGate:
             segmentation_module._cudnn_depthwise_is_safe(0)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
     def test_cudnn_route_matches_workaround(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Both routes compute the same forward output and gradients."""
         block = DepthwiseConvBlock(dim=16).cuda()
@@ -541,7 +541,7 @@ class TestCudnnDepthwiseGate:
             torch.testing.assert_close(cudnn, workaround, rtol=1e-4, atol=1e-4)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
     def test_cudnn_route_skips_the_workaround(self, mocker, monkeypatch: pytest.MonkeyPatch) -> None:
         """With cuDNN allowed, the depthwise conv runs as the plain module, without toggling cuDNN."""
         monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", "1")
@@ -746,7 +746,7 @@ class TestSegmentationHeadForwardExport:
         assert actual.shape == (2, 3, 5, 7)
         torch.testing.assert_close(actual, expected)
 
-    @_onnx_only
+    @onnx_only
     @pytest.mark.integration
     @pytest.mark.e2e_onnx
     def test_onnx_graph_has_no_einsum(self, tmp_path: Path) -> None:

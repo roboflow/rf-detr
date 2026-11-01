@@ -19,7 +19,11 @@ from torch.utils.data import DistributedSampler, SequentialSampler
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _UfcocoBackend, _VernierBackend
-from tests._markers import _requires_cuda, _requires_torch_xla, _ufcoco_only, _vernier_only
+from rfdetr.utilities.imports import _IS_UFCOCO_INSTALLED, _IS_VERNIER_INSTALLED
+from tests._markers import requires_torch_xla
+
+ufcoco_only = pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed")
+vernier_only = pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed")
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -183,8 +187,8 @@ class TestSetup:
     @pytest.mark.parametrize(
         "eval_backend, backend_type",
         [
-            pytest.param("ufcoco", _UfcocoBackend, id="ufcoco", marks=_ufcoco_only),
-            pytest.param("vernier", _VernierBackend, id="vernier", marks=_vernier_only),
+            pytest.param("ufcoco", _UfcocoBackend, id="ufcoco", marks=ufcoco_only),
+            pytest.param("vernier", _VernierBackend, id="vernier", marks=vernier_only),
         ],
     )
     def test_optional_eval_backend_reaches_every_metric(
@@ -563,7 +567,7 @@ class TestValidationBatchEndDeviceRouting:
         cb._sync_xla_metric_inputs(SimpleNamespace(device=torch.device("cpu")))
 
     @pytest.mark.xla
-    @_requires_torch_xla
+    @requires_torch_xla
     def test_sync_xla_metric_inputs_runs_against_real_torch_xla(self) -> None:
         """Real PJRT execution catches a signature mismatch with the installed ``torch_xla.sync`` API.
 
@@ -608,7 +612,7 @@ class TestValidationBatchEndDeviceRouting:
         assert events == ["sync", "convert_preds", "convert_targets"]
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_build_matching_data_receives_cuda_tensors_while_metric_state_on_cpu(self, mocker: MockerFixture) -> None:
         """build_matching_data keeps receiving the original CUDA tensors while map_metric's state is CPU-resident.
 
@@ -2274,7 +2278,7 @@ class TestConvertTargets:
                 id="multi-target-batch-cuda",
                 marks=[
                     pytest.mark.gpu,
-                    _requires_cuda,
+                    pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available"),
                 ],
             ),
         ],

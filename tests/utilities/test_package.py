@@ -99,12 +99,6 @@ def test_backbone_import_does_not_import_peft() -> None:
     _assert_subprocess_succeeds([sys.executable, "-c", code], "backbone import")
 
 
-#: Skip a test node that checks the Python 3.14 path, where TorchScript is no longer used.
-_requires_python_314 = pytest.mark.skipif(
-    sys.version_info < (3, 14), reason="TorchScript remains supported before Python 3.14"
-)
-
-
 class TestImportPaths:
     """Structural tests for the detr.py → inference.py + variants.py split (PR 6).
 
@@ -195,7 +189,7 @@ class TestImportPaths:
 
         _assert_subprocess_succeeds([sys.executable, "-c", code], "NumPy complex_ shim")
 
-    @_requires_python_314
+    @pytest.mark.skipif(sys.version_info < (3, 14), reason="TorchScript remains supported before Python 3.14")
     def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
         """Python 3.14+ imports must not invoke unsupported TorchScript compilation.
 

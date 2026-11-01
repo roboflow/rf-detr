@@ -6,6 +6,7 @@
 """Unit tests for rfdetr.utilities.state_dict."""
 
 import logging
+import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,6 @@ from rfdetr.utilities.state_dict import (
     strip_checkpoint,
     validate_checkpoint_compatibility,
 )
-from tests._markers import _requires_posix_permissions
 
 #: Checkpoint keys under which the patch-embedding projection weight is saved: plain, and with ``backbone_lora=True``.
 _PROJECTION_KEYS = [
@@ -555,7 +555,7 @@ class TestStripCheckpoint:
         result = _load_checkpoint(ckpt_path)
         assert result["rfdetr_version"] == "override"
 
-    @_requires_posix_permissions
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
     def test_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """A checkpoint saved and stripped under one umask ends with that umask's mode, not a ``0o600`` temp mode."""
@@ -563,7 +563,7 @@ class TestStripCheckpoint:
         strip_checkpoint(ckpt_path)
         assert stat.S_IMODE(ckpt_path.stat().st_mode) == 0o666 & ~process_umask
 
-    @_requires_posix_permissions
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     @pytest.mark.usefixtures("process_umask")  # the default 0o022, so both modes differ from a fresh file's 0o644
     @pytest.mark.parametrize("mode", [pytest.param(0o600, id="0o600"), pytest.param(0o640, id="0o640")])
     def test_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:

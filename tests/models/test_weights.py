@@ -26,7 +26,7 @@ from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.imports import _IS_PEFT_INSTALLED
 from rfdetr.utilities.reproducibility import seed_all
 
-_peft_only = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installed; `pip install rfdetr[lora]`")
+peft_only = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installed; `pip install rfdetr[lora]`")
 
 #: ``num_classes`` default of ``RFDETRBaseConfig``; an explicit value equal to it must still count as explicit.
 _DEFAULT_NUM_CLASSES = RFDETRBaseConfig.model_fields["num_classes"].default
@@ -700,7 +700,7 @@ def plain_checkpoint(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
-@_peft_only
+@peft_only
 class TestLoadPretrainWeightsLoraCheckpoint:
     """A checkpoint saved by a ``backbone_lora=True`` run reloads with its trained encoder (#1540).
 

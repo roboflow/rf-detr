@@ -41,7 +41,7 @@ from rfdetr.models.transformer import (
 )
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
-from tests._markers import _cuda_marks, _onnx_and_onnxruntime_only, _requires_cuda
+from tests._markers import cuda_marks, onnx_and_onnxruntime_only, requires_cuda
 from tests.models._transformer_support import decoder_layer, record_apply_calls, single_level_two_stage_transformer
 
 # Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
@@ -403,7 +403,7 @@ def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> N
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.parametrize("width", [2, 4])
 @pytest.mark.parametrize(
     ("dtype", "atol"),
@@ -1004,7 +1004,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         assert output_memory.shape == (batch_size, total_hw, dim)
         assert output_proposals.shape == (batch_size, total_hw, 4)
 
-    @_onnx_and_onnxruntime_only
+    @onnx_and_onnxruntime_only
     @pytest.mark.parametrize("batch_size", [1, 4, 8])
     def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
@@ -1761,7 +1761,7 @@ def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbo
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gradients() -> None:
     """Under bf16 autocast the batched fast path yields finite outputs and gradients reaching every group.
 
@@ -1836,7 +1836,7 @@ def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gra
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.parametrize(
     "spatial_shapes_hw",
     [
@@ -2132,7 +2132,7 @@ def test_two_stage_topk_gather_backward_routes_gradient_only_to_selected_rows() 
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices() -> None:
     """On CUDA the two-stage top-k gather reproduces the CPU result bit-for-bit for out-of-order indices.
 
@@ -2224,7 +2224,7 @@ def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_t
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.parametrize("bbox_reparam", [False, True])
 def test_two_stage_bbox_mlp_gather_order_matches_on_cuda_for_real_three_layer_mlp(bbox_reparam: bool) -> None:
     """CUDA twin of test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp.
@@ -2500,7 +2500,7 @@ def _interleaved_sineembed(
 _SINEEMBED_ROUTES = [
     pytest.param("cpu", gen_sineembed_for_position, id="cpu-plain"),
     pytest.param("cpu", _interleaved_sineembed, id="cpu-interleaved-kernel"),
-    pytest.param("cuda", gen_sineembed_for_position, id="cuda-public", marks=_cuda_marks),
+    pytest.param("cuda", gen_sineembed_for_position, id="cuda-public", marks=cuda_marks),
 ]
 
 #: Every hook ``Module.__call__`` runs around ``forward``, as ``(module, hook) -> handle``: the four per-module
@@ -2663,7 +2663,7 @@ class TestGroupedSelfAttention:
         return layer, tgt
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "mutate",
         [
@@ -2692,7 +2692,7 @@ class TestGroupedSelfAttention:
         assert layer._grouped_self_attention_eligible(tgt, None, None) is False
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "make_self_attn",
         [
@@ -2718,7 +2718,7 @@ class TestGroupedSelfAttention:
         assert layer._grouped_self_attention_eligible(tgt, None, None) is False
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "make_inputs",
         [
@@ -2754,7 +2754,7 @@ class TestGroupedSelfAttention:
         assert layer._grouped_self_attention_eligible(tgt, tgt_mask, key_padding_mask) is False
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "hook",
         [
@@ -2780,7 +2780,7 @@ class TestGroupedSelfAttention:
         assert layer._grouped_self_attention_eligible(tgt, None, None) is False
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize("predicate", ["is_compiling", "_is_tracing"])
     def test_eligibility_falls_back_to_the_module_call_while_compiling_or_tracing(
         self, predicate: str, cuda_layer: tuple[TransformerDecoderLayer, torch.Tensor], mocker: MockerFixture
@@ -2798,7 +2798,7 @@ class TestGroupedSelfAttention:
         assert layer._grouped_self_attention_eligible(torch.randn(2, 12, 16), None, None) is False
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.usefixtures("highest_float32_matmul_precision")
     @pytest.mark.parametrize(
         "autocast_dtype",
@@ -2891,7 +2891,7 @@ _LINEAR_RELU_CASES = [
         device,
         dtype,
         id=f"{device}-{name}",
-        marks=_cuda_marks
+        marks=cuda_marks
         if device == "cuda"
         else pytest.mark.skipif(
             not _cpu_addmm_activation_available(dtype), reason="torch._addmm_activation has no CPU kernel"
@@ -2937,7 +2937,7 @@ class TestLinearReLU:
             assert torch.equal(tensor.grad, expected_grad)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     def test_matches_relu_of_linear_for_nan_inf_and_negative_zero_on_cuda(self) -> None:
         """The epilogue ReLU treats NaN, infinities and the sign of zero like ``relu(linear)``.
 
@@ -2965,7 +2965,7 @@ class TestFfnHidden:
     """Decoder FFN hidden activation: fused CUDA path and its fallbacks."""
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.usefixtures("float32_matmul_precision")
     @pytest.mark.parametrize(
         "mode", [pytest.param("train", id="train"), pytest.param("inference", id="eval-inference-mode")]
@@ -3034,7 +3034,7 @@ class TestFfnHidden:
         assert torch.equal(out, layer.activation(layer.linear1(tgt)))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "mutate",
         [
@@ -3066,7 +3066,7 @@ class TestFfnHidden:
         assert torch.equal(out, layer.activation(layer.linear1(tgt)))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "make_linear",
         [
@@ -3089,7 +3089,7 @@ class TestFfnHidden:
         assert torch.equal(out, layer.activation(layer.linear1(tgt)))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "hook",
         [
@@ -3118,7 +3118,7 @@ class TestFfnHidden:
         assert torch.equal(out, layer.activation(layer.linear1(tgt)))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize("predicate", ["is_compiling", "_is_tracing"])
     def test_falls_back_to_the_two_op_path_while_compiling_or_tracing(
         self,
@@ -3140,7 +3140,7 @@ class TestObservedModulesKeepTheModuleCall:
     """Hooks and instance overrides on decoder submodules keep the full-precision module call."""
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize("target", ["ref_point_head", "first_linear"])
     @pytest.mark.parametrize("feature", ["forward_pre_hook", "instance_forward"])
     def test_ref_point_head_observers_keep_the_full_precision_embedding_input(
@@ -3199,7 +3199,7 @@ class TestObservedModulesKeepTheModuleCall:
         assert observed_dtypes == [torch.float32]
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize("target", ["cross_attn", "sampling_offsets", "attention_weights"])
     @pytest.mark.parametrize("feature", ["forward_pre_hook", "instance_forward"])
     def test_cross_attention_observers_keep_the_full_precision_query(
@@ -3256,7 +3256,7 @@ class TestObservedModulesKeepTheModuleCall:
         assert observed_dtypes == [torch.float32]
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         "feature",
         [
@@ -3374,7 +3374,7 @@ class TestPlainModuleCallGate:
         assert layer._pos_embed_for_linear(tensor, pos).dtype == torch.float32
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     def test_pos_embed_for_linear_emits_the_autocast_dtype_under_cuda_autocast(self) -> None:
         """Under bf16 autocast the positional add is produced in bf16 in one step, bitwise the cast sum."""
         layer = decoder_layer().cuda()
@@ -3490,9 +3490,9 @@ class TestGenSineembedForPosition:
         ("device", "mode", "expected_calls"),
         [
             pytest.param("cpu", "eager", 0, id="cpu-eager"),
-            pytest.param("cuda", "eager", 1, id="cuda-eager", marks=_cuda_marks),
-            pytest.param("cuda", "compiling", 0, id="cuda-compiling", marks=_cuda_marks),
-            pytest.param("cuda", "tracing", 0, id="cuda-tracing", marks=_cuda_marks),
+            pytest.param("cuda", "eager", 1, id="cuda-eager", marks=cuda_marks),
+            pytest.param("cuda", "compiling", 0, id="cuda-compiling", marks=cuda_marks),
+            pytest.param("cuda", "tracing", 0, id="cuda-tracing", marks=cuda_marks),
         ],
     )
     def test_takes_the_interleaved_write_only_on_cuda_eager(
@@ -3591,7 +3591,7 @@ class TestTwoStageGroupSelection:
         torch.testing.assert_close(memory.grad, expected_grad, rtol=1e-6, atol=1e-6)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     def test_cast_once_matches_expanded_cast_under_autocast(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -3636,7 +3636,7 @@ class TestTwoStageGroupSelection:
         torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-5, atol=1e-6)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     def test_keeps_expand_then_cast_while_tracing(self, mocker: MockerFixture) -> None:
         """TorchScript tracing must not record the custom cast-then-expand autograd function.
 
@@ -3748,7 +3748,7 @@ class TestEagerRewritesOnTheProductionModel:
     """Eager decoder rewrites on the production Nano model: routing, loss parity and CUDA-graph replay."""
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         ("training", "autocast_dtype", "captured"),
         [
@@ -3831,7 +3831,7 @@ class TestEagerRewritesOnTheProductionModel:
         assert {args[1] for args in calls["sine"]} == {autocast_dtype or torch.float32}
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     @pytest.mark.parametrize(
         ("autocast_dtype", "grad_rtol"),
         [pytest.param(None, 1e-4, id="fp32"), pytest.param(torch.bfloat16, 1e-2, id="bf16")],
@@ -3962,7 +3962,7 @@ class TestEagerRewritesOnTheProductionModel:
         )
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @requires_cuda
     def test_autocast_only_rewrites_match_the_two_op_graph_under_cuda_graph_replay(self) -> None:
         """Captured and replayed on new inputs, ``_AddInDtype`` and ``_CastThenExpand`` keep the two-op graph's values.
 

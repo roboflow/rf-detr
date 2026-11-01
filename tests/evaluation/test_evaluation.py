@@ -24,7 +24,6 @@ from rfdetr.evaluation.matching import (
     init_matching_accumulator,
     merge_matching_data,
 )
-from tests._markers import _requires_cuda
 
 # ---------------------------------------------------------------------------
 # _compute_mask_iou
@@ -162,7 +161,7 @@ class TestComputeMaskIou:
         assert torch.equal(result, expected)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize(
         ("m", "gt_size"),
         [

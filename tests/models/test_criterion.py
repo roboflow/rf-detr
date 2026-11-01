@@ -28,7 +28,7 @@ from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.utilities.tensors import NestedTensor, pad_targets_to_fixed_count
-from tests._markers import _requires_cuda, _requires_cuda_bf16, _requires_torch_xla
+from tests._markers import requires_torch_xla
 
 
 class _MatcherStub:
@@ -176,7 +176,7 @@ class TestTargetMaskPointSampling:
     """Tests for the guarded direct sampling of matched ground-truth masks."""
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize(
         "variant", ["random", "ties", "outside", "nan", "strided", "empty", "coords_grad", "negative", "cuda_indices"]
     )
@@ -218,7 +218,7 @@ class TestTargetMaskPointSampling:
             assert torch.equal(actual_grad.view(torch.uint8), expected_grad.view(torch.uint8))
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize(
         ("variant", "expected_sampled_rows"),
         [
@@ -262,7 +262,7 @@ class TestTargetMaskPointSampling:
         assert [call.args[0].shape[0] for call in sampler.call_args_list] == expected_sampled_rows
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize("variant", ["float", "all_empty", "different_shapes", "wrong_count"])
     def test_cuda_per_image_sampling_retains_fallback(self, mocker: MockerFixture, variant: str) -> None:
         """Unsupported inputs retain native concatenation and sampler validation."""
@@ -516,7 +516,7 @@ class TestTargetMaskPointSampling:
         fallback.assert_not_called()
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_cuda_point_coords_preserve_fallback_for_cpu_masks(self, mocker: MockerFixture) -> None:
         """CUDA point coordinates with CPU masks remain on the established fallback path."""
         masks = torch.rand(8, 96, 96)
@@ -532,7 +532,7 @@ class TestTargetMaskPointSampling:
         fallback.assert_called_once()
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_cuda_matcher_indices_preserve_fallback_semantics(self, mocker: MockerFixture) -> None:
         """CUDA matcher indices remain on the established fallback path."""
         masks = torch.rand(8, 96, 96, device="cuda")
@@ -600,7 +600,7 @@ class TestTargetMaskPointSampling:
         fallback.assert_not_called()
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_single_cuda_image_is_gathered(self, mocker: MockerFixture) -> None:
         """A single CUDA image is gathered too: batch 1 at high resolution is where the float copies cost most."""
         torch.manual_seed(0)  # deterministic and, at this point count, verified to land no exact-tie coordinate.
@@ -1187,7 +1187,7 @@ class TestMaskLossDenominatorStaysOnDevice:
         assert denominator.grad is not None
 
     @pytest.mark.xla
-    @_requires_torch_xla
+    @requires_torch_xla
     def test_denominator_is_not_read_back_to_the_host_on_xla(self) -> None:
         """No ``_local_scalar_dense`` and no ``aten::`` fallback: the whole call stays on device.
 
@@ -1512,7 +1512,7 @@ class TestBatchedDetectionLosses:
                 assert (actual.float() - expected.float()).abs().max() <= tolerance * expected.float().abs().max()
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize("target_counts", [(3, 0), (0, 0)])
     def test_compiled_cuda_losses_and_gradients_match_fallback(self, target_counts: tuple[int, int]) -> None:
         """The real lazy CUDA compilation preserves losses and gradients, including an empty batch."""
@@ -1540,8 +1540,10 @@ class TestBatchedDetectionLosses:
             assert torch.allclose(box_gradient, layer["pred_boxes"].grad, rtol=1e-5, atol=1e-6)
 
     @pytest.mark.gpu
-    @_requires_cuda
-    @_requires_cuda_bf16
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(), reason="BF16 CUDA not available"
+    )
     @pytest.mark.parametrize("target_counts", [(3, 0), (0, 0)])
     def test_compiled_cuda_bf16_autocast_matches_fallback(self, target_counts: tuple[int, int]) -> None:
         """The compiled graph matches the per-layer path in the BF16 autocast regime training actually runs.
@@ -1585,7 +1587,7 @@ class TestBatchedDetectionLosses:
                 assert (actual.float() - expected.float()).abs().max() <= tolerance * expected.float().abs().max()
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize(
         ("losses", "overrides", "enabled", "layer_count", "batched"),
         [
@@ -1641,7 +1643,7 @@ class TestBatchedDetectionLosses:
         assert criterion._can_batch_detection_losses(outputs, matched) is batched
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize(
         ("queries", "logits_dtype", "boxes_dtype", "matches", "batched"),
         [
@@ -1681,7 +1683,7 @@ class TestBatchedDetectionLosses:
         assert criterion._can_batch_detection_losses(outputs, matched) is batched
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_segmentation_losses_survive_enabled_batching(self) -> None:
         """A segmentation criterion on CUDA still returns its mask losses for every layer once batching is enabled."""
         outputs, _, targets = _layered_detection_batch((3, 2), device="cuda", mask_side=8)
@@ -1699,7 +1701,7 @@ class TestBatchedDetectionLosses:
         assert criterion._compiled_batched_detection_losses is None, "the segmentation criterion was batched"
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_criterion_subclass_keeps_its_own_box_loss(self) -> None:
         """An overridden loss on a ``SetCriterion`` subclass is not answered by the batched base implementation."""
         sentinel = torch.tensor(123.0, device="cuda")
@@ -1728,7 +1730,7 @@ class TestBatchedDetectionLosses:
         assert criterion._compiled_batched_detection_losses is None, "the subclass was batched"
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_compiled_graph_is_reused_across_matched_pair_counts(self) -> None:
         """After warm-up, batches with another number of matched pairs must not recompile the loss graph.
 
@@ -1757,7 +1759,7 @@ class TestBatchedDetectionLosses:
         assert not torch._dynamo.utils.counters["graph_break"]
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_compiled_loss_falls_back_to_eager_past_the_recompile_limit(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1908,7 +1910,7 @@ class TestPaddedTargets:
         assert torch.allclose(plain["cardinality_error"], padded["cardinality_error"], rtol=1e-5, atol=1e-6)
 
     @pytest.mark.xla
-    @_requires_torch_xla
+    @requires_torch_xla
     def test_cardinality_error_does_not_read_the_valid_mask_back_to_the_host(self) -> None:
         """No ``_local_scalar_dense``: reading padded targets' ``valid`` counts must stay a device transfer.
 

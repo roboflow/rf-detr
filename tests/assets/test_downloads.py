@@ -27,12 +27,6 @@ def mock_file_operations(mocker):
     return {"exists": mock_exists, "download": mock_download, "validate": mock_validate}
 
 
-#: Skip a test node that needs the ``rfdetr_plus`` package.
-_rfdetr_plus_only = pytest.mark.skipif(
-    not _IS_RFDETR_PLUS_AVAILABLE, reason="rf-detr-plus not installed - skip priority test"
-)
-
-
 class TestDownloadPretrainWeights:
     """Test download_pretrain_weights function with mocking for offline testing."""
 
@@ -49,7 +43,7 @@ class TestDownloadPretrainWeights:
         assert call_kwargs["expected_md5"] is not None  # Should have MD5 hash
         assert len(call_kwargs["expected_md5"]) == 32  # Valid MD5 hash
 
-    @_rfdetr_plus_only
+    @pytest.mark.skipif(not _IS_RFDETR_PLUS_AVAILABLE, reason="rf-detr-plus not installed - skip priority test")
     def test_download_from_rfdetr_plus_when_available(self, mocker, mock_file_operations):
         """The rf-detr-plus URL is used for models absent from local ModelWeights.
 

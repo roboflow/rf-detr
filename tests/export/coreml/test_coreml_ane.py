@@ -40,7 +40,7 @@ from tests.export.conftest import _structured_parity_input, eager_reference_tens
 # before the autouse `reset_random_seeds`, so the draw would otherwise depend on test order.
 _EXPORT_SEED = 0
 
-_coreml_runtime_only = pytest.mark.skipif(
+coreml_runtime_only = pytest.mark.skipif(
     not _IS_COREMLTOOLS_AVAILABLE or sys.platform != "darwin",
     reason="needs coremltools and the macOS CoreML runtime",
 )
@@ -74,7 +74,7 @@ def nano_fp16_export(request: pytest.FixtureRequest, tmp_path_factory: pytest.Te
     return Path(mlpackage_path), example, eager_reference_tensors(model, example)
 
 
-@_coreml_runtime_only
+@coreml_runtime_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLNeuralEngineLoad:
@@ -106,7 +106,7 @@ class TestCoreMLNeuralEngineLoad:
 _IOS15_SPEC_VERSION = 6
 
 
-@_coreml_runtime_only
+@coreml_runtime_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLSpecificationVersion:
@@ -205,7 +205,7 @@ def _compute_plan(mlpackage_path: Path) -> Any:
     return plan
 
 
-@_coreml_runtime_only
+@coreml_runtime_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLNeuralEngineFallbackBoundary:
@@ -295,7 +295,7 @@ def nano_fp16_neural_engine_export(tmp_path_factory: pytest.TempPathFactory) -> 
 _QUERY_SELECTION_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_dims"})
 
 
-@_coreml_runtime_only
+@coreml_runtime_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLNeuralEngineRewrites:

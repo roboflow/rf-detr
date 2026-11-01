@@ -8,6 +8,7 @@
 import copy
 import logging
 import pickle
+import sys
 import warnings
 from collections.abc import Callable
 from typing import Any, get_args
@@ -36,14 +37,19 @@ from rfdetr.training.coco_map import (
     _VernierBackend,
     _warn_streaming_fallback,
 )
-from tests._markers import (
-    _faster_coco_eval_only,
-    _hotcoco_only,
-    _pycocotools_only,
-    _requires_gloo_spawn,
-    _ufcoco_only,
-    _vernier_only,
+from rfdetr.utilities.imports import (
+    _IS_FASTER_COCO_EVAL_INSTALLED,
+    _IS_HOTCOCO_INSTALLED,
+    _IS_PYCOCOTOOLS_INSTALLED,
+    _IS_UFCOCO_INSTALLED,
+    _IS_VERNIER_INSTALLED,
 )
+
+faster_coco_eval_only = pytest.mark.skipif(not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed")
+hotcoco_only = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed")
+pycocotools_only = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pycocotools not installed")
+ufcoco_only = pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed")
+vernier_only = pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed")
 
 # pytest-doctestplus has no ``+REQUIRES`` directive, so a helper doctest that builds a hotcoco metric is gated on the
 # optional package here instead, and skips rather than fails where the ``train`` extra is not installed.
@@ -51,11 +57,11 @@ __doctest_requires__ = {"_metric_fed_per_image": ["hotcoco"]}
 
 # Every backend the adapter accepts, each carrying the skip mark for the package it needs.
 _BACKEND_ONLY = {
-    "faster_coco_eval": _faster_coco_eval_only,
-    "hotcoco": _hotcoco_only,
-    "hotcoco_streaming": _hotcoco_only,
-    "ufcoco": _ufcoco_only,
-    "vernier": _vernier_only,
+    "faster_coco_eval": faster_coco_eval_only,
+    "hotcoco": hotcoco_only,
+    "hotcoco_streaming": hotcoco_only,
+    "ufcoco": ufcoco_only,
+    "vernier": vernier_only,
 }
 _ALL_BACKENDS = [pytest.param(backend, marks=mark) for backend, mark in _BACKEND_ONLY.items()]
 # The backends that replace the evaluation of a `faster_coco_eval`-named TorchMetrics backend.
@@ -772,7 +778,7 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, b
 # Windows CI currently cannot run this spawn test because gloo DDP spawn fails with
 # makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
 @pytest.mark.ddp
-@_requires_gloo_spawn
+@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.parametrize("backend", _NON_STREAMING_BACKENDS)
 def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path, backend: str) -> None:
     """Two real Gloo ranks must finish without deadlock when only rank zero receives a metric update.
@@ -934,7 +940,7 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     assert recall_at(2) < recall_at(500)
 
 
-@_hotcoco_only
+@hotcoco_only
 @pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
 def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str], backend: str) -> None:
     """Selecting hotcoco must not add backend chatter to a training run's console output.
@@ -958,7 +964,7 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str], ba
     assert captured.err == ""
 
 
-@_hotcoco_only
+@hotcoco_only
 @pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
 def test_hotcoco_evaluation_raises_no_warnings(backend: str) -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
@@ -992,7 +998,7 @@ def test_hotcoco_suppresses_only_the_max_dets_warning() -> None:
     assert [str(warning.message) for warning in raised] == ["unrelated diagnostic"]
 
 
-@_ufcoco_only
+@ufcoco_only
 def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None:
     """``map`` must be a real number, equal to faster-coco-eval's, when ``eval_max_dets`` is not 100.
 
@@ -1015,7 +1021,7 @@ def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None
     assert aggregate_ap("ufcoco") == expected
 
 
-@_ufcoco_only
+@ufcoco_only
 def test_ufcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
     """Selecting ufcoco must not add backend chatter to a training run's console output.
 
@@ -1093,7 +1099,7 @@ def test_ufcoco_propagates_nested_import_error(mocker: MockerFixture) -> None:
     assert raised.value is nested_error
 
 
-@_ufcoco_only
+@ufcoco_only
 def test_ufcoco_backend_picks_up_the_optional_package_and_survives_pickling() -> None:
     """The ufcoco backend must resolve its surfaces from ``ultrafast_pycocotools`` and pickle with the metric.
 
@@ -1115,7 +1121,7 @@ def test_ufcoco_backend_picks_up_the_optional_package_and_survives_pickling() ->
     assert restored._coco_backend.cocoeval is backend.cocoeval
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_backend_survives_pickling() -> None:
     """The vernier backend must pickle with the metric, which Lightning's DDP spawn and checkpoint plumbing require."""
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
@@ -1151,7 +1157,7 @@ def test_vernier_thread_budget_divides_by_local_world_size(
     assert _vernier_thread_budget() == expected
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_rejects_mask_only_evaluation() -> None:
     """Mask-only evaluation must fail at construction, before an epoch of state is accumulated and discarded."""
     with pytest.raises(ValueError) as exc_info:
@@ -1159,7 +1165,7 @@ def test_vernier_rejects_mask_only_evaluation() -> None:
     assert "requires 'bbox'" in str(exc_info.value)
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_rejects_fractional_ground_truth_labels() -> None:
     """A fractional ground-truth class label must be rejected instead of silently truncated by ``.long()``.
 
@@ -1177,7 +1183,7 @@ def test_vernier_rejects_fractional_ground_truth_labels() -> None:
     assert "must be integral" in str(exc_info.value)
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> None:
     """A fractional detection class label under ``segm`` must be rejected instead of truncated by ``.long()``.
 
@@ -1204,7 +1210,7 @@ def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> Non
     assert "must be integral" in str(exc_info.value)
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_accepts_whole_valued_float_labels() -> None:
     """A whole-valued floating-point label must be accepted, matching the equivalent integer label.
 
@@ -1228,7 +1234,7 @@ def test_vernier_accepts_whole_valued_float_labels() -> None:
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_handles_one_dimensional_empty_boxes() -> None:
     """A 1-D empty box tensor on one image must not crash concatenation against another image's real boxes.
 
@@ -1258,7 +1264,7 @@ def test_vernier_handles_one_dimensional_empty_boxes() -> None:
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_handles_one_dimensional_empty_boxes_under_segmentation() -> None:
     """A 1-D empty box tensor on one image must not crash the columnar detection route ``segm`` uses.
 
@@ -1295,7 +1301,7 @@ def test_vernier_handles_one_dimensional_empty_boxes_under_segmentation() -> Non
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
     """A one-dimensional empty ground-truth box tensor must not crash concatenation against another image's boxes.
 
@@ -1327,7 +1333,7 @@ def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
 
 @pytest.mark.parametrize("iou_type", ["bbox", pytest.param(("bbox", "segm"), id="both")])
 @pytest.mark.parametrize("max_dets", [100, 500])
-@_vernier_only
+@vernier_only
 def test_vernier_matches_faster_coco_eval_across_updates_and_reuse(iou_type: Any, max_dets: int) -> None:
     """Vernier's native path must match faster-coco-eval exactly on ties, crowds and images missing either side.
 
@@ -1453,7 +1459,7 @@ def _rasterize(boxes: torch.Tensor) -> torch.Tensor:
         pytest.param(True, True, True, True, id="masks"),
     ],
 )
-@_vernier_only
+@vernier_only
 def test_vernier_columnar_ground_truth_is_the_same_document(
     with_area: bool, with_crowd: bool, empty_images: bool, with_masks: bool
 ) -> None:
@@ -1513,7 +1519,7 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
     )
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> None:
     """The ground-truth builder must keep ``iscrowd`` at its stored width, not through a column that wraps it.
 
@@ -1542,7 +1548,7 @@ def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> No
     assert wide_crowd.num_annotations == no_crowd.num_annotations
 
 
-@_vernier_only
+@vernier_only
 def test_vernier_columnar_route_keeps_crowd_flags_wider_than_uint8() -> None:
     """A crowd flag must reach vernier at its stored width, not through a column that wraps it.
 
@@ -1563,7 +1569,7 @@ def test_vernier_columnar_route_keeps_crowd_flags_wider_than_uint8() -> None:
 
 @pytest.mark.parametrize("iou_type", ["bbox", pytest.param(("bbox", "segm"), id="both")])
 @pytest.mark.parametrize("max_dets", [100, 500])
-@_vernier_only
+@vernier_only
 def test_vernier_parity_modes_differ_only_on_the_aggregate_at_a_non_default_max_dets(
     iou_type: Any, max_dets: int
 ) -> None:
@@ -1670,7 +1676,7 @@ class TestUfcocoArraysMatchPycocotools:
     computed from. pycocotools is the reference ufcoco reproduces, and ``rfdetr[train]`` installs it.
     """
 
-    @_ufcoco_only
+    @ufcoco_only
     def test_evaluator_keeps_the_inherited_collect(self) -> None:
         """The adapter's evaluator subclass must not define its own ``_collect``.
 
@@ -1679,8 +1685,8 @@ class TestUfcocoArraysMatchPycocotools:
         """
         assert "_collect" not in vars(_ufcoco_evaluator_type())
 
-    @_pycocotools_only
-    @_ufcoco_only
+    @pycocotools_only
+    @ufcoco_only
     @pytest.mark.parametrize("iou_type", ["bbox", "segm", pytest.param(("bbox", "segm"), id="both")])
     @pytest.mark.parametrize("max_dets", [100, 500])
     def test_evaluator_arrays_are_byte_identical(self, iou_type: Any, max_dets: int) -> None:
@@ -1746,11 +1752,11 @@ class TestUfcocoArraysMatchPycocotools:
 @pytest.mark.parametrize(
     ("backend", "iou_type", "from_array"),
     [
-        pytest.param("ufcoco", "bbox", True, marks=_ufcoco_only),
-        pytest.param("hotcoco", "bbox", True, marks=_hotcoco_only),
-        pytest.param("faster_coco_eval", "bbox", False, marks=_faster_coco_eval_only),
-        pytest.param("ufcoco", "segm", False, marks=_ufcoco_only),
-        pytest.param("ufcoco", ("bbox", "segm"), False, marks=_ufcoco_only, id="ufcoco-both"),
+        pytest.param("ufcoco", "bbox", True, marks=ufcoco_only),
+        pytest.param("hotcoco", "bbox", True, marks=hotcoco_only),
+        pytest.param("faster_coco_eval", "bbox", False, marks=faster_coco_eval_only),
+        pytest.param("ufcoco", "segm", False, marks=ufcoco_only),
+        pytest.param("ufcoco", ("bbox", "segm"), False, marks=ufcoco_only, id="ufcoco-both"),
     ],
 )
 def test_box_only_predictions_load_from_one_array(backend: str, iou_type: Any, from_array: bool) -> None:
@@ -1799,7 +1805,7 @@ class TestDetectionArrayLabelValidation:
             metric.compute()
         assert "Invalid input class of sample 0" in str(exc_info.value)
 
-    @_ufcoco_only
+    @ufcoco_only
     def test_accepts_empty_floating_point_labels(self) -> None:
         """An image with no detections must pass with a ``float32`` label tensor, as it does upstream.
 
@@ -1993,7 +1999,7 @@ def _computed(
     return metric.compute()
 
 
-@_hotcoco_only
+@hotcoco_only
 class TestHotcocoMultiIouTypeMatchesFasterCocoEval:
     """A bbox+segm hotcoco run switches the active area with ``update_anns`` and must still equal the reference."""
 
@@ -2017,7 +2023,7 @@ class TestHotcocoMultiIouTypeMatchesFasterCocoEval:
         _assert_same_metrics(actual, _computed("faster_coco_eval", iou_type, records))
 
 
-@_hotcoco_only
+@hotcoco_only
 def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions(mocker: MockerFixture) -> None:
     """A bbox+segm run on hotcoco must build its datasets once, not once per IoU type.
 
@@ -2089,8 +2095,8 @@ def _straddling_disc_records() -> tuple[list[dict[str, Any]], list[dict[str, Any
     return predictions, targets
 
 
-@_vernier_only
-@_hotcoco_only
+@vernier_only
+@hotcoco_only
 def test_two_iou_type_run_buckets_bbox_ap_by_mask_area() -> None:
     """A two-IoU-type run must bucket ``bbox`` AP by *mask* area, as upstream does.
 
@@ -2116,8 +2122,8 @@ def test_two_iou_type_run_buckets_bbox_ap_by_mask_area() -> None:
         assert torch.equal(vernier_result[key], reference[key]), key
 
 
-@_vernier_only
-@_hotcoco_only
+@vernier_only
+@hotcoco_only
 def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
     """The mirror of the two-IoU-type case, and the reason ``rles`` is gated on the run.
 
@@ -2157,7 +2163,7 @@ def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-@_vernier_only
+@vernier_only
 def test_autocast_dtypes_survive_the_round_trip_to_vernier(dtype: torch.dtype) -> None:
     """State stored under autocast must evaluate, whatever dtype the autocast ran in.
 
@@ -2271,7 +2277,7 @@ def _assert_same_metrics(actual: dict[str, torch.Tensor], expected: dict[str, to
         assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1)), key
 
 
-@_hotcoco_only
+@hotcoco_only
 class TestHotcocoStreaming:
     """``hotcoco_streaming`` matches batches in ``update()`` and must report exactly what ``hotcoco`` reports."""
 

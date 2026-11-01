@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.model_ema import ModelEma
-from tests._markers import _requires_cuda, _requires_torch_xla
+from tests._markers import requires_torch_xla
 
 
 class _EMAContainerModule(nn.Module):
@@ -340,7 +340,7 @@ class TestXLARealDeviceExecution:
     """
 
     @pytest.mark.xla
-    @_requires_torch_xla
+    @requires_torch_xla
     def test_num_averaged_value_does_not_read_the_lazy_per_group_counter_back_to_the_host(self) -> None:
         """No ``aten::_local_scalar_dense`` host read: the XLA branch must use the CPU-resident model counter.
 
@@ -703,7 +703,7 @@ class TestMultiAvgFn:
         assert torch.equal(ema_new.module.step_count, ema_old.module.step_count)
 
     @pytest.mark.gpu
-    @_requires_cuda
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_multi_avg_fn_matches_avg_fn_weight_parity_on_cuda(self) -> None:
         """CUDA-resident foreach multi_avg_fn EMA must match avg_fn EMA — exercises real GPU group dispatch.
 
@@ -945,7 +945,7 @@ class TestRealXLATrainerEMA:
     """Run the XLA optimizer-hook lifecycle through a real Lightning Trainer when hardware is available."""
 
     @pytest.mark.xla
-    @_requires_torch_xla
+    @requires_torch_xla
     def test_optimizer_hook_updates_once_per_interval_across_resume(self, tmp_path: Path) -> None:
         """A real XLA Trainer updates EMA at steps 2 and 4, including after checkpoint resume.
 

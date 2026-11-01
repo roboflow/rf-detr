@@ -15,7 +15,7 @@ Covers:
 * The single-level deformable-attention core emitting no one-output ``split`` under ``torch.export`` — the only op
   litert-torch 0.9.4 could not lower on RF-DETR's export graph.
 * A real end-to-end export + numerical parity check, gated behind the ``e2e_litert`` marker and
-  the ``_litert_only`` skip so it only runs where the ``[litert]`` extra is installed.
+  the ``litert_only`` skip so it only runs where the ``[litert]`` extra is installed.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ from tests.export.conftest import (
     max_abs_output_diffs,
 )
 
-_litert_only = pytest.mark.skipif(
+litert_only = pytest.mark.skipif(
     not _IS_LITERT_TORCH_INSTALLED, reason="litert_torch not installed; skip LiteRT e2e tests"
 )
 
@@ -691,7 +691,7 @@ def litert_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     return reference_model, example, Path(tflite_path)
 
 
-@_litert_only
+@litert_only
 @pytest.mark.integration
 @pytest.mark.e2e_litert
 class TestLiteRTEndToEnd:

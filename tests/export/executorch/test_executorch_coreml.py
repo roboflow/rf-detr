@@ -40,7 +40,7 @@ from tests.export.executorch.test_executorch_export import _portable_kernel_call
 # depends on process/test order.
 _EXPORT_SEED = 0
 
-_executorch_coreml_only = pytest.mark.skipif(
+executorch_coreml_only = pytest.mark.skipif(
     not _IS_EXECUTORCH_AVAILABLE or not _IS_COREMLTOOLS_AVAILABLE or sys.platform != "darwin",
     reason="needs executorch, coremltools and macOS to run the CoreML delegate",
 )
@@ -94,7 +94,7 @@ def _delegate_call_count(pte_path: Path) -> int:
     )
 
 
-@_executorch_coreml_only
+@executorch_coreml_only
 @pytest.mark.integration
 @pytest.mark.e2e_executorch
 class TestExecuTorchCoreMLDelegate:

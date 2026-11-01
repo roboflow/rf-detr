@@ -18,7 +18,6 @@ import torch
 from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
-from tests._markers import _cuda_marks, _requires_cuda
 
 #: COCO RLE edge-case names exercised by the mask-state parity test.
 _MASK_CASES = [
@@ -44,7 +43,7 @@ _DEVICES = [
     "cpu",
     pytest.param(
         "cuda",
-        marks=_cuda_marks,
+        marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")],
     ),
 ]
 #: Arguments for the adapter and its reference, stock TorchMetrics, which encodes masks with faster-coco-eval.
@@ -176,7 +175,7 @@ def test_stored_masks_do_not_depend_on_the_encoding_chunk(monkeypatch: pytest.Mo
 
 
 @pytest.mark.gpu
-@_requires_cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_dense_mask_chunks_bound_extra_cuda_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     """Completed dense chunks must not accumulate on CUDA as the mask stack grows.
 

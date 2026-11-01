@@ -78,7 +78,7 @@ def _write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
     image.save(path, format="JPEG", quality=90)
 
 
-_requires_simplejpeg = pytest.mark.skipif(io_utils.simplejpeg is None, reason="simplejpeg is not installed")
+requires_simplejpeg = pytest.mark.skipif(io_utils.simplejpeg is None, reason="simplejpeg is not installed")
 
 
 class TestDecodeImage:
@@ -96,7 +96,7 @@ class TestDecodeImage:
     on the fixture below) instead of exact equality.
     """
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_jpeg_pixels_match_pillow(self, tmp_path: Path) -> None:
         """Full-resolution simplejpeg output equals Pillow's."""
         jpeg_path = tmp_path / "img.jpg"
@@ -109,7 +109,7 @@ class TestDecodeImage:
         assert scales == (1.0, 1.0)
         np.testing.assert_array_equal(pixels, expected)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     @pytest.mark.parametrize(
         ("width", "height", "draft_size"),
         [
@@ -132,7 +132,7 @@ class TestDecodeImage:
         assert scales == expected_scales
         np.testing.assert_array_equal(pixels, expected)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_grayscale_jpeg_decodes_to_rgb(self, tmp_path: Path) -> None:
         """Single-channel JPEG sources come back as three-channel RGB like Pillow's ``convert``."""
         jpeg_path = tmp_path / "gray.jpg"
@@ -144,7 +144,7 @@ class TestDecodeImage:
         assert pixels.shape == (30, 40, 3)
         np.testing.assert_array_equal(pixels, expected)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_cmyk_jpeg_matches_pillow_within_rounding_tolerance(self, tmp_path: Path) -> None:
         """CMYK JPEG sources decode to RGB pixels within a small rounding tolerance of Pillow's conversion.
 
@@ -162,7 +162,7 @@ class TestDecodeImage:
         assert pixels.shape == expected.shape
         np.testing.assert_allclose(pixels.astype(int), expected.astype(int), atol=2)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path) -> None:
         """A JPEG simplejpeg rejects falls through to Pillow, so callers see the same ``OSError`` as before."""
         jpeg_path = tmp_path / "img.jpg"
@@ -172,7 +172,7 @@ class TestDecodeImage:
         with pytest.raises(OSError, match="truncated"):
             decode_image(jpeg_path)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -184,7 +184,7 @@ class TestDecodeImage:
         with pytest.raises(Image.DecompressionBombError):
             decode_image(jpeg_path)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_jpeg_between_pixel_limit_tiers_warns_and_decodes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -267,7 +267,7 @@ class TestDecodeImage:
         assert scales == expected_scales
         np.testing.assert_array_equal(pixels, expected)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_bytes_garbage_after_soi_raises_pillow_error(self) -> None:
         """Bytes with a valid JPEG SOI marker but a garbage payload raise the same error Pillow would.
 
@@ -363,7 +363,7 @@ class TestDecodePilImage:
         # `io.BytesIO(data)` shares `data`'s buffer instead of copying it.
         assert peak_traced_bytes(decode_pil, source) < 800 * 600 * 3 // 2
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
     def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
@@ -378,7 +378,7 @@ class TestDecodePilImage:
         with pytest.raises(Image.DecompressionBombError):
             decode_pil(source)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
     def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
         """A truncated JPEG falls through to Pillow, raising the same ``OSError`` for the PIL entry points."""
@@ -391,7 +391,7 @@ class TestDecodePilImage:
         with pytest.raises(OSError, match="truncated"):
             decode_pil(source)
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
     def test_garbage_after_soi_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
         """A JPEG SOI marker followed by a garbage payload raises Pillow's error through the PIL entry points.
@@ -412,7 +412,7 @@ class TestDecodePilImage:
 class TestReadSimplejpegCandidate:
     """``_read_simplejpeg_candidate`` decides, by marker, whether a file is ``simplejpeg``'s to decode."""
 
-    @_requires_simplejpeg
+    @requires_simplejpeg
     def test_jpeg_file_returns_its_bytes(self, tmp_path: Path) -> None:
         """A JPEG file's raw bytes come back unchanged, the positive branch the module doctest does not cover."""
         jpeg_path = tmp_path / "img.jpg"

@@ -24,15 +24,18 @@ from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD, build_kornia_pipeline, collate_boxes
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import _MIN_TRAIN_BATCHES, GradAccumAlignedDataset, RFDETRDataModule, _worker_init_fn
+from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
 from rfdetr.utilities.tensors import (
     NestedTensor,
     PackedTargets,
     nested_tensor_from_tensor_list,
     pack_targets,
 )
-from tests._markers import _cuda_marks, _kornia_only
 
-_CUDA_DEVICE = pytest.param("cuda", marks=_cuda_marks)
+kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
+_CUDA_DEVICE = pytest.param(
+    "cuda", marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")]
+)
 _EVAL_LOADERS = ["val_dataloader", "test_dataloader", "predict_dataloader"]
 _EVAL_LOADER_DATASETS = [
     pytest.param("val_dataloader", "_dataset_val", id="val"),
@@ -675,7 +678,7 @@ class TestKeypointAugmentationWarning:
 
         assert not [w for w in caught if "Keypoint mode" in str(w.message)]
 
-    @_kornia_only
+    @kornia_only
     def test_keypoint_mode_gpu_augmentation_builds_pipeline(self, mocker, tmp_path: Path) -> None:
         """Setup('fit') builds a keypoint-enabled Kornia pipeline when the requested GPU backend is ready."""
         dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="gpu")
@@ -690,7 +693,7 @@ class TestKeypointAugmentationWarning:
         assert build.call_args.kwargs["with_keypoints"] is True
         assert dm._kornia_pipeline is not None
 
-    @_kornia_only
+    @kornia_only
     def test_keypoint_mode_auto_can_select_kornia(self, mocker, tmp_path: Path) -> None:
         """Auto backend can resolve to Kornia for keypoints on a CUDA host."""
         dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="auto")
@@ -1816,7 +1819,7 @@ class TestOnAfterBatchTransfer:
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
 
-    @_kornia_only
+    @kornia_only
     @pytest.mark.parametrize("segmentation_head", [False, True])
     @pytest.mark.parametrize("flip", ["HorizontalFlip", "VerticalFlip"])
     def test_detection_box_edges_follow_flipped_pixels(
@@ -1853,7 +1856,7 @@ class TestOnAfterBatchTransfer:
         if segmentation_head:
             torch.testing.assert_close(targets_out[0]["masks"], target["masks"].flip(dimension))
 
-    @_kornia_only
+    @kornia_only
     def test_detection_identity_preserves_fractional_subpixel_and_padded_boxes(self, tmp_path: Path) -> None:
         """An identity pipeline preserves continuous edges and ignores padding for an empty image."""
         dm = self._attach_mock_trainer(self._build_dm(tmp_path))
@@ -1878,7 +1881,7 @@ class TestOnAfterBatchTransfer:
         assert targets_out[1]["labels"].shape == (0,)
         torch.testing.assert_close(targets[0]["boxes"], boxes)
 
-    @_kornia_only
+    @kornia_only
     @pytest.mark.parametrize("flip", ["HorizontalFlip", "VerticalFlip"])
     def test_detection_flip_preserves_fractional_and_subpixel_edges(self, tmp_path: Path, flip: str) -> None:
         """Flips reflect fractional edges through width/height without changing subpixel extent."""
@@ -1898,7 +1901,7 @@ class TestOnAfterBatchTransfer:
         torch.testing.assert_close(targets_out[0]["boxes"], expected)
         torch.testing.assert_close(targets_out[0]["labels"], target["labels"])
 
-    @_kornia_only
+    @kornia_only
     def test_detection_flip_handles_all_empty_targets(self, tmp_path: Path) -> None:
         """An all-empty detection batch keeps zero-length annotation tensors through the bridge."""
         dm = self._attach_mock_trainer(self._build_dm(tmp_path))
@@ -1912,7 +1915,7 @@ class TestOnAfterBatchTransfer:
         assert targets_out[0]["boxes"].shape == (0, 4)
         assert targets_out[0]["labels"].shape == (0,)
 
-    @_kornia_only
+    @kornia_only
     def test_detection_affine_scales_continuous_box_width(self, tmp_path: Path) -> None:
         """Scaling around the image center doubles fractional box extent without a one-pixel correction."""
         dm = self._attach_mock_trainer(self._build_dm(tmp_path))
@@ -1928,7 +1931,7 @@ class TestOnAfterBatchTransfer:
         # Continuous image center is (16, 8): [13.25, 5.5, 18.75, 10.5] -> [10.5, 3, 21.5, 13].
         torch.testing.assert_close(targets_out[0]["boxes"], torch.tensor([[0.5, 0.5, 11 / 32, 10 / 16]]))
 
-    @_kornia_only
+    @kornia_only
     @pytest.mark.parametrize("device", ["cpu", _CUDA_DEVICE])
     def test_pixel_affine_reaches_segmentation_training_batch(self, tmp_path: Path, device: str) -> None:
         """The real transfer hook moves pixels, boxes, instance masks, and padding masks together."""
@@ -1975,7 +1978,7 @@ class TestOnAfterBatchTransfer:
         torch.testing.assert_close(samples_out.tensors[0, :, 30, 34], (1.0 - mean) / std, rtol=0, atol=1e-5)
         torch.testing.assert_close(samples_out.tensors[0, :, 30, 30], (0.0 - mean) / std, rtol=0, atol=1e-5)
 
-    @_kornia_only
+    @kornia_only
     def test_pixel_affine_drops_box_and_mask_shifted_out_of_frame(self, tmp_path: Path) -> None:
         """A translated-out object must not remain as a zero-area training target."""
         dm = RFDETRDataModule(
@@ -2032,7 +2035,7 @@ class TestOnAfterBatchTransfer:
         assert result_samples.mask.dtype == torch.bool
         assert torch.equal(result_samples.mask, padding_masks_aug[:, 0].to(torch.bool))
 
-    @_kornia_only
+    @kornia_only
     def test_perspective_warps_padding_mask_with_real_pipeline(self, tmp_path) -> None:
         """Perspective transports unequal-size batch padding through the real Kornia sequence."""
         dm = self._build_dm(tmp_path)
@@ -2190,7 +2193,7 @@ class TestOnAfterBatchTransfer:
         for idx, target in enumerate(result_targets):
             torch.testing.assert_close(target["keypoints"], input_keypoints[idx], rtol=1e-4, atol=1e-6)
 
-    @_kornia_only
+    @kornia_only
     @pytest.mark.parametrize("device_name", ["cpu", _CUDA_DEVICE])
     @pytest.mark.parametrize("height, width", [(16, 32), (32, 16)])
     def test_keypoint_mode_real_pipeline_flips_and_normalizes(
@@ -2230,7 +2233,7 @@ class TestOnAfterBatchTransfer:
         torch.testing.assert_close(result[0]["keypoints"], expected_keypoints)
         torch.testing.assert_close(result[0]["boxes"], expected_boxes)
 
-    @_kornia_only
+    @kornia_only
     def test_keypoint_mode_handles_all_empty_targets(self, tmp_path: Path) -> None:
         """An annotation-free batch still reaches Kornia without its zero-point reshape crash."""
         mc = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[2])
@@ -2255,7 +2258,7 @@ class TestOnAfterBatchTransfer:
         assert result[0]["boxes"].shape == (0, 4)
         assert result[0]["keypoints"].shape == (0, 2, 3)
 
-    @_kornia_only
+    @kornia_only
     def test_keypoints_and_instance_masks_share_flip(self, tmp_path: Path) -> None:
         """A combined target keeps its instance mask and joints with the flipped box."""
         mc = _base_model_config(segmentation_head=True, use_grouppose_keypoints=True, num_keypoints_per_class=[2])
@@ -2310,7 +2313,7 @@ class TestOnAfterBatchTransfer:
 
         return result[0]
 
-    @_kornia_only
+    @kornia_only
     def test_setup_pipeline_with_flip_pairs_swaps_left_right_keypoints(self, tmp_path: Path) -> None:
         """A flipped sample relabels paired joints: slot 0 receives the mirrored slot-1 joint and vice versa."""
         dm = self._build_dm_with_setup_pipeline(tmp_path, keypoint_flip_pairs=[0, 1])
@@ -2319,7 +2322,7 @@ class TestOnAfterBatchTransfer:
 
         torch.testing.assert_close(target["keypoints"], torch.tensor([[[10 / 16, 7 / 16, 1], [13 / 16, 4 / 16, 2]]]))
 
-    @_kornia_only
+    @kornia_only
     def test_setup_pipeline_without_flip_pairs_leaves_keypoints_unflipped(self, tmp_path: Path) -> None:
         """Without flip pairs the flip is disabled, so joints keep their coordinates and slots (normalized by W, H)."""
         dm = self._build_dm_with_setup_pipeline(tmp_path, keypoint_flip_pairs=[])
@@ -2328,7 +2331,7 @@ class TestOnAfterBatchTransfer:
 
         torch.testing.assert_close(target["keypoints"], torch.tensor([[[3 / 16, 4 / 16, 2], [6 / 16, 7 / 16, 1]]]))
 
-    @_kornia_only
+    @kornia_only
     def test_setup_pipeline_without_flip_pairs_leaves_boxes_unflipped(self, tmp_path: Path) -> None:
         """Without flip pairs the box [2, 2, 10, 10] stays put: cxcywh (6, 6, 8, 8) / 16."""
         dm = self._build_dm_with_setup_pipeline(tmp_path, keypoint_flip_pairs=[])

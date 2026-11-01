@@ -53,9 +53,9 @@ from rfdetr.export._tflite.exporter import (
     _prepare_calibration_data,
 )
 from rfdetr.export.imports import _IS_ONNX_GRAPHSURGEON_INSTALLED, _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
-from tests._markers import _onnx_only
+from tests._markers import onnx_only
 
-_onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
+onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 
 _CALIB_IGNORED = "`calibration_data` has no effect on the exported .tflite"
 
@@ -332,7 +332,7 @@ class TestTFLiteMetadataArtifacts:
         assert exporter._metadata_artifacts(primary) == (primary,)
 
 
-@_onnx2tf_available
+@onnx2tf_available
 class TestExportTfliteConverter:
     """Tests for ``TFLiteExporter.convert_onnx()``."""
 
@@ -937,7 +937,7 @@ class TestPatchValidationDownload:
             sys.modules.update(saved)
 
 
-@_onnx_only
+@onnx_only
 class TestGetOnnxInputInfo:
     """Tests for ``_get_onnx_input_info()``."""
 
@@ -1208,7 +1208,7 @@ class TestLoadCalibrationImages:
 # ---------------------------------------------------------------------------
 
 
-@_onnx2tf_available
+@onnx2tf_available
 class TestCheckOnnx2tfAvailable:
     """Tests for ``_check_onnx2tf_available()``."""
 
@@ -1229,7 +1229,7 @@ class TestCheckOnnx2tfAvailable:
 # TestGridSampleOnnxRewrite
 # ---------------------------------------------------------------------------
 
-_onnx_gs_available = pytest.mark.skipif(
+onnx_gs_available = pytest.mark.skipif(
     not (_IS_ONNX_INSTALLED and _IS_ONNX_GRAPHSURGEON_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx, onnx_graphsurgeon, and onnxruntime required",
 )
@@ -1309,7 +1309,7 @@ class TestGridSampleOnnxRewrite:
         messages = [record.getMessage() for record in dict.fromkeys(caplog.records)]
         assert [re.findall(r"Install with: pip install (\S+)", m) for m in messages] == [["onnx_graphsurgeon"]]
 
-    @_onnx_gs_available
+    @onnx_gs_available
     def test_no_gridsample_nodes_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
         """_replace_gridsample_for_tflite removes all GridSample nodes from the graph."""
         import onnx
@@ -1324,7 +1324,7 @@ class TestGridSampleOnnxRewrite:
         remaining = [n for n in graph.nodes if n.op == "GridSample"]
         assert remaining == [], f"Expected no GridSample nodes; found {len(remaining)}"
 
-    @_onnx_gs_available
+    @onnx_gs_available
     def test_gather_nodes_present_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
         """Rewritten graph contains Gather nodes (the TFLite-safe replacement ops)."""
         import onnx
@@ -1339,7 +1339,7 @@ class TestGridSampleOnnxRewrite:
         gather_nodes = [n for n in graph.nodes if n.op == "Gather"]
         assert len(gather_nodes) >= 4, f"Expected ≥4 Gather nodes (one per bilinear corner); found {len(gather_nodes)}"
 
-    @_onnx_gs_available
+    @onnx_gs_available
     def test_numerical_equivalence_vs_pytorch(self, gridsample_onnx: Path, tmp_path: Path) -> None:
         """Rewritten ONNX output matches torch.nn.functional.grid_sample within 1e-5."""
         import onnxruntime as ort
@@ -1421,7 +1421,7 @@ def _build_gather_elements_onnx(
 class TestConstantGatherElementsOnnxRewrite:
     """Onnx2tf transposes a constant ``GatherElements`` input but not its indices; the rewrite keeps both in place."""
 
-    @_onnx_gs_available
+    @onnx_gs_available
     @pytest.mark.parametrize("axis", [0, 1, 2])
     def test_rewritten_gather_matches_take_along_axis(self, axis: int, tmp_path: Path) -> None:
         """The rank-1 ``Gather`` replacement returns what ``GatherElements`` returns, negative indices included."""
@@ -1442,7 +1442,7 @@ class TestConstantGatherElementsOnnxRewrite:
 
         np.testing.assert_array_equal(result, np.take_along_axis(data, indices, axis=axis))
 
-    @_onnx_gs_available
+    @onnx_gs_available
     @pytest.mark.parametrize("cast_data", [False, True])
     def test_constant_data_gather_elements_is_removed(self, cast_data: bool, tmp_path: Path) -> None:
         """No ``GatherElements`` reading a constant, or a tensor that folds to one, reaches onnx2tf."""
@@ -1458,7 +1458,7 @@ class TestConstantGatherElementsOnnxRewrite:
 
         assert [node.op_type for node in patched.graph.node if node.op_type == "GatherElements"] == []
 
-    @_onnx_gs_available
+    @onnx_gs_available
     def test_constant_gather_with_folded_expand_shape_is_rewritten(self, tmp_path: Path) -> None:
         """Constant folding resolves an Expand target before its symbolic index dimensions are matched."""
         import onnx
@@ -1493,7 +1493,7 @@ class TestConstantGatherElementsOnnxRewrite:
         expected = np.take_along_axis(data, np.broadcast_to(indices, _gather_indices_shape(1)), axis=1)
         np.testing.assert_array_equal(actual, expected)
 
-    @_onnx_gs_available
+    @onnx_gs_available
     def test_variable_data_gather_elements_is_kept(self, tmp_path: Path) -> None:
         """A ``GatherElements`` reading a computed tensor converts correctly in onnx2tf, so it is left alone."""
         from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
@@ -1507,7 +1507,7 @@ class TestConstantGatherElementsOnnxRewrite:
 class TestNamedTFLiteOutputs:
     """Real conversion must preserve semantic names when signature outputs are reordered."""
 
-    @_onnx2tf_available
+    @onnx2tf_available
     def test_keypoint_output_names_preserve_their_tensors(self, tmp_path: Path) -> None:
         """Alphabetically sorted signatures must not swap logits and keypoint tensors."""
         import onnx
@@ -1548,7 +1548,7 @@ class TestNamedTFLiteOutputs:
 class TestStaticUnsqueezeOnnxRewrite:
     """Static singleton insertion must preserve coordinate axes through onnx2tf conversion."""
 
-    @_onnx_gs_available
+    @onnx_gs_available
     def test_coordinate_broadcast_uses_reshape(self, tmp_path: Path) -> None:
         """Equal query and coordinate widths cannot confuse Unsqueeze's channel-layout handling."""
         import onnx
@@ -1721,7 +1721,7 @@ class TestPreloadTensorflowBeforeOnnx:
 class TestExportTflitePreloadOrder:
     """``TFLiteExporter.convert_onnx()`` preloads TensorFlow before it touches onnx.
 
-    Deliberately **not** gated on ``_onnx2tf_available``: the ``fake_onnx2tf`` fixture injects a stub module and the
+    Deliberately **not** gated on ``onnx2tf_available``: the ``fake_onnx2tf`` fixture injects a stub module and the
     availability check is patched out, so this runs — and covers the preload call inside ``convert_onnx()`` — in CI,
     which never installs the ``tflite`` extra.
     """
@@ -1931,7 +1931,7 @@ class TestTFLiteDependencyCheckOrder:
 class TestExportTfliteAppliesInterpreterPath:
     """``convert_onnx()`` must apply :func:`_interpreter_scripts_on_path` around ``onnx2tf.convert``.
 
-    Deliberately **not** gated on ``_onnx2tf_available``: ``fake_onnx2tf`` injects a stub so this runs in CI.
+    Deliberately **not** gated on ``onnx2tf_available``: ``fake_onnx2tf`` injects a stub so this runs in CI.
     """
 
     def test_convert_sees_interpreter_scripts_dir_on_path(

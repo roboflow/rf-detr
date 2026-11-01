@@ -124,16 +124,10 @@ def _sum_variadic(*tensors: torch.Tensor) -> torch.Tensor:
     return torch.stack(tensors).sum(0)
 
 
-#: Skip a test node that compiles with TorchScript, which predict() stops using on Python 3.14.
-_requires_torchscript = pytest.mark.skipif(
-    sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+"
-)
-
-
 class TestScriptOrEager:
     """script_or_eager compiles where TorchScript works and returns the eager function where it cannot."""
 
-    @_requires_torchscript
+    @pytest.mark.skipif(sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+")
     def test_returns_script_function_when_scripting_succeeds(self) -> None:
         """A scriptable function comes back as a TorchScript function before Python 3.14.
 
@@ -168,7 +162,7 @@ class TestScriptOrEager:
 
         assert script_or_eager(batch_dice_loss) is batch_dice_loss
 
-    @_requires_torchscript
+    @pytest.mark.skipif(sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+")
     def test_returns_eager_function_when_frontend_rejects_source(self) -> None:
         """A TorchScript frontend error falls back to the eager function instead of propagating.
 

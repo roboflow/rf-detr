@@ -33,12 +33,10 @@ try:
 except ImportError:
     HAS_CONFIG_BUILDERS = False
 
-#: Skip every test here when the config-native builder functions cannot be imported.
-_requires_config_builders = pytest.mark.skipif(
+pytestmark = pytest.mark.skipif(
     not HAS_CONFIG_BUILDERS,
     reason="config-native builder functions are not importable",
 )
-pytestmark = _requires_config_builders
 
 
 class TestBuildModelFromConfig:

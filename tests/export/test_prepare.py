@@ -102,12 +102,6 @@ class TestResolveOutputNames:
             resolve_output_names(_make_model_config(), backbone_only=True, backbone=None)
 
 
-#: Skip a test node that checks the fallback taken when CUDA is requested but absent.
-_requires_no_cuda = pytest.mark.skipif(
-    torch.cuda.is_available(), reason="exercises the CUDA-requested-but-unavailable fallback"
-)
-
-
 class TestPrepareExportGraph:
     """Building the traceable graph every format is handed."""
 
@@ -143,7 +137,7 @@ class TestPrepareExportGraph:
 
         assert graph.input_tensors.device.type == "cpu"
 
-    @_requires_no_cuda
+    @pytest.mark.skipif(torch.cuda.is_available(), reason="exercises the CUDA-requested-but-unavailable fallback")
     def test_falls_back_to_cpu_when_cuda_is_requested_but_absent(self) -> None:
         """Requesting CUDA on a machine without it falls back to CPU (with a warning) instead of raising.
 

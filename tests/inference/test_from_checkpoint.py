@@ -208,12 +208,6 @@ class TestFromCheckpointDictArgs:
 # ---------------------------------------------------------------------------
 
 
-#: Skip a test node that checks the guard raised when ``rfdetr_plus`` is missing.
-_requires_no_rfdetr_plus = pytest.mark.skipif(
-    _IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active"
-)
-
-
 class TestFromCheckpointEdgeCases:
     """Edge-case handling in from_checkpoint."""
 
@@ -245,7 +239,7 @@ class TestFromCheckpointEdgeCases:
         with pytest.raises(ValueError, match="Could not infer model class"):
             RFDETR.from_checkpoint(tmp_path / "finetuned.pth")
 
-    @_requires_no_rfdetr_plus
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     def test_filename_fallback_xlarge_without_plus_raises_import_error(
         self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
@@ -385,7 +379,7 @@ class TestFromCheckpointEdgeCases:
         assert call_kwargs["num_classes"] == 1
         assert call_kwargs["pretrain_weights"] == str(tmp_path / "checkpoint_best_total.pth")
 
-    @_requires_no_rfdetr_plus
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     def test_characterization_xlarge_without_plus_raises_import_error(
         self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
@@ -592,7 +586,7 @@ class TestFromCheckpointModelName:
         mock_cls.assert_called_once()
         assert result is mock_cls.return_value
 
-    @_requires_no_rfdetr_plus
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
     def test_plus_model_name_without_plus_raises_import_error(
         self, tmp_path: Path, model_name: str, mocker: MockerFixture
