@@ -21,7 +21,6 @@ from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE, passes
 from rfdetr.export._coreml.passes import rewrite_upsample_bilinear
 
 _requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools")
-pytestmark = _requires_coremltools
 
 
 def _upsample_program(input_shape: tuple[Any, ...], *, opset: str = "iOS15", **upsample_kwargs: Any) -> Any:
@@ -73,6 +72,7 @@ def _op_types(block: Any) -> list[str]:
     return types
 
 
+@_requires_coremltools
 class TestRewriteUpsampleBilinear:
     """``rewrite_upsample_bilinear`` swaps a fixed-size ``upsample_bilinear`` for matmuls and keeps the rest."""
 

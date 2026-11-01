@@ -25,10 +25,7 @@ from tests._markers import _requires_cuda, _requires_two_cuda_devices
 
 from .helpers import _BaseFakeRFDETR, _DummyModel
 
-pytestmark = [
-    pytest.mark.gpu,
-    _requires_cuda,
-]
+pytestmark = pytest.mark.gpu
 
 _NUM_KEYPOINTS = 4
 _MASK_SIZE = 4
@@ -76,6 +73,7 @@ class _CudaDummyRFDETR(_BaseFakeRFDETR):
         )
 
 
+@_requires_cuda
 class TestPredictCudaTransfer:
     """Verifies the batched CUDA->CPU transfer is complete, ordered, non-blocking, and correctly synchronized."""
 
