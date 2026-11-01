@@ -537,8 +537,9 @@ def predict(
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         stream: Yield results on demand instead of collecting them.
         batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch, an eager
-            directory or glob (or a list of them) in batches of eight when the model has no fixed batch size, and
-            other expanded or streamed sources one image or frame at a time. An integer bounds every batch.
+            directory or glob (or a list of them) in batches of eight, or of an export's smaller ``max_batch_size``,
+            when the model has no fixed batch size, and other expanded or streamed sources one image or frame at a
+            time. An integer bounds every batch.
         vid_stride: Read every Nth video frame.
         stream_buffer: Queue live frames instead of retaining the latest frame.
         prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs. That reads the
@@ -596,9 +597,9 @@ def _default_batch(images: _PredictionInput, context: PredictionContext, *, stre
     """Choose the batch size for an expanded or streamed source when the caller passes ``batch=None``.
 
     A BCHW tensor already is one batch. An eager directory or glob runs in batches of :data:`_DEFAULT_EAGER_BATCH` on a
-    model that accepts any batch size; its results are collected anyway, so batching costs no latency. Streamed
-    sources keep one image per batch, so the first result arrives after one image, and a compiled snapshot or export
-    keeps it because its batch size is fixed or bounded.
+    model or export without a fixed batch size, or of the export's ``max_batch_size`` when that is smaller; its results
+    are collected anyway, so batching costs no latency. Streamed sources keep one image per batch, so the first result
+    arrives after one image, and a compiled snapshot or fixed-batch export keeps it too.
 
     Args:
         images: The prediction source.
@@ -615,9 +616,11 @@ def _default_batch(images: _PredictionInput, context: PredictionContext, *, stre
     if isinstance(images, torch.Tensor) and images.ndim == 4:
         # Split a BCHW tensor only when the caller bounds the batch size.
         return max(images.shape[0], 1)
-    flexible_batch = not context.fixed_shape and context.batch_size is None and context.max_batch_size is None
-    if not stream and flexible_batch and has_only_finite_images(images):
-        return _DEFAULT_EAGER_BATCH
+    # A fixed input resolution does not fix the batch axis, so only a fixed batch size keeps one image per batch.
+    if not stream and context.batch_size is None and has_only_finite_images(images):
+        if context.max_batch_size is None:
+            return _DEFAULT_EAGER_BATCH
+        return min(_DEFAULT_EAGER_BATCH, context.max_batch_size)
     return 1
 
 

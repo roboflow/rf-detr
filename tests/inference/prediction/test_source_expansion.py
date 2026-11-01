@@ -686,19 +686,24 @@ class TestDefaultEagerBatch:
         """``stream=True`` yields the first result after one image, not after a full batch."""
         assert self._batch_sizes(mocker, _image_dir(tmp_path), stream=True) == [1] * 10
 
+    def test_fixed_batch_context_keeps_one_image_per_batch(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """A compiled snapshot keeps the one-image default instead of failing its batch-size check."""
+        overrides = {"batch_size": 1}
+        assert self._batch_sizes(mocker, _image_dir(tmp_path), context_overrides=overrides) == [1] * 10
+
     @pytest.mark.parametrize(
-        "overrides",
+        "overrides,expected",
         [
-            pytest.param({"batch_size": 1}, id="compiled-snapshot"),
-            pytest.param({"fixed_shape": True}, id="export-dynamic-batch"),
-            pytest.param({"fixed_shape": True, "max_batch_size": 4}, id="export-max-batch"),
+            pytest.param({"fixed_shape": True}, [8, 2], id="unbounded"),
+            pytest.param({"fixed_shape": True, "max_batch_size": 4}, [4, 4, 2], id="max-batch-below-eight"),
+            pytest.param({"fixed_shape": True, "max_batch_size": 16}, [8, 2], id="max-batch-above-eight"),
         ],
     )
-    def test_fixed_batch_contexts_keep_one_image_per_batch(
-        self, tmp_path: Path, mocker: MockerFixture, overrides: dict[str, Any]
+    def test_dynamic_batch_export_takes_the_eager_default(
+        self, tmp_path: Path, mocker: MockerFixture, overrides: dict[str, Any], expected: list[int]
     ) -> None:
-        """Compiled snapshots and exports keep the one-image default instead of failing a batch-size check."""
-        assert self._batch_sizes(mocker, _image_dir(tmp_path), context_overrides=overrides) == [1] * 10
+        """An export's fixed input resolution does not fix its batch axis, so it batches up to its own maximum."""
+        assert self._batch_sizes(mocker, _image_dir(tmp_path), context_overrides=overrides) == expected
 
     def test_manifest_keeps_one_image_per_batch(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A manifest may name live sources, so it keeps the one-image default."""

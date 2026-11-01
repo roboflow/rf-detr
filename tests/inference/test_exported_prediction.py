@@ -795,6 +795,30 @@ class TestExportedStreaming:
             expected_box, _ = _expected_detection((value, value, value), height=64, width=96)
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
 
+    def test_dynamic_batch_default_for_a_directory(
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, mocker
+    ) -> None:
+        """Without ``batch``, a dynamic-batch export runs an eager directory in batches of its ``max_batch_size``.
+
+        The bound comes from the artifact's metadata, so a ten-image directory reaches the ONNX session as batches of
+        four, four and two, in source order.
+        """
+        import onnxruntime as ort
+
+        path, metadata = exported_detection
+        metadata = dict(metadata, input_shape=[-1, 3, 32, 48], max_batch_size=4)
+        model = RFDETRInference(path, metadata=metadata, device="cpu")
+        source = tmp_path / "images"
+        source.mkdir()
+        for index in range(10):
+            Image.fromarray(np.full((64, 96, 3), 20 * index, dtype=np.uint8)).save(source / f"{index}.png")
+
+        execute = mocker.patch.object(ort.InferenceSession, "run", autospec=True, side_effect=ort.InferenceSession.run)
+        results = model.predict(source)
+
+        assert [call.args[2]["images"].shape[0] for call in execute.call_args_list] == [4, 4, 2]
+        assert [int(result.metadata["source_image"][0, 0, 0]) for result in results] == [20 * i for i in range(10)]
+
     @_requires_opencv
     def test_two_camera_streams_fill_a_batch_two_export(
         self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path, mocker
