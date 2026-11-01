@@ -3565,7 +3565,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
         <p>Predict with a live native model, checkpoint, or exported artifact.</p>
 <p>This facade shares prediction behavior across native models and exported runtimes. <code>model.inference()</code> returns
 an owned, optimized snapshot of a live model. Passing a live model directly to this constructor borrows it instead:
-predictions follow later changes to that model.</p>
+predictions follow later changes to that model, and its batches run one at a time, so each batch reads the model's
+state when it starts. A predictor that owns its model or runtime may build the next CUDA batch while one runs.</p>
 
 
 <p><span class="doc-section-title">Examples:</span></p>

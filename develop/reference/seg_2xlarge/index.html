@@ -9988,7 +9988,7 @@ capture can leave CUDA random-number state unusable; restart the process before 
 </span><span id="__span-0-1868"><a id="__codelineno-0-1868" name="__codelineno-0-1868"></a>    <span class="n">snapshot</span><span class="o">.</span><span class="n">_optimized_resolution</span> <span class="o">=</span> <span class="n">snapshot</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">resolution</span>
 </span><span id="__span-0-1869"><a id="__codelineno-0-1869" name="__codelineno-0-1869"></a>    <span class="n">snapshot</span><span class="o">.</span><span class="n">_optimized_dtype</span> <span class="o">=</span> <span class="n">dtype</span>
 </span><span id="__span-0-1870"><a id="__codelineno-0-1870" name="__codelineno-0-1870"></a>    <span class="n">snapshot</span><span class="o">.</span><span class="n">_optimized_inplace</span> <span class="o">=</span> <span class="kc">False</span>
-</span><span id="__span-0-1871"><a id="__codelineno-0-1871" name="__codelineno-0-1871"></a>    <span class="k">return</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
+</span><span id="__span-0-1871"><a id="__codelineno-0-1871" name="__codelineno-0-1871"></a>    <span class="k">return</span> <span class="n">RFDETRInference</span><span class="o">.</span><span class="n">_from_owned_model</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
