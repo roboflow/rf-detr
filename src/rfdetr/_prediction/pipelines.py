@@ -234,9 +234,11 @@ def _predict_prepared_ahead(
     a worker thread prepares the next batch on a CUDA stream of its own while it runs; the current stream waits for
     that stream's event before the input is used. A batch holding a CUDA tensor is prepared on this thread and the
     current stream instead: the worker's stream does not wait for the caller's, so it could read the tensor before the
-    kernels writing it finish. Each batch runs the same operations as :func:`_predict_batch`, so the results are the
-    same. At most one prepared batch waits beside the one running. An error raised while reading or preparing the next
-    batch is raised after the current batch's results are yielded, where the serial loop raised it.
+    kernels writing it finish. The overlap helps only inputs decoded on the host, such as image files and arrays: for a
+    CUDA tensor, checking its value range and copying it for ``include_source_image`` wait for the batch before it, on
+    either path. Each batch runs the same operations as :func:`_predict_batch`, so the results are the same. At most
+    one prepared batch waits beside the one running. An error raised while reading or preparing the next batch is
+    raised after the current batch's results are yielded, where the serial loop raised it.
 
     Closing the generator, or an error raised to the caller, waits for a batch the worker is already preparing to
     finish, which can take as long as reading its images (an image URL allows 30 s per read): returning earlier would
