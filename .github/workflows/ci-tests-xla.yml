@@ -43,6 +43,9 @@ jobs:
     name: XLA CPU-PJRT testing
     timeout-minutes: 25
     runs-on: ubuntu-latest
+    env:
+      # Read by both the install step and the completeness check after it.
+      EXTRAS: train,xla,cli
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -60,11 +63,11 @@ jobs:
         # pyproject.toml), so the resolver can't float torch ahead of torch_xla into an
         # ABI-incompatible combo. UV_TORCH_BACKEND=cpu keeps torch CPU-only.
         run: |
-          uv pip install -e ".[train,xla,cli]" --group tests
+          uv pip install -e ".[$EXTRAS]" --group tests
 
       - name: 🔎 Verify the installed extras are complete
         # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
-        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras train,xla,cli --groups tests
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras "$EXTRAS" --groups tests
 
       - name: 🔧 Expose libpython for torch_xla
         # torch_xla's _XLAC extension links the shared libpython3.11.so.1.0, which uv's standalone
