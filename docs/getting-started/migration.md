@@ -26,7 +26,7 @@ predictor = model.inference(compile=False)
 detections = predictor.predict("image.jpg")
 ```
 
-The defaults are batch size 1 and float32, compiled with TorchScript, or with inductor on Apple Silicon (MPS) when the installed PyTorch has its MPS code generator; pass `compile_backend="torchscript"` there to keep TorchScript. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
+The defaults are batch size 1 and float32, compiled with TorchScript, captured as a CUDA graph on CUDA, or compiled with inductor on Apple Silicon (MPS) when the installed PyTorch has its MPS code generator; pass `compile_backend="torchscript"` on either to keep TorchScript alone. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
 
 ---
 
