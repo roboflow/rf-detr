@@ -24,7 +24,6 @@ from PIL import Image
 from pytest_mock import MockerFixture
 
 from rfdetr._prediction import core, pipelines
-from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
 from tests._markers import _requires_cuda, _requires_mps
 
@@ -173,32 +172,6 @@ class TestDecodeAhead:
         assert pixels == [[index * 30, 20, 30] for index in range(5)]
         assert len(threads) == 5
         assert threading.main_thread().name not in threads
-
-    @pytest.mark.parametrize(
-        "source,expected",
-        [
-            pytest.param("images", True, id="directory"),
-            pytest.param("images/*.png", True, id="glob"),
-            pytest.param("images/a.png", True, id="file"),
-            pytest.param(["images/a.png", "images"], True, id="list-of-files"),
-            pytest.param(0, False, id="camera"),
-            pytest.param(["images/a.png", 0], False, id="list-with-camera"),
-            pytest.param("sources.txt", False, id="manifest"),
-            pytest.param("clip.mp4", False, id="video"),
-            pytest.param("rtsp://host/stream", False, id="live"),
-        ],
-    )
-    def test_only_finite_image_sources_decode_ahead(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Any, expected: bool
-    ) -> None:
-        """Live, video and manifest sources keep reading one batch at a time, so a live frame is never read early."""
-        (tmp_path / "images").mkdir()
-        Image.new("RGB", (4, 4)).save(tmp_path / "images" / "a.png")
-        (tmp_path / "sources.txt").write_text("images/a.png\n")
-        (tmp_path / "clip.mp4").write_bytes(b"")
-        monkeypatch.chdir(tmp_path)
-
-        assert has_only_finite_images(source) is expected
 
 
 class TestPreparedAhead:

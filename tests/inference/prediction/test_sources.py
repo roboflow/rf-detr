@@ -17,6 +17,7 @@ import torch
 from PIL import Image, UnidentifiedImageError
 from pytest_mock import MockerFixture
 
+from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
 from tests._online import is_online
 
@@ -780,3 +781,33 @@ class TestPredictURLFetch:
         monkeypatch.setattr(requests, "get", _fail_get)
         detections = model.predict(str(img_path))
         assert isinstance(detections, sv.Detections)
+
+
+class TestHasOnlyFiniteImages:
+    """Sources holding only image files, directories and globs are finite; any camera, video or manifest is not."""
+
+    @pytest.mark.parametrize(
+        "source,expected",
+        [
+            pytest.param("images", True, id="directory"),
+            pytest.param("images/*.png", True, id="glob"),
+            pytest.param("images/a.png", True, id="file"),
+            pytest.param(["images/a.png", "images"], True, id="list-of-files"),
+            pytest.param(0, False, id="camera"),
+            pytest.param(["images/a.png", 0], False, id="list-with-camera"),
+            pytest.param("sources.txt", False, id="manifest"),
+            pytest.param("clip.mp4", False, id="video"),
+            pytest.param("rtsp://host/stream", False, id="live"),
+        ],
+    )
+    def test_has_only_finite_images(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Any, expected: bool
+    ) -> None:
+        """A source is finite only when it holds no camera, video, live stream or manifest."""
+        (tmp_path / "images").mkdir()
+        Image.new("RGB", (4, 4)).save(tmp_path / "images" / "a.png")
+        (tmp_path / "sources.txt").write_text("images/a.png\n")
+        (tmp_path / "clip.mp4").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        assert has_only_finite_images(source) is expected
