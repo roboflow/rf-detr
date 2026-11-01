@@ -44,7 +44,7 @@ from rfdetr.export._tensorrt.exporter import (
 from rfdetr.export.imports import _IS_ONNXCONVERTER_COMMON_INSTALLED
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, box_iou
-from tests._markers import onnx_and_onnxruntime_only, onnxruntime_only
+from tests._markers import _onnx_and_onnxruntime_only, _onnxruntime_only
 
 __doctest_requires__ = {
     ("_outputs_before_and_after_lift",): ["onnxruntime"],
@@ -63,10 +63,10 @@ DECODER = "/transformer/decoder/layers.0/"
 #: Node-name prefix outside every quantized region (a detection head).
 HEAD = "/class_embed/"
 
-onnxconverter_common_only = pytest.mark.skipif(
+_onnxconverter_common_only = pytest.mark.skipif(
     not _IS_ONNXCONVERTER_COMMON_INSTALLED, reason="onnxconverter-common not installed (the FP16 graph rewrite)"
 )
-tensorrt_only = pytest.mark.skipif(
+_tensorrt_only = pytest.mark.skipif(
     not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
 )
 
@@ -1959,7 +1959,7 @@ class TestLiftOpset:
             quantize._lift_opset(model)
         assert "'mystery' (NotAnOp) is not an ONNX op" in str(exc_info.value)
 
-    @onnx_and_onnxruntime_only
+    @_onnx_and_onnxruntime_only
     @pytest.mark.parametrize("coordinate_mode", ["half_pixel", "pytorch_half_pixel", "align_corners", "asymmetric"])
     @pytest.mark.parametrize("mode", ["nearest", "linear", "cubic"])
     def test_resize_gives_the_same_values_at_opset_19(self, mode: str, coordinate_mode: str) -> None:
@@ -1979,7 +1979,7 @@ class TestLiftOpset:
         before, after = _outputs_before_and_after_lift(model, {"x": x})
         np.testing.assert_allclose(after[0], before[0], atol=1e-6)
 
-    @onnx_and_onnxruntime_only
+    @_onnx_and_onnxruntime_only
     @pytest.mark.parametrize("reduction", ["none", "add", "mul"])
     def test_scatter_nd_gives_the_same_values_at_opset_19(self, reduction: str) -> None:
         """ScatterND outputs match before and after the lift for every reduction."""
@@ -2082,7 +2082,7 @@ def _with_detector_outputs(model: Any) -> Any:
 class TestPatchEmbeddingAsMatmul:
     """The 3-channel patch-embedding ``Conv`` becomes a ``MatMul`` that INT8 can run, with the same output."""
 
-    @onnxruntime_only
+    @_onnxruntime_only
     @pytest.mark.parametrize(
         ("batch", "channels", "patch", "height", "width"),
         [
@@ -2356,8 +2356,8 @@ class TestPatchEmbeddingAsMatmul:
         assert model.SerializeToString() == before
 
 
-@onnx_and_onnxruntime_only
-@onnxconverter_common_only
+@_onnx_and_onnxruntime_only
+@_onnxconverter_common_only
 class TestPatchEmbeddingInInt8Source:
     """``int8_source_graph`` plans, calibrates and quantizes the patch embedding as the matrix multiply it becomes."""
 
@@ -2590,7 +2590,7 @@ class TestInt8SourceGraph:
         quantize._refuse_unquantizable_source(helper.make_model(graph), "heads.onnx")
 
 
-@onnxruntime_only
+@_onnxruntime_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestCalibration:
@@ -2875,7 +2875,7 @@ class TestCalibration:
         assert "session failed" in str(exc_info.value)
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
 
-    @onnxconverter_common_only
+    @_onnxconverter_common_only
     def test_intermediates_are_removed_when_the_rewrite_fails(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
     ) -> None:
@@ -2927,7 +2927,7 @@ class TestCalibration:
         assert "stop after counting" in str(exc_info.value)
         assert seen == [2]
 
-    @onnxconverter_common_only
+    @_onnxconverter_common_only
     def test_source_graph_is_quantized_and_cleaned_up(self, image_graph: Path) -> None:
         """The quantized source graph is valid, has one quantize node and is deleted on exit."""
         calibration = np.random.default_rng(0).standard_normal((3, 3, 4, 6)).astype(np.float32)
@@ -2947,7 +2947,7 @@ class TestCalibration:
     @pytest.mark.parametrize(
         "error", [pytest.param(RuntimeError, id="error"), pytest.param(KeyboardInterrupt, id="interrupt")]
     )
-    @onnxconverter_common_only
+    @_onnxconverter_common_only
     def test_quantized_graph_is_removed_when_the_build_fails(
         self, image_graph: Path, error: type[BaseException]
     ) -> None:
@@ -2968,7 +2968,7 @@ class TestCalibration:
                 raise error()
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
 
-    @onnxconverter_common_only
+    @_onnxconverter_common_only
     def test_quantized_graph_that_cannot_be_removed_is_reported(
         self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
     ) -> None:
@@ -3519,7 +3519,7 @@ class TestSmoothNorms:
         assert "has no LayerNormalization" in str(exc_info.value)
 
 
-@onnxruntime_only
+@_onnxruntime_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestSmoothingScales:
@@ -3915,7 +3915,7 @@ def _int8_mean(values: np.ndarray, step: float) -> np.ndarray:
     return (np.clip(np.round(rows / step), -128, 127) * step).mean(0)
 
 
-@onnxruntime_only
+@_onnxruntime_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestMlpBiasShifts:
@@ -4038,8 +4038,8 @@ def _bias_of(model: Any, add: str) -> np.ndarray:
     return next(numpy_helper.to_array(constants[tensor]) for tensor in node.input if tensor in constants)
 
 
-@onnxruntime_only
-@onnxconverter_common_only
+@_onnxruntime_only
+@_onnxconverter_common_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestBiasCorrectionInInt8Source:
@@ -4221,7 +4221,7 @@ class TestNanoInt8Plan:
             "INT8 attention in 9 of 12 backbone attention blocks"
         ]
 
-    @onnxconverter_common_only
+    @_onnxconverter_common_only
     def test_rewritten_graph_is_valid_onnx(self, nano_onnx: Path, plan: quantize.Int8Plan) -> None:
         """The Q/DQ-rewritten Nano graph passes the ONNX checker and strict shape inference."""
         from rfdetr.export._tensorrt.exporter import fp16_source_graph
@@ -4270,8 +4270,8 @@ class TestNanoInt8Plan:
         ) as int8_path:
             return onnx.load(int8_path)
 
-    @onnx_and_onnxruntime_only
-    @onnxconverter_common_only
+    @_onnx_and_onnxruntime_only
+    @_onnxconverter_common_only
     def test_int8_source_graph_quantizes_the_patch_embedding(self, nano_int8: Any) -> None:
         """The Nano INT8 source graph has no backbone Conv left and one Dequantize per planned input."""
         quantized = nano_int8
@@ -4285,16 +4285,16 @@ class TestNanoInt8Plan:
             if n.op_type == "Conv" and n.name.startswith(quantize._QUANTIZED_REGIONS[0])
         ] == []
 
-    @onnx_and_onnxruntime_only
-    @onnxconverter_common_only
+    @_onnx_and_onnxruntime_only
+    @_onnxconverter_common_only
     def test_int8_source_graph_reads_smoothed_norms(self, nano_int8: Any) -> None:
         """The Nano INT8 source graph has 21 norms reading smoothed scale and bias."""
         norms = [node for node in nano_int8.graph.node if node.op_type == "LayerNormalization"]
         # The 21 norms of ``test_every_backbone_norm_a_quantized_projection_reads_is_smoothed``, scale and bias both.
         assert sum(all(re.search(r"_smoothed(_\d+)?$", name) for name in node.input[1:]) for node in norms) == 21
 
-    @onnx_and_onnxruntime_only
-    @onnxconverter_common_only
+    @_onnx_and_onnxruntime_only
+    @_onnxconverter_common_only
     def test_int8_source_graph_reads_corrected_mlp_biases(self, nano_int8: Any) -> None:
         """The Nano INT8 source graph has 24 MLP biases replaced by corrected ones."""
         adds = [node for node in nano_int8.graph.node if node.op_type == "Add"]
@@ -4448,8 +4448,8 @@ class TestSegmentationAndKeypointInt8Plan:
         plan = plans["segmentation-large"]
         assert (len(plan.weighted), len(plan.activations)) == (56, 56)
 
-    @onnx_and_onnxruntime_only
-    @onnxconverter_common_only
+    @_onnx_and_onnxruntime_only
+    @_onnxconverter_common_only
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
     def test_int8_source_graph_builds_from_the_real_export(
         self,
@@ -4490,8 +4490,8 @@ class TestSegmentationAndKeypointInt8Plan:
         assert quantize._patch_embedding_as_matmul(model, multiple_of=quantize._INT8_CONV_CHANNEL_MULTIPLE) == 0
         assert model.SerializeToString() == before
 
-    @onnx_and_onnxruntime_only
-    @onnxconverter_common_only
+    @_onnx_and_onnxruntime_only
+    @_onnxconverter_common_only
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
     def test_patch_embedding_is_a_float_matmul_in_the_quantized_graph(
         self, kind: str, quantized_graphs: dict[str, Any]
@@ -4533,7 +4533,7 @@ class TestSegmentationAndKeypointInt8Plan:
         fc2 = {n.replace("fc2", "fc") for n in plans[kind].weighted if "/mlp/fc2/" in n}
         assert (len(fc1), fc1) == (12, fc2)
 
-    @onnxconverter_common_only
+    @_onnxconverter_common_only
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
     def test_rewritten_graph_is_valid_onnx(
         self, kind: str, exports: dict[str, Path], plans: dict[str, quantize.Int8Plan]
@@ -4547,7 +4547,7 @@ class TestSegmentationAndKeypointInt8Plan:
         onnx.checker.check_model(model, full_check=True)
         onnx.shape_inference.infer_shapes(model, strict_mode=True)
 
-    @onnx_and_onnxruntime_only
+    @_onnx_and_onnxruntime_only
     @pytest.mark.parametrize("kind", ["segmentation", "keypoint"])
     def test_lifted_graph_gives_the_same_outputs(self, kind: str, exports: dict[str, Path]) -> None:
         """A real export gives the same outputs before and after the opset lift."""
@@ -4712,7 +4712,7 @@ def _assert_heads_agree(fp16_engine: Path, int8_engine: Path, example: np.ndarra
             assert offset <= _MAX_KEYPOINT_OFFSET, f"query {query}: keypoint offset {offset:.3f}"
 
 
-@tensorrt_only
+@_tensorrt_only
 @pytest.mark.gpu
 @pytest.mark.integration
 @pytest.mark.e2e_tensorrt
@@ -4826,7 +4826,7 @@ class TestInt8EndToEnd:
         _assert_confident_detections_match(Path(fp16), Path(int8), example, batch=batch)
 
 
-@tensorrt_only
+@_tensorrt_only
 @pytest.mark.gpu
 @pytest.mark.integration
 @pytest.mark.e2e_tensorrt

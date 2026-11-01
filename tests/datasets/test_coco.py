@@ -38,7 +38,7 @@ from rfdetr.datasets.coco import (
 from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.detr import RFDETR
 from rfdetr.utilities import PackedTargets, pack_targets
-from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
+from tests._markers import _albumentations_only
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -1056,7 +1056,7 @@ class TestPipelineParity:
     ``_build_torchvision_pipeline``. Shape, dtype and output distribution are compared instead.
     """
 
-    @pytest.mark.skipif(not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed")
+    @_albumentations_only
     def test_eval_resize_normalize_stats_close(self) -> None:
         """The torchvision and Albumentations eval pipelines agree on shape, dtype, mean and std."""
         image = _make_gradient_image(120, 90)

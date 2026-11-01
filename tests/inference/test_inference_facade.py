@@ -30,7 +30,7 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
-from tests._markers import requires_mps
+from tests._markers import _requires_mps
 
 from .helpers import _DummyModel, _DummyRFDETR
 
@@ -650,7 +650,7 @@ class TestMpsSnapshotRewrites:
 
         assert _snapshot_rewrites(_snapshot_module(predictor)) == (False, False)
 
-    @requires_mps
+    @_requires_mps
     def test_source_model_is_not_rewritten(self, mps_nano_model: RFDETRNano) -> None:
         """Only the snapshot copy changes, never the trainable source.
 
@@ -661,14 +661,14 @@ class TestMpsSnapshotRewrites:
 
         assert _snapshot_rewrites(mps_nano_model.model.model) == (False, False)
 
-    @requires_mps
+    @_requires_mps
     def test_mps_eager_snapshot_is_rewritten(self, mps_nano_model: RFDETRNano) -> None:
         """An MPS ``compile=False`` snapshot samples with ``F.grid_sample`` and has its LayerScales folded."""
         predictor = mps_nano_model.inference(compile=False)
 
         assert _snapshot_rewrites(_snapshot_module(predictor)) == (True, True)
 
-    @requires_mps
+    @_requires_mps
     @pytest.mark.parametrize("compile", [False, True])
     def test_mps_snapshot_matches_the_source(self, mps_scaled_nano_model: RFDETRNano, compile: bool) -> None:
         """An MPS snapshot, eager or a TorchScript trace, predicts what the source predicts.
@@ -704,7 +704,7 @@ class TestMpsSnapshotRewrites:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
 
-    @requires_mps
+    @_requires_mps
     def test_mps_inductor_snapshot_keeps_layer_scales(self, mps_nano_model: RFDETRNano, mocker: MockerFixture) -> None:
         """Inductor fuses the LayerScale multiply itself and folding measured no gain, so only the sampler changes."""
         compile_mock = mocker.patch.object(torch, "compile", side_effect=lambda module, **_: module)
@@ -713,7 +713,7 @@ class TestMpsSnapshotRewrites:
 
         assert _snapshot_rewrites(compile_mock.call_args.args[0]) == (True, False)
 
-    @requires_mps
+    @_requires_mps
     def test_mps_fold_runs_in_the_snapshot_dtype(self, mps_nano_model: RFDETRNano) -> None:
         """A float16 source widened to a float32 snapshot folds LayerScale in float32.
 
@@ -767,7 +767,7 @@ def scaled_checkpoint(nano_model: RFDETRNano, tmp_path: Path) -> Path:
 class TestMpsCheckpointRewrites:
     """A checkpoint the facade loads on MPS belongs to it and takes the snapshot rewrites; a live model never does."""
 
-    @requires_mps
+    @_requires_mps
     def test_mps_checkpoint_model_is_rewritten(self, scaled_checkpoint: Path) -> None:
         """The loaded model samples with ``F.grid_sample`` and has its LayerScales folded."""
         facade = RFDETRInference(scaled_checkpoint, device="mps")
@@ -775,7 +775,7 @@ class TestMpsCheckpointRewrites:
         assert facade._native_model is not None
         assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
 
-    @requires_mps
+    @_requires_mps
     def test_auto_device_checkpoint_on_mps_is_rewritten(self, scaled_checkpoint: Path) -> None:
         """The default ``device="auto"`` resolves to MPS on Apple Silicon and takes the rewrites there.
 
@@ -788,7 +788,7 @@ class TestMpsCheckpointRewrites:
         assert torch.device(facade._native_model.model.device).type == "mps"
         assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
 
-    @requires_mps
+    @_requires_mps
     def test_mps_checkpoint_matches_the_unrewritten_model(self, scaled_checkpoint: Path) -> None:
         """The rewritten checkpoint model predicts what the same weights predict without the rewrites."""
         image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
@@ -799,7 +799,7 @@ class TestMpsCheckpointRewrites:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
 
-    @requires_mps
+    @_requires_mps
     def test_borrowed_mps_model_is_not_rewritten(self, mps_nano_model: RFDETRNano) -> None:
         """A live model passed to the facade stays trainable: no sampler swap, no folded LayerScale."""
         RFDETRInference(mps_nano_model).predict(np.zeros((64, 64, 3), dtype=np.uint8))
@@ -841,7 +841,7 @@ class TestDefaultCompileBackend:
         assert predictor._native_model is not None
         assert isinstance(predictor._native_model.model.inference_model, torch.jit.ScriptModule)
 
-    @requires_mps
+    @_requires_mps
     def test_mps_default_compiles_with_inductor(self, mps_nano_model: RFDETRNano, mocker: MockerFixture) -> None:
         """The MPS default goes through ``torch.compile``; a TorchScript trace would bypass it."""
         compile_mock = mocker.patch.object(torch, "compile", side_effect=lambda module, **_: module)

@@ -22,11 +22,9 @@ from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_squa
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
 from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
+from tests._markers import _albumentations_only
 
-albumentations_only = pytest.mark.skipif(
-    not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed; skip Albumentations wrapper tests"
-)
-pytestmark = albumentations_only
+pytestmark = _albumentations_only
 
 __doctest_requires__ = {"_has_albumentations_transform": ["albumentations"]}
 
@@ -125,6 +123,13 @@ class TestKeypointHFlipFiltering:
         }
         warning.assert_called_once()
         assert "HorizontalFlip" in str(warning.call_args)
+
+
+#: Skip a test node that needs Albumentations' ``SquareSymmetry``, which older releases lack.
+_requires_square_symmetry = pytest.mark.skipif(
+    not _has_albumentations_transform("SquareSymmetry"),
+    reason="SquareSymmetry is unavailable in this Albumentations version",
+)
 
 
 class TestAlbumentationsWrapper:
@@ -285,10 +290,7 @@ class TestAlbumentationsWrapper:
         torch.testing.assert_close(kp[0, 0], torch.tensor(19.0), rtol=1e-4, atol=1e-6)
         torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
 
-    @pytest.mark.skipif(
-        not _has_albumentations_transform("SquareSymmetry"),
-        reason="SquareSymmetry is unavailable in this Albumentations version",
-    )
+    @_requires_square_symmetry
     def test_square_symmetry_explicit_pairs_keeps_instances_aligned(self, monkeypatch):
         """SquareSymmetry's horizontal element keeps image annotations and keypoint slots aligned."""
         import albumentations as alb

@@ -9,9 +9,7 @@ import pytest
 import torch
 
 from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, keypoint_horizontal_flip_mask
-from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
-
-kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
+from tests._markers import _kornia_only
 
 
 @pytest.fixture
@@ -20,7 +18,7 @@ def flip_pipeline():
     return build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1])
 
 
-@kornia_only
+@_kornia_only
 class TestBuildKorniaPipelineFlipPairs:
     """``build_kornia_pipeline`` accepts flip pairs only when the pipeline actually transports keypoints."""
 
@@ -46,7 +44,7 @@ class TestBuildKorniaPipelineFlipPairs:
         assert len(list(flip_pipeline.children())) == 1
 
 
-@kornia_only
+@_kornia_only
 class TestKeypointHorizontalFlipMask:
     """``keypoint_horizontal_flip_mask`` detects horizontal flips from the pipeline's own transforms."""
 

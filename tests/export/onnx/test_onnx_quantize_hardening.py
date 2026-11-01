@@ -16,7 +16,7 @@ import pytest
 
 from rfdetr.export._onnx.quantize import nodes_to_exclude, quantize_int8
 from rfdetr.export._runtime import calibration
-from tests._markers import onnx_only
+from tests._markers import _onnx_only
 
 # The helper doctests build real ONNX graphs, so they need the package a class-level skipif cannot gate.
 __doctest_requires__ = {("_identity_model", "_score_graph", "_head_graph"): ["onnx"]}
@@ -97,7 +97,7 @@ def source_model(tmp_path: Path) -> Path:
 _CALIBRATION = np.zeros((2, 3, 8, 8), dtype=np.float32)
 
 
-@onnx_only
+@_onnx_only
 @pytest.mark.usefixtures("fake_ort")
 class TestCalibrationSettings:
     """How :func:`quantize_int8` configures ONNX Runtime's calibration."""
@@ -164,7 +164,7 @@ def _identity_model(dims: list[int | str]) -> object:
     return helper.make_model(graph)
 
 
-@onnx_only
+@_onnx_only
 @pytest.mark.usefixtures("fake_ort")
 class TestStaticBatch:
     """How calibration samples are fed to a graph traced at a fixed batch size."""
@@ -213,7 +213,7 @@ class TestStaticBatch:
             quantize_int8(source, np.zeros((2, 3, 8, 8), dtype=np.float32))
 
 
-@onnx_only
+@_onnx_only
 @pytest.mark.usefixtures("fake_ort")
 class TestScratchFiles:
     """What :func:`quantize_int8` leaves on disk, on success and on failure."""
@@ -345,7 +345,7 @@ def _head_graph() -> object:
     return helper.make_graph(nodes, "heads", inputs, outputs)
 
 
-@onnx_only
+@_onnx_only
 class TestHeadWalk:
     """Which head multiplies the walk back from the graph outputs holds in float."""
 
@@ -370,7 +370,7 @@ class TestHeadWalk:
         assert (name in nodes_to_exclude(_head_graph())) is excluded
 
 
-@onnx_only
+@_onnx_only
 class TestAttentionScoreWalk:
     """Which multiplies the walk back from a ``Softmax`` holds in float."""
 

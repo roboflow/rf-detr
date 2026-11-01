@@ -19,7 +19,7 @@ from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export.imports import _IS_NNCF_INSTALLED, _IS_OPENVINO_INSTALLED
 from tests.export.conftest import _export_graph, _stub_openvino_module
 
-openvino_nncf_only = pytest.mark.skipif(
+_openvino_nncf_only = pytest.mark.skipif(
     not (_IS_OPENVINO_INSTALLED and _IS_NNCF_INSTALLED),
     reason="openvino/nncf not installed; `pip install nncf` to run the INT8 export",
 )
@@ -206,7 +206,7 @@ class TestExportOpenvinoInt8:
 
 @pytest.mark.integration
 @pytest.mark.e2e_openvino
-@openvino_nncf_only
+@_openvino_nncf_only
 class TestOpenvinoInt8EndToEnd:
     """Real NNCF quantization of a tiny model (``-m e2e_openvino``; needs ``openvino`` and ``nncf`` installed)."""
 

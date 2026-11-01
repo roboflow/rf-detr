@@ -42,11 +42,10 @@ from rfdetr.training.trainer import (
     _requests_multiple_devices,
     _xla_resolves_to_single_device,
 )
-from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED, _IS_TRANSFORMER_ENGINE_INSTALLED
-from tests._markers import requires_torch_xla
+from rfdetr.utilities.imports import _IS_TRANSFORMER_ENGINE_INSTALLED
+from tests._markers import _hotcoco_only, _requires_torch_xla
 
-hotcoco_only = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed")
-transformer_engine_only = pytest.mark.skipif(
+_transformer_engine_only = pytest.mark.skipif(
     not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires the 'cuda' extra (transformer-engine)"
 )
 
@@ -311,7 +310,7 @@ class TestBuildTrainerCallbacks:
         with pytest.raises(MisconfigurationException, match="multiple progress bar"):
             build_trainer(_tc(tmp_path, use_ema=False, progress_bar="tqdm"), _mc(), extra_callbacks=[TQDMProgressBar()])
 
-    @hotcoco_only
+    @_hotcoco_only
     def test_streaming_backend_receives_the_model_class_count(self, tmp_path: Path) -> None:
         """``hotcoco_streaming`` gets ``num_classes`` from the model config, so it streams rather than falling back.
 
@@ -326,7 +325,7 @@ class TestBuildTrainerCallbacks:
 
         assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
 
-    @hotcoco_only
+    @_hotcoco_only
     def test_streaming_backend_receives_the_model_class_count_on_the_ema_metric(self, tmp_path: Path) -> None:
         """The EMA metric streams too: dropping its ``num_classes`` would silently make it evaluate in one batch."""
         model_config = _mc()
@@ -362,7 +361,7 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._num_classes == expected
         assert type(coco_cb._num_classes) is type(expected)
 
-    @hotcoco_only
+    @_hotcoco_only
     def test_numpy_class_count_keeps_the_streaming_backend_streaming(self, tmp_path: Path) -> None:
         """A NumPy class count still declares every category to the streaming metric, instead of disabling streaming."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), _mc())
@@ -776,7 +775,7 @@ class TestBuildTrainerPrecision:
         assert captured_trainer_kwargs["precision"] == "32-true"
 
     @pytest.mark.xla
-    @requires_torch_xla
+    @_requires_torch_xla
     def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
         """Resolves plan Sec 1.3 caveat #1: PTL's 'tpu' accelerator needs real TPU chips, not just torch_xla+PJRT.
 
@@ -1065,6 +1064,13 @@ def _cuda_supports_fp8() -> bool:
     return torch.cuda.is_available() and torch.cuda.get_device_capability(0) >= (8, 9)
 
 
+#: Skip a test node that runs FP8 training, which needs compute capability 8.9 or newer.
+_requires_fp8_cuda = pytest.mark.skipif(
+    not _cuda_supports_fp8(),
+    reason="FP8 requires a Transformer Engine-supported GPU (Ada, Hopper, or newer; compute capability >= 8.9)",
+)
+
+
 class TestBuildTrainerFP8Smoke:
     """Real CUDA + Transformer Engine integration smoke test for FP8 training.
 
@@ -1077,11 +1083,8 @@ class TestBuildTrainerFP8Smoke:
     """
 
     @pytest.mark.gpu
-    @transformer_engine_only
-    @pytest.mark.skipif(
-        not _cuda_supports_fp8(),
-        reason="FP8 requires a Transformer Engine-supported GPU (Ada, Hopper, or newer; compute capability >= 8.9)",
-    )
+    @_transformer_engine_only
+    @_requires_fp8_cuda
     def test_fp8_smoke_builds_and_steps(self, base_model_config, base_train_config, mocker: MockerFixture):
         """A real CUDA + Transformer Engine environment must build the plugin and run one FP8 training step.
 
@@ -1958,7 +1961,7 @@ class TestAcceleratorResolvesToXLA:
 class TestMultiDeviceXLAStrategy:
     """`XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`.
 
-    The first four tests are marked ``xla`` and guarded with ``requires_torch_xla`` because they exercise
+    The first four tests are marked ``xla`` and guarded with ``_requires_torch_xla`` because they exercise
     ``build_trainer``'s real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is
     touched, so the CPU-PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the
     ``accelerator="auto"`` case, ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so
@@ -1973,7 +1976,7 @@ class TestMultiDeviceXLAStrategy:
     """
 
     @pytest.mark.xla
-    @requires_torch_xla
+    @_requires_torch_xla
     def test_multiple_xla_devices_select_the_xla_strategy(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
@@ -1983,7 +1986,7 @@ class TestMultiDeviceXLAStrategy:
         assert captured_trainer_kwargs["strategy"] == "xla"
 
     @pytest.mark.xla
-    @requires_torch_xla
+    @_requires_torch_xla
     def test_single_xla_device_keeps_auto(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """One chip already resolves to SingleDeviceXLAStrategy, so nothing should be overridden."""
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
@@ -1991,7 +1994,7 @@ class TestMultiDeviceXLAStrategy:
         assert captured_trainer_kwargs["strategy"] == "auto"
 
     @pytest.mark.xla
-    @requires_torch_xla
+    @_requires_torch_xla
     def test_an_explicit_strategy_is_never_overridden(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """A caller who names a strategy owns that choice, even on multi-device XLA.
 
@@ -2007,7 +2010,7 @@ class TestMultiDeviceXLAStrategy:
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     @pytest.mark.xla
-    @requires_torch_xla
+    @_requires_torch_xla
     def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
@@ -2030,7 +2033,7 @@ class TestMultiDeviceXLAStrategy:
         A caller who leaves ``accelerator`` unset passes literal ``"auto"`` here. Without
         ``_accelerator_resolves_to_xla``, RF-DETR's generic distributed branch would create ``DDPStrategy`` before
         Lightning resolves that value to XLA, causing the `XLAAccelerator`/`DDPStrategy` mismatch. Not marked
-        ``xla``/``requires_torch_xla``: it patches ``XLAPrecision`` and ``XLAAccelerator.is_available`` directly, so
+        ``xla``/``_requires_torch_xla``: it patches ``XLAPrecision`` and ``XLAAccelerator.is_available`` directly, so
         it runs on every CI lane rather than only the CPU-PJRT one.
         """
         mocker.patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True)

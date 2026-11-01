@@ -20,8 +20,8 @@ from pytest_mock import MockerFixture
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE, passes
 from rfdetr.export._coreml.passes import rewrite_upsample_bilinear
 
-requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools")
-pytestmark = requires_coremltools
+_requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools")
+pytestmark = _requires_coremltools
 
 
 def _upsample_program(input_shape: tuple[Any, ...], *, opset: str = "iOS15", **upsample_kwargs: Any) -> Any:

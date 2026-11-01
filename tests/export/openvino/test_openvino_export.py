@@ -11,7 +11,7 @@ Covers:
   ``sys.modules`` injection so these run without the real ``openvino`` package installed).
 * ``OpenVINOInference.__init__`` — dependency-missing path.
 * ``format="openvino"`` wiring through ``RFDETR.export()`` (heavy deps mocked, fast).
-* A real end-to-end export + numerical parity check, gated behind the ``openvino_only`` skip
+* A real end-to-end export + numerical parity check, gated behind the ``_openvino_only`` skip
   so it only runs where the ``openvino`` package is installed.
 
 The dependency-missing tests make ``openvino`` unimportable through ``sys.modules`` (see the
@@ -42,7 +42,7 @@ from rfdetr.export._openvino.exporter import ModelWrapper, OpenVINOConfig, OpenV
 from rfdetr.export._openvino.inference import OpenVINOInference
 from rfdetr.export._runtime.adapters import load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata, read_metadata
-from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
+from tests._markers import _openvino_only
 from tests.export._openvino_shapes import FakePartialShape
 from tests.export.conftest import (
     _export_graph,
@@ -52,8 +52,6 @@ from tests.export.conftest import (
     eager_reference_tensors,
     max_abs_output_diffs,
 )
-
-openvino_only = pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
 
 
 def _infer_openvino_f32(xml_path: Path, input_array: NDArray[Any]) -> tuple[NDArray[Any], ...]:
@@ -654,7 +652,7 @@ class TestOpenVINOInferenceDeviceAndCache:
         assert caller_dict == {"INFERENCE_NUM_THREADS": 3}
         assert [call.args[2]["INFERENCE_NUM_THREADS"] for call in core.compile_model.call_args_list] == [2, 3]
 
-    @openvino_only
+    @_openvino_only
     @pytest.mark.integration
     @pytest.mark.e2e_openvino
     def test_default_hint_is_float32_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
@@ -664,7 +662,7 @@ class TestOpenVINOInferenceDeviceAndCache:
         compiled = OpenVINOInference(openvino_relu_xml, device="CPU").compiled_model
         assert compiled.get_property("INFERENCE_PRECISION_HINT") == ov.Type.f32
 
-    @openvino_only
+    @_openvino_only
     @pytest.mark.integration
     @pytest.mark.e2e_openvino
     def test_explicit_hint_in_config_is_honoured_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
@@ -1077,7 +1075,7 @@ def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[
     return reference_model, example, Path(xml_path)
 
 
-@openvino_only
+@_openvino_only
 @pytest.mark.integration
 @pytest.mark.e2e_openvino
 class TestOpenVINOEndToEnd:
@@ -1210,7 +1208,7 @@ class TestOpenVINOEndToEnd:
         assert max(diffs) < 1e-2, f"OpenVINO backbone outputs diverge from PyTorch: max abs diff {max(diffs)}"
 
 
-@openvino_only
+@_openvino_only
 class TestOpenVINOInferenceEndToEnd:
     """Real ``OpenVINOInference`` behaviour gated behind an actual ``openvino`` install."""
 

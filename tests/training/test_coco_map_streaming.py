@@ -17,10 +17,9 @@ from pytest_mock import MockerFixture
 
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _warn_streaming_fallback
-from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED
+from tests._markers import _hotcoco_only
 from tests.training.callbacks.test_coco_eval_callback import _make_pl_module, _make_trainer
 
-_requires_hotcoco = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco is not installed")
 # The two ways a metric gets copied mid-epoch: Lightning's spawn/checkpoint plumbing pickles it, EMA set-up deep-copies.
 _ROUND_TRIPS = [
     pytest.param(lambda metric: pickle.loads(pickle.dumps(metric)), id="pickle"),
@@ -60,7 +59,7 @@ def _disc_records(predicted: int, annotated: int) -> tuple[list[dict[str, Any]],
     return predictions, targets
 
 
-@_requires_hotcoco
+@_hotcoco_only
 class TestStreamConstruction:
     """The metric opens its streams through the backend's ``open_stream`` seam, never through a package directly."""
 
@@ -90,7 +89,7 @@ class TestStreamConstruction:
             )
 
 
-@_requires_hotcoco
+@_hotcoco_only
 class TestCopyMidEpoch:
     """A copy taken mid-epoch drops its open stream, and the copy, the object that falls back, logs why."""
 
@@ -157,7 +156,7 @@ def _assert_same_metrics(actual: dict[str, torch.Tensor], expected: dict[str, to
         assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1)), key
 
 
-@_requires_hotcoco
+@_hotcoco_only
 class TestStreamedDetectionForms:
     """Each IoU type's stream gets the detection form that gives it the area the batch path uses."""
 
@@ -200,7 +199,7 @@ class TestStreamedDetectionForms:
         _assert_same_metrics(streamed.compute(), batch.compute())
 
 
-@_requires_hotcoco
+@_hotcoco_only
 @pytest.mark.parametrize("iou_type", ["bbox", "segm", ("bbox", "segm")])
 @pytest.mark.parametrize(
     ("predicted", "annotated"),
@@ -223,7 +222,7 @@ def test_empty_side_state_matches_batch_hotcoco(iou_type: Any, predicted: int, a
     _assert_same_metrics(streamed.compute(), batch.compute())
 
 
-@_requires_hotcoco
+@_hotcoco_only
 @pytest.mark.parametrize("class_metrics", [True, False])
 def test_float_detection_labels_are_refused_while_streaming(class_metrics: bool) -> None:
     """A whole-valued float detection label raises the batch path's ``ValueError`` as the batch is streamed.
@@ -241,7 +240,7 @@ def test_float_detection_labels_are_refused_while_streaming(class_metrics: bool)
         metric.update(predictions, targets)
 
 
-@_requires_hotcoco
+@_hotcoco_only
 def test_float_detection_labels_are_refused_by_the_batch_backend() -> None:
     """The batch backend raises the same ``ValueError`` at ``compute()``, so both paths agree on the message."""
     predictions, targets = _disc_records(predicted=1, annotated=1)
@@ -253,7 +252,7 @@ def test_float_detection_labels_are_refused_by_the_batch_backend() -> None:
         metric.compute()
 
 
-@_requires_hotcoco
+@_hotcoco_only
 def test_float_detection_labels_in_a_later_batch_name_their_epoch_wide_sample() -> None:
     """A float label arriving after a valid batch is refused with its index in the whole epoch, as on the batch path.
 
@@ -272,7 +271,7 @@ def test_float_detection_labels_in_a_later_batch_name_their_epoch_wide_sample() 
     assert "sample 1 (expected integer labels" in str(exc_info.value)
 
 
-@_requires_hotcoco
+@_hotcoco_only
 @pytest.mark.parametrize("label", [1.0, 5.0])
 def test_float_ground_truth_labels_are_refused_while_streaming(label: float) -> None:
     """A float target label in dictionary-backed ground truth raises, and streaming stays on.
@@ -293,7 +292,7 @@ def test_float_ground_truth_labels_are_refused_while_streaming(label: float) -> 
     assert not metric._stream_stopped
 
 
-@_requires_hotcoco
+@_hotcoco_only
 def test_callback_streams_validation_only_not_the_train_split() -> None:
     """``hotcoco_streaming`` streams validation only; the train-split metric evaluates in one batch on ``hotcoco``.
 

@@ -15,7 +15,7 @@ import torch.nn as nn
 
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export.prepare import ExportGraph
-from tests._markers import onnx_only
+from tests._markers import _onnx_only
 
 # The helper doctest exports a real ONNX model, so it needs the package a class-level skipif cannot gate.
 __doctest_requires__ = {("_export_tiny_model", "_embedded_metadata"): ["onnx"]}
@@ -100,7 +100,7 @@ def _embedded_metadata(onnx_path: str) -> dict[str, str]:
     return {prop.key: prop.value for prop in onnx.load(onnx_path).metadata_props}
 
 
-@onnx_only
+@_onnx_only
 class TestExportOnnxNotes:
     """Verify ``notes`` metadata round-trips through the ONNX export."""
 

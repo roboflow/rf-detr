@@ -33,22 +33,15 @@ from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
-from rfdetr.utilities.imports import (
-    _IS_FASTER_COCO_EVAL_INSTALLED,
-    _IS_HOTCOCO_INSTALLED,
-    _IS_PYCOCOTOOLS_INSTALLED,
-    _IS_UFCOCO_INSTALLED,
-    _IS_VERNIER_INSTALLED,
-)
+from tests._markers import _faster_coco_eval_only, _hotcoco_only, _pycocotools_only, _ufcoco_only, _vernier_only
 
-pycocotools_only = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pycocotools not installed")
 # Every eval backend `CocoEvalBackend` names, each carrying the skip mark for the package it needs.
 _BACKEND_ONLY = {
-    "hotcoco": pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed"),
-    "hotcoco_streaming": pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed"),
-    "faster_coco_eval": pytest.mark.skipif(not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed"),
-    "ufcoco": pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed"),
-    "vernier": pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed"),
+    "hotcoco": _hotcoco_only,
+    "hotcoco_streaming": _hotcoco_only,
+    "faster_coco_eval": _faster_coco_eval_only,
+    "ufcoco": _ufcoco_only,
+    "vernier": _vernier_only,
 }
 _ALL_BACKENDS = [pytest.param(backend, marks=_BACKEND_ONLY[backend]) for backend in get_args(CocoEvalBackend)]
 
@@ -432,7 +425,7 @@ class TestCrowdRegionsReachEvaluation:
         assert scored[0]["boxes"][1].tolist() == [128.0, 16.0, 128.0, 112.0], "the zero-width box must reach GT as-is"
 
 
-@pycocotools_only
+@_pycocotools_only
 def test_crowd_row_matches_its_non_crowd_twin_under_the_eval_transform(tmp_path: Path) -> None:
     """A compressed-RLE crowd and a polygon non-crowd twin covering the same box give the same box and mask.
 
@@ -615,7 +608,7 @@ def _pycocotools_stats(
     return evaluator.stats
 
 
-@pycocotools_only
+@_pycocotools_only
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
 @pytest.mark.parametrize("segmentation", [False, True])
 def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmentation: bool) -> None:

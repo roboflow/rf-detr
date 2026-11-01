@@ -22,6 +22,7 @@ from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr import detr as detr_module
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
+from tests._markers import _requires_two_cuda_devices
 
 from .helpers import _DummyRFDETR
 
@@ -1048,7 +1049,7 @@ class TestCudaGraphInferenceModel:
         assert torch.equal(torch.cat(outputs, dim=1), torch.stack([inputs + 1, inputs * 2]).to(device))
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    @_requires_two_cuda_devices
     def test_capture_on_second_device_replays_the_callers_input(self) -> None:
         """A graph captured on cuda:1 after one on cuda:0 must compute on the caller's input, not the dummy.
 

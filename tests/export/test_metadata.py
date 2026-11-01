@@ -7,7 +7,6 @@
 
 import hashlib
 import json
-import os
 import stat
 from collections.abc import Sequence
 from pathlib import Path
@@ -32,11 +31,10 @@ from rfdetr.export._runtime.metadata import (
     write_metadata,
 )
 from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
-from rfdetr.export.imports import _IS_OPENVINO_INSTALLED
 from rfdetr.export.prepare import ExportGraph, resolve_output_names
 from rfdetr.inference import RFDETRInference
 from rfdetr.utilities.class_names import class_id_to_name
-from tests._markers import onnx_and_onnxruntime_only, onnx_only
+from tests._markers import _onnx_and_onnxruntime_only, _onnx_only, _openvino_only, _requires_posix_permissions
 
 #: Digest of the ``b"model"`` artifact bytes, as a companion records it.
 _MODEL_DIGEST = hashlib.sha256(b"model").hexdigest()
@@ -213,7 +211,7 @@ class TestGraphOutputOrder:
 class TestWriteExportMetadata:
     """Verify public metadata publication for artifacts exported earlier."""
 
-    @pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
+    @_openvino_only
     def test_openvino_positional_sidecar(self, tmp_path: Path, metadata_source: RFDETR) -> None:
         """Apply the real exporter mapping and bind metadata to XML and weights."""
         artifact = tmp_path / "model.xml"
@@ -423,7 +421,7 @@ class TestSidecarMetadata:
         assert "written by rfdetr 9.9.9" in str(exc_info.value)
         assert "Upgrade rfdetr" in str(exc_info.value)
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     def test_new_file_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """A first sidecar gets the mode ``open()`` would give it, so other users can read it, not ``0o600``."""
         artifact = tmp_path / "model.tflite"
@@ -461,10 +459,10 @@ class TestSidecarMetadata:
 
         assert message in str(exc_info.value)
 
-    @onnx_only
+    @_onnx_only
     def test_companion_conflicting_with_embedded_onnx_metadata_is_rejected(self, tmp_path: Path) -> None:
         """A companion cannot relabel an ONNX model whose embedded metadata says something else."""
-        import onnx  # optional dependency, gated by onnx_only
+        import onnx  # optional dependency, gated by _onnx_only
 
         artifact = tmp_path / "model.onnx"
         onnx.save(onnx.helper.make_model(onnx.helper.make_graph([], "empty", [], [])), artifact)
@@ -679,7 +677,7 @@ class TestMetadataCapture:
 class TestFormatMetadata:
     """Verify metadata behavior for format-specific interfaces."""
 
-    @onnx_and_onnxruntime_only
+    @_onnx_and_onnxruntime_only
     def test_missing_args_export_preserves_head_size_and_zero_indexed_names(
         self, tmp_path: Path, metadata_source: RFDETR
     ) -> None:
@@ -708,14 +706,14 @@ class TestFormatMetadata:
         np.testing.assert_array_equal(detections.class_id, [1, 1])
         np.testing.assert_array_equal(detections.data["class_name"], ["bicycle", "bicycle"])
 
-    @onnx_and_onnxruntime_only
+    @_onnx_and_onnxruntime_only
     @pytest.mark.parametrize("quantization", [None, "fp32", "int8"])
     @pytest.mark.parametrize("composed", [False, True])
     def test_onnx_final_artifacts_load_and_predict(
         self, tmp_path: Path, quantization: str | None, composed: bool
     ) -> None:
         """Every final ONNX file, including the INT8 export's FP32 baseline, carries a usable contract."""
-        import onnx  # optional dependency, gated by onnx_and_onnxruntime_only
+        import onnx  # optional dependency, gated by _onnx_and_onnxruntime_only
 
         metadata = _make_metadata(
             format="tensorrt" if composed else "onnx",
@@ -789,10 +787,10 @@ class TestFormatMetadata:
         assert loaded.outputs == {"pred_boxes": 1, "pred_logits": 0}
         assert loaded.input_layout == "NHWC"
 
-    @onnx_only
+    @_onnx_only
     def test_onnx_metadata_keeps_user_notes(self, tmp_path: Path) -> None:
         """The reserved inference key does not replace a caller's notes."""
-        import onnx  # optional dependency, gated by onnx_only
+        import onnx  # optional dependency, gated by _onnx_only
 
         artifact = tmp_path / "model.onnx"
         graph = onnx.helper.make_graph([], "empty", [], [])
@@ -810,12 +808,12 @@ class TestFormatMetadata:
         assert next(item.value for item in saved.metadata_props if item.key == "rfdetr_notes") == '{"run": 7}'
         assert not artifact.with_name("model.onnx.rfdetr.json").exists()
 
-    @onnx_only
+    @_onnx_only
     def test_onnx_metadata_write_failure_preserves_original(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A failed metadata save leaves the successfully converted ONNX file intact."""
-        import onnx  # optional dependency, gated by onnx_only
+        import onnx  # optional dependency, gated by _onnx_only
 
         artifact = tmp_path / "model.onnx"
         graph = onnx.helper.make_graph([], "empty", [], [])

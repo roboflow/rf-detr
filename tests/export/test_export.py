@@ -44,7 +44,7 @@ from rfdetr.export.base import Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.export.registry import REGISTRY, resolve_exporter
 from rfdetr.models.backbone.dinov2 import DinoV2
-from tests._markers import onnx_only, onnxruntime_only
+from tests._markers import _onnx_only, _onnxruntime_only, _requires_cuda
 
 if TYPE_CHECKING:
     import onnx
@@ -277,8 +277,8 @@ def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@onnx_only
+@_requires_cuda
+@_onnx_only
 def test_segmentation_model_exports(tmp_path: Path) -> None:
     """Integration test: exporting a segmentation model writes an ONNX file instead of crashing.
 
@@ -296,8 +296,8 @@ def test_segmentation_model_exports(tmp_path: Path) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@onnx_only
+@_requires_cuda
+@_onnx_only
 def test_export_accepts_rectangular_shape_differing_from_resolution(tmp_path: Path) -> None:
     """Integration test: exporting with a valid rectangular shape writes an ONNX file instead of crashing.
 
@@ -319,7 +319,7 @@ def test_export_accepts_rectangular_shape_differing_from_resolution(tmp_path: Pa
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
-@onnx_only
+@_onnx_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestExportedGraphAvoidsCoreMLRejectedOps:
@@ -412,8 +412,8 @@ def test_dinov2_export_uses_precomputed_positions_for_exact_rectangular_grid() -
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@onnx_only
+@_requires_cuda
+@_onnx_only
 def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     """Verify that calling export() does not change the original model's train/eval state.
 
@@ -921,7 +921,7 @@ def test_rfdetr_export_tensorrt_dynamic_batch_rejects_invalid_bounds(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@_requires_cuda
 @pytest.mark.parametrize("mode", ["train", "eval"])
 def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "eval"]) -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
@@ -1206,8 +1206,8 @@ class TestExportOnnxVariantNaming:
 
 
 @pytest.mark.gpu
-@onnx_only
-@onnxruntime_only
+@_onnx_only
+@_onnxruntime_only
 @pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRSegNano, RFDETRKeypointPreview])
 @pytest.mark.parametrize("projector_scale", [["P4"], ["P4", "P5"]])
 @pytest.mark.parametrize("dynamic_batch", [False, True])
@@ -2535,7 +2535,7 @@ def _if_nodes(model: "onnx.ModelProto") -> list[str]:
     return [node.name for node in model.graph.node if node.op_type == "If"]
 
 
-@onnx_only
+@_onnx_only
 class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
     """The keypoint ONNX graph must avoid the constructs that broke its onnx2tf/TFLite conversion (#1514).
 

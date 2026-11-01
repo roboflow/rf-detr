@@ -152,7 +152,11 @@ class TestHasProgressBar:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+#: Skip a test node that needs ``rich``.
+_rich_only = pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+
+
+@_rich_only
 class TestGetRichConsole:
     """_get_rich_console returns the PTL RichProgressBar console or a fresh one."""
 
@@ -207,7 +211,7 @@ class TestGetRichConsole:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+@_rich_only
 class TestBuildSummaryRenderable:
     """_build_summary_renderable returns a Rich Group for console.print()."""
 
@@ -311,7 +315,7 @@ class TestBuildSummaryRenderable:
 class TestRenderSummaryTables:
     """_render_summary_tables delegates to console.print when Rich available."""
 
-    @pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+    @_rich_only
     def test_calls_console_print_once(self) -> None:
         """console.print called exactly once with the Group renderable."""
         console = MagicMock(name="console")

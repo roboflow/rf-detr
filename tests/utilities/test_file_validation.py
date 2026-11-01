@@ -15,6 +15,7 @@ import pytest
 import requests
 
 from rfdetr.utilities.files import _compute_file_md5, _download_file, _mkstemp_default_mode, _validate_file_md5
+from tests._markers import _requires_posix_permissions, _requires_symlink_privilege
 
 
 class _DummyTqdm:
@@ -233,7 +234,7 @@ class TestDownloadFile:
         _assert_no_download_temp_files(tmp_path)
         mock_open.assert_not_called()
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
     def test_download_file_mode_follows_umask(self, mock_get: Mock, process_umask: int, tmp_path: Path) -> None:
         """The downloaded file gets the mode ``open()`` would give it, not ``mkstemp``'s owner-only ``0o600``."""
@@ -269,7 +270,7 @@ class TestMkstempDefaultMode:
 
         assert "No usable temporary file name" in str(exc_info.value)
 
-    @pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs elevated privileges on Windows")
+    @_requires_symlink_privilege
     def test_never_follows_a_planted_symlink(self, tmp_path: Path, mocker) -> None:
         """A symlink planted at a candidate name counts as taken, so the file it points to is never created."""
         link_target = tmp_path / "link_target"
@@ -303,7 +304,7 @@ class TestMkstempDefaultMode:
         os.close(fd)
         assert os.path.isabs(path)
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
     def test_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """The file is created ``0o666`` minus the umask, as ``open()`` creates one, not ``mkstemp``'s ``0o600``."""
