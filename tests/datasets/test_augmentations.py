@@ -24,7 +24,6 @@ from rfdetr.utilities import collate_fn
 from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
 from tests._markers import _requires_albumentations
 
-
 __doctest_requires__ = {"_has_albumentations_transform": ["albumentations"]}
 
 
