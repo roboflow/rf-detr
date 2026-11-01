@@ -16,6 +16,7 @@ import json
 import tarfile
 import types
 import warnings
+from collections.abc import Iterable
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -140,6 +141,7 @@ class TestPackCocoToShards:
     """Packing a COCO split into tar shards uses only the standard library."""
 
     def test_index_reports_every_sample(self, tmp_path: Path) -> None:
+        """Packing reports the sample count and writes the split's index file."""
         image_dir, annotations = _build_coco_split(tmp_path, count=8)
         index = pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="train")
         assert index.num_samples == 8
@@ -155,6 +157,7 @@ class TestPackCocoToShards:
     def test_shard_rollover_follows_the_size_limit(
         self, tmp_path: Path, max_shard_bytes: int, expected_single_shard: bool
     ) -> None:
+        """The default limit keeps one shard, a tiny limit rolls over, and shard files match the index."""
         image_dir, annotations = _build_coco_split(tmp_path, count=6)
         index = pack_coco_to_shards(
             image_dir, annotations, tmp_path / "shards", split="train", max_shard_bytes=max_shard_bytes
@@ -163,6 +166,7 @@ class TestPackCocoToShards:
         assert sum(1 for _ in (tmp_path / "shards").glob("train-*.tar")) == len(index.shards)
 
     def test_image_bytes_are_copied_verbatim(self, tmp_path: Path) -> None:
+        """Image bytes inside the shard equal the source file bytes, with no re-encoding."""
         image_dir, annotations = _build_coco_split(tmp_path, count=3)
         index = pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="train")
         with tarfile.open(tmp_path / "shards" / index.shards[0]) as tar:
@@ -171,6 +175,7 @@ class TestPackCocoToShards:
             assert member.read() == (image_dir / "img_0000.jpg").read_bytes()
 
     def test_images_without_annotations_get_an_empty_list(self, tmp_path: Path) -> None:
+        """An image with no annotations still gets a sidecar JSON holding an empty list."""
         image_dir, annotations = _build_coco_split(tmp_path, count=4, empty_from=2)
         index = pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="train")
         with tarfile.open(tmp_path / "shards" / index.shards[0]) as tar:
@@ -179,6 +184,7 @@ class TestPackCocoToShards:
             assert json.loads(member.read())["annotations"] == []
 
     def test_packing_twice_produces_byte_identical_shards(self, tmp_path: Path) -> None:
+        """Packing the same split twice yields the same shard names and identical bytes."""
         image_dir, annotations = _build_coco_split(tmp_path, count=4)
         first = pack_coco_to_shards(image_dir, annotations, tmp_path / "a", split="train")
         second = pack_coco_to_shards(image_dir, annotations, tmp_path / "b", split="train")
@@ -187,12 +193,14 @@ class TestPackCocoToShards:
             assert (tmp_path / "a" / shard).read_bytes() == (tmp_path / "b" / shard).read_bytes()
 
     def test_png_split_keeps_its_own_member_extension(self, tmp_path: Path) -> None:
+        """A PNG source split packs its images as ``.png`` shard members."""
         image_dir, annotations = _build_coco_split(tmp_path, count=2, extension="png")
         index = pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="train")
         with tarfile.open(tmp_path / "shards" / index.shards[0]) as tar:
             assert "00000000.png" in tar.getnames()
 
     def test_packer_records_samples_per_shard(self, tmp_path: Path) -> None:
+        """The index's per-shard sample counts match the shard list and add up to the total."""
         image_dir, annotations = _build_coco_split(tmp_path, count=6)
         index = pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="train", max_shard_bytes=1)
         assert len(index.samples_per_shard) == len(index.shards)
@@ -227,39 +235,49 @@ class TestPackCocoToShardsFailures:
     """The packer fails closed rather than dropping data silently, and never touches a valid prior pack."""
 
     def test_missing_image_is_fatal(self, tmp_path: Path) -> None:
+        """An annotated image missing from disk aborts packing instead of being dropped silently."""
         image_dir, annotations = _build_coco_split(tmp_path, count=3)
         (image_dir / "img_0001.jpg").unlink()
-        with pytest.raises(FileNotFoundError, match="silently dropping"):
+        with pytest.raises(FileNotFoundError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+        assert "silently dropping" in str(exc_info.value)
 
     def test_missing_annotation_file_is_fatal(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="does not exist"):
+        """A nonexistent annotation file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError) as exc_info:
             pack_coco_to_shards(tmp_path, tmp_path / "absent.json", tmp_path / "shards")
+        assert "does not exist" in str(exc_info.value)
 
     def test_annotation_file_without_images_is_rejected(self, tmp_path: Path) -> None:
+        """An annotation file that lists no images is rejected."""
         annotations = tmp_path / "empty.json"
         annotations.write_text(json.dumps({"images": [], "categories": []}), encoding="utf-8")
-        with pytest.raises(ValueError, match="lists no images"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(tmp_path, annotations, tmp_path / "shards")
+        assert "lists no images" in str(exc_info.value)
 
     def test_unsupported_image_extension_fails_at_pack_time(self, tmp_path: Path) -> None:
+        """An undecodable image format (``.tiff``) is rejected when packing, not when reading."""
         image_dir, annotations = _build_coco_split(tmp_path, count=2)
         (image_dir / "img_0000.jpg").rename(image_dir / "img_0000.tiff")
         payload = json.loads(annotations.read_text(encoding="utf-8"))
         payload["images"][0]["file_name"] = "img_0000.tiff"
         annotations.write_text(json.dumps(payload), encoding="utf-8")
-        with pytest.raises(ValueError, match="cannot decode"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+        assert "cannot decode" in str(exc_info.value)
 
     def test_annotations_that_match_no_image_are_rejected(self, tmp_path: Path) -> None:
+        """Annotations whose image ids match no image (string versus int ids) are rejected."""
         image_dir, annotations = _build_coco_split(tmp_path, count=3)
         payload = json.loads(annotations.read_text(encoding="utf-8"))
         # A COCO export whose image ids are strings while annotations keep ints, or vice versa.
         for entry in payload["images"]:
             entry["id"] = str(entry["id"])
         annotations.write_text(json.dumps(payload), encoding="utf-8")
-        with pytest.raises(ValueError, match="matching no image"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+        assert "matching no image" in str(exc_info.value)
 
     def test_partially_orphaned_annotations_are_rejected(self, tmp_path: Path) -> None:
         """A minority of mismatched annotations must not be dropped silently either."""
@@ -267,12 +285,13 @@ class TestPackCocoToShardsFailures:
         payload = json.loads(annotations.read_text(encoding="utf-8"))
         payload["annotations"][0]["image_id"] = "no-such-image"
         annotations.write_text(json.dumps(payload), encoding="utf-8")
-        with pytest.raises(ValueError, match="matching no image"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+        assert "matching no image" in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "category_ids",
-        [pytest.param("contiguous", id="unknown-word"), pytest.param("", id="empty")],
+        ["contiguous", pytest.param("", id="empty")],
     )
     def test_unknown_category_policy_is_rejected_before_anything_is_written(
         self, tmp_path: Path, category_ids: str
@@ -280,20 +299,23 @@ class TestPackCocoToShardsFailures:
         """The CLI's choices= does not protect a library caller; without this the pack only fails at read time."""
         image_dir, annotations = _build_coco_split(tmp_path, count=2)
         shard_dir = tmp_path / "shards"
-        with pytest.raises(ValueError, match="category_ids"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", category_ids=category_ids)
+        assert "category_ids" in str(exc_info.value)
         assert not shard_dir.exists() or not list(shard_dir.iterdir())
 
     @pytest.mark.parametrize(
         "split",
-        [pytest.param("*", id="star"), pytest.param("tr?in", id="question"), pytest.param("tr[ai]n", id="bracket")],
+        ["*", "tr?in", "tr[ai]n"],
     )
     def test_glob_metacharacters_in_split_are_rejected(self, split: str) -> None:
         """A split used as a glob would match, and then delete, other splits' shards."""
-        with pytest.raises(ValueError, match="glob metacharacter|must not contain"):
+        with pytest.raises(ValueError) as exc_info:
             _validate_split_name(split)
+        assert any(text in str(exc_info.value) for text in ("glob metacharacter", "must not contain"))
 
     def test_repacking_one_split_leaves_another_splits_shards_alone(self, tmp_path: Path) -> None:
+        """Re-packing ``train`` leaves the shards and index of a packed ``val`` split untouched."""
         shard_dir = tmp_path / "shards"
         val_images, val_annotations = _build_coco_split(tmp_path, count=4, subdir="other")
         val_index = pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val")
@@ -307,7 +329,7 @@ class TestPackCocoToShardsFailures:
         for name, payload in val_bytes.items():
             assert (shard_dir / name).read_bytes() == payload
 
-    def test_a_repack_never_leaves_the_index_pointing_at_a_missing_shard(self, tmp_path: Path) -> None:
+    def test_repack_never_leaves_index_pointing_at_missing_shard(self, tmp_path: Path) -> None:
         """Publication order must keep the index and the shards it names consistent at every step."""
         shard_dir = tmp_path / "shards"
         first_images, first_annotations = _build_coco_split(tmp_path, count=8, subdir="first")
@@ -324,23 +346,25 @@ class TestPackCocoToShardsFailures:
         on_disk = {path.name for path in shard_dir.glob("train-*.tar")}
         assert on_disk == set(index.shards)
 
-    def test_generation_is_content_derived_so_repacking_is_reproducible(self, tmp_path: Path) -> None:
-        image_dir, annotations = _build_coco_split(tmp_path, count=4)
-        first = pack_coco_to_shards(image_dir, annotations, tmp_path / "a", split="train")
-        second = pack_coco_to_shards(image_dir, annotations, tmp_path / "b", split="train")
-        assert first.shards == second.shards
-        assert _pack_generation({"x": 1}, ["aa"]) == _pack_generation({"x": 1}, ["aa"])
-        assert _pack_generation({"x": 1}, ["aa"]) != _pack_generation({"x": 2}, ["aa"])
+    @pytest.mark.parametrize(
+        ("left", "right", "expect_equal"),
+        [
+            pytest.param(({"x": 1}, ["aa"]), ({"x": 1}, ["aa"]), True, id="same-inputs"),
+            pytest.param(({"x": 1}, ["aa"]), ({"x": 2}, ["aa"]), False, id="manifest-change"),
+            pytest.param(({"x": 1}, ["aaaa"]), ({"x": 1}, ["bbbb"]), False, id="shard-content-change-same-size"),
+        ],
+    )
+    def test_pack_generation_follows_manifest_and_shard_content(
+        self, left: tuple[dict[str, int], list[str]], right: tuple[dict[str, int], list[str]], expect_equal: bool
+    ) -> None:
+        """The generation token is content-derived: equal inputs repeat it and any manifest or shard change moves it.
 
-    def test_generation_changes_when_shard_content_changes_at_the_same_size(self, tmp_path: Path) -> None:
-        """A re-pack whose shard bytes differ gets a new generation even if the padded shard size is unchanged.
-
-        Regression test: the generation token used to hash only the shard byte *size*, not its content, so two
-        structurally-identical packs with genuinely different bytes (same sample/category counts, same
-        per-shard sizes) could reuse the live generation name and publication could overwrite a shard the
-        current index still points at, mid-epoch.
+        Regression test (shard-content case): the token used to hash only the shard byte *size*, not its content, so two
+        structurally identical packs with different bytes (same sample/category counts, same per-shard sizes) could
+        reuse the live generation name and publication could overwrite a shard the current index still points at, mid-
+        epoch.
         """
-        assert _pack_generation({"x": 1}, ["aaaa"]) != _pack_generation({"x": 1}, ["bbbb"])
+        assert (_pack_generation(*left) == _pack_generation(*right)) is expect_equal
 
     def test_republish_detects_a_same_length_image_content_change(self, tmp_path: Path) -> None:
         """Re-packing after an image's bytes change, at an unchanged file length, still writes a fresh shard.
@@ -363,20 +387,24 @@ class TestPackCocoToShardsFailures:
         assert first.shards != second.shards
         assert (shard_dir / second.shards[0]).read_bytes() != first_bytes
 
-    @pytest.mark.parametrize("max_shard_bytes", [pytest.param(0, id="zero"), pytest.param(-1, id="negative")])
+    @pytest.mark.parametrize("max_shard_bytes", [0, -1])
     def test_non_positive_shard_size_is_rejected(self, tmp_path: Path, max_shard_bytes: int) -> None:
+        """A zero or negative ``max_shard_bytes`` is rejected."""
         image_dir, annotations = _build_coco_split(tmp_path, count=1)
-        with pytest.raises(ValueError, match="max_shard_bytes"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", max_shard_bytes=max_shard_bytes)
+        assert "max_shard_bytes" in str(exc_info.value)
 
     def test_file_name_outside_image_dir_is_rejected(self, tmp_path: Path) -> None:
+        """A ``file_name`` that traverses out of the image directory is rejected."""
         image_dir, annotations = _build_coco_split(tmp_path, count=2)
         payload = json.loads(annotations.read_text(encoding="utf-8"))
         payload["images"][0]["file_name"] = "../escape.jpg"
         annotations.write_text(json.dumps(payload), encoding="utf-8")
         (image_dir.parent / "escape.jpg").write_bytes(b"not a real image")
-        with pytest.raises(ValueError, match="escapes"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+        assert "escapes" in str(exc_info.value)
 
     def test_symlinked_image_directory_is_accepted(self, tmp_path: Path) -> None:
         """Packing an image directory reached through a symlink succeeds.
@@ -394,9 +422,11 @@ class TestPackCocoToShardsFailures:
         assert index.num_samples == 2
 
     def test_split_with_path_separator_is_rejected(self, tmp_path: Path) -> None:
+        """A split name containing a path separator is rejected when packing."""
         image_dir, annotations = _build_coco_split(tmp_path, count=1)
-        with pytest.raises(ValueError, match="path separator"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="../escape")
+        assert "path separator" in str(exc_info.value)
 
     def test_failed_repack_does_not_corrupt_a_previous_valid_pack(self, tmp_path: Path) -> None:
         """A re-pack that fails partway through must leave a previously-packed split untouched.
@@ -446,8 +476,9 @@ class TestPackCocoToShardsFailures:
             return real_replace(self, target)
 
         monkeypatch.setattr(Path, "replace", _replace)
-        with pytest.raises(OSError, match="simulated failure"):
+        with pytest.raises(OSError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        assert "simulated failure" in str(exc_info.value)
         assert not any(shard_dir.glob(f"{staged_prefix}*"))
         assert not any(shard_dir.glob(".train-pack-*"))
 
@@ -497,8 +528,9 @@ class TestPackCocoToShardsFailures:
 
         monkeypatch.setattr(Path, "replace", fail_replace)
         monkeypatch.setattr(Path, "write_bytes", fail_write)
-        with pytest.raises(OSError, match="injected publication failure"):
+        with pytest.raises(OSError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, shard_dir, max_shard_bytes=1)
+        assert "injected publication failure" in str(exc_info.value)
         assert {path.name: path.read_bytes() for path in shard_dir.iterdir()} == before
 
 
@@ -506,20 +538,25 @@ class TestShardIndex:
     """The index carries the label space so a reader never parses the source annotation file."""
 
     def test_json_roundtrip_preserves_every_field(self) -> None:
+        """``to_json`` followed by ``from_json`` returns an equal index."""
         index = ShardIndex("train", ("train-000000.tar",), 5, tuple(_CATEGORIES), (3, 9), "remap", (5,))
         assert ShardIndex.from_json(index.to_json()) == index
 
     def test_unsupported_schema_version_is_rejected(self) -> None:
+        """An index written with a newer schema version is rejected."""
         payload = ShardIndex("train", (), 0, (), (), "remap").to_json()
         payload["version"] = INDEX_VERSION + 1
-        with pytest.raises(ValueError, match="schema version"):
+        with pytest.raises(ValueError) as exc_info:
             ShardIndex.from_json(payload)
+        assert "schema version" in str(exc_info.value)
 
     def test_unknown_category_policy_is_rejected(self) -> None:
+        """An index declaring an unknown ``category_ids`` policy is rejected."""
         payload = ShardIndex("train", (), 0, (), (), "remap").to_json()
         payload["category_ids"] = "contiguous"
-        with pytest.raises(ValueError, match="category_ids policy"):
+        with pytest.raises(ValueError) as exc_info:
             ShardIndex.from_json(payload)
+        assert "category_ids policy" in str(exc_info.value)
 
     @pytest.mark.parametrize(
         ("policy", "expected"),
@@ -529,10 +566,12 @@ class TestShardIndex:
         ],
     )
     def test_cat2label_follows_the_declared_policy(self, policy: str, expected: dict[int, int] | None) -> None:
+        """``remap`` maps raw ids to contiguous labels while ``raw`` yields no mapping."""
         index = ShardIndex("train", (), 0, tuple(_CATEGORIES), (3, 9), policy)  # type: ignore[arg-type]
         assert index.cat2label() == expected
 
     def test_unannotated_grouping_category_consumes_no_label_slot(self) -> None:
+        """A grouping category with no annotations takes no label slot under ``remap``."""
         categories = (
             {"id": 0, "name": "root", "supercategory": "none"},
             {"id": 1, "name": "cat", "supercategory": "root"},
@@ -541,13 +580,16 @@ class TestShardIndex:
         assert ShardIndex("train", (), 0, categories, (1, 2), "remap").cat2label() == {1: 0, 2: 1}
 
     def test_packed_policy_reaches_the_reader(self, tmp_path: Path) -> None:
+        """The ``raw`` policy chosen at pack time is what the reader's index reports."""
         image_dir, annotations = _build_coco_split(tmp_path, count=2)
         pack_coco_to_shards(image_dir, annotations, tmp_path / "shards", split="train", category_ids="raw")
         assert read_shard_index(tmp_path / "shards", "train").cat2label() is None
 
     def test_missing_index_names_the_packing_command(self, tmp_path: Path) -> None:
-        with pytest.raises(WebDatasetSplitUnavailableError, match="rfdetr.cli.webdataset"):
+        """A missing split index raises an error that names the packing CLI."""
+        with pytest.raises(WebDatasetSplitUnavailableError) as exc_info:
             read_shard_index(tmp_path, "train")
+        assert "rfdetr.cli.webdataset" in str(exc_info.value)
 
     def test_missing_split_error_is_still_a_file_not_found(self, tmp_path: Path) -> None:
         """Callers that only care the split is absent keep catching FileNotFoundError."""
@@ -556,8 +598,10 @@ class TestShardIndex:
             read_shard_index(tmp_path, "train")
 
     def test_split_with_path_separator_is_rejected_on_read(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="path separator"):
+        """Reading a split name containing a path separator is rejected."""
+        with pytest.raises(ValueError) as exc_info:
             read_shard_index(tmp_path, "../escape")
+        assert "path separator" in str(exc_info.value)
 
     def test_index_whose_own_split_field_disagrees_with_the_filename_is_rejected(self, tmp_path: Path) -> None:
         """The index's own recorded ``split`` field is checked, not just the filename it was read from.
@@ -569,8 +613,9 @@ class TestShardIndex:
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="val")
         (shard_dir / index_name("val")).rename(shard_dir / index_name("train"))
-        with pytest.raises(ValueError, match="recorded split"):
+        with pytest.raises(ValueError) as exc_info:
             read_shard_index(shard_dir, "train")
+        assert "recorded split" in str(exc_info.value)
 
 
 class TestShardPathValidation:
@@ -587,10 +632,7 @@ class TestShardPathValidation:
 
     @pytest.mark.parametrize(
         "entry",
-        [
-            pytest.param("../../etc/passwd", id="relative-traversal"),
-            pytest.param("/etc/passwd", id="absolute-path"),
-        ],
+        ["../../etc/passwd", "/etc/passwd"],
     )
     def test_resolve_within_rejects_an_escaping_entry(self, tmp_path: Path, entry: str) -> None:
         """A shard entry that resolves outside the base directory is rejected rather than followed.
@@ -599,8 +641,9 @@ class TestShardPathValidation:
         the filesystem, and every caller that joins an entry onto a base directory must reject that instead of
         opening or deleting whatever it points at.
         """
-        with pytest.raises(ValueError, match="resolves outside"):
+        with pytest.raises(ValueError) as exc_info:
             resolve_within(tmp_path, entry)
+        assert "resolves outside" in str(exc_info.value)
 
     def test_shard_urls_rejects_a_malicious_index_entry(self, tmp_path: Path) -> None:
         """Reading shard URLs rejects an index whose ``shards`` list was tampered with a traversal entry.
@@ -613,8 +656,9 @@ class TestShardPathValidation:
         payload["shards"] = ["../../escape.tar"]
         (shard_dir / index_name("train")).write_text(json.dumps(payload), encoding="utf-8")
         dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
-        with pytest.raises(ValueError, match="resolves outside"):
+        with pytest.raises(ValueError) as exc_info:
             dataset._shard_urls()
+        assert "resolves outside" in str(exc_info.value)
 
     def test_republish_cleanup_rejects_a_malicious_previous_index_entry(self, tmp_path: Path) -> None:
         """Re-packing a split refuses to delete a stale-shard entry that escapes the shard directory.
@@ -630,8 +674,9 @@ class TestShardPathValidation:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
         payload["shards"] = [*payload["shards"], "../escape.tar"]
         index_path.write_text(json.dumps(payload), encoding="utf-8")
-        with pytest.raises(ValueError, match="resolves outside"):
+        with pytest.raises(ValueError) as exc_info:
             pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        assert "resolves outside" in str(exc_info.value)
 
 
 def _pack(tmp_path: Path, **kwargs: Any) -> Path:
@@ -672,9 +717,11 @@ class TestWebDatasetDetection:
         ],
     )
     def test_shard_url_names_a_path_open_accepts(self, path: PurePosixPath | PureWindowsPath, expected: str) -> None:
+        """The shard URL path equals the posix form of both Windows and POSIX shard paths."""
         assert urlparse(_shard_url(path)).path == expected
 
     def test_webdataset_opens_every_shard_url_this_dataset_emits(self, tmp_path: Path) -> None:
+        """Webdataset's own opener streams every emitted shard URL, even from a directory with a space."""
         from webdataset.cache import StreamingOpen
 
         shard_dir = _pack(tmp_path / "shard dir", count=4)
@@ -684,12 +731,14 @@ class TestWebDatasetDetection:
         assert opened == [(shard_dir / name).read_bytes() for name in dataset.index.shards]
 
     def test_every_sample_is_streamed_once(self, tmp_path: Path) -> None:
+        """Iterating the dataset yields each packed sample exactly once."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=12), "train", transforms=None)
         image_ids = [int(target["image_id"]) for _, target in dataset]
         assert sorted(image_ids) == list(range(1000, 1012))
 
     @pytest.mark.parametrize("extension", ["jpg", "png"])
     def test_output_matches_the_loose_file_dataset(self, tmp_path: Path, extension: str) -> None:
+        """Streamed images, boxes and labels equal the loose-file dataset's for the same split."""
         image_dir, annotations = _build_coco_split(tmp_path, count=6, extension=extension)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", max_shard_bytes=4096)
@@ -796,6 +845,7 @@ class TestWebDatasetDetection:
         assert peak_traced_bytes(lambda: next(iter(dataset))) < encoded_size + 2 * (800 * 600 * 3)
 
     def test_segmentation_masks_match_the_loose_file_dataset(self, tmp_path: Path) -> None:
+        """Streamed instance masks equal the loose-file dataset's masks for the same polygons."""
         image_dir, annotations = _build_coco_split(tmp_path, count=4, segmentation=True)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", max_shard_bytes=4096)
@@ -824,6 +874,7 @@ class TestWebDatasetDetection:
         ],
     )
     def test_class_names_follow_the_label_space(self, tmp_path: Path, category_ids: str, expected: list[str]) -> None:
+        """``remap`` drops the unannotated parent while ``raw`` keeps every category, indexed by raw id."""
         grouped_categories = [
             {"id": 0, "name": "root", "supercategory": "none"},
             {"id": 3, "name": "cat", "supercategory": "root"},
@@ -836,6 +887,7 @@ class TestWebDatasetDetection:
         assert dataset.class_names == expected
 
     def test_class_names_leave_a_gap_for_an_unnamed_label_slot(self, tmp_path: Path) -> None:
+        """A label slot with no category gets an empty class name between named ones."""
         image_dir, annotations = _build_coco_split(tmp_path, count=4)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
@@ -843,9 +895,11 @@ class TestWebDatasetDetection:
         assert dataset.class_names == ["cat", "", "dog"]
 
     def test_length_is_a_type_error_until_an_epoch_is_planned(self, tmp_path: Path) -> None:
+        """``len`` raises TypeError until ``configure_epoch`` plans the epoch, then reports its size."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=8), "train", transforms=None)
-        with pytest.raises(TypeError, match="no planned epoch length"):
+        with pytest.raises(TypeError) as exc_info:
             len(dataset)
+        assert "no planned epoch length" in str(exc_info.value)
         dataset.configure_epoch(samples_per_worker=4, num_workers=2)
         assert len(dataset) == 8
 
@@ -856,29 +910,36 @@ class TestWebDatasetDetection:
     def test_configure_epoch_rejects_degenerate_plans(
         self, tmp_path: Path, samples_per_worker: int, num_workers: int
     ) -> None:
+        """A plan with zero samples or zero workers is rejected."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=8), "train", transforms=None)
-        with pytest.raises(ValueError, match="must be >= 1"):
+        with pytest.raises(ValueError) as exc_info:
             dataset.configure_epoch(samples_per_worker=samples_per_worker, num_workers=num_workers)
+        assert "must be >= 1" in str(exc_info.value)
 
     def test_planned_epoch_bounds_the_sample_count(self, tmp_path: Path) -> None:
+        """A planned epoch stops iteration at ``samples_per_worker`` samples."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=12), "train", transforms=None)
         dataset.configure_epoch(samples_per_worker=5, num_workers=1)
         assert len(list(dataset)) == 5
 
     @pytest.mark.parametrize(
-        ("drop_member", "match"),
+        ("drop_member", "expected_message"),
         [
             pytest.param("jpg", "no image member", id="no-image"),
             pytest.param("json", "annotation sidecar", id="no-json"),
         ],
     )
-    def test_malformed_sample_names_the_missing_member(self, tmp_path: Path, drop_member: str, match: str) -> None:
+    def test_malformed_sample_names_the_missing_member(
+        self, tmp_path: Path, drop_member: str, expected_message: str
+    ) -> None:
+        """A shard sample missing its image or JSON member raises a KeyError naming the gap."""
         shard_dir = _pack(tmp_path, count=2)
         index = read_shard_index(shard_dir, "train")
         _rewrite_shard_without(shard_dir / index.shards[0], drop_member)
         dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
-        with pytest.raises(KeyError, match=match):
+        with pytest.raises(KeyError) as exc_info:
             list(dataset)
+        assert expected_message in str(exc_info.value)
 
 
 def _rewrite_shard_without(shard: Path, extension: str) -> None:
@@ -940,26 +1001,20 @@ class TestStreamingShuffle:
             epochs.append(rank_ids)
         assert set(epochs[0][0]) != set(epochs[1][0])
 
-    @pytest.mark.parametrize("num_workers", [pytest.param(0, id="main-process"), pytest.param(2, id="two-workers")])
-    def test_sample_order_changes_between_epochs(self, tmp_path: Path, num_workers: int) -> None:
-        dataset = WebDatasetDetection(
-            _pack(tmp_path, count=24), "train", transforms=None, shuffle_buffer=8, shard_shuffle=4
-        )
-        loader = build_webdataset_loader(
-            dataset, batch_size=2, collate_fn=_id_collate, num_workers=num_workers, fixed_epoch=False, world_size=1
-        )
-        first = [image_id for batch in loader for image_id in batch]
-        second = [image_id for batch in loader for image_id in batch]
-        assert sorted(first) == sorted(second) == list(range(1000, 1024))
-        assert first != second
-
-    def test_sample_order_changes_between_epochs_with_persistent_workers(self, tmp_path: Path) -> None:
-        """Regression test: a persistent worker keeps its process (and its torch seed) across epochs.
-
-        ``persistent_workers=True`` is the DataModule's own default whenever ``num_workers > 0``
-        (:attr:`~rfdetr.training.module_data.RFDETRDataModule._persistent_workers`), so this has to reshuffle too,
-        not just the non-persistent case above.
-        """
+    @pytest.mark.parametrize(
+        ("num_workers", "persistent_workers"),
+        [
+            pytest.param(0, False, id="main-process"),
+            pytest.param(2, False, id="two-workers"),
+            # A persistent worker keeps its process (and torch seed) across epochs; it is the DataModule's own default
+            # whenever num_workers > 0 (RFDETRDataModule._persistent_workers), so it has to reshuffle too.
+            pytest.param(2, True, id="persistent-workers"),
+        ],
+    )
+    def test_sample_order_changes_between_epochs(
+        self, tmp_path: Path, num_workers: int, persistent_workers: bool
+    ) -> None:
+        """With shuffling on, each epoch covers the whole split in a new order, persistent workers included."""
         dataset = WebDatasetDetection(
             _pack(tmp_path, count=24), "train", transforms=None, shuffle_buffer=8, shard_shuffle=4
         )
@@ -967,8 +1022,8 @@ class TestStreamingShuffle:
             dataset,
             batch_size=2,
             collate_fn=_id_collate,
-            num_workers=2,
-            persistent_workers=True,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
             fixed_epoch=False,
             world_size=1,
         )
@@ -978,6 +1033,7 @@ class TestStreamingShuffle:
         assert first != second
 
     def test_shuffled_epoch_stays_a_partition_across_workers(self, tmp_path: Path) -> None:
+        """Four workers together stream every sample once per shuffled epoch."""
         dataset = WebDatasetDetection(
             _pack(tmp_path, count=24), "train", transforms=None, shuffle_buffer=8, shard_shuffle=4
         )
@@ -1010,6 +1066,7 @@ class TestStreamingShuffle:
         assert first_epoch != second_epoch
 
     def test_streaming_emits_no_webdataset_warning(self, tmp_path: Path) -> None:
+        """Streaming a shuffled split emits no UserWarning from webdataset."""
         dataset = WebDatasetDetection(
             _pack(tmp_path, count=8), "train", transforms=None, shuffle_buffer=4, shard_shuffle=4
         )
@@ -1037,6 +1094,7 @@ class TestPlanSamplesPerWorker:
     def test_plan_is_a_whole_number_of_batches(
         self, total: int, batch_size: int, num_workers: int, world_size: int, grad_accum_steps: int, expected: int
     ) -> None:
+        """The plan equals the expected size and is a whole number of batches and accumulation windows."""
         planned = plan_samples_per_worker(
             total,
             batch_size=batch_size,
@@ -1049,20 +1107,25 @@ class TestPlanSamplesPerWorker:
         assert (planned // batch_size * max(1, num_workers)) % grad_accum_steps == 0
 
     def test_split_too_small_for_one_batch_per_worker_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="cannot fill one accumulation window"):
+        """A split too small to give each worker one batch is rejected."""
+        with pytest.raises(ValueError) as exc_info:
             plan_samples_per_worker(10, batch_size=4, num_workers=8)
+        assert "cannot fill one accumulation window" in str(exc_info.value)
 
     def test_split_too_small_for_one_accumulation_window_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="cannot fill one accumulation window"):
+        """A split too small for one accumulation window is rejected."""
+        with pytest.raises(ValueError) as exc_info:
             plan_samples_per_worker(79, batch_size=4, num_workers=2, grad_accum_steps=20)
+        assert "cannot fill one accumulation window" in str(exc_info.value)
 
 
 @webdataset_only
 class TestBuildWebdatasetLoader:
     """Training plans a fixed epoch; evaluation passes over every sample exactly once."""
 
-    @pytest.mark.parametrize("num_workers", [pytest.param(0, id="main-process"), pytest.param(2, id="two-workers")])
+    @pytest.mark.parametrize("num_workers", [0, 2])
     def test_training_length_matches_the_batches_produced(self, tmp_path: Path, num_workers: int) -> None:
+        """The training loader's ``len`` equals the batches it yields, all of full size."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None)
         loader = build_webdataset_loader(
             dataset, batch_size=4, collate_fn=_count_collate, num_workers=num_workers, world_size=1
@@ -1072,32 +1135,25 @@ class TestBuildWebdatasetLoader:
         assert set(batches) == {4}
 
     def test_training_epoch_is_a_whole_number_of_accumulation_windows(self, tmp_path: Path) -> None:
+        """The training loader length is a multiple of ``grad_accum_steps`` and matches its batches."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=64), "train", transforms=None)
         loader = build_webdataset_loader(
-            dataset,
-            batch_size=2,
-            collate_fn=_count_collate,
-            num_workers=1,
-            world_size=1,
-            grad_accum_steps=3,
+            dataset, batch_size=2, collate_fn=_count_collate, num_workers=1, world_size=1, grad_accum_steps=3
         )
         assert len(loader) % 3 == 0
         assert len(loader) == len(list(loader))
 
     def test_evaluation_sees_every_sample_exactly_once(self, tmp_path: Path) -> None:
+        """The evaluation loader streams every sample exactly once, none dropped or repeated."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=14), "train", transforms=None)
         loader = build_webdataset_loader(
-            dataset,
-            batch_size=4,
-            collate_fn=_id_collate,
-            num_workers=2,
-            fixed_epoch=False,
-            world_size=1,
+            dataset, batch_size=4, collate_fn=_id_collate, num_workers=2, fixed_epoch=False, world_size=1
         )
         streamed = [image_id for batch in loader for image_id in batch]
         assert sorted(streamed) == list(range(1000, 1014))
 
     def test_evaluation_loader_reports_no_length(self, tmp_path: Path) -> None:
+        """The evaluation loader is unsized: ``len`` raises TypeError."""
         dataset = WebDatasetDetection(_pack(tmp_path, count=8), "train", transforms=None)
         loader = build_webdataset_loader(
             dataset, batch_size=4, collate_fn=_count_collate, num_workers=0, fixed_epoch=False, world_size=1
@@ -1105,10 +1161,7 @@ class TestBuildWebdatasetLoader:
         with pytest.raises(TypeError):
             len(loader)
 
-    @pytest.mark.parametrize(
-        "fixed_epoch",
-        [pytest.param(True, id="training"), pytest.param(False, id="evaluation")],
-    )
+    @pytest.mark.parametrize("fixed_epoch", [True, False])
     def test_fewer_shards_than_ranks_is_rejected_on_both_paths(self, tmp_path: Path, fixed_epoch: bool) -> None:
         """A rank with no shard never reaches the step function while the others do, which deadlocks DDP.
 
@@ -1117,7 +1170,7 @@ class TestBuildWebdatasetLoader:
         shard_dir = _pack(tmp_path, count=8)
         dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
         shards = len(dataset.index.shards)
-        with pytest.raises(ValueError, match="rank"):
+        with pytest.raises(ValueError) as exc_info:
             build_webdataset_loader(
                 dataset,
                 batch_size=2,
@@ -1126,8 +1179,9 @@ class TestBuildWebdatasetLoader:
                 fixed_epoch=fixed_epoch,
                 world_size=shards + 1,
             )
+        assert "rank" in str(exc_info.value)
 
-    def test_explicit_world_size_and_rank_are_honored_even_without_env_vars(
+    def test_explicit_world_size_and_rank_apply_without_env_vars(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The node split uses the rank/world_size the loader resolved once, not each worker's own env guess.
@@ -1166,13 +1220,13 @@ class TestBuildWebdatasetLoader:
         assert ids0.isdisjoint(ids1)
         assert ids0 | ids1 == set(range(1000, 1024))
 
-    def test_rank_split_and_worker_split_compose_to_one_clean_partition(
+    def test_rank_and_worker_splits_compose_into_one_partition(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The fixed nodesplitter and webdataset's own workersplitter don't overlap when combined.
 
         The single-rank test above (``num_workers=4``, ``world_size=1``) exercises only the worker split, and
-        ``test_explicit_world_size_and_rank_are_honored_even_without_env_vars`` above exercises only the rank
+        ``test_explicit_world_size_and_rank_apply_without_env_vars`` above exercises only the rank
         split (``num_workers=0``). Neither proves the two compose cleanly: a bug that made the workersplitter
         ignore which rank's shard subset it was handed (e.g. re-deriving shards from the full index instead of
         the node-split iterator) would pass both of those and still duplicate or drop samples once both splits
@@ -1210,18 +1264,16 @@ class TestBuildWebdatasetLoader:
         assert rank0_worker0 | rank0_worker1 | rank1_worker0 | rank1_worker1 == frozenset(range(1000, 1032))
 
     def test_more_workers_than_shards_is_rejected_for_training(self, tmp_path: Path) -> None:
+        """Training with more workers than shards is rejected, since some worker would get none."""
         image_dir, annotations = _build_coco_split(tmp_path, count=16)
         shard_dir = tmp_path / "shards"
         index = pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
         dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
-        with pytest.raises(ValueError, match="cannot cover"):
+        with pytest.raises(ValueError) as exc_info:
             build_webdataset_loader(
-                dataset,
-                batch_size=2,
-                collate_fn=_count_collate,
-                num_workers=len(index.shards) + 1,
-                world_size=1,
+                dataset, batch_size=2, collate_fn=_count_collate, num_workers=len(index.shards) + 1, world_size=1
             )
+        assert "cannot cover" in str(exc_info.value)
 
     @pytest.mark.parametrize(
         ("num_workers", "expect_warning"),
@@ -1235,6 +1287,7 @@ class TestBuildWebdatasetLoader:
     def test_uneven_shard_split_is_reported(
         self, tmp_path: Path, capsys: Any, num_workers: int, expect_warning: bool
     ) -> None:
+        """A shard split leaving a worker short of the average warns; an even split stays quiet."""
         image_dir, annotations = _build_coco_split(tmp_path, count=48)
         shard_dir = tmp_path / "shards"
         # One sample per shard, so the shard count is exactly 48 whatever the images weigh.
@@ -1293,8 +1346,9 @@ class TestBuildWebdatasetLoader:
         """
         dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None)
         dataset.index = replace(dataset.index, shards=("a.tar", "b.tar"), num_samples=1000, samples_per_shard=(980, 20))
-        with pytest.raises(ValueError, match="no longer a tuning nuisance"):
+        with pytest.raises(ValueError) as exc_info:
             build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=2, world_size=1)
+        assert "no longer a tuning nuisance" in str(exc_info.value)
 
     def test_shuffled_skew_is_checked_again_on_each_epoch(self, tmp_path: Path) -> None:
         """A balanced first permutation must not mask an unsafe assignment in a later epoch."""
@@ -1303,8 +1357,9 @@ class TestBuildWebdatasetLoader:
         build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=0, world_size=2, rank=0)
         # Seed 0 assigns (100, 100); seed 1 assigns (20, 180). Validate before opening any shard.
         iter(dataset)
-        with pytest.raises(ValueError, match="no longer a tuning nuisance"):
+        with pytest.raises(ValueError) as exc_info:
             iter(dataset)
+        assert "no longer a tuning nuisance" in str(exc_info.value)
 
     def test_shuffled_balanced_assignment_ignores_packing_order_skew(self, tmp_path: Path) -> None:
         """An unsafe packing order must not reject a safe shuffled assignment."""
@@ -1327,6 +1382,7 @@ class TestBuildWebdatasetLoader:
         assert "fixed training epoch plans" in capsys.readouterr().out
 
     def test_skew_threshold_is_a_fraction(self) -> None:
+        """The warn fraction is positive and below the raise fraction, which is below one."""
         assert 0.0 < SHARD_SKEW_WARN_FRACTION < SHARD_SKEW_RAISE_FRACTION < 1.0
 
     @pytest.mark.parametrize(
@@ -1339,8 +1395,10 @@ class TestBuildWebdatasetLoader:
     def test_uneven_eval_split_across_ranks_is_reported(
         self, tmp_path: Path, capsys: Any, samples_per_shard: tuple[int, int], expect_warning: bool
     ) -> None:
-        """An uneven per-rank evaluation split is surfaced, since every rank still gets a shard but a different number
-        of batches -- the follow-on deadlock risk fewer-shards-than-ranks alone does not cover."""
+        """An uneven per-rank evaluation split is surfaced; every rank has a shard but runs a different batch count.
+
+        That mismatch is the follow-on deadlock risk the fewer-shards-than-ranks check alone does not cover.
+        """
         dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None)
         dataset.index = replace(
             dataset.index,
@@ -1355,6 +1413,7 @@ class TestBuildWebdatasetLoader:
         assert ("different numbers of evaluation batches" in capsys.readouterr().err) is expect_warning
 
     def test_batches_collate_into_the_model_input_contract(self, tmp_path: Path) -> None:
+        """Batches collate into padded nested tensors with one target per sample."""
         transforms = make_coco_transforms("val", 224)
         dataset = WebDatasetDetection(_pack(tmp_path, count=8), "train", transforms=transforms)
         loader = build_webdataset_loader(
@@ -1427,8 +1486,10 @@ class TestBuildWebdataset:
         return types.SimpleNamespace(**defaults)
 
     def test_missing_shard_directory_is_reported(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="does not exist"):
+        """A nonexistent shard directory raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError) as exc_info:
             build_webdataset("train", self._namespace(tmp_path / "absent"), 224)
+        assert "does not exist" in str(exc_info.value)
 
     def test_missing_train_index_names_itself_not_the_requested_split(self, tmp_path: Path) -> None:
         """Evaluating a shard directory with no packed 'train' split names the real gap, not 'val'.
@@ -1441,14 +1502,17 @@ class TestBuildWebdataset:
         image_dir, annotations = _build_coco_split(tmp_path, count=2)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="val")
-        with pytest.raises(WebDatasetSplitUnavailableError, match="needs a packed 'train' index"):
+        with pytest.raises(WebDatasetSplitUnavailableError) as exc_info:
             build_webdataset("val", self._namespace(shard_dir), 224)
+        assert "needs a packed 'train' index" in str(exc_info.value)
 
     def test_keypoint_training_is_rejected_with_a_pointer_to_the_other_formats(self, tmp_path: Path) -> None:
+        """Keypoint training on shards raises NotImplementedError mentioning keypoints."""
         shard_dir = _pack(tmp_path, count=2)
         namespace = self._namespace(shard_dir, use_grouppose_keypoints=True)
-        with pytest.raises(NotImplementedError, match="keypoint"):
+        with pytest.raises(NotImplementedError) as exc_info:
             build_webdataset("train", namespace, 224)
+        assert "keypoint" in str(exc_info.value)
 
     @pytest.mark.parametrize("split", ["val", "test"])
     @pytest.mark.parametrize(
@@ -1484,13 +1548,11 @@ class TestBuildWebdataset:
         assert dataset.total_samples == 2
         assert [int(target["labels"][0]) for _, target in dataset] == [expected_label, expected_label]
 
-    @pytest.mark.parametrize(
-        "square_resize_div_64",
-        [pytest.param(False, id="aspect-preserving-resize"), pytest.param(True, id="square-div-64-resize")],
-    )
+    @pytest.mark.parametrize("square_resize_div_64", [False, True])
     def test_both_resize_pipelines_produce_model_ready_tensors(
         self, tmp_path: Path, square_resize_div_64: bool
     ) -> None:
+        """Both resize pipelines yield a 3-D image and four-column boxes."""
         shard_dir = _pack(tmp_path, count=4)
         namespace = self._namespace(shard_dir, square_resize_div_64=square_resize_div_64)
         dataset = build_webdataset("train", namespace, 224)
@@ -1505,10 +1567,12 @@ class TestBuildWebdataset:
         pack_coco_to_shards(train_images, train_annotations, shard_dir, split="train", category_ids="raw")
         val_images, val_annotations = _build_coco_split(tmp_path, count=4, subdir="va")
         pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val", category_ids="remap")
-        with pytest.raises(ValueError, match="category_ids"):
+        with pytest.raises(ValueError) as exc_info:
             build_webdataset("val", self._namespace(shard_dir), 224)
+        assert "category_ids" in str(exc_info.value)
 
     def test_matching_raw_policy_across_splits_is_accepted(self, tmp_path: Path) -> None:
+        """Train and val both packed with ``raw`` build fine and keep raw category ids."""
         shard_dir = tmp_path / "shards"
         train_images, train_annotations = _build_coco_split(tmp_path, count=6, subdir="tr2")
         pack_coco_to_shards(train_images, train_annotations, shard_dir, split="train", category_ids="raw")
@@ -1518,9 +1582,64 @@ class TestBuildWebdataset:
         assert dataset.cat2label is None
 
     def test_build_dataset_routes_the_webdataset_format(self, tmp_path: Path) -> None:
+        """``build_dataset`` returns a WebDatasetDetection for ``dataset_file='webdataset'``."""
         shard_dir = _pack(tmp_path, count=4)
         dataset = build_dataset("train", self._namespace(shard_dir), 224)
         assert isinstance(dataset, WebDatasetDetection)
+
+
+def _batched_sample_count(loader: Iterable[tuple[Any, Any]]) -> int:
+    """Count the samples across batches whose ``samples.tensors`` stack along dimension 0.
+
+    Examples:
+        >>> batch = (types.SimpleNamespace(tensors=torch.zeros(2, 3)), None)
+        >>> _batched_sample_count([batch, batch])
+        4
+    """
+    return sum(int(samples.tensors.shape[0]) for samples, _ in loader)
+
+
+def _setup_datamodule(tmp_path: Path, split_counts: dict[str, int], stage: str = "fit", **train_overrides: Any) -> Any:
+    """Pack *split_counts* under *tmp_path* and return an ``RFDETRDataModule`` set up for *stage*.
+
+    Skipped as a doctest: it needs the ``data`` and ``train`` extras and a real ``tmp_path``.
+
+    Args:
+        tmp_path: Root temporary directory; shards go to ``tmp_path / "shards"``.
+        split_counts: Number of synthetic images to pack for each split name.
+        stage: Lightning stage passed to ``setup``.
+        **train_overrides: ``TrainConfig`` fields overriding the streaming-friendly defaults.
+
+    Returns:
+        The set-up data module.
+
+    Examples:
+        >>> _setup_datamodule(tmp_path, {"train": 64, "val": 32}).class_names  # doctest: +SKIP
+        ['cat', 'dog']
+    """
+    from rfdetr.config import RFDETRSmallConfig, TrainConfig
+    from rfdetr.training.module_data import RFDETRDataModule
+
+    shard_dir = tmp_path / "shards"
+    for split, count in split_counts.items():
+        image_dir, annotations = _build_coco_split(tmp_path, count=count, subdir=split)
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split=split, max_shard_bytes=8192)
+    settings: dict[str, Any] = {
+        "dataset_dir": str(shard_dir),
+        "dataset_file": "webdataset",
+        "batch_size": 4,
+        "num_workers": 2,
+        "pin_memory": False,
+        "persistent_workers": False,
+        "multi_scale": False,
+        "expanded_scales": False,
+        "tensorboard": False,
+        "output_dir": str(tmp_path / "out"),
+    }
+    settings.update(train_overrides)
+    module = RFDETRDataModule(RFDETRSmallConfig(pretrain_weights=None), TrainConfig(**settings))
+    module.setup(stage)
+    return module
 
 
 @webdataset_only
@@ -1530,78 +1649,29 @@ class TestDataModuleStreaming:
 
     @pytest.fixture
     def datamodule(self, tmp_path: Path) -> Any:
-        """Build an :class:`RFDETRDataModule` over a freshly packed train/val split.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            Needs a real tmp_path and the data/train extras, so it cannot run standalone.
-        """
-        from rfdetr.config import RFDETRSmallConfig, TrainConfig
-        from rfdetr.training.module_data import RFDETRDataModule
-
-        shard_dir = tmp_path / "shards"
-        for split, count in (("train", 64), ("val", 32)):
-            image_dir, annotations = _build_coco_split(tmp_path, count=count, subdir=split)
-            pack_coco_to_shards(image_dir, annotations, shard_dir, split=split, max_shard_bytes=8192)
-        train_config = TrainConfig(
-            dataset_dir=str(shard_dir),
-            dataset_file="webdataset",
-            batch_size=4,
-            grad_accum_steps=1,
-            num_workers=2,
-            pin_memory=False,
-            persistent_workers=False,
-            multi_scale=False,
-            expanded_scales=False,
-            tensorboard=False,
-            output_dir=str(tmp_path / "out"),
-        )
-        module = RFDETRDataModule(RFDETRSmallConfig(pretrain_weights=None), train_config)
-        module.setup("fit")
-        return module
+        """Data module over freshly packed train (64) and val (32) splits, set up for fit."""
+        return _setup_datamodule(tmp_path, {"train": 64, "val": 32}, grad_accum_steps=1)
 
     def test_training_loader_reports_the_batches_it_yields(self, datamodule: Any) -> None:
+        """The training loader's ``len`` equals the number of batches it yields."""
         loader = datamodule.train_dataloader()
         assert len(loader) == len(list(loader))
 
     def test_training_batches_are_all_full(self, datamodule: Any) -> None:
+        """Every training batch holds exactly ``batch_size`` samples, with no short tail batch."""
         loader = datamodule.train_dataloader()
         assert {int(samples.tensors.shape[0]) for samples, _ in loader} == {4}
 
     def test_training_loader_aligns_to_grad_accum_steps(self, tmp_path: Path) -> None:
-        from rfdetr.config import RFDETRSmallConfig, TrainConfig
-        from rfdetr.training.module_data import RFDETRDataModule
-
-        shard_dir = tmp_path / "shards"
-        image_dir, annotations = _build_coco_split(tmp_path, count=96, subdir="train")
-        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", max_shard_bytes=8192)
-        val_image_dir, val_annotations = _build_coco_split(tmp_path, count=16, subdir="val")
-        pack_coco_to_shards(val_image_dir, val_annotations, shard_dir, split="val", max_shard_bytes=8192)
-        train_config = TrainConfig(
-            dataset_dir=str(shard_dir),
-            dataset_file="webdataset",
-            batch_size=2,
-            grad_accum_steps=3,
-            num_workers=1,
-            pin_memory=False,
-            persistent_workers=False,
-            multi_scale=False,
-            expanded_scales=False,
-            tensorboard=False,
-            output_dir=str(tmp_path / "out"),
-        )
-        module = RFDETRDataModule(RFDETRSmallConfig(pretrain_weights=None), train_config)
-        module.setup("fit")
-        loader = module.train_dataloader()
-        assert len(loader) % train_config.grad_accum_steps == 0
+        """The training loader length is a multiple of the configured ``grad_accum_steps``."""
+        module = _setup_datamodule(tmp_path, {"train": 96, "val": 16}, batch_size=2, grad_accum_steps=3, num_workers=1)
+        assert len(module.train_dataloader()) % 3 == 0
 
     def test_training_loader_aligns_to_trainer_accumulation_override(self, datamodule: Any) -> None:
         """Automatic optimization aligns the stream to the Trainer's effective accumulation value."""
         trainer_grad_accum_steps = 3
         datamodule.trainer = types.SimpleNamespace(
-            world_size=1,
-            global_rank=0,
-            accumulate_grad_batches=trainer_grad_accum_steps,
+            world_size=1, global_rank=0, accumulate_grad_batches=trainer_grad_accum_steps
         )
 
         loader = datamodule.train_dataloader()
@@ -1609,56 +1679,39 @@ class TestDataModuleStreaming:
         assert len(loader) % trainer_grad_accum_steps == 0
 
     def test_validation_loader_is_unsized_and_covers_the_split(self, datamodule: Any) -> None:
+        """The validation loader has no length and streams all 32 validation samples."""
         loader = datamodule.val_dataloader()
         with pytest.raises(TypeError):
             len(loader)
-        assert sum(int(samples.tensors.shape[0]) for samples, _ in loader) == 32
+        assert _batched_sample_count(loader) == 32
 
-    @pytest.mark.parametrize(
-        "stage",
-        [pytest.param("test", id="test-loader"), pytest.param("predict", id="predict-loader")],
-    )
+    @pytest.mark.parametrize("stage", ["test", "predict"])
     def test_other_eval_loaders_also_stream_the_split(self, datamodule: Any, stage: str) -> None:
-        # This fixture packs no test split, so "test" resolves to the 32-sample val shards.
+        """The test and predict loaders are unsized and cover the split; no test split is packed, so val is used."""
         datamodule.setup(stage)
-        loader = datamodule.test_dataloader() if stage == "test" else datamodule.predict_dataloader()
+        loader = getattr(datamodule, f"{stage}_dataloader")()
         with pytest.raises(TypeError):
             len(loader)
-        assert sum(int(samples.tensors.shape[0]) for samples, _ in loader) == 32
+        assert _batched_sample_count(loader) == 32
 
     def test_packed_test_split_is_used_instead_of_val(self, tmp_path: Path) -> None:
-        from rfdetr.config import RFDETRSmallConfig, TrainConfig
-        from rfdetr.training.module_data import RFDETRDataModule
-
-        shard_dir = tmp_path / "with-test"
-        for split, count in (("train", 64), ("val", 32), ("test", 16)):
-            image_dir, annotations = _build_coco_split(tmp_path, count=count, subdir=f"wt-{split}")
-            pack_coco_to_shards(image_dir, annotations, shard_dir, split=split, max_shard_bytes=8192)
-        train_config = TrainConfig(
-            dataset_dir=str(shard_dir),
-            dataset_file="webdataset",
-            batch_size=4,
-            num_workers=2,
-            pin_memory=False,
-            persistent_workers=False,
-            multi_scale=False,
-            expanded_scales=False,
-            tensorboard=False,
-            output_dir=str(tmp_path / "out2"),
-        )
-        module = RFDETRDataModule(RFDETRSmallConfig(pretrain_weights=None), train_config)
-        module.setup("test")
-        assert sum(int(s.tensors.shape[0]) for s, _ in module.test_dataloader()) == 16
+        """When a test split is packed, the test loader streams it (16 samples) rather than val."""
+        module = _setup_datamodule(tmp_path, {"train": 64, "val": 32, "test": 16}, stage="test")
+        assert _batched_sample_count(module.test_dataloader()) == 16
 
     def test_absent_test_split_falls_back_to_val_and_says_so(self, datamodule: Any, capsys: Any) -> None:
+        """Without a packed test split, the test loader streams val and logs that it did."""
         datamodule.setup("test")
         assert "evaluating the 'val' split instead" in capsys.readouterr().err
-        assert sum(int(s.tensors.shape[0]) for s, _ in datamodule.test_dataloader()) == 32
+        assert _batched_sample_count(datamodule.test_dataloader()) == 32
 
-    def test_datamodule_reports_the_shard_index_class_names(self, datamodule: Any) -> None:
+    def test_class_names_come_from_the_shard_index(self, datamodule: Any) -> None:
+        """The data module reports the class names recorded in the shard index."""
         assert datamodule.class_names == ["cat", "dog"]
 
     @matplotlib_only
     def test_sample_grid_rejects_a_streaming_split(self, datamodule: Any) -> None:
-        with pytest.raises(TypeError, match="map-style dataset"):
+        """Drawing a sample grid needs a map-style dataset, so a streaming split raises TypeError."""
+        with pytest.raises(TypeError) as exc_info:
             datamodule._show_samples(2, split="train")
+        assert "map-style dataset" in str(exc_info.value)

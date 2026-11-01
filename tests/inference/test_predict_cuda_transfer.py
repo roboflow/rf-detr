@@ -14,11 +14,11 @@ require CUDA and are skipped otherwise.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr import ClassThresholds
 
@@ -126,7 +126,9 @@ class TestPredictCudaTransfer:
             atol=1e-6,
         )
 
-    def test_synchronize_targets_the_result_tensors_own_stream_before_any_numpy_read(self) -> None:
+    def test_synchronize_targets_the_result_tensors_own_stream_before_any_numpy_read(
+        self, mocker: MockerFixture
+    ) -> None:
         """The barrier must target the tensors' own device's current stream, and land before every `.numpy()` read.
 
         Occurrence alone is insufficient: a refactor that moves the sync after the first read would still
@@ -157,11 +159,10 @@ class TestPredictCudaTransfer:
             call_order.append("numpy")
             return real_numpy(self)
 
-        with (
-            patch("torch.cuda.current_stream", side_effect=_record_sync) as stream_spy,
-            patch.object(torch.Tensor, "numpy", _record_numpy, create=False),
-        ):
-            model.predict(img, threshold=0.5, include_source_image=False)
+        stream_spy = mocker.patch("torch.cuda.current_stream", side_effect=_record_sync)
+        mocker.patch.object(torch.Tensor, "numpy", _record_numpy, create=False)
+
+        model.predict(img, threshold=0.5, include_source_image=False)
 
         assert stream_spy.call_count >= 1
         called_devices = [torch.device(c.args[0]) if c.args else None for c in stream_spy.call_args_list]
@@ -174,7 +175,7 @@ class TestPredictCudaTransfer:
             f"synchronize must precede every .numpy() read; call order was: {call_order}"
         )
 
-    def test_output_transfer_uses_non_blocking_copies(self) -> None:
+    def test_output_transfer_uses_non_blocking_copies(self, mocker: MockerFixture) -> None:
         """`non_blocking=True` must actually reach the output-side `.to()` calls, not silently degrade to blocking.
 
         A regression that drops `non_blocking=True` from the output transfer would pass the value- and
@@ -194,8 +195,9 @@ class TestPredictCudaTransfer:
                 cpu_bound_calls.append(bool(kwargs.get("non_blocking", False)))
             return real_to(self, *args, **kwargs)
 
-        with patch.object(torch.Tensor, "to", _spy_to, create=False):
-            model.predict(img, threshold=0.5)
+        mocker.patch.object(torch.Tensor, "to", _spy_to, create=False)
+
+        model.predict(img, threshold=0.5)
 
         assert cpu_bound_calls, "expected at least one CUDA->CPU .to() call"
         assert all(cpu_bound_calls), (
@@ -203,7 +205,7 @@ class TestPredictCudaTransfer:
         )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires a second CUDA device")
-    def test_synchronize_distinguishes_result_device_from_process_current_device(self) -> None:
+    def test_synchronize_distinguishes_result_device_from_process_current_device(self, mocker: MockerFixture) -> None:
         """The sync must target `boxes.device`, not `torch.cuda.current_device()`, when the two differ.
 
         On a single-GPU runner both spellings resolve to the same device, so a regression to `torch.cuda.synchronize()`
@@ -218,8 +220,10 @@ class TestPredictCudaTransfer:
                 return _DummyModel(labels=[1, 2, 3], device="cuda:1")
 
         model = _SecondDeviceDummyRFDETR(pretrain_weights=None)
-        with patch("torch.cuda.current_stream", wraps=torch.cuda.current_stream) as spy:
-            model.predict(img, threshold=0.5)
+        spy = mocker.patch("torch.cuda.current_stream", wraps=torch.cuda.current_stream)
+
+        model.predict(img, threshold=0.5)
+
         called_devices = [torch.device(c.args[0]) if c.args else None for c in spy.call_args_list]
         assert torch.device("cuda:1") in called_devices, (
             f"expected sync on cuda:1 (tensors' own device), not the process current device; got: {called_devices}"

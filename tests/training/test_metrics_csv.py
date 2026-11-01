@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
@@ -33,27 +34,34 @@ from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_para
 # ---------------------------------------------------------------------------
 
 
-def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> pd.DataFrame:
-    """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv.
+def _run_fit(
+    mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None, max_epochs: int = 1, ckpt_path: str | None = None
+) -> None:
+    """Run one PTL ``fit()`` (2 train + 2 val batches per epoch) on mocked model internals into ``tc.output_dir``.
+
+    Args:
+        mc: Model config for the run.
+        tc: Train config for the run; ``tc.output_dir`` is where ``metrics.csv`` and checkpoints land.
+        criterion: Criterion instance; pass the same one across resumed runs so loss values stay comparable.
+        max_epochs: Epoch count passed to ``build_trainer``.
+        ckpt_path: Checkpoint to resume PTL's trainer state from, or ``None`` for a fresh run.
 
     Examples:
         >>> import contextlib
         >>> import io
         >>> from tempfile import TemporaryDirectory
         >>> with TemporaryDirectory() as d:
-        ...     output_dir = Path(d) / 'out'
+        ...     mc = RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3)
+        ...     tc = TrainConfig(
+        ...         dataset_dir=str(Path(d) / 'ds'),
+        ...         output_dir=str(Path(d) / 'out'),
+        ...         epochs=1,
+        ...         batch_size=2,
+        ...         tensorboard=False,
+        ...     )
         ...     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        ...         metrics = _fit_and_read_csv(
-        ...             RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3),
-        ...             TrainConfig(
-        ...                 dataset_dir=str(Path(d) / 'ds'),
-        ...                 output_dir=str(output_dir),
-        ...                 epochs=1,
-        ...                 batch_size=2,
-        ...                 tensorboard=False,
-        ...             ),
-        ...         )
-        ...     {'train/loss', 'val/mAP_50_95'}.issubset(metrics.columns)
+        ...         _run_fit(mc, tc)
+        ...     (Path(tc.output_dir) / 'metrics.csv').exists()
         True
     """
     fake_criterion = criterion or _FakeCriterion()
@@ -64,10 +72,7 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
             return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
         ),
         patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
-        patch(
-            "rfdetr.training.module_model.get_param_dict",
-            side_effect=lambda args, model: _make_param_dicts(model),
-        ),
+        patch("rfdetr.training.module_model.get_param_dict", side_effect=lambda args, model: _make_param_dicts(model)),
     ):
         module = RFDETRModelModule(mc, tc)
         datamodule = RFDETRDataModule(mc, tc)
@@ -75,13 +80,37 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
             tc,
             mc,
             accelerator="cpu",
-            max_epochs=1,
+            max_epochs=max_epochs,
             limit_train_batches=2,
             limit_val_batches=2,
             log_every_n_steps=1,
         )
-        trainer.fit(module, datamodule=datamodule)
+        trainer.fit(module, datamodule=datamodule, ckpt_path=ckpt_path)
 
+
+def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> pd.DataFrame:
+    """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv.
+
+    Examples:
+        >>> import contextlib
+        >>> import io
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as d:
+        ...     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        ...         metrics = _fit_and_read_csv(
+        ...             RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3),
+        ...             TrainConfig(
+        ...                 dataset_dir=str(Path(d) / 'ds'),
+        ...                 output_dir=str(Path(d) / 'out'),
+        ...                 epochs=1,
+        ...                 batch_size=2,
+        ...                 tensorboard=False,
+        ...             ),
+        ...         )
+        ...     {'train/loss', 'val/mAP_50_95'}.issubset(metrics.columns)
+        True
+    """
+    _run_fit(mc, tc, criterion)
     csv_path = Path(tc.output_dir) / "metrics.csv"
     assert csv_path.exists(), "CSVLogger must write metrics.csv to output_dir"
     return pd.read_csv(csv_path)
@@ -118,31 +147,25 @@ _REQUIRED_DETECTION_EMA = _REQUIRED_DETECTION | frozenset(
 class TestDetectionMetricsCSV:
     """metrics.csv contains all columns that plot_metrics() needs for detection."""
 
-    def test_base_metrics_present_without_ema(self, base_model_config, base_train_config):
-        """Default validation logs aggregate metrics without optional validation loss."""
+    @pytest.mark.parametrize(
+        ("use_ema", "required_columns"),
+        [
+            pytest.param(False, _REQUIRED_DETECTION, id="without-ema"),
+            pytest.param(True, _REQUIRED_DETECTION_EMA, id="with-ema"),
+        ],
+    )
+    def test_required_columns_present(self, base_model_config, base_train_config, use_ema, required_columns):
+        """Aggregate (and, with EMA, EMA) metric columns are logged and non-NaN; the optional ``val/loss`` is absent."""
         mc = base_model_config()
-        tc = base_train_config(use_ema=False, run_test=False)
+        tc = base_train_config(use_ema=use_ema, run_test=False)
         df = _fit_and_read_csv(mc, tc)
 
-        missing = _REQUIRED_DETECTION - set(df.columns)
+        missing = required_columns - set(df.columns)
         assert not missing, f"Missing columns in metrics.csv: {sorted(missing)}"
         assert "val/loss" not in df.columns
 
-        all_nan = {c for c in _REQUIRED_DETECTION if df[c].isna().all()}
+        all_nan = {c for c in required_columns if df[c].isna().all()}
         assert not all_nan, f"Columns with all-NaN values: {sorted(all_nan)}"
-
-    def test_ema_metrics_present_with_ema_enabled(self, base_model_config, base_train_config):
-        """EMA validation retains aggregate EMA metrics without optional validation loss."""
-        mc = base_model_config()
-        tc = base_train_config(use_ema=True, run_test=False)
-        df = _fit_and_read_csv(mc, tc)
-
-        missing = _REQUIRED_DETECTION_EMA - set(df.columns)
-        assert not missing, f"Missing EMA columns in metrics.csv: {sorted(missing)}"
-        assert "val/loss" not in df.columns
-
-        all_nan = {c for c in _REQUIRED_DETECTION_EMA if df[c].isna().all()}
-        assert not all_nan, f"EMA columns with all-NaN values: {sorted(all_nan)}"
 
     def test_train_loss_is_unscaled(self, base_model_config, base_train_config):
         """Train/loss must be logged at the raw criterion scale, not divided by grad_accum_steps.
@@ -189,73 +212,13 @@ class TestMetricsCSVResume:
     resumed epoch(s).
     """
 
-    def _fit_one_run(
-        self,
-        mc: RFDETRBaseConfig,
-        tc: TrainConfig,
-        fake_criterion: _FakeCriterion,
-        max_epochs: int,
-        ckpt_path: str | None,
-    ) -> None:
-        """Run one PTL ``fit()`` call against mocked model internals, writing into ``tc.output_dir``.
-
-        Args:
-            mc: Model config for the run.
-            tc: Train config for the run; ``tc.output_dir`` is where ``metrics.csv`` and checkpoints land.
-            fake_criterion: Shared criterion instance so loss values stay comparable across resumed runs.
-            max_epochs: Epoch count passed to ``build_trainer``.
-            ckpt_path: Checkpoint to resume PTL's trainer state from, or ``None`` for a fresh run.
-
-        Examples:
-            >>> import contextlib
-            >>> import io
-            >>> from tempfile import TemporaryDirectory
-            >>> with TemporaryDirectory() as d:
-            ...     mc = RFDETRBaseConfig(pretrain_weights=None, device='cpu', num_classes=3)
-            ...     tc = TrainConfig(
-            ...         dataset_dir=str(Path(d) / 'ds'),
-            ...         output_dir=str(Path(d) / 'out'),
-            ...         epochs=1,
-            ...         batch_size=2,
-            ...         tensorboard=False,
-            ...     )
-            ...     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            ...         TestMetricsCSVResume()._fit_one_run(mc, tc, _FakeCriterion(), max_epochs=1, ckpt_path=None)
-            ...     (Path(tc.output_dir) / 'metrics.csv').exists()
-            True
-        """
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = build_trainer(
-                tc,
-                mc,
-                accelerator="cpu",
-                max_epochs=max_epochs,
-                limit_train_batches=2,
-                limit_val_batches=2,
-                log_every_n_steps=1,
-            )
-            trainer.fit(module, datamodule=datamodule, ckpt_path=ckpt_path)
-
     def test_history_preserved_across_resume(self, base_model_config, base_train_config):
         """A second build_trainer() call against the same output_dir must APPEND, not overwrite, metrics.csv."""
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False)
         fake_criterion = _FakeCriterion()
 
-        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+        _run_fit(mc, tc, fake_criterion)
 
         csv_path = Path(tc.output_dir) / "metrics.csv"
         assert csv_path.exists(), "First run must have written metrics.csv"
@@ -266,7 +229,7 @@ class TestMetricsCSVResume:
         assert last_ckpt.exists(), "checkpoint_interval default (10) must still save a `last` checkpoint every epoch"
 
         tc.resume = str(last_ckpt)
-        self._fit_one_run(mc, tc, fake_criterion, max_epochs=2, ckpt_path=str(last_ckpt))
+        _run_fit(mc, tc, fake_criterion, max_epochs=2, ckpt_path=str(last_ckpt))
 
         rows_after_resume = pd.read_csv(csv_path)
         assert len(rows_after_resume) > len(rows_before_resume), (
@@ -281,47 +244,26 @@ class TestMetricsCSVResume:
             check_dtype=False,
         )
 
-    def test_reused_output_dir_with_empty_resume_resets_history(self, base_model_config, base_train_config):
-        """A fresh run with an empty resume value reusing output_dir must reset metrics.csv, like resume=None."""
+    @pytest.mark.parametrize("resume", [None, ""])
+    def test_reused_output_dir_without_resume_resets_history(self, base_model_config, base_train_config, resume):
+        """A fresh run (``resume`` None or empty) reusing a prior run's output_dir resets metrics.csv instead of
+        appending."""
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False)
         fake_criterion = _FakeCriterion()
 
-        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+        _run_fit(mc, tc, fake_criterion)
 
         csv_path = Path(tc.output_dir) / "metrics.csv"
         rows_from_first_run = pd.read_csv(csv_path)
         assert not rows_from_first_run.empty, "First run must have logged at least one row"
 
-        tc.resume = ""
-        assert tc.resume == "", "This case must exercise the public empty-string resume value"
-        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
+        tc.resume = resume
+        assert tc.resume == resume, "This case only applies to a fresh run, not a resumed one"
+        _run_fit(mc, tc, fake_criterion)
 
         rows_from_second_run = pd.read_csv(csv_path)
         assert len(rows_from_second_run) == len(rows_from_first_run), (
-            f"Fresh run wrote {len(rows_from_second_run)} rows but the prior run wrote "
-            f"{len(rows_from_first_run)} — resume='' must let CSVLogger reset metrics.csv, "
-            "not silently append onto an unrelated prior run's history."
-        )
-
-    def test_reused_output_dir_without_resume_resets_history(self, base_model_config, base_train_config):
-        """A fresh run (``resume=None``) reusing a prior run's output_dir must reset metrics.csv, not append."""
-        mc = base_model_config()
-        tc = base_train_config(use_ema=False, run_test=False)
-        fake_criterion = _FakeCriterion()
-
-        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
-
-        csv_path = Path(tc.output_dir) / "metrics.csv"
-        rows_from_first_run = pd.read_csv(csv_path)
-        assert not rows_from_first_run.empty, "First run must have logged at least one row"
-
-        assert tc.resume is None, "This case only applies to a fresh run, not a resumed one"
-        self._fit_one_run(mc, tc, fake_criterion, max_epochs=1, ckpt_path=None)
-
-        rows_from_second_run = pd.read_csv(csv_path)
-        assert len(rows_from_second_run) == len(rows_from_first_run), (
-            f"Fresh run wrote {len(rows_from_second_run)} rows but the prior run wrote "
-            f"{len(rows_from_first_run)} — a fresh run (resume=None) reusing output_dir must let "
-            "CSVLogger reset metrics.csv, not silently append onto an unrelated prior run's history."
+            f"Fresh run wrote {len(rows_from_second_run)} rows but the prior run wrote {len(rows_from_first_run)} - "
+            f"resume={resume!r} must let CSVLogger reset metrics.csv, not append onto an unrelated prior run's history."
         )

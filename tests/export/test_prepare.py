@@ -187,6 +187,7 @@ class TestExportShapeFreeze:
     """Non-DINOv2 encoders opt in to the export-shape freeze through ``set_export_shape``."""
 
     def test_set_export_shape_is_called_with_the_export_shape(self) -> None:
+        """set_export_shape is called with the export shape."""
         model = _DetectorWithEncoderStub()
 
         prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
@@ -218,6 +219,7 @@ class TestExportShapeFreezeThroughWrappers:
     """A wrapper that forwards attributes must not freeze the wrapped encoder a second time."""
 
     def test_forwarding_wrapper_does_not_repeat_the_freeze(self) -> None:
+        """A forwarding wrapper around the encoder does not repeat the shape freeze."""
         model = _DetectorWithEncoderStub()
         encoder = model.backbone[0].encoder
         model.backbone[0].encoder = _ForwardingWrapperStub(encoder)

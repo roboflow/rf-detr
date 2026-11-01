@@ -6,11 +6,12 @@
 
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr.models import _assignment
 from rfdetr.models import matcher as matcher_module
@@ -37,14 +38,7 @@ def standard_target() -> dict[str, torch.Tensor]:
 class TestHungarianMatcherNonFiniteCosts:
     """Tests for non-finite cost matrix sanitization in the Hungarian matcher."""
 
-    @pytest.mark.parametrize(
-        "invalid_value",
-        [
-            pytest.param(float("nan"), id="nan"),
-            pytest.param(float("inf"), id="inf"),
-            pytest.param(float("-inf"), id="-inf"),
-        ],
-    )
+    @pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
     def test_replaces_non_finite_costs_before_assignment(
         self,
         matcher: HungarianMatcher,
@@ -275,7 +269,7 @@ class TestHungarianMatcherNonFiniteCosts:
 class TestHungarianMatcherSanitization:
     """Unit tests for the private matcher cost sanitization helper."""
 
-    def test_sanitize_cost_matrix_replaces_non_finite_entries(self) -> None:
+    def test_replaces_non_finite_entries(self) -> None:
         """Non-finite entries should be replaced with a larger finite sentinel."""
         cost_matrix = torch.tensor(
             [
@@ -293,7 +287,7 @@ class TestHungarianMatcherSanitization:
         assert sanitized[0, 0] == 1.0
         assert sanitized[1, 1] == -2.0
 
-    def test_sanitize_cost_matrix_all_non_finite_fallback(self) -> None:
+    def test_all_non_finite_falls_back_to_dtype_max(self) -> None:
         """All-non-finite matrices should fall back to the dtype maximum."""
         cost_matrix = torch.tensor(
             [
@@ -308,7 +302,7 @@ class TestHungarianMatcherSanitization:
         assert torch.isfinite(sanitized).all()
         assert torch.all(sanitized == torch.finfo(cost_matrix.dtype).max)
 
-    def test_sanitize_cost_matrix_clamps_overflowing_replacement_cost(self) -> None:
+    def test_clamps_overflowing_replacement_cost(self) -> None:
         """Overflow in the computed replacement cost should clamp to dtype max."""
         dtype_max = torch.finfo(torch.float32).max
         cost_matrix = torch.tensor(
@@ -478,9 +472,7 @@ class TestClassCostGatherFirst:
         actual = matcher(outputs, targets)
 
         expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
-        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
-            assert torch.equal(act_q, exp_q)
-            assert torch.equal(act_t, exp_t)
+        _assert_same_indices(actual, expected)
 
     def test_forward_matches_reference_when_one_batch_element_has_zero_targets(self, matcher: HungarianMatcher) -> None:
         """A zero-GT batch element must gather-first-match the reference (empty tgt_ids column selection).
@@ -509,9 +501,7 @@ class TestClassCostGatherFirst:
         actual = matcher(outputs, targets)
 
         expected = _reference_indices_full_class_materialization(matcher, outputs, targets)
-        for (act_q, act_t), (exp_q, exp_t) in zip(actual, expected):
-            assert torch.equal(act_q, exp_q)
-            assert torch.equal(act_t, exp_t)
+        _assert_same_indices(actual, expected)
         assert actual[1][0].shape == (0,)
         assert actual[1][1].shape == (0,)
 
@@ -629,9 +619,7 @@ class TestDiagonalBlockExtraction:
         expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
 
         assert len(actual) == bs
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
         assert actual[1][0].shape == (0,)
         assert actual[1][1].shape == (0,)
 
@@ -666,9 +654,7 @@ class TestDiagonalBlockExtraction:
         expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets, group_detr=group_detr)
 
         assert len(actual) == bs
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
         # Each group matches min(g_num_queries, size) queries per image (g_num_queries=4):
         # image 0 has 3 targets -> 3 per group x 2 groups; image 2 has 2 targets -> 2 per group x 2 groups.
         assert actual[0][0].shape == (6,)
@@ -699,9 +685,7 @@ class TestDiagonalBlockExtraction:
         expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
 
         assert len(actual) == bs
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
         for matched_queries, matched_targets in actual:
             assert matched_queries.shape == (0,)
             assert matched_targets.shape == (0,)
@@ -806,6 +790,7 @@ class TestDiagonalExtractionContentAgnostic:
     @pytest.mark.parametrize("group_detr", [1, 2, 3])
     @pytest.mark.parametrize("seed", [41, 42, 43, 44, 45])
     def test_matches_old_extraction_for_arbitrary_cost_content(self, seed: int, group_detr: int) -> None:
+        """The new diagonal-block extraction returns the same indices as the old one on arbitrary cost tensors."""
         torch.manual_seed(seed)
         sizes = [3, 0, 5, 2]
         bs = len(sizes)
@@ -820,9 +805,7 @@ class TestDiagonalExtractionContentAgnostic:
         expected = _old_extraction_indices(cost_matrix, sizes, group_detr=group_detr)
 
         assert len(actual) == bs
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
 
 
 def _spy_on_compact_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
@@ -830,9 +813,12 @@ def _spy_on_compact_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     lets a test assert which branch ``forward`` actually took.
 
     Examples:
-        >>> _spy_on_compact_path(pytest.MonkeyPatch())  # doctest: +SKIP
-
-        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[1, 2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     calls = _spy_on_compact_path(patched)
+        ...     _ = HungarianMatcher()(outputs, targets)
+        >>> calls
+        [1]
     """
     calls: list[int] = []
     original = HungarianMatcher._compute_compact_detection_cost_matrix
@@ -885,9 +871,12 @@ def _spy_on_full_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     matrix, found it non-finite, and fell through to the full path".
 
     Examples:
-        >>> _spy_on_full_path(pytest.MonkeyPatch())  # doctest: +SKIP
-
-        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     calls = _spy_on_full_path(patched)
+        ...     _ = HungarianMatcher()(outputs, targets)
+        >>> calls
+        [1]
     """
     calls: list[int] = []
     original = matcher_module.pairwise_box_l1_cost
@@ -910,9 +899,12 @@ def _spy_on_mask_cost_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     instead of the single draw the full path has always made for this batch.
 
     Examples:
-        >>> _spy_on_mask_cost_calls(pytest.MonkeyPatch())  # doctest: +SKIP
-
-        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+        >>> outputs, targets = _random_segmentation_batch(seed=1, sizes=[1, 2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     calls = _spy_on_mask_cost_calls(patched)
+        ...     _ = HungarianMatcher()(outputs, targets)
+        >>> calls
+        [1]
     """
     calls: list[int] = []
     original = HungarianMatcher._compute_mask_costs
@@ -1130,7 +1122,7 @@ class TestCompactPathRouting:
 
         assert calls == []
 
-    def test_batch_size_greater_than_one_detection_uses_compact_path(
+    def test_batch_size_greater_than_one_uses_compact_path(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
     ) -> None:
         """A safe, detection-only, ``bs > 1`` batch must take the compact path."""
@@ -1248,7 +1240,7 @@ class TestCompactPathRouting:
             pytest.param((2.0, 5.0, 2.0), id="shipped"),
         ],
     )
-    def test_compact_path_matches_pre_pr1_reference_across_seeds(
+    def test_matches_pre_pr1_reference_across_seeds(
         self, monkeypatch: pytest.MonkeyPatch, seed: int, costs: tuple[float, float, float]
     ) -> None:
         """The compact path's assignment must agree with the pre-PR1 reference (full materialization + ``split(sizes,
@@ -1272,9 +1264,7 @@ class TestCompactPathRouting:
         expected = _reference_indices_pre_diagonal_extraction(weighted_matcher, outputs, targets)
 
         assert calls == [1]
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
 
     def test_heterogeneous_and_empty_targets_use_compact_path(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
@@ -1289,9 +1279,7 @@ class TestCompactPathRouting:
         expected = _reference_indices_pre_diagonal_extraction(matcher, outputs, targets)
 
         assert calls == [1]
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
         assert actual[0][0].shape == (0,)
 
     def test_all_batch_elements_empty_uses_compact_path(
@@ -1313,13 +1301,7 @@ class TestCompactPathRouting:
             assert matched_queries.shape == (0,)
             assert matched_targets.shape == (0,)
 
-    @pytest.mark.parametrize(
-        "group_detr",
-        [
-            pytest.param(2, id="two_groups"),
-            pytest.param(3, id="three_groups"),
-        ],
-    )
+    @pytest.mark.parametrize("group_detr", [2, 3])
     def test_group_detr_greater_than_one_uses_compact_path(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, group_detr: int
     ) -> None:
@@ -1353,9 +1335,10 @@ class TestCompactPathRouting:
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_detection_batch(seed=209, sizes=[2, 3])
 
-        with pytest.raises(ValueError, match="divisible"):
+        with pytest.raises(ValueError) as exc_info:
             matcher(outputs, targets, group_detr=4)
 
+        assert "divisible" in str(exc_info.value)
         assert calls == [1]
 
     @pytest.mark.parametrize("seed", [201, 202, 203])
@@ -1460,9 +1443,7 @@ class TestCompactPathRouting:
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         expected = extreme_matcher(outputs, targets)
 
-        for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
 
 
 def _random_segmentation_batch(
@@ -1547,6 +1528,41 @@ def _total_masks_present_assignment_cost(
     return total
 
 
+def _hybrid_and_full_indices(
+    monkeypatch: pytest.MonkeyPatch,
+    matcher: HungarianMatcher,
+    outputs: dict[str, Any],
+    targets: list[dict[str, torch.Tensor]],
+    rng_seed: int,
+    group_detr: int = 1,
+) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], list[tuple[torch.Tensor, torch.Tensor]]]:
+    """Match one masks-present batch on the masks-hybrid route and again on the full-cartesian route, same RNG draw.
+
+    The RNG is reseeded before each call because ``_compute_mask_costs`` draws ``point_coords`` with ``torch.rand``, and
+    the two routes must sample the same points to be comparable. Asserts each route really ran via the compact spy.
+
+    Examples:
+        >>> outputs, targets = _random_segmentation_batch(seed=1, sizes=[2, 3])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     hybrid, full = _hybrid_and_full_indices(patched, HungarianMatcher(), outputs, targets, rng_seed=7)
+        >>> len(hybrid), len(full)
+        (2, 2)
+    """
+    monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
+    monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
+    torch.manual_seed(rng_seed)
+    hybrid_calls = _spy_on_compact_path(monkeypatch)
+    hybrid = matcher(outputs, targets, group_detr=group_detr)
+    assert hybrid_calls == [1], "test is only meaningful if the hybrid route actually ran"
+
+    monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 10**9)
+    torch.manual_seed(rng_seed)
+    full_calls = _spy_on_compact_path(monkeypatch)
+    full = matcher(outputs, targets, group_detr=group_detr)
+    assert full_calls == [], "test is only meaningful if the comparison route is the full cartesian path"
+    return hybrid, full
+
+
 class TestMasksPresentCompactHybrid:
     """The masks-hybrid path (``_compact_mask_path_applicable`` + ``_mask_compact_worth_it``) computes class/bbox/GIoU
     through the compact per-image route while leaving the mask cost on the full cross-image matrix, extracting its
@@ -1555,6 +1571,12 @@ class TestMasksPresentCompactHybrid:
     It must agree with the pre-existing full-cartesian path exactly, and must only engage once the batch is large enough
     to be worth it.
     """
+
+    @pytest.fixture()
+    def forced_mask_hybrid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make the masks-hybrid route eligible on any device with a one-element worth-it threshold."""
+        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
+        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
 
     def test_below_threshold_uses_fallback_path_regardless_of_batch_size(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
@@ -1571,13 +1593,12 @@ class TestMasksPresentCompactHybrid:
 
         assert calls == []
 
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_above_threshold_uses_compact_path(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
     ) -> None:
         """Once the avoided class/bbox/GIoU entries reach the threshold, the masks-present batch must reach the compact
         route for those terms."""
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_segmentation_batch(seed=302, sizes=[2, 3])
 
@@ -1585,8 +1606,9 @@ class TestMasksPresentCompactHybrid:
 
         assert calls == [1]
 
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_combined_cost_preserves_full_path_addition_order(
-        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+        self, mocker: MockerFixture, matcher: HungarianMatcher
     ) -> None:
         """The hybrid matrix must add detection, mask-CE, and mask-Dice terms in the full path's exact order.
 
@@ -1594,21 +1616,17 @@ class TestMasksPresentCompactHybrid:
         mask_ce) + mask_dice``. Capturing the matrix at the assignment boundary pins the latter order independently of
         which assignment a larger randomized fixture happens to select.
         """
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         outputs, targets = _random_segmentation_batch(seed=300, sizes=[1, 1], num_queries=1)
         detection_cost = torch.full((1, 2), 14.94161605834961, dtype=torch.float32)
         mask_ce = torch.tensor([[5.640276908874512, 0.0], [0.0, 5.640276908874512]], dtype=torch.float32)
         mask_dice = torch.tensor([[4.21762752532959, 0.0], [0.0, 4.21762752532959]], dtype=torch.float32)
-        assignment = MagicMock(
-            return_value=[
-                (torch.tensor([0]), torch.tensor([0])),
-                (torch.tensor([0]), torch.tensor([0])),
-            ]
+        assignment = mocker.patch.object(
+            matcher,
+            "_assign_compact_cost_matrix",
+            return_value=[(torch.tensor([0]), torch.tensor([0])), (torch.tensor([0]), torch.tensor([0]))],
         )
-        monkeypatch.setattr(matcher, "_compute_compact_detection_cost_matrix", MagicMock(return_value=detection_cost))
-        monkeypatch.setattr(matcher, "_compute_mask_costs", MagicMock(return_value=(mask_ce, mask_dice)))
-        monkeypatch.setattr(matcher, "_assign_compact_cost_matrix", assignment)
+        mocker.patch.object(matcher, "_compute_compact_detection_cost_matrix", return_value=detection_cost)
+        mocker.patch.object(matcher, "_compute_mask_costs", return_value=(mask_ce, mask_dice))
 
         matcher(outputs, targets)
 
@@ -1643,24 +1661,11 @@ class TestMasksPresentCompactHybrid:
         matcher = HungarianMatcher()
         outputs, targets = _random_segmentation_batch(seed=seed, sizes=sizes)
 
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
-        torch.manual_seed(seed + 10_000)
-        hybrid_calls = _spy_on_compact_path(monkeypatch)
-        hybrid = matcher(outputs, targets)
-        assert hybrid_calls == [1], "test is only meaningful if the hybrid route actually ran"
+        hybrid, full = _hybrid_and_full_indices(monkeypatch, matcher, outputs, targets, rng_seed=seed + 10_000)
 
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 10**9)
-        torch.manual_seed(seed + 10_000)
-        full_calls = _spy_on_compact_path(monkeypatch)
-        full = matcher(outputs, targets)
-        assert full_calls == [], "test is only meaningful if the comparison route is the full cartesian path"
+        _assert_same_indices(hybrid, full)
 
-        for image_idx, ((hyb_q, hyb_t), (full_q, full_t)) in enumerate(zip(hybrid, full)):
-            assert torch.equal(hyb_q, full_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(hyb_t, full_t), f"target indices diverged for image {image_idx}"
-
-    @pytest.mark.parametrize("group_detr", [pytest.param(2, id="two_groups"), pytest.param(3, id="three_groups")])
+    @pytest.mark.parametrize("group_detr", [2, 3])
     def test_matches_full_cartesian_path_exactly_with_group_detr(
         self, monkeypatch: pytest.MonkeyPatch, group_detr: int
     ) -> None:
@@ -1675,22 +1680,11 @@ class TestMasksPresentCompactHybrid:
         matcher = HungarianMatcher()
         outputs, targets = _random_segmentation_batch(seed=311, sizes=[2, 3], num_queries=12)
 
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
-        torch.manual_seed(930)
-        hybrid_calls = _spy_on_compact_path(monkeypatch)
-        hybrid = matcher(outputs, targets, group_detr=group_detr)
-        assert hybrid_calls == [1], "test is only meaningful if the hybrid route actually ran"
+        hybrid, full = _hybrid_and_full_indices(
+            monkeypatch, matcher, outputs, targets, rng_seed=930, group_detr=group_detr
+        )
 
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 10**9)
-        torch.manual_seed(930)
-        full_calls = _spy_on_compact_path(monkeypatch)
-        full = matcher(outputs, targets, group_detr=group_detr)
-        assert full_calls == [], "test is only meaningful if the comparison route is the full cartesian path"
-
-        for image_idx, ((hyb_q, hyb_t), (full_q, full_t)) in enumerate(zip(hybrid, full)):
-            assert torch.equal(hyb_q, full_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(hyb_t, full_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(hybrid, full)
 
     def test_matches_full_cartesian_path_exactly_with_dict_shaped_pred_masks(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1718,30 +1712,16 @@ class TestMasksPresentCompactHybrid:
         )[0]
         matcher = HungarianMatcher()
 
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
-        torch.manual_seed(920)
-        hybrid_calls = _spy_on_compact_path(monkeypatch)
-        hybrid = matcher(outputs, targets)
-        assert hybrid_calls == [1], "test is only meaningful if the hybrid route actually ran"
+        hybrid, full = _hybrid_and_full_indices(monkeypatch, matcher, outputs, targets, rng_seed=920)
 
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 10**9)
-        torch.manual_seed(920)
-        full_calls = _spy_on_compact_path(monkeypatch)
-        full = matcher(outputs, targets)
-        assert full_calls == [], "test is only meaningful if the comparison route is the full cartesian path"
+        _assert_same_indices(hybrid, full)
 
-        for image_idx, ((hyb_q, hyb_t), (full_q, full_t)) in enumerate(zip(hybrid, full)):
-            assert torch.equal(hyb_q, full_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(hyb_t, full_t), f"target indices diverged for image {image_idx}"
-
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_fixed_row_padding_uses_fallback_path_even_above_threshold(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
     ) -> None:
         """A masks-present batch carrying ``"valid"`` (XLA's fixed-row target padding) must never reach the compact
         route, however large, since the padding sentinel's interaction with a per-column mask cost is unverified."""
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_segmentation_batch(seed=303, sizes=[2, 3])
         for target in targets:
@@ -1751,11 +1731,10 @@ class TestMasksPresentCompactHybrid:
 
         assert calls == []
 
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_keypoints_alongside_masks_uses_fallback_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A batch with both mask and keypoint targets (not a real model output today, but defensively excluded) must
         never reach the masks-hybrid compact route."""
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         calls = _spy_on_compact_path(monkeypatch)
         num_keypoints, pred_dim = 3, 7
         keypoint_matcher = HungarianMatcher(num_keypoints_per_class=[num_keypoints])
@@ -1768,14 +1747,13 @@ class TestMasksPresentCompactHybrid:
 
         assert calls == []
 
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_non_finite_mask_cost_falls_through_to_full_path(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
     ) -> None:
         """A NaN in ``pred_masks`` (not swept by ``_detection_inputs_are_safe``, which only checks boxes/labels) must
         make the hybrid route's combined matrix non-finite and fall through to the sanitizing full-cartesian path,
         exactly like the detection-only compact path already does for an overflowing weighted cost."""
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         calls = _spy_on_compact_path(monkeypatch)
         outputs, targets = _random_segmentation_batch(seed=305, sizes=[2, 3])
         outputs["pred_masks"][0, 0, 0, 0] = float("nan")
@@ -1787,6 +1765,7 @@ class TestMasksPresentCompactHybrid:
         assert calls == [1]
         assert len(results) == 2
 
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_non_finite_mask_cost_reuses_the_hybrid_attempts_draw(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
     ) -> None:
@@ -1805,8 +1784,6 @@ class TestMasksPresentCompactHybrid:
         outputs, targets = _random_segmentation_batch(seed=305, sizes=[2, 3])
         outputs["pred_masks"][0, 0] = float("nan")
 
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         compact_calls = _spy_on_compact_path(monkeypatch)
         mask_cost_calls = _spy_on_mask_cost_calls(monkeypatch)
         torch.manual_seed(900)
@@ -1818,9 +1795,7 @@ class TestMasksPresentCompactHybrid:
         torch.manual_seed(900)
         never_attempted_hybrid = matcher(outputs, targets)
 
-        for image_idx, ((fb_q, fb_t), (ref_q, ref_t)) in enumerate(zip(hybrid_then_fallback, never_attempted_hybrid)):
-            assert torch.equal(fb_q, ref_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(fb_t, ref_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(hybrid_then_fallback, never_attempted_hybrid)
 
     def test_worth_it_gate_uses_avoided_work_not_compact_matrix_size(self) -> None:
         """Batches with the same old gate value must route differently when their avoided work differs.
@@ -1838,7 +1813,6 @@ class TestMasksPresentCompactHybrid:
     @pytest.mark.parametrize(
         ("num_queries", "expected"),
         [(90_999, False), (91_000, True), (91_001, True)],
-        ids=["one_step_below", "at_threshold", "one_step_above"],
     )
     def test_worth_it_gate_boundary_at_the_real_default_threshold(self, num_queries: int, expected: bool) -> None:
         """``_mask_compact_worth_it`` must be inclusive (``>=``) at exactly the real deployed
@@ -1871,6 +1845,7 @@ class TestMasksPresentCompactHybrid:
 
         assert HungarianMatcher._mask_compact_worth_it(outputs, targets) is expected
 
+    @pytest.mark.usefixtures("forced_mask_hybrid")
     def test_unsafe_inputs_fall_through_to_full_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A masks-present batch above the worth-it threshold must still fall through to the full cartesian path when
         ``_detection_inputs_are_safe`` reports the batch unsafe — the third predicate the hybrid gate ANDs together,
@@ -1881,8 +1856,6 @@ class TestMasksPresentCompactHybrid:
         fallback directly, but never exercised it with mask targets present, where the hybrid `elif` ANDs it with two
         more conditions instead of gating a plain `if`.
         """
-        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
-        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
         matcher = HungarianMatcher()
         outputs, targets = _random_segmentation_batch(seed=308, sizes=[2, 3])
 
@@ -1896,9 +1869,7 @@ class TestMasksPresentCompactHybrid:
         fallback_result = matcher(outputs, targets)
         assert calls == [1], "the compact route must not be attempted again once inputs are reported unsafe"
 
-        for image_idx, ((hyb_q, hyb_t), (full_q, full_t)) in enumerate(zip(hybrid_result, fallback_result)):
-            assert torch.equal(hyb_q, full_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(hyb_t, full_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(hybrid_result, fallback_result)
 
 
 @pytest.mark.gpu
@@ -1911,7 +1882,7 @@ class TestMasksHybridPathOnCUDA:
     Mirrors ``TestCompactPathOnCUDA``, which covers the same gap for the detection-only compact path.
     """
 
-    def test_masks_hybrid_path_matches_fallback_on_cuda_float32(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_matches_fallback_on_cuda_float32(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Under real CUDA kernels, the masks-hybrid route must reach an assignment as good as the full cartesian
         fallback's on the same device.
 
@@ -1932,12 +1903,9 @@ class TestMasksHybridPathOnCUDA:
         _assert_assignment_lengths(actual, num_queries=12, sizes=[2, 4, 1])
 
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
-        # Reset before every call that draws `_compute_mask_costs`' random point sample: the hybrid
-        # and fallback assignments must be produced from the same draw (mirrors
-        # `TestMasksPresentCompactHybrid.test_matches_full_cartesian_path_exactly`'s RNG handling),
-        # and both must then be *scored* against one shared draw too (mirrors
-        # `TestCompactPathOnCUDA`'s "both sides scored on one common matrix" rule) -- otherwise the
-        # comparison silently mixes three independent random mask-cost matrices instead of one.
+        # Reseed before every `_compute_mask_costs` call: hybrid and fallback assignments need the same random point
+        # draw, and both are then scored on one shared draw (see `TestCompactPathOnCUDA`) -- otherwise the comparison
+        # mixes three independent random mask-cost matrices.
         torch.manual_seed(700)
         expected = matcher(outputs, targets)
 
@@ -1946,9 +1914,7 @@ class TestMasksHybridPathOnCUDA:
         torch.manual_seed(701)
         expected_cost = _total_masks_present_assignment_cost(matcher, outputs, targets, expected)
         assert actual_cost == pytest.approx(expected_cost)
-        for image_idx, ((actual_q, actual_t), (expected_q, expected_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(actual_q, expected_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(actual_t, expected_t), f"target indices diverged for image {image_idx}"
+        _assert_same_indices(actual, expected)
 
 
 class TestMasksHybridDeviceRouting:
@@ -1975,14 +1941,7 @@ class TestNonFiniteLogitsWithoutGateSweep:
     nobody.
     """
 
-    @pytest.mark.parametrize(
-        "bad_value",
-        [
-            pytest.param(float("inf"), id="inf"),
-            pytest.param(float("-inf"), id="neg_inf"),
-            pytest.param(float("nan"), id="nan"),
-        ],
-    )
+    @pytest.mark.parametrize("bad_value", [float("inf"), float("-inf"), float("nan")])
     def test_consumed_non_finite_logit_falls_through_to_full_path(
         self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher, bad_value: float
     ) -> None:
@@ -2078,9 +2037,10 @@ class TestGateRoutesInputsThatDivergeBetweenPaths:
         outputs, targets = _detection_batch_with_labels(seed=305, labels_per_image=[[0, 1], [2, 3]])
         targets[1]["boxes"] = targets[1]["boxes"].double()
 
-        with pytest.raises(RuntimeError, match="expected scalar type Float but found Double"):
+        with pytest.raises(RuntimeError) as exc_info:
             matcher(outputs, targets)
 
+        assert "expected scalar type Float but found Double" in str(exc_info.value)
         assert calls == []
 
     def test_negative_label_uses_full_path_and_keeps_wrap_semantics(
@@ -2152,9 +2112,7 @@ class TestCompactPathOnCUDA:
     agreement, which is what this machine can actually run and check.
     """
 
-    def test_compact_path_matches_fallback_on_cuda_float32(
-        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
-    ) -> None:
+    def test_matches_fallback_on_cuda_float32(self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher) -> None:
         """Under real CUDA kernels the compact path must reach an assignment as good as the fallback's on the same
         device.
 
@@ -2183,9 +2141,7 @@ class TestCompactPathOnCUDA:
             _total_assignment_cost(matcher, outputs, targets, expected)
         )
 
-    def test_compact_path_matches_cpu_reference_on_cuda(
-        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
-    ) -> None:
+    def test_matches_cpu_reference_on_cuda(self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher) -> None:
         """Same inputs, CPU vs CUDA: the compact path must reach an assignment of the same cost regardless of the device
         the model happens to run on.
 
@@ -2331,7 +2287,7 @@ class TestCompiledL1Matching:
             ),
         ],
     )
-    def test_dynamic_shapes_preserve_assignments(self, device: str) -> None:
+    def test_dynamic_shapes_preserve_assignments(self, mocker: MockerFixture, device: str) -> None:
         """One compiled callable handles ragged, empty, and smaller last batches without changing matches."""
         eager = HungarianMatcher(cost_class=2, cost_bbox=5, cost_giou=2)
         compiled = HungarianMatcher(cost_class=2, cost_bbox=5, cost_giou=2)
@@ -2343,21 +2299,21 @@ class TestCompiledL1Matching:
             spies.append(MagicMock(wraps=real_compile(fn, **kwargs)))
             return spies[-1]
 
-        with patch.object(matcher_module.torch, "compile", side_effect=spy_compile):
-            for sizes, queries in [([2, 0, 3], 8), ([5, 1], 12), ([0, 0], 8), ([1], 8), ([0], 8)]:
-                outputs, targets = _random_detection_batch(seed=721, sizes=sizes, num_queries=queries)
-                outputs = {key: value.to(device) for key, value in outputs.items()}
-                targets = [{key: value.to(device) for key, value in target.items()} for target in targets]
-                expected = eager(outputs, targets, group_detr=2)
+        mocker.patch.object(matcher_module.torch, "compile", side_effect=spy_compile)
+        for sizes, queries in [([2, 0, 3], 8), ([5, 1], 12), ([0, 0], 8), ([1], 8), ([0], 8)]:
+            outputs, targets = _random_detection_batch(seed=721, sizes=sizes, num_queries=queries)
+            outputs = {key: value.to(device) for key, value in outputs.items()}
+            targets = [{key: value.to(device) for key, value in target.items()} for target in targets]
+            expected = eager(outputs, targets, group_detr=2)
 
-                actual = compiled(outputs, targets, group_detr=2)
+            actual = compiled(outputs, targets, group_detr=2)
 
-                _assert_same_indices(actual, expected)
+            _assert_same_indices(actual, expected)
 
         assert len(spies) == 1, "one lazily built callable must serve every batch"
         assert {call.args[0].ndim for call in spies[0].call_args_list} == {2, 3}
 
-    def test_enable_defers_compilation_to_first_use_with_matcher_owned_recipe(self) -> None:
+    def test_enable_defers_compilation_to_first_use_with_matcher_owned_recipe(self, mocker: MockerFixture) -> None:
         """Enabling records the request; ``torch.compile`` runs once, on the first call, with the matcher's recipe.
 
         The caller's Inductor options are forwarded, but matcher CUDA graphs stay off whatever the caller asked for. A
@@ -2366,11 +2322,12 @@ class TestCompiledL1Matching:
         outputs, targets = _random_detection_batch(seed=725, sizes=[2, 1])
         matcher = HungarianMatcher()
         compiled_cost = MagicMock(wraps=matcher_module.pairwise_box_l1_cost)
-        with patch.object(matcher_module.torch, "compile", return_value=compiled_cost) as compiler:
-            matcher.enable_compiled_l1_cost({"triton.cudagraphs": True, "triton.coalesce_tiling_analysis": False})
-            compiler.assert_not_called()
-            matcher(outputs, targets)
-            matcher(outputs, targets)
+        compiler = mocker.patch.object(matcher_module.torch, "compile", return_value=compiled_cost)
+
+        matcher.enable_compiled_l1_cost({"triton.cudagraphs": True, "triton.coalesce_tiling_analysis": False})
+        compiler.assert_not_called()
+        matcher(outputs, targets)
+        matcher(outputs, targets)
 
         # No fullgraph=True: hitting Dynamo's recompile limit must fall back to eager, never abort training.
         compiler.assert_called_once_with(
@@ -2380,21 +2337,21 @@ class TestCompiledL1Matching:
         )
         assert compiled_cost.call_count == 2
 
-    def test_compiled_full_path_keeps_mixed_dtype_failure(self) -> None:
+    def test_compiled_full_path_keeps_mixed_dtype_failure(self, mocker: MockerFixture) -> None:
         """A mismatched FP32/FP64 pair still fails eagerly instead of entering Dynamo -- or even building it."""
         outputs, targets = _random_detection_batch(seed=722, sizes=[2, 3])
         targets[1]["boxes"] = targets[1]["boxes"].double()
         matcher = HungarianMatcher()
         matcher.enable_compiled_l1_cost()
 
-        with (
-            patch.object(
-                matcher_module.torch, "compile", side_effect=AssertionError("Invalid dtype pair reached compiler")
-            ) as compiler,
-            pytest.raises(RuntimeError, match="expected scalar type Float but found Double"),
-        ):
+        compiler = mocker.patch.object(
+            matcher_module.torch, "compile", side_effect=AssertionError("Invalid dtype pair reached compiler")
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
             matcher(outputs, targets)
 
+        assert "expected scalar type Float but found Double" in str(exc_info.value)
         compiler.assert_not_called()
 
 
@@ -2488,9 +2445,12 @@ def _spy_on_target_side_precheck(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     result across its several ``matcher()`` calls instead of recomputing it from scratch on each one.
 
     Examples:
-        >>> _spy_on_target_side_precheck(pytest.MonkeyPatch())  # doctest: +SKIP
-
-        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[1, 2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     calls = _spy_on_target_side_precheck(patched)
+        ...     _ = HungarianMatcher()._precompute_target_side_safety(outputs, targets)
+        >>> calls
+        [1]
     """
     calls: list[int] = []
     original = HungarianMatcher._target_side_precheck
@@ -2515,9 +2475,12 @@ def _spy_on_precompute_target_side_safety(monkeypatch: pytest.MonkeyPatch) -> li
     own eligibility rule made that cost no sweep".
 
     Examples:
-        >>> _spy_on_precompute_target_side_safety(pytest.MonkeyPatch())  # doctest: +SKIP
-
-        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[1, 2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     calls = _spy_on_precompute_target_side_safety(patched)
+        ...     _ = HungarianMatcher()._precompute_target_side_safety(outputs, targets)
+        >>> calls
+        [1]
     """
     calls: list[int] = []
     original = HungarianMatcher._precompute_target_side_safety
@@ -2957,9 +2920,12 @@ def _spy_on_assign(monkeypatch: pytest.MonkeyPatch) -> list[torch.Tensor]:
     behavior — lets a test compare the matrix's numeric content between two ``forward()`` calls.
 
     Examples:
-        >>> _spy_on_assign(pytest.MonkeyPatch())  # doctest: +SKIP
-
-        # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[1, 2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     captured = _spy_on_assign(patched)
+        ...     _ = HungarianMatcher()(outputs, targets)
+        >>> len(captured)
+        1
     """
     captured: list[torch.Tensor] = []
     original = HungarianMatcher._assign_compact_cost_matrix
@@ -2985,6 +2951,7 @@ class TestMatcherDictMaskCostUsesProjectedFeatures:
     def test_cost_matrix_differs_between_projected_and_raw_spatial_features(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A real head's projected dict output yields a different mask cost matrix than the raw spatial features."""
         torch.manual_seed(10)
         hidden, mask_size, num_queries = 4, 8, 4
         head = SegmentationHead(in_dim=hidden, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
@@ -3146,6 +3113,28 @@ class TestBatchedDetectionMatching:
         assert matcher._match_many([layer1, layer2, layer3], targets) is None
 
 
+def _spy_on_box_l1_cost(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Wrap ``pairwise_box_l1_cost`` to record one entry per call (any rank), without changing its result.
+
+    Examples:
+        >>> outputs, targets = _random_detection_batch(seed=1, sizes=[1, 2])
+        >>> with pytest.MonkeyPatch.context() as patched:
+        ...     calls = _spy_on_box_l1_cost(patched)
+        ...     _ = HungarianMatcher()(outputs, targets)
+        >>> calls
+        [1]
+    """
+    calls: list[int] = []
+    original = matcher_module.pairwise_box_l1_cost
+
+    def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+        calls.append(1)
+        return original(x1, x2, *args, **kwargs)
+
+    monkeypatch.setattr(matcher_module, "pairwise_box_l1_cost", spy)
+    return calls
+
+
 class TestStackedCostConstruction:
     """``_match_many`` folds compatible layers into one stacked cost-construction pass when the padded per-layer matrix
     is small enough; the stacked pass must match the per-layer loop numerically, and oversized batches must keep the
@@ -3212,14 +3201,7 @@ class TestStackedCostConstruction:
         outputs, targets = _random_detection_batch(seed=613, sizes=[2, 3])
         layer2, _ = _random_detection_batch(seed=614, sizes=[2, 3])
         monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", limit)
-        calls: list[int] = []
-        original = matcher_module.pairwise_box_l1_cost
-
-        def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
-            calls.append(1)
-            return original(x1, x2, *args, **kwargs)
-
-        monkeypatch.setattr(matcher_module, "pairwise_box_l1_cost", spy)
+        calls = _spy_on_box_l1_cost(monkeypatch)
 
         result = matcher._match_many([outputs, layer2], targets)
 
@@ -3249,14 +3231,7 @@ class TestStackedCostConstruction:
             layer, _ = _random_detection_batch(seed=seed, sizes=[10, 10], num_queries=10)
             layers.append(layer)
         monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", 1_000)
-        calls: list[int] = []
-        original = matcher_module.pairwise_box_l1_cost
-
-        def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
-            calls.append(1)
-            return original(x1, x2, *args, **kwargs)
-
-        monkeypatch.setattr(matcher_module, "pairwise_box_l1_cost", spy)
+        calls = _spy_on_box_l1_cost(monkeypatch)
 
         result = matcher._match_many(layers, targets)
 
@@ -3353,8 +3328,10 @@ class TestGpuAssignmentBucketing:
         """
         cost_matrix = torch.rand(7, 4)
 
-        with pytest.raises(ValueError, match="must be divisible by group_detr"):
+        with pytest.raises(ValueError) as exc_info:
             _assignment.assign_many_bucketed([cost_matrix], [2, 2], group_detr=2)
+
+        assert "must be divisible by group_detr" in str(exc_info.value)
 
 
 class TestGpuAssignmentPreservesEstablishedAssignments:

@@ -12,7 +12,7 @@ import runpy
 import stat
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -157,35 +157,35 @@ class TestRecordWeek:
 
         assert updated.history == (_metric(date(2026, 8, 24), stars_total=12_000, new_stars=None, downloads=70_000),)
 
-    def test_next_observation_records_star_delta(self) -> None:
-        """New period must calculate star growth from previous cumulative checkpoint."""
+    @pytest.mark.parametrize(
+        ("start", "end", "stars_total", "expected_new_stars"),
+        [
+            (date(2026, 8, 24), date(2026, 8, 30), 12_125, 125),  # contiguous week: growth from previous checkpoint
+            (
+                date(2026, 8, 31),
+                date(2026, 9, 6),
+                12_250,
+                None,
+            ),  # skipped week: unknown baseline, not one week's growth
+            (date(2026, 8, 24), date(2026, 8, 30), 12_000, 0),  # stalled stars: explicit 0, not "-- baseline"
+        ],
+    )
+    def test_records_star_delta_against_previous_checkpoint(
+        self, start: date, end: date, stars_total: int, expected_new_stars: int | None
+    ) -> None:
+        """Star growth is measured from the contiguous previous checkpoint, else recorded as an unknown baseline.
+
+        A contiguous week records the cumulative-count difference, a skipped checkpoint must not be reported as one
+        week's growth, and a stalled count between contiguous checkpoints records a real 0 (a materially different claim
+        from the '-- baseline' render reserved for a missing predecessor).
+        """
         previous = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
 
         updated = update_weekly_metrics.record_week(
-            _state(previous),
-            start=date(2026, 8, 24),
-            end=date(2026, 8, 30),
-            stars_total=12_125,
-            downloads=80_000,
-            history_limit=52,
+            _state(previous), start=start, end=end, stars_total=stars_total, downloads=80_000, history_limit=52
         )
 
-        assert updated.history[-1].new_stars == 125
-
-    def test_gap_establishes_unknown_delta_baseline(self) -> None:
-        """A skipped checkpoint must not be reported as one week's star growth."""
-        previous = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
-
-        updated = update_weekly_metrics.record_week(
-            _state(previous),
-            start=date(2026, 8, 31),
-            end=date(2026, 9, 6),
-            stars_total=12_250,
-            downloads=80_000,
-            history_limit=52,
-        )
-
-        assert updated.history[-1].new_stars is None
+        assert updated.history[-1].new_stars == expected_new_stars
 
     def test_same_period_replaces_observation_without_resetting_delta(self) -> None:
         """A rerun must refresh one period's downloads while holding its star checkpoint.
@@ -244,25 +244,6 @@ class TestRecordWeek:
                 downloads=80_000,
                 history_limit=52,
             )
-
-    def test_next_observation_records_zero_star_delta(self) -> None:
-        """A stalled star count between contiguous checkpoints must record zero, not baseline.
-
-        Only the missing-previous-checkpoint path (tested above) is expected to render '-- baseline'; a real contiguous
-        pair with no star movement must compute an explicit 0, which is a materially different claim.
-        """
-        previous = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
-
-        updated = update_weekly_metrics.record_week(
-            _state(previous),
-            start=date(2026, 8, 24),
-            end=date(2026, 8, 30),
-            stars_total=12_000,
-            downloads=80_000,
-            history_limit=52,
-        )
-
-        assert updated.history[-1].new_stars == 0
 
     def test_retains_only_configured_latest_history(self) -> None:
         """Bounded history must keep latest checkpoints and their recorded deltas."""
@@ -450,16 +431,15 @@ class TestFetchJson:
             pytest.param(URLError("Name or service not known"), "Name or service not known", id="url-error"),
         ],
     )
-    def test_reports_connection_failure_as_metrics_error(self, error: Exception, match: str) -> None:
+    def test_reports_connection_failure_as_metrics_error(self, mocker, error: Exception, match: str) -> None:
         """A failure raised by urlopen itself must surface as MetricsError, not a raw urllib traceback.
 
         Both a non-2xx status and a DNS/connection-refused failure reach the caller from urlopen, so each must be
         translated with the detail (status code, resolver reason) that makes a scheduled-run log actionable.
         """
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", side_effect=error),
-            pytest.raises(update_weekly_metrics.MetricsError, match=match),
-        ):
+        mocker.patch("scripts.update_weekly_metrics.urlopen", side_effect=error)
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match=match):
             update_weekly_metrics._fetch_json("https://example.invalid/api", {})
 
     @pytest.mark.parametrize(
@@ -469,17 +449,16 @@ class TestFetchJson:
             pytest.param(http.client.IncompleteRead(b"partial"), id="incomplete-read"),
         ],
     )
-    def test_reports_body_read_failure_as_metrics_error(self, read_error: Exception) -> None:
+    def test_reports_body_read_failure_as_metrics_error(self, mocker, read_error: Exception) -> None:
         """A connection lost after the response opens must fail closed, not escape as a traceback.
 
         urlopen returns normally and only the body read fails, so the failure misses both the HTTPError and URLError
         branches. main() reports MetricsError alone, so any other exception reaches the scheduled workflow log as an
         unhandled traceback.
         """
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=_failing_response(read_error)),
-            pytest.raises(update_weekly_metrics.MetricsError, match="API request failed"),
-        ):
+        mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=_failing_response(read_error))
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match="API request failed"):
             update_weekly_metrics._fetch_json("https://example.invalid/api", {})
 
     @pytest.mark.parametrize(
@@ -490,36 +469,35 @@ class TestFetchJson:
             pytest.param(b"[1, 2, 3]", "not an object", id="json-array"),
         ],
     )
-    def test_reports_invalid_body_as_metrics_error(self, body: bytes, match: str) -> None:
+    def test_reports_invalid_body_as_metrics_error(self, mocker, body: bytes, match: str) -> None:
         """A body that is oversized, unparsable, or not a JSON object must fail closed.
 
         The byte cap is lowered to 10 for every case so the oversized body stays small; the two well-formed-length
         bodies sit under that cap and therefore still reach the parsing branches they target.
         """
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=_body_response(body)),
-            patch("scripts.update_weekly_metrics.MAX_API_RESPONSE_BYTES", 10),
-            pytest.raises(update_weekly_metrics.MetricsError, match=match),
-        ):
+        mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=_body_response(body))
+        mocker.patch("scripts.update_weekly_metrics.MAX_API_RESPONSE_BYTES", 10)
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match=match):
             update_weekly_metrics._fetch_json("https://example.invalid/api", {})
 
 
 class TestMetricsApis:
     """Tests for upstream API boundary parsing."""
 
-    def test_fetch_star_count_uses_repository_api_and_token_header(self) -> None:
+    def test_fetch_star_count_uses_repository_api_and_token_header(self, mocker) -> None:
         """GitHub request must authenticate through header and return validated count."""
         response = io.BytesIO(json.dumps({"stargazers_count": 12_125}).encode())
+        urlopen = mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=response)
 
-        with patch("scripts.update_weekly_metrics.urlopen", return_value=response) as urlopen:
-            stars = update_weekly_metrics.fetch_star_count("roboflow/rf-detr", "secret-token")
+        stars = update_weekly_metrics.fetch_star_count("roboflow/rf-detr", "secret-token")
 
         request = urlopen.call_args.args[0]
         assert request.full_url == "https://api.github.com/repos/roboflow/rf-detr"
         assert request.get_header("Authorization") == "Bearer secret-token"
         assert stars == 12_125
 
-    def test_fetch_daily_downloads_reads_without_mirrors_series(self) -> None:
+    def test_fetch_daily_downloads_reads_without_mirrors_series(self, mocker) -> None:
         """PyPI Stats response must become validated UTC daily counts."""
         payload = {
             "package": "rfdetr",
@@ -530,25 +508,23 @@ class TestMetricsApis:
             ],
         }
         response = io.BytesIO(json.dumps(payload).encode())
+        urlopen = mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=response)
 
-        with patch("scripts.update_weekly_metrics.urlopen", return_value=response) as urlopen:
-            downloads = update_weekly_metrics.fetch_daily_downloads("rfdetr")
+        downloads = update_weekly_metrics.fetch_daily_downloads("rfdetr")
 
         request = urlopen.call_args.args[0]
         assert request.full_url == "https://pypistats.org/api/packages/rfdetr/overall?mirrors=false"
         assert downloads == {date(2026, 8, 24): 10_000, date(2026, 8, 25): 11_000}
 
-    def test_fetch_daily_downloads_rejects_duplicate_dates(self) -> None:
+    def test_fetch_daily_downloads_rejects_duplicate_dates(self, mocker) -> None:
         """Duplicate upstream days must fail instead of inflating weekly totals."""
         row = {"category": "without_mirrors", "date": "2026-08-24", "downloads": 10_000}
         response = io.BytesIO(
             json.dumps({"package": "rfdetr", "type": "overall_downloads", "data": [row, row]}).encode()
         )
+        mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=response)
 
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
-            pytest.raises(update_weekly_metrics.MetricsError, match="duplicate data"),
-        ):
+        with pytest.raises(update_weekly_metrics.MetricsError, match="duplicate data"):
             update_weekly_metrics.fetch_daily_downloads("rfdetr")
 
     @pytest.mark.parametrize(
@@ -603,25 +579,22 @@ class TestMetricsApis:
             ),
         ],
     )
-    def test_fetch_daily_downloads_rejects_malformed_response(self, payload: dict, match: str) -> None:
+    def test_fetch_daily_downloads_rejects_malformed_response(self, mocker, payload: dict, match: str) -> None:
         """Every deviation from the documented PyPI Stats response shape must fail closed.
 
         A schema drift upstream (renamed field, dropped category, truncated row) must surface as a MetricsError the
         scheduled workflow can report, not an unhandled KeyError/TypeError deep in aggregation.
         """
-        response = io.BytesIO(json.dumps(payload).encode())
+        mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=io.BytesIO(json.dumps(payload).encode()))
 
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
-            pytest.raises(update_weekly_metrics.MetricsError, match=match),
-        ):
+        with pytest.raises(update_weekly_metrics.MetricsError, match=match):
             update_weekly_metrics.fetch_daily_downloads("rfdetr")
 
 
 class TestMetricsUpdate:
     """Tests for complete local SVG update behavior."""
 
-    def test_first_update_writes_fetch_results_as_embedded_baseline(self, tmp_path: Path) -> None:
+    def test_first_update_writes_fetch_results_as_embedded_baseline(self, mocker, tmp_path: Path) -> None:
         """Missing output must produce one self-contained baseline observation."""
         output = tmp_path / "weekly-metrics.svg"
         daily_downloads = {
@@ -634,19 +607,18 @@ class TestMetricsUpdate:
             date(2026, 8, 30): 16_000,
         }
 
-        with (
-            patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125),
-            patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads),
-        ):
-            update_weekly_metrics.update_metrics(
-                output=output,
-                repository="roboflow/rf-detr",
-                package="rfdetr",
-                window_weeks=12,
-                history_limit=104,
-                today=date(2026, 9, 3),
-                github_token=None,
-            )
+        mocker.patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125)
+        mocker.patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads)
+
+        update_weekly_metrics.update_metrics(
+            output=output,
+            repository="roboflow/rf-detr",
+            package="rfdetr",
+            window_weeks=12,
+            history_limit=104,
+            today=date(2026, 9, 3),
+            github_token=None,
+        )
 
         state = update_weekly_metrics.parse_state(output.read_text(), "roboflow/rf-detr", "rfdetr")
         assert state.history[0].stars_total == 12_125
@@ -654,7 +626,7 @@ class TestMetricsUpdate:
         assert state.history[0].downloads == 91_000
         assert output.stat().st_mode & stat.S_IROTH
 
-    def test_cli_writes_custom_output(self, tmp_path: Path) -> None:
+    def test_cli_writes_custom_output(self, mocker, tmp_path: Path) -> None:
         """Command entry point must run complete generator with explicit output path.
 
         ``main`` reads the current instant internally rather than accepting one as an argument, so the test freezes
@@ -666,18 +638,17 @@ class TestMetricsUpdate:
         start, _ = update_weekly_metrics.completed_week(frozen_now.date())
         daily_downloads = {start + timedelta(days=offset): 100 for offset in range(7)}
 
-        with (
-            patch("scripts.update_weekly_metrics.datetime") as mock_datetime,
-            patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125),
-            patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads),
-        ):
-            mock_datetime.now.return_value = frozen_now
-            exit_code = update_weekly_metrics.main(["--output", str(output), "--weeks", "4"])
+        mock_datetime = mocker.patch("scripts.update_weekly_metrics.datetime")
+        mock_datetime.now.return_value = frozen_now
+        mocker.patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125)
+        mocker.patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads)
+
+        exit_code = update_weekly_metrics.main(["--output", str(output), "--weeks", "4"])
 
         assert exit_code == 0
         assert output.read_text().startswith('<?xml version="1.0" encoding="UTF-8"?>')
 
-    def test_same_week_rerun_is_byte_identical(self, tmp_path: Path) -> None:
+    def test_same_week_rerun_is_byte_identical(self, mocker, tmp_path: Path) -> None:
         """Unchanged download data must not create SVG content changes as the star count moves.
 
         Stars accrue continuously, so a rerun minutes later reads a larger total. Only a rerun that leaves the artifact
@@ -687,39 +658,37 @@ class TestMetricsUpdate:
         start = date(2026, 8, 24)
         daily_downloads = {start + timedelta(days=offset): 100 for offset in range(7)}
 
-        with (
-            patch("scripts.update_weekly_metrics.fetch_star_count", side_effect=[12_125, 12_310]),
-            patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads),
-        ):
-            first = update_weekly_metrics.update_metrics(
-                output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None
-            )
-            first_svg = output.read_bytes()
-            second = update_weekly_metrics.update_metrics(
-                output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None
-            )
+        mocker.patch("scripts.update_weekly_metrics.fetch_star_count", side_effect=[12_125, 12_310])
+        mocker.patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads)
+
+        first = update_weekly_metrics.update_metrics(
+            output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None
+        )
+        first_svg = output.read_bytes()
+        second = update_weekly_metrics.update_metrics(
+            output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None
+        )
 
         assert second == first
         assert output.read_bytes() == first_svg
 
-    def test_malformed_existing_svg_is_not_overwritten(self, tmp_path: Path) -> None:
+    def test_malformed_existing_svg_is_not_overwritten(self, mocker, tmp_path: Path) -> None:
         """Invalid embedded state must stop before fetching or replacing artifact."""
         output = tmp_path / "metrics.svg"
         malformed = b'<svg><metadata id="weekly-metrics-state">{broken</metadata></svg>'
         output.write_bytes(malformed)
 
-        with (
-            patch("scripts.update_weekly_metrics.fetch_star_count") as fetch_stars,
-            patch("scripts.update_weekly_metrics.fetch_daily_downloads") as fetch_downloads,
-            pytest.raises(update_weekly_metrics.MetricsError, match="Invalid weekly metrics metadata"),
-        ):
+        fetch_stars = mocker.patch("scripts.update_weekly_metrics.fetch_star_count")
+        fetch_downloads = mocker.patch("scripts.update_weekly_metrics.fetch_daily_downloads")
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match="Invalid weekly metrics metadata"):
             update_weekly_metrics.update_metrics(output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None)
 
         fetch_stars.assert_not_called()
         fetch_downloads.assert_not_called()
         assert output.read_bytes() == malformed
 
-    def test_failed_write_removes_its_temporary_file(self, tmp_path: Path) -> None:
+    def test_failed_write_removes_its_temporary_file(self, mocker, tmp_path: Path) -> None:
         """A write that fails part way must not leave a temporary file beside the artifact.
 
         The temporary is created with delete=False so the completed file can be renamed into place atomically. A failure
@@ -733,15 +702,14 @@ class TestMetricsUpdate:
         temporary.__enter__.return_value.name = str(stranded)
         temporary.__enter__.return_value.write.side_effect = OSError("no space left on device")
 
-        with (
-            patch("scripts.update_weekly_metrics.tempfile.NamedTemporaryFile", return_value=temporary),
-            pytest.raises(update_weekly_metrics.MetricsError, match="Could not write generated SVG"),
-        ):
+        mocker.patch("scripts.update_weekly_metrics.tempfile.NamedTemporaryFile", return_value=temporary)
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match="Could not write generated SVG"):
             update_weekly_metrics.write_svg(output, "<svg/>")
 
         assert not stranded.exists()
 
-    def test_script_entry_point_executes_after_all_helpers_are_defined(self, tmp_path: Path) -> None:
+    def test_script_entry_point_executes_after_all_helpers_are_defined(self, mocker, tmp_path: Path) -> None:
         """Direct script execution must not call main before later definitions exist.
 
         ``runpy`` re-executes the module fresh under ``__main__``, so its own internal ``datetime.now()`` call cannot be
@@ -771,13 +739,12 @@ class TestMetricsUpdate:
             ).encode()
         )
 
-        with (
-            patch("datetime.datetime") as mock_datetime_cls,
-            patch("urllib.request.urlopen", side_effect=[github_response, pypi_response]),
-            patch("sys.argv", ["update_weekly_metrics.py", "--output", str(output)]),
-            pytest.raises(SystemExit) as exit_info,
-        ):
-            mock_datetime_cls.now.return_value = frozen_now
+        mock_datetime_cls = mocker.patch("datetime.datetime")
+        mock_datetime_cls.now.return_value = frozen_now
+        mocker.patch("urllib.request.urlopen", side_effect=[github_response, pypi_response])
+        mocker.patch("sys.argv", ["update_weekly_metrics.py", "--output", str(output)])
+
+        with pytest.raises(SystemExit) as exit_info:
             runpy.run_path(Path(update_weekly_metrics.__file__), run_name="__main__")
 
         assert exit_info.value.code == 0

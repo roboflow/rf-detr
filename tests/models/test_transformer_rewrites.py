@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -21,7 +21,6 @@ import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from rfdetr.models.transformer import (
-    Transformer,
     TransformerDecoder,
     TransformerDecoderLayer,
     _AddInDtype,
@@ -32,12 +31,17 @@ from rfdetr.models.transformer import (
     gen_sineembed_for_position,
 )
 from tests._markers import requires_cuda
-from tests.models._transformer_support import EAGER_CUDA, decoder_layer, gate_open, record_apply_calls
+from tests.models._transformer_support import (
+    EAGER_CUDA,
+    decoder_layer,
+    gate_open,
+    record_apply_calls,
+    single_level_two_stage_transformer,
+)
 
 #: Every ``_global*hook*`` name ``torch.nn.modules.module`` defines (torch 2.14). Only the forward, forward-pre,
-#: backward and backward-pre registries act inside ``Module.__call__``; the ``*_registration_hooks`` fire on
-#: ``register_*`` and the ``_always_called``/``_with_kwargs``/``_is_full_backward_hook`` entries are metadata of those
-#: four. A name outside this set is a registry ``_module_call_is_plain`` was not written against.
+#: backward and backward-pre registries act inside ``Module.__call__``; the rest are registration hooks or metadata of
+#: those four. A name outside this set is a registry ``_module_call_is_plain`` was not written against.
 _KNOWN_GLOBAL_HOOK_NAMES = frozenset(
     {
         "_global_backward_hooks",
@@ -61,6 +65,18 @@ _GLOBAL_CALL_HOOK_REGISTRIES = [
 _MODULE_CALL_HOOK_REGISTRIES = ["_forward_hooks", "_forward_pre_hooks", "_backward_hooks", "_backward_pre_hooks"]
 
 
+@pytest.fixture
+def eager_cuda_gate_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Open the shared eager-CUDA gate (``_eager_cuda``) so CPU tensors follow the CUDA routing.
+
+    Examples:
+        Skipped because a pytest fixture has no standalone call (pytest injects ``monkeypatch``):
+
+        >>> eager_cuda_gate_open  # doctest: +SKIP
+    """
+    monkeypatch.setattr(EAGER_CUDA, gate_open)
+
+
 def _linear_relu_inputs(dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return leaf ``(x, weight, bias)`` tensors for ``_LinearReLU``, shaped like a small decoder FFN call.
 
@@ -78,18 +94,21 @@ def _linear_relu_inputs(dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor,
 class TestLinearReLUAutograd:
     """``_LinearReLU``'s hand-written backward must behave like autograd's for ``relu(linear(x))``."""
 
-    def test_gradients_match_finite_differences(self) -> None:
-        """First-order gradients of the fused FFN match finite differences in fp64 on CPU."""
-        assert torch.autograd.gradcheck(_LinearReLU.apply, _linear_relu_inputs(torch.float64))
-
-    def test_double_backward_matches_finite_differences(self) -> None:
-        """Second-order gradients through the fused FFN are correct, as they are for ``relu(linear(x))``.
+    @pytest.mark.parametrize(
+        "check",
+        [
+            pytest.param(torch.autograd.gradcheck, id="first-order"),
+            pytest.param(torch.autograd.gradgradcheck, id="second-order"),
+        ],
+    )
+    def test_gradients_match_finite_differences(self, check: Callable[..., bool]) -> None:
+        """First- and second-order gradients of the fused FFN match finite differences in fp64 on CPU.
 
         ``create_graph=True`` callers (gradient penalties, higher-order optimisers) differentiate the backward itself. A
         saved tensor that is neither an input nor an output of the function is cut off from that graph, which silently
-        drops the matching terms instead of raising.
+        drops the matching terms instead of raising, so the second-order case is as correct as for ``relu(linear(x))``.
         """
-        assert torch.autograd.gradgradcheck(_LinearReLU.apply, _linear_relu_inputs(torch.float64))
+        assert check(_LinearReLU.apply, _linear_relu_inputs(torch.float64))
 
     def test_weight_gradient_is_contiguous(self) -> None:
         """The weight gradient has the parameter's own layout, as autograd's ``F.linear`` backward gives it.
@@ -198,12 +217,13 @@ class TestEagerCuda:
 
         assert _eager_cuda(Mock(spec=torch.Tensor, is_cuda=True)) is False
 
-    @patch("rfdetr.models.transformer._IS_HIP", new=True)
-    def test_is_false_on_a_rocm_build(self) -> None:
+    def test_is_false_on_a_rocm_build(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A ROCm (HIP) build keeps the previous ops although its AMD tensors report ``is_cuda``.
 
         The rewrites' speed and bitwise parity were measured on NVIDIA CUDA only.
         """
+        monkeypatch.setattr("rfdetr.models.transformer._IS_HIP", True)
+
         assert _eager_cuda(Mock(spec=torch.Tensor, is_cuda=True)) is False
 
     def test_is_false_inside_a_torch_func_transform(self) -> None:
@@ -226,7 +246,7 @@ class TestSineEmbeddingEligibility:
     Forcing ``_eager_cuda`` lets CPU exercise the routing; the rewrite's ops are device independent.
     """
 
-    @patch(EAGER_CUDA, new=gate_open)
+    @pytest.mark.usefixtures("eager_cuda_gate_open")
     def test_even_dim_takes_the_interleaved_write(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Control: with the gate open an even ``dim`` takes the interleaved write, so the odd case below is real."""
         applied = record_apply_calls(monkeypatch, _InterleavedSinCos)
@@ -235,7 +255,7 @@ class TestSineEmbeddingEligibility:
 
         assert len(applied) == 1
 
-    @patch(EAGER_CUDA, new=gate_open)
+    @pytest.mark.usefixtures("eager_cuda_gate_open")
     def test_odd_dim_keeps_the_plain_ops_and_their_error(self) -> None:
         """An odd ``dim`` raises the plain path's error instead of returning a wider embedding.
 
@@ -276,7 +296,7 @@ class TestWeightSubclassesKeepTheModuleOps:
     so it must keep the previous ops. The CUDA gate is forced open to run the routing on CPU.
     """
 
-    @patch(EAGER_CUDA, new=gate_open)
+    @pytest.mark.usefixtures("eager_cuda_gate_open")
     def test_ffn_with_plain_parameters_takes_the_epilogue(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Control: with the gate open, plain ``linear1`` parameters take the fused epilogue."""
         applied = record_apply_calls(monkeypatch, _LinearReLU)
@@ -286,7 +306,7 @@ class TestWeightSubclassesKeepTheModuleOps:
 
         assert len(applied) == 1
 
-    @patch(EAGER_CUDA, new=gate_open)
+    @pytest.mark.usefixtures("eager_cuda_gate_open")
     @pytest.mark.parametrize("name", ["weight", "bias"])
     def test_ffn_with_a_subclass_parameter_keeps_the_two_ops(self, name: str, monkeypatch: pytest.MonkeyPatch) -> None:
         """A wrapped ``linear1`` weight or bias keeps ``relu(linear1(x))``."""
@@ -298,14 +318,14 @@ class TestWeightSubclassesKeepTheModuleOps:
 
         assert applied == []
 
-    @patch(EAGER_CUDA, new=gate_open)
+    @pytest.mark.usefixtures("eager_cuda_gate_open")
     def test_self_attention_with_plain_projections_is_eligible(self) -> None:
         """Control: with the gate open, plain in-projection parameters are eligible for the grouped path."""
         layer = decoder_layer()
 
         assert layer._grouped_self_attention_eligible(torch.randn(2, 12, 16), None, None) is True
 
-    @patch(EAGER_CUDA, new=gate_open)
+    @pytest.mark.usefixtures("eager_cuda_gate_open")
     @pytest.mark.parametrize("name", ["in_proj_weight", "in_proj_bias"])
     def test_self_attention_with_a_subclass_projection_is_ineligible(self, name: str) -> None:
         """A wrapped packed in-projection keeps the ``self_attn`` module call."""
@@ -353,37 +373,12 @@ class TestPosEmbedForLinearHonoursOverrides:
         assert torch.equal(layer._pos_embed_for_linear(tensor, pos), tensor + 2 * pos)
 
 
-def _small_two_stage_transformer(hidden_dim: int = 16) -> Transformer:
-    """Build a one-layer, one-level two-stage ``Transformer`` small enough for CPU forward passes.
-
-    Examples:
-        >>> type(_small_two_stage_transformer().decoder.ref_point_head).__name__
-        'MLP'
-    """
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=3,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        group_detr=1,
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 5)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
-    return transformer
-
-
 def test_replaced_ref_point_head_without_layers_runs_the_forward() -> None:
     """A replacement head with no ``.layers`` (here a plain ``nn.Linear``) still runs, as it did before the rewrite.
 
     Reading ``ref_point_head.layers[0]`` ahead of the ``MLP`` type check raised ``AttributeError`` on every device.
     """
-    transformer = _small_two_stage_transformer().eval()
+    transformer = single_level_two_stage_transformer(16, 3, num_classes=5).eval()
     transformer.decoder.ref_point_head = nn.Linear(32, 16)
     srcs, pos_embeds = [torch.randn(2, 16, 4, 4)], [torch.randn(2, 16, 4, 4)]
     masks = [torch.zeros(2, 4, 4, dtype=torch.bool)]

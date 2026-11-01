@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import copy
 import multiprocessing
-from unittest.mock import patch
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torch import Tensor, nn
 
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
@@ -99,7 +99,7 @@ def test_cuda_graphs_and_compile_can_be_combined() -> None:
     assert (config.compile, config.cuda_graphs) == (True, True)
 
 
-def test_capture_preserves_accumulated_gradients() -> None:
+def test_capture_preserves_accumulated_gradients(mocker: MockerFixture) -> None:
     """First-seen resolutions must not clear gradients from earlier microbatches."""
     model = _TinyGraphableModel()
     model.projection.weight.grad = torch.full_like(model.projection.weight, 7.0)
@@ -109,13 +109,14 @@ def test_capture_preserves_accumulated_gradients() -> None:
         torch.testing.assert_close(model.projection.weight.grad, original_grad)
         return module
 
-    with patch("torch.cuda.make_graphed_callables", side_effect=_fake_capture):
-        CudaGraphTrainingRunner(model)(_samples())
+    mocker.patch("torch.cuda.make_graphed_callables", side_effect=_fake_capture)
+
+    CudaGraphTrainingRunner(model)(_samples())
 
     torch.testing.assert_close(model.projection.weight.grad, original_grad)
 
 
-def test_replay_accumulates_onto_previous_microbatch_gradients() -> None:
+def test_replay_accumulates_onto_previous_microbatch_gradients(mocker: MockerFixture) -> None:
     """A replayed backward adds to the previous microbatch instead of doubling itself.
 
     ``make_graphed_callables`` returns its static gradient buffers from every backward. When ``.grad`` was ``None``,
@@ -132,10 +133,10 @@ def test_replay_accumulates_onto_previous_microbatch_gradients() -> None:
 
         return _replay
 
-    with patch("torch.cuda.make_graphed_callables", side_effect=_fake_capture):
-        runner = CudaGraphTrainingRunner(model)
-        runner(_samples(1.0))["pred"].sum().backward()
-        runner(_samples(3.0))["pred"].sum().backward()
+    mocker.patch("torch.cuda.make_graphed_callables", side_effect=_fake_capture)
+    runner = CudaGraphTrainingRunner(model)
+    runner(_samples(1.0))["pred"].sum().backward()
+    runner(_samples(3.0))["pred"].sum().backward()
     reference(_samples(1.0))["pred"].sum().backward()
     reference(_samples(3.0))["pred"].sum().backward()
 
@@ -155,22 +156,21 @@ def test_runner_does_not_change_registered_model_state() -> None:
     assert tuple(model.parameters()) == parameters
 
 
-def test_capture_restores_autocast_cache_setting() -> None:
+def test_capture_restores_autocast_cache_setting(mocker: MockerFixture) -> None:
     """Capture may disable autocast's weight cache temporarily but cannot leak that global setting."""
     cache_settings: list[bool] = []
     model = _TinyGraphableModel()
-    with (
-        patch("torch.is_autocast_enabled", return_value=True),
-        patch("torch.is_autocast_cache_enabled", return_value=True),
-        patch("torch.set_autocast_cache_enabled", side_effect=cache_settings.append),
-        patch("torch.cuda.make_graphed_callables", side_effect=lambda module, _args, **_kwargs: module),
-    ):
-        CudaGraphTrainingRunner(model)(_samples())
+    mocker.patch("torch.is_autocast_enabled", return_value=True)
+    mocker.patch("torch.is_autocast_cache_enabled", return_value=True)
+    mocker.patch("torch.set_autocast_cache_enabled", side_effect=cache_settings.append)
+    mocker.patch("torch.cuda.make_graphed_callables", side_effect=lambda module, _args, **_kwargs: module)
+
+    CudaGraphTrainingRunner(model)(_samples())
 
     assert cache_settings == [False, True]
 
 
-def test_capture_logs_signature_once() -> None:
+def test_capture_logs_signature_once(mocker: MockerFixture) -> None:
     """A successful capture announces its signature once; replays stay silent.
 
     Without this line an active graph run is indistinguishable from eager in the console: the only
@@ -181,25 +181,25 @@ def test_capture_logs_signature_once() -> None:
     model = _TinyGraphableModel()
     runner = CudaGraphTrainingRunner(model)
 
-    with (
-        patch("torch.cuda.make_graphed_callables", side_effect=lambda module, _args, **_kwargs: module),
-        patch("rfdetr.training.cuda_graph_step.logger") as logger,
-    ):
-        runner(_samples())
-        runner(_samples())
+    mocker.patch("torch.cuda.make_graphed_callables", side_effect=lambda module, _args, **_kwargs: module)
+    logger = mocker.patch("rfdetr.training.cuda_graph_step.logger")
+
+    runner(_samples())
+    runner(_samples())
 
     logger.info.assert_called_once()
     message = logger.info.call_args.args[0] % logger.info.call_args.args[1:]
     assert message.startswith("Captured CUDA graph 1 for input shape (2, 4, 3, 3)")
 
 
-def test_failed_capture_raises_without_eager_retry() -> None:
+def test_failed_capture_raises_without_eager_retry(mocker: MockerFixture) -> None:
     """A capture error must stop training, not execute against potentially damaged CUDA state."""
     model = _TinyGraphableModel()
     runner = CudaGraphTrainingRunner(model)
-    with patch("torch.cuda.make_graphed_callables", side_effect=RuntimeError("unsupported")) as capture:
-        with pytest.raises(RuntimeError, match="CUDA graph capture failed") as exc:
-            runner(_samples())
+    capture = mocker.patch("torch.cuda.make_graphed_callables", side_effect=RuntimeError("unsupported"))
+
+    with pytest.raises(RuntimeError, match="CUDA graph capture failed") as exc:
+        runner(_samples())
 
     capture.assert_called_once()
     assert str(exc.value.__cause__) == "unsupported"
@@ -329,11 +329,8 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(tf3
                 reference = eager_parameters[name]
                 assert (parameter.grad is None) == (reference.grad is None), name
                 if parameter.grad is not None:
-                    # Scale-aware bound: an element-wise atol cannot separate kernel noise on a large gradient
-                    # from a wrong gradient on a small one. A capture bug (stale input, dropped or doubled
-                    # accumulation) shows as a relative error of 1e-2 or more; kernel noise stays below 1e-5.
-                    # The absolute floor covers analytically zero gradients (softmax attention key biases,
-                    # ~1e-12 of rounding residue) whose relative error is meaningless.
+                    # Scale-aware bound: capture bugs (stale input, doubled accumulation) give >=1e-2 relative error,
+                    # kernel noise <1e-5; the absolute floor covers analytically zero gradients (~1e-12 residue).
                     difference_norm = (parameter.grad - reference.grad).norm()
                     reference_norm = reference.grad.norm()
                     assert difference_norm <= 1e-4 * reference_norm + 1e-9, (

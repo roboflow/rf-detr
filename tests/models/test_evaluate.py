@@ -18,12 +18,14 @@ import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr import RFDETR, RFDETRNano
+from rfdetr.config import TrainConfig
 from rfdetr.detr import _device_move_lock
 
 
@@ -93,13 +95,10 @@ class TestEvaluateReturnValue:
         """The return value is a dictionary."""
         assert isinstance(evaluation_result.metrics, dict)
 
-    def test_contains_map_metric(self, evaluation_result: SimpleNamespace) -> None:
-        """The primary COCO mAP key is present for the requested split."""
-        assert "test/mAP_50_95" in evaluation_result.metrics
-
-    def test_contains_f1_metric(self, evaluation_result: SimpleNamespace) -> None:
-        """The F1-sweep metric is present for the requested split."""
-        assert "test/F1" in evaluation_result.metrics
+    @pytest.mark.parametrize("key", ["test/mAP_50_95", "test/F1"])
+    def test_contains_metric(self, evaluation_result: SimpleNamespace, key: str) -> None:
+        """The primary COCO mAP key and the F1-sweep key are present for the requested split."""
+        assert key in evaluation_result.metrics
 
     def test_metric_values_are_finite_floats(self, evaluation_result: SimpleNamespace) -> None:
         """Every returned metric is a finite scalar."""
@@ -164,6 +163,21 @@ def _mock_trainer() -> Any:
     return trainer
 
 
+@pytest.fixture
+def mocked_training(mocker: MockerFixture) -> SimpleNamespace:
+    """Patch the PTL training stack that ``evaluate()`` imports lazily, so no forward pass runs.
+
+    Exposes the mocked ``trainer`` plus the patched ``module``, ``datamodule`` and ``build_trainer`` objects.
+    """
+    trainer = _mock_trainer()
+    return SimpleNamespace(
+        trainer=trainer,
+        module=mocker.patch("rfdetr.training.RFDETRModelModule"),
+        datamodule=mocker.patch("rfdetr.training.RFDETRDataModule"),
+        build_trainer=mocker.patch("rfdetr.training.build_trainer", return_value=trainer),
+    )
+
+
 class _LockTrackingLiveModel(torch.nn.Module):
     """Live-module stand-in that records the device-move lock state at every ``.to()`` call instead of moving.
 
@@ -181,7 +195,9 @@ class _LockTrackingLiveModel(torch.nn.Module):
         return self
 
 
-def test_evaluate_moves_the_live_model_under_the_device_move_lock(tmp_path: Path) -> None:
+def test_evaluate_moves_the_live_model_under_the_device_move_lock(
+    mocked_training: SimpleNamespace, tmp_path: Path
+) -> None:
     """``evaluate()``'s move of the live weights to CPU for the transplant must hold that module's move lock.
 
     The transplant frees accelerator memory for the freshly built eval module by moving the *live* module — the one
@@ -193,14 +209,8 @@ def test_evaluate_moves_the_live_model_under_the_device_move_lock(tmp_path: Path
     mock_self.model.model = live_model
     # Anything but "cpu": the transplant's CPU move is skipped for a model that already lives there.
     mock_self.model.device = torch.device("meta")
-    trainer = _mock_trainer()
 
-    with (
-        patch("rfdetr.training.RFDETRModelModule"),
-        patch("rfdetr.training.RFDETRDataModule"),
-        patch("rfdetr.training.build_trainer", return_value=trainer),
-    ):
-        RFDETR.evaluate(mock_self, dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+    RFDETR.evaluate(mock_self, dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
 
     assert live_model.lock_held == [True], (
         f"expected one live-model move, taken under the module's move lock, got lock states {live_model.lock_held!r}"
@@ -210,38 +220,32 @@ def test_evaluate_moves_the_live_model_under_the_device_move_lock(tmp_path: Path
 class TestEvaluateSplitDispatch:
     """``split`` selects ``trainer.test`` vs ``trainer.validate`` and validates the value."""
 
-    def test_split_test_calls_trainer_test(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """``split='test'`` routes to ``trainer.test`` and never passes ``ckpt_path`` (issue #1110 regression).
+    @pytest.mark.parametrize(
+        ("split", "called", "not_called"), [("test", "test", "validate"), ("val", "validate", "test")]
+    )
+    def test_split_routes_to_trainer_method(
+        self,
+        mocked_training: SimpleNamespace,
+        nano_model: RFDETRNano,
+        tmp_path: Path,
+        split: str,
+        called: str,
+        not_called: str,
+    ) -> None:
+        """``split`` routes to ``trainer.test``/``trainer.validate`` and never passes ``ckpt_path`` (issue #1110).
 
         The #1110 fix hinges on ``evaluate()`` never passing ``ckpt_path`` to ``trainer.test``/``validate`` — PTL's
         loop-state-restore raises ``KeyError`` when ``ckpt_path`` points at a bare ``.pth``. Inspecting the actual call
         args (not just that the call happened) catches a future regression that reintroduces ``ckpt_path=...``.
         """
-        trainer = _mock_trainer()
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer", return_value=trainer),
-        ):
-            nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
-        trainer.test.assert_called_once()
-        trainer.validate.assert_not_called()
-        _, test_kwargs = trainer.test.call_args
-        assert "ckpt_path" not in test_kwargs
+        trainer = mocked_training.trainer
 
-    def test_split_val_calls_trainer_validate(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """``split='val'`` routes to ``trainer.validate`` and never passes ``ckpt_path`` (issue #1110 regression)."""
-        trainer = _mock_trainer()
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer", return_value=trainer),
-        ):
-            nano_model.evaluate(dataset_dir=str(tmp_path), split="val", output_dir=str(tmp_path / "o"))
-        trainer.validate.assert_called_once()
-        trainer.test.assert_not_called()
-        _, validate_kwargs = trainer.validate.call_args
-        assert "ckpt_path" not in validate_kwargs
+        nano_model.evaluate(dataset_dir=str(tmp_path), split=split, output_dir=str(tmp_path / "o"))
+
+        getattr(trainer, called).assert_called_once()
+        getattr(trainer, not_called).assert_not_called()
+        _, call_kwargs = getattr(trainer, called).call_args
+        assert "ckpt_path" not in call_kwargs
 
     def test_invalid_split_raises(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
         """An unsupported split value raises ``ValueError``."""
@@ -272,18 +276,12 @@ class TestEvaluateClassCountMismatch:
                 tensorboard=False,
             )
 
-    def test_no_warning_when_class_names_unresolvable(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
-        """No class-mismatch ``UserWarning`` is emitted when the datamodule cannot resolve class names (the ``None``
-        branch)."""
-        trainer = _mock_trainer()
-        datamodule = MagicMock()
-        datamodule.class_names = None
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule", return_value=datamodule),
-            patch("rfdetr.training.build_trainer", return_value=trainer),
-            warnings.catch_warnings(record=True) as caught,
-        ):
+    def test_no_warning_when_class_names_unresolvable(
+        self, mocked_training: SimpleNamespace, nano_model: RFDETRNano, tmp_path: Path
+    ) -> None:
+        """No class-mismatch ``UserWarning`` is emitted when the datamodule cannot resolve class names (``None``)."""
+        mocked_training.datamodule.return_value.class_names = None
+        with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
         assert not any("classes" in str(w.message) for w in caught)
@@ -304,8 +302,9 @@ class TestEvaluateImportGuard:
             return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
-        with pytest.raises(ImportError, match=r"rfdetr\[train,loggers\]") as exc_info:
+        with pytest.raises(ImportError) as exc_info:
             nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+        assert "rfdetr[train,loggers]" in str(exc_info.value)
         assert exc_info.value.__cause__ is not None
 
     def test_internal_training_module_import_error_preserved(
@@ -320,49 +319,45 @@ class TestEvaluateImportGuard:
             return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
-        with pytest.raises(ModuleNotFoundError, match=r"rfdetr\.training"):
+        with pytest.raises(ModuleNotFoundError) as exc_info:
             nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+        assert "rfdetr.training" in str(exc_info.value)
 
 
 class TestEvaluateTrainerBoundary:
     """Evaluate() drives build_trainer and maps its results at the trainer boundary."""
 
-    def test_device_index_forwarded_and_eval_mode(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
+    def test_device_index_forwarded_and_eval_mode(
+        self, mocked_training: SimpleNamespace, nano_model: RFDETRNano, tmp_path: Path
+    ) -> None:
         """Device='cuda:1' maps to accelerator='gpu'/devices=[1] and the trainer is built in eval mode.
 
         The rebuilt module also skips upstream encoder weights: ``evaluate()`` transplants every weight into it, so a
         fetch would be wasted I/O.
         """
-        trainer = _mock_trainer()
-        with (
-            patch("rfdetr.training.RFDETRModelModule") as mock_module,
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build,
-        ):
-            nano_model.evaluate(
-                dataset_dir=str(tmp_path), split="test", device="cuda:1", output_dir=str(tmp_path / "o")
-            )
-        _, build_kwargs = mock_build.call_args
-        assert build_kwargs == {"include_training_callbacks": False, "accelerator": "gpu", "devices": [1]}
-        assert mock_module.call_args.kwargs["load_encoder_weights"] is False
+        nano_model.evaluate(dataset_dir=str(tmp_path), split="test", device="cuda:1", output_dir=str(tmp_path / "o"))
 
-    def test_empty_results_returns_empty_dict(self, nano_model: RFDETRNano, tmp_path: Path) -> None:
+        _, build_kwargs = mocked_training.build_trainer.call_args
+        assert build_kwargs == {"include_training_callbacks": False, "accelerator": "gpu", "devices": [1]}
+        assert mocked_training.module.call_args.kwargs["load_encoder_weights"] is False
+
+    def test_empty_results_returns_empty_dict(
+        self, mocked_training: SimpleNamespace, nano_model: RFDETRNano, tmp_path: Path
+    ) -> None:
         """When the trainer yields no metrics, evaluate() returns an empty dict."""
-        trainer = MagicMock()
-        trainer.test.return_value = []
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer", return_value=trainer),
-        ):
-            metrics = nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+        mocked_training.trainer.test.return_value = []
+
+        metrics = nano_model.evaluate(dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+
         assert metrics == {}
 
 
 class TestEvaluateResolutionOverride:
     """A resolution override reconciles positional embeddings so the in-memory transplant still loads."""
 
-    def test_resolution_override_evaluates(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
+    def test_resolution_override_evaluates(
+        self, mocker: MockerFixture, synthetic_shape_dataset_dir: Path, tmp_path: Path
+    ) -> None:
         """evaluate(resolution=...) interpolates PE, returns metrics, and leaves model_config unchanged.
 
         The PTL trainer is mocked so only the resolution-sensitive build + state-dict transplant run (the line that
@@ -377,23 +372,26 @@ class TestEvaluateResolutionOverride:
         original_pe = model.model_config.positional_encoding_size
         block_size = model.model_config.patch_size * model.model_config.num_windows
         new_resolution = block_size * (model.model_config.resolution // block_size + 1)
-        trainer = _mock_trainer()
-        with patch("rfdetr.training.build_trainer", return_value=trainer):
-            metrics = model.evaluate(
-                dataset_dir=str(synthetic_shape_dataset_dir),
-                split="test",
-                resolution=new_resolution,
-                device="cpu",
-                output_dir=str(tmp_path / "o"),
-                batch_size=4,
-                num_workers=0,
-                tensorboard=False,
-            )
+        mocker.patch("rfdetr.training.build_trainer", return_value=_mock_trainer())
+
+        metrics = model.evaluate(
+            dataset_dir=str(synthetic_shape_dataset_dir),
+            split="test",
+            resolution=new_resolution,
+            device="cpu",
+            output_dir=str(tmp_path / "o"),
+            batch_size=4,
+            num_workers=0,
+            tensorboard=False,
+        )
+
         assert "test/mAP_50_95" in metrics
         assert model.model_config.resolution == original_resolution
         assert model.model_config.positional_encoding_size == original_pe
 
-    def test_resolution_override_resizes_real_batches(self, synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
+    def test_resolution_override_resizes_real_batches(
+        self, mocker: MockerFixture, synthetic_shape_dataset_dir: Path, tmp_path: Path
+    ) -> None:
         """evaluate(resolution=...) must actually feed the model images resized to the override, repeatably.
 
         Unlike ``test_resolution_override_evaluates`` above, the PTL trainer is NOT mocked here: this runs a real
@@ -426,21 +424,22 @@ class TestEvaluateResolutionOverride:
             observed_shapes.append(tuple(batch[0].tensors.shape[-2:]))
             return original_test_step(self, batch, batch_idx)
 
+        mocker.patch.object(RFDETRModelModule, "test_step", recording_test_step)
+
         def run_and_get_shape(resolution: int | None, output_dir: Path) -> tuple[int, int]:
             """Run one evaluate() call, spying on test_step, and return the single uniform batch shape it saw."""
             observed_shapes.clear()
             kwargs: dict[str, Any] = {"resolution": resolution} if resolution is not None else {}
-            with patch.object(RFDETRModelModule, "test_step", recording_test_step):
-                model.evaluate(
-                    dataset_dir=str(synthetic_shape_dataset_dir),
-                    split="test",
-                    device="cpu",
-                    output_dir=str(output_dir),
-                    batch_size=4,
-                    num_workers=0,
-                    tensorboard=False,
-                    **kwargs,
-                )
+            model.evaluate(
+                dataset_dir=str(synthetic_shape_dataset_dir),
+                split="test",
+                device="cpu",
+                output_dir=str(output_dir),
+                batch_size=4,
+                num_workers=0,
+                tensorboard=False,
+                **kwargs,
+            )
             assert observed_shapes, "test_step was never called"
             shapes = set(observed_shapes)
             assert len(shapes) == 1, f"evaluate(resolution={resolution}) fed inconsistently shaped batches: {shapes}"
@@ -459,27 +458,25 @@ class TestEvaluateResolutionOverride:
         )
 
 
-def test_auto_batch_probe_not_invoked(nano_model: RFDETRNano, tmp_path: Path) -> None:
+def test_auto_batch_probe_not_invoked(
+    mocked_training: SimpleNamespace, mocker: MockerFixture, nano_model: RFDETRNano, tmp_path: Path
+) -> None:
     """``evaluate(batch_size="auto")`` skips the forward+backward prober and uses the default micro-batch.
 
     ``batch_size="auto"`` is a train-only feature; evaluate() must not run the training-style probe.
     """
-    from rfdetr.config import TrainConfig
+    mock_probe = mocker.patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
 
-    trainer = _mock_trainer()
-    with (
-        patch("rfdetr.training.RFDETRModelModule"),
-        patch("rfdetr.training.RFDETRDataModule"),
-        patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build_trainer,
-        patch("rfdetr.training.auto_batch.resolve_auto_batch_config") as mock_probe,
-    ):
-        nano_model.evaluate(dataset_dir=str(tmp_path), split="test", batch_size="auto", output_dir=str(tmp_path / "o"))
+    nano_model.evaluate(dataset_dir=str(tmp_path), split="test", batch_size="auto", output_dir=str(tmp_path / "o"))
+
     mock_probe.assert_not_called()
-    passed_config = mock_build_trainer.call_args.args[0]
+    passed_config = mocked_training.build_trainer.call_args.args[0]
     assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
 
 
-def test_evaluate_fp8_auto_batch_uses_default_micro_batch(nano_model: RFDETRNano, tmp_path: Path) -> None:
+def test_evaluate_fp8_auto_batch_uses_default_micro_batch(
+    mocked_training: SimpleNamespace, mocker: MockerFixture, nano_model: RFDETRNano, tmp_path: Path
+) -> None:
     """``evaluate(amp_dtype="fp8", batch_size="auto")`` must not raise before ``for_eval`` is consulted.
 
     ``TrainConfig.validate_fp8_batch_size`` rejects ``amp_dtype="fp8"`` with ``batch_size="auto"`` unconditionally at
@@ -488,24 +485,14 @@ def test_evaluate_fp8_auto_batch_uses_default_micro_batch(nano_model: RFDETRNano
     happily substitute the default micro-batch — is ever reached, so the combination must be resolved before
     ``TrainConfig`` is constructed, not after.
     """
-    from rfdetr.config import TrainConfig
+    mock_probe = mocker.patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
 
-    trainer = _mock_trainer()
-    with (
-        patch("rfdetr.training.RFDETRModelModule"),
-        patch("rfdetr.training.RFDETRDataModule"),
-        patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build_trainer,
-        patch("rfdetr.training.auto_batch.resolve_auto_batch_config") as mock_probe,
-    ):
-        nano_model.evaluate(
-            dataset_dir=str(tmp_path),
-            split="test",
-            amp_dtype="fp8",
-            batch_size="auto",
-            output_dir=str(tmp_path / "o"),
-        )
+    nano_model.evaluate(
+        dataset_dir=str(tmp_path), split="test", amp_dtype="fp8", batch_size="auto", output_dir=str(tmp_path / "o")
+    )
+
     mock_probe.assert_not_called()
-    passed_config = mock_build_trainer.call_args.args[0]
+    passed_config = mocked_training.build_trainer.call_args.args[0]
     assert passed_config.amp_dtype == "fp8"
     assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
 
@@ -615,10 +602,9 @@ def test_evaluate_matches_manual_building_blocks_on_test_split(
     ``evaluate()`` is a convenience wrapper over the manual PTL building-block pattern documented in
     ``docs/learn/train/customization.md`` (``RFDETRModelModule`` + ``RFDETRDataModule`` + ``build_trainer`` +
     ``trainer.test``/``validate``, the same pattern exercised in ``tests/benchmarks/test_inference_coco.py::
-    test_inference_detection_ptl_predict``). Asserts the two paths return identical metrics for the same model and
+    test_inference_ptl_predict``). Asserts the two paths return identical metrics for the same model and
     dataset, so the convenience wrapper cannot silently drift from the documented decomposed pattern.
     """
-    from rfdetr.config import TrainConfig
     from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
     num_classes = _num_classes(synthetic_shape_dataset_dir)

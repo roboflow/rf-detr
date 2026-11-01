@@ -226,14 +226,7 @@ class TestAlbumentationsWrapper:
             atol=1e-6,
         )
 
-    @pytest.mark.parametrize(
-        "num_instances",
-        [
-            pytest.param(0, id="zero_instances"),
-            pytest.param(1, id="one_instance"),
-            pytest.param(2, id="two_instances"),
-        ],
-    )
+    @pytest.mark.parametrize("num_instances", [0, 1, 2])
     def test_horizontal_flip_with_keypoint_flip_pairs_handles_ndarray_bboxes(self, num_instances):
         """Regression test for #1125.
 
@@ -251,24 +244,14 @@ class TestAlbumentationsWrapper:
 
         image = Image.new("RGB", (100, 50))
 
-        if num_instances == 0:
-            target = {
-                "boxes": torch.zeros((0, 4), dtype=torch.float32),
-                "labels": torch.zeros((0,), dtype=torch.long),
-                "keypoints": torch.zeros((0, 2, 3), dtype=torch.float32),
-            }
-        else:
-            boxes = []
-            keypoints = []
-            for i in range(num_instances):
-                x = 10.0 + i * 30.0
-                boxes.append([x, 5.0, x + 20.0, 25.0])
-                keypoints.append([[x + 5.0, 10.0, 2.0], [x + 15.0, 20.0, 2.0]])
-            target = {
-                "boxes": torch.tensor(boxes, dtype=torch.float32),
-                "labels": torch.tensor([1] * num_instances, dtype=torch.long),
-                "keypoints": torch.tensor(keypoints, dtype=torch.float32),
-            }
+        xs = [10.0 + i * 30.0 for i in range(num_instances)]
+        target = {
+            "boxes": torch.tensor([[x, 5.0, x + 20.0, 25.0] for x in xs], dtype=torch.float32).reshape(-1, 4),
+            "labels": torch.tensor([1] * num_instances, dtype=torch.long),
+            "keypoints": torch.tensor(
+                [[[x + 5.0, 10.0, 2.0], [x + 15.0, 20.0, 2.0]] for x in xs], dtype=torch.float32
+            ).reshape(-1, 2, 3),
+        }
 
         # Pre-fix: this call raised ValueError for num_instances >= 1 under Albumentations 2.x.
         aug_image, aug_target = wrapper(image, target)
@@ -277,13 +260,7 @@ class TestAlbumentationsWrapper:
         assert aug_target["boxes"].shape[0] == num_instances
         assert aug_target["keypoints"].shape[0] == num_instances
 
-    @pytest.mark.parametrize(
-        "transform_name",
-        [
-            pytest.param("HorizontalFlip", id="HorizontalFlip"),
-            pytest.param("TimeReverse", id="TimeReverse"),
-        ],
-    )
+    @pytest.mark.parametrize("transform_name", ["HorizontalFlip", "TimeReverse"])
     def test_horizontal_flip_swaps_paired_keypoints(self, transform_name):
         """HFlip-type transforms, including the TimeReverse alias, exchange keypoint slots for the configured pair."""
         import albumentations as alb
@@ -659,8 +636,8 @@ class TestAlbumentationsWrapper:
         assert torch.equal(aug_target["boxes"], target["boxes"])
         assert torch.equal(aug_target["labels"], target["labels"])
 
-    def test_empty_boxes_handling(self):
-        """Test wrapper handles empty boxes correctly."""
+    def test_empty_boxes_pass_through(self):
+        """Empty boxes and labels (no masks key) come back with the same empty shapes."""
         import albumentations as alb
 
         transform = alb.HorizontalFlip(p=1.0)
@@ -723,8 +700,10 @@ class TestAlbumentationsWrapper:
 
         image = Image.new("RGB", (100, 100))
 
-        with pytest.raises(TypeError, match="target must be a dictionary"):
+        with pytest.raises(TypeError) as exc_info:
             wrapper(image, "invalid_target")
+
+        assert "target must be a dictionary" in str(exc_info.value)
 
     def test_missing_labels_key(self):
         """Test wrapper raises error when labels key is missing."""
@@ -736,8 +715,10 @@ class TestAlbumentationsWrapper:
         image = Image.new("RGB", (100, 100))
         target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]])}
 
-        with pytest.raises(KeyError, match="target must contain 'labels' key"):
+        with pytest.raises(KeyError) as exc_info:
             wrapper(image, target)
+
+        assert "target must contain 'labels' key" in str(exc_info.value)
 
     def test_invalid_boxes_shape(self):
         """Test wrapper raises error for invalid boxes shape."""
@@ -752,8 +733,10 @@ class TestAlbumentationsWrapper:
             "labels": torch.tensor([1]),
         }
 
-        with pytest.raises(ValueError, match="boxes must have shape"):
+        with pytest.raises(ValueError) as exc_info:
             wrapper(image, target)
+
+        assert "boxes must have shape" in str(exc_info.value)
 
     def test_orig_size_preserved_with_two_boxes(self):
         """Test that orig_size is not treated as per-instance field when num_boxes=2.
@@ -952,11 +935,9 @@ class TestAlbumentationsWrapper:
 
         assert isinstance(aug_image, Image.Image)
         assert "masks" in aug_target
-        # Number of boxes may change with rotation (boxes can be removed if they go out of bounds)
+        # Rotation can remove boxes that leave the image; any surviving mask must keep content.
         assert aug_target["masks"].shape[0] == aug_target["boxes"].shape[0]
-        if aug_target["boxes"].shape[0] > 0:
-            # Mask should still have content (not all zeros)
-            assert aug_target["masks"].any()
+        assert aug_target["boxes"].shape[0] == 0 or aug_target["masks"].any()
 
     @pytest.mark.parametrize(
         "transform_name,params",
@@ -1022,28 +1003,6 @@ class TestAlbumentationsWrapper:
         assert aug_target["masks"].shape == (2, height, width)
         assert aug_target["boxes"].shape[0] == 2
         assert aug_target["labels"].shape[0] == 2
-
-    def test_empty_masks_handling(self):
-        """Test wrapper correctly handles empty masks (no 'masks' key when empty)."""
-        import albumentations as alb
-
-        transform = alb.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform)
-
-        height, width = 100, 100
-        image = Image.new("RGB", (width, height))
-
-        # When boxes are empty, don't include masks field
-        target = {
-            "boxes": torch.zeros((0, 4)),
-            "labels": torch.zeros((0,), dtype=torch.long),
-        }
-
-        aug_image, aug_target = wrapper(image, target)
-
-        assert isinstance(aug_image, Image.Image)
-        assert aug_target["boxes"].shape == (0, 4)
-        assert aug_target["labels"].shape == (0,)
 
     def test_geometric_transform_with_empty_masks_tensor(self):
         """Test that a geometric transform does not crash when masks tensor is empty (0 instances).
@@ -1118,8 +1077,10 @@ class TestAlbumentationsWrapper:
             "masks": torch.zeros((height, width), dtype=torch.uint8),
         }
 
-        with pytest.raises(ValueError, match="masks must have shape"):
+        with pytest.raises(ValueError) as exc_info:
             wrapper(image, target)
+
+        assert "masks must have shape" in str(exc_info.value)
 
     @pytest.mark.parametrize("mask_dtype", [torch.uint8, torch.float32])
     def test_mask_dtype_handling(self, mask_dtype):
@@ -1417,18 +1378,26 @@ class TestAlbumentationsWrapper:
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""
 
-    def test_build_from_valid_config(self):
-        """Test building transforms from valid configuration."""
-        config = {
-            "HorizontalFlip": {"p": 0.5},
-            "VerticalFlip": {"p": 0.3},
-        }
-
+    @pytest.mark.parametrize(
+        "config",
+        [
+            pytest.param({"HorizontalFlip": {"p": 0.5}, "VerticalFlip": {"p": 0.3}}, id="valid"),
+            pytest.param({"HorizontalFlip": {"p": 1.0}, "GaussianBlur": {"p": 1.0}}, id="geometric-and-pixel"),
+            pytest.param(
+                {
+                    "Rotate": {"limit": (90, 90), "p": 0.5},
+                    "Affine": {"scale": (0.9, 1.1), "translate_percent": (-0.1, 0.1), "p": 0.3},
+                },
+                id="complex-params",
+            ),
+        ],
+    )
+    def test_builds_one_wrapper_per_entry_in_config_order(self, config):
+        """Every config entry becomes one AlbumentationsWrapper, in config order."""
         transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 2
         assert all(isinstance(t, AlbumentationsWrapper) for t in transforms)
-        # Validate transform names match config in correct order
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == list(config.keys())
 
@@ -1440,16 +1409,19 @@ class TestAlbumentationsWrapperFromConfig:
 
         assert len(transforms) == 0
 
-    def test_unknown_transform_skipped(self):
-        """Test that unknown transforms are skipped with warning."""
-        config = {
-            "HorizontalFlip": {"p": 0.5},
-            "NonExistentTransform": {"p": 0.5},
-        }
+    @pytest.mark.parametrize(
+        "skipped_entry",
+        [
+            pytest.param({"NonExistentTransform": {"p": 0.5}}, id="unknown-transform"),
+            pytest.param({"InvalidTransform": "not_a_dict"}, id="non-dict-params"),
+        ],
+    )
+    def test_unbuildable_entry_is_skipped(self, skipped_entry):
+        """An unknown transform name or non-dict params is skipped, leaving only the valid transform."""
+        config = {"HorizontalFlip": {"p": 0.5}, **skipped_entry}
 
         transforms = AlbumentationsWrapper.from_config(config)
 
-        # Only valid transform should be included
         assert len(transforms) == 1
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == ["HorizontalFlip"]
@@ -1470,49 +1442,10 @@ class TestAlbumentationsWrapperFromConfig:
 
     def test_invalid_config_type(self):
         """Test that invalid config type raises TypeError."""
-        with pytest.raises(TypeError, match="config_dict must be a dictionary or list"):
+        with pytest.raises(TypeError) as exc_info:
             AlbumentationsWrapper.from_config("invalid")
 
-    def test_mixed_geometric_and_pixel_transforms(self):
-        """Test building mix of geometric and pixel-level transforms."""
-        config = {
-            "HorizontalFlip": {"p": 1.0},  # Geometric
-            "GaussianBlur": {"p": 1.0},  # Pixel-level
-        }
-
-        transforms = AlbumentationsWrapper.from_config(config)
-
-        assert len(transforms) == 2
-        # Validate transform names match config in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
-        assert transform_names == list(config.keys())
-
-    def test_config_with_complex_params(self):
-        """Test building transforms with complex parameter structures."""
-        config = {
-            "Rotate": {"limit": (90, 90), "p": 0.5},
-            "Affine": {"scale": (0.9, 1.1), "translate_percent": (-0.1, 0.1), "p": 0.3},
-        }
-
-        transforms = AlbumentationsWrapper.from_config(config)
-
-        assert len(transforms) == 2
-        # Validate transform names match config in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
-        assert transform_names == list(config.keys())
-
-    def test_non_dict_params_skipped(self):
-        """Test that transforms with non-dict params are skipped."""
-        config = {
-            "HorizontalFlip": {"p": 0.5},
-            "InvalidTransform": "not_a_dict",
-        }
-
-        transforms = AlbumentationsWrapper.from_config(config)
-
-        assert len(transforms) == 1
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
-        assert transform_names == ["HorizontalFlip"]
+        assert "config_dict must be a dictionary or list" in str(exc_info.value)
 
     def test_from_config_some_of_replacement_uses_execution_log(self):
         """from_config-built SomeOf(replace=True) parity matches the equivalent direct-constructor wrapper.
@@ -1583,10 +1516,13 @@ class TestRandomSizedCropCompat:
             ),
         ],
     )
-    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
-    def test_errors_on_partial_hw_with_v2_api(self, params, expected_missing):
-        with pytest.raises(ValueError, match=f"missing '{expected_missing}'"):
+    def test_errors_on_partial_hw_with_v2_api(self, mocker, params, expected_missing):
+        """Passing only one of height/width with the v2 API raises naming the missing dimension."""
+        mocker.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
+        with pytest.raises(ValueError) as exc_info:
             _build_albu_transform("RandomSizedCrop", params)
+
+        assert f"missing '{expected_missing}'" in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "params",
@@ -1610,27 +1546,27 @@ class TestRandomSizedCropCompat:
             ),
         ],
     )
-    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
-    def test_size_takes_precedence_over_hw_on_v2_api(self, params):
+    def test_size_takes_precedence_over_hw_on_v2_api(self, mocker, params):
+        """On the v2 API an explicit ``size`` wins and conflicting height/width are dropped before instantiation."""
+        mocker.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
         # No TypeError means height/width were correctly dropped before instantiation
         transform = _build_albu_transform("RandomSizedCrop", params)
         assert transform.size == (256, 256)
 
-    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
-    def test_scalar_size_passes_through_on_v1_legacy_path(self):
-        # Scalar size=640 does not match isinstance(size, Sequence), so the v1
-        # legacy branch leaves it in the params dict. FakeV1 does not accept
-        # ``size`` so this should raise a TypeError from the constructor — our
-        # normalization code does NOT raise a ValueError for this case.
-        with pytest.raises(TypeError):
-            _build_albu_transform(
-                "RandomSizedCrop",
-                {"min_max_height": [100, 200], "size": 640},
-            )
+    def test_scalar_size_passes_through_on_v1_legacy_path(self, mocker):
+        """A scalar ``size`` is left in the params on the v1 path, so the v1 constructor rejects it with TypeError.
 
-    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
-    def test_adapts_height_width_for_v2_api(self):
+        A scalar is not a ``Sequence``, so the normalizer cannot split it into height/width; it forwards ``size``
+        unchanged and raises no ValueError of its own, which the height-only v2 errors do.
+        """
+        mocker.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
+
+        with pytest.raises(TypeError):
+            _build_albu_transform("RandomSizedCrop", {"min_max_height": [100, 200], "size": 640})
+
+    def test_adapts_height_width_for_v2_api(self, mocker):
         """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
+        mocker.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "height": 640, "width": 640},
@@ -1640,9 +1576,9 @@ class TestRandomSizedCropCompat:
         assert transform.min_max_height == [384, 600]
         assert transform.size == (640, 640)
 
-    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
-    def test_adapts_size_for_v1_api(self):
+    def test_adapts_size_for_v1_api(self, mocker):
         """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
+        mocker.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "size": (640, 640)},
@@ -1653,13 +1589,13 @@ class TestRandomSizedCropCompat:
         assert transform.height == 640
         assert transform.width == 640
 
-    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
-    def test_from_config_partial_height_is_silently_skipped(self):
+    def test_from_config_partial_height_is_silently_skipped(self, mocker):
         """from_config swallows the ValueError for partial height-only config and skips the transform.
 
         This documents the intentional silent-skip behavior: from_config wraps _build_albu_transform in a broad except
         clause so bad configs produce a warning rather than an exception.
         """
+        mocker.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
         config = {
             "HorizontalFlip": {"p": 0.5},
             "RandomSizedCrop": {"min_max_height": [100, 200], "height": 256},
@@ -1676,26 +1612,21 @@ class TestRandomSizedCropCompat:
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
 
-    def test_one_of_geometric_detection(self):
-        """OneOf containing a geometric transform is treated as geometric."""
+    @pytest.mark.parametrize(
+        ("container", "members", "expected_geometric"),
+        [
+            pytest.param("OneOf", ["HorizontalFlip", "GaussianBlur"], True, id="one-of-with-geometric"),
+            pytest.param("OneOf", ["GaussianBlur", "Blur"], False, id="one-of-pixel-only"),
+            pytest.param("Sequential", ["Rotate", "GaussianBlur"], True, id="sequential-with-geometric"),
+        ],
+    )
+    def test_container_geometric_detection(self, container, members, expected_geometric):
+        """A container is geometric when any member is geometric, and pixel-level when all members are pixel-level."""
         import albumentations as alb
 
-        wrapper = AlbumentationsWrapper(alb.OneOf([alb.HorizontalFlip(p=1.0), alb.GaussianBlur(p=1.0)]))
-        assert wrapper._is_geometric is True
+        wrapper = AlbumentationsWrapper(getattr(alb, container)([getattr(alb, name)(p=1.0) for name in members]))
 
-    def test_one_of_pixel_detection(self):
-        """OneOf containing only pixel transforms is treated as pixel-level."""
-        import albumentations as alb
-
-        wrapper = AlbumentationsWrapper(alb.OneOf([alb.GaussianBlur(p=1.0), alb.Blur(p=1.0)]))
-        assert wrapper._is_geometric is False
-
-    def test_sequential_geometric_detection(self):
-        """Sequential containing a geometric transform is treated as geometric."""
-        import albumentations as alb
-
-        wrapper = AlbumentationsWrapper(alb.Sequential([alb.Rotate(limit=45, p=1.0), alb.GaussianBlur(p=1.0)]))
-        assert wrapper._is_geometric is True
+        assert wrapper._is_geometric is expected_geometric
 
     def test_from_config_nested_one_of(self):
         """from_config builds a OneOf wrapper from nested config."""
@@ -1835,7 +1766,7 @@ class TestAlbumentationsWrapperNestedConfig:
 
         assert len(transforms) == 3
 
-    def test_from_config_one_of_applies_correctly_geometric(self):
+    def test_from_config_one_of_applies_geometric(self):
         """OneOf geometric wrapper correctly transforms boxes (always fires)."""
         config = {
             "OneOf": {
@@ -1859,7 +1790,7 @@ class TestAlbumentationsWrapperNestedConfig:
         expected_boxes = torch.tensor([[50.0, 20.0, 90.0, 60.0]])
         torch.testing.assert_close(aug_target["boxes"], expected_boxes)
 
-    def test_from_config_one_of_applies_correctly_pixel(self):
+    def test_from_config_one_of_applies_pixel(self):
         """OneOf pixel-level wrapper preserves boxes unchanged."""
         config = {
             "OneOf": {
@@ -1883,70 +1814,29 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(aug_image, Image.Image)
         torch.testing.assert_close(aug_target["boxes"], original_boxes)
 
-    def test_one_of_explicit_p_is_respected(self):
-        """Explicit p supplied for OneOf in config is preserved."""
+    @pytest.mark.parametrize("container", ["OneOf", "Sequential"])
+    @pytest.mark.parametrize(
+        ("extra", "expected_p"),
+        [pytest.param({"p": 0.0}, 0.0, id="explicit-p-is-respected"), pytest.param({}, 1.0, id="default-p-is-one")],
+    )
+    def test_container_p_from_config(self, container, extra, expected_p):
+        """A container keeps the p given in config and defaults to p=1.0 when none is supplied."""
         import albumentations as alb
 
-        config = {
-            "OneOf": {
-                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
-                "p": 0.0,
-            }
-        }
+        config = {container: {"transforms": [{"HorizontalFlip": {"p": 1.0}}], **extra}}
         transforms = AlbumentationsWrapper.from_config(config)
         inner = transforms[0].transform.transforms[0]
-        assert isinstance(inner, alb.OneOf)
-        assert inner.p == pytest.approx(0.0)
-
-    def test_one_of_default_p_is_one_when_omitted(self):
-        """OneOf defaults to p=1.0 when no container-level p is supplied."""
-        import albumentations as alb
-
-        config = {
-            "OneOf": {
-                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        inner = transforms[0].transform.transforms[0]
-        assert isinstance(inner, alb.OneOf)
-        assert inner.p == pytest.approx(1.0)
+        assert isinstance(inner, getattr(alb, container))
+        assert inner.p == pytest.approx(expected_p)
 
     def test_one_of_empty_transforms_raises(self):
         """OneOf with no transforms raises ValueError."""
-        with pytest.raises(ValueError, match="at least one"):
+        with pytest.raises(ValueError) as exc_info:
             _build_albu_transform("OneOf", {"transforms": []})
 
-    def test_sequential_explicit_p_is_respected(self):
-        """Explicit p supplied for Sequential in config is preserved."""
-        import albumentations as alb
+        assert "at least one" in str(exc_info.value)
 
-        config = {
-            "Sequential": {
-                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
-                "p": 0.0,
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        inner = transforms[0].transform.transforms[0]
-        assert isinstance(inner, alb.Sequential)
-        assert inner.p == pytest.approx(0.0)
-
-    def test_sequential_default_p_is_one_when_omitted(self):
-        """Sequential defaults to p=1.0 when no container-level p is supplied."""
-        import albumentations as alb
-
-        config = {
-            "Sequential": {
-                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        inner = transforms[0].transform.transforms[0]
-        assert isinstance(inner, alb.Sequential)
-        assert inner.p == pytest.approx(1.0)
-
-    def test_some_of_single_p_still_works(self):
+    def test_some_of_single_p(self):
         """SomeOf with a plain p (block probability) still works without probs."""
         import albumentations as alb
 
@@ -1966,16 +1856,7 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(inner, alb.SomeOf)
         assert inner.p == pytest.approx(0.5)
 
-    @pytest.mark.parametrize(
-        "hflip_name",
-        [
-            pytest.param("HorizontalFlip", id="HorizontalFlip"),
-            pytest.param("TimeReverse", id="TimeReverse"),
-            pytest.param("Flip", id="Flip"),
-            pytest.param("D4", id="D4"),
-            pytest.param("SquareSymmetry", id="SquareSymmetry"),
-        ],
-    )
+    @pytest.mark.parametrize("hflip_name", ["HorizontalFlip", "TimeReverse", "Flip", "D4", "SquareSymmetry"])
     def test_hflip_disabled_for_keypoint_pipeline(self, hflip_name: str) -> None:
         """HFlip-type transforms are skipped when keypoint_flip_pairs is empty (no left/right pairs configured)."""
         config = {hflip_name: {"p": 0.5}, "GaussianBlur": {"p": 0.5}}
@@ -1986,31 +1867,26 @@ class TestAlbumentationsWrapperNestedConfig:
         assert hflip_name not in names
         assert "GaussianBlur" in names
 
-    def test_hflip_disable_logs_warning(self) -> None:
+    def test_hflip_disable_logs_warning(self, mocker) -> None:
         """from_config logs a warning when HorizontalFlip is disabled for a keypoint pipeline."""
         config = {"HorizontalFlip": {"p": 0.5}}
 
-        with mock.patch("rfdetr.datasets.transforms.logger") as mock_log:
-            AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
+        mock_log = mocker.patch("rfdetr.datasets.transforms.logger")
+        AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[])
 
         assert mock_log.warning.called
         call_args = mock_log.warning.call_args[0]
         assert "HorizontalFlip" in str(call_args)
 
-    def test_hflip_included_when_no_keypoints(self) -> None:
-        """HorizontalFlip is NOT skipped when keypoint_flip_pairs is None (detection pipeline)."""
+    @pytest.mark.parametrize(
+        "keypoint_flip_pairs",
+        [pytest.param(None, id="detection-pipeline"), pytest.param([0, 1], id="semantic-pairs-configured")],
+    )
+    def test_hflip_included_unless_pairs_are_empty(self, keypoint_flip_pairs) -> None:
+        """HorizontalFlip is kept for a detection pipeline (pairs None) and when semantic flip pairs are configured."""
         config = {"HorizontalFlip": {"p": 0.5}}
 
-        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=None)
-
-        names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
-        assert "HorizontalFlip" in names
-
-    def test_hflip_included_when_keypoint_flip_pairs_are_configured(self) -> None:
-        """HorizontalFlip is safe for keypoint pipelines when semantic flip pairs are configured."""
-        config = {"HorizontalFlip": {"p": 0.5}}
-
-        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[0, 1])
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=keypoint_flip_pairs)
 
         names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert "HorizontalFlip" in names
@@ -2347,13 +2223,7 @@ class TestTrainingLoop:
 class TestMakeCocoTransformsAugConfig:
     """Tests for aug_config propagation in make_coco_transforms / make_coco_transforms_square_div_64."""
 
-    @pytest.mark.parametrize(
-        "make_transforms",
-        [
-            make_coco_transforms,
-            make_coco_transforms_square_div_64,
-        ],
-    )
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
     def test_default_none_uses_aug_config(self, make_transforms):
         """Omitting aug_config uses the torchvision-native default HorizontalFlip."""
         pipeline = make_transforms("train", 640)
@@ -2361,13 +2231,7 @@ class TestMakeCocoTransformsAugConfig:
         assert any(isinstance(t, RandomHorizontalFlip) for t in pipeline.transforms)
         assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
-    @pytest.mark.parametrize(
-        "make_transforms",
-        [
-            make_coco_transforms,
-            make_coco_transforms_square_div_64,
-        ],
-    )
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
     def test_empty_dict_disables_augmentations(self, make_transforms):
         """aug_config={} disables the default torchvision HorizontalFlip."""
         pipeline = make_transforms("train", 640, aug_config={})
@@ -2375,13 +2239,7 @@ class TestMakeCocoTransformsAugConfig:
         assert not any(isinstance(t, RandomHorizontalFlip) for t in pipeline.transforms)
         assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
-    @pytest.mark.parametrize(
-        "make_transforms",
-        [
-            make_coco_transforms,
-            make_coco_transforms_square_div_64,
-        ],
-    )
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
     def test_custom_dict_is_used(self, make_transforms):
         """A custom non-empty aug_config uses the optional Albumentations path."""
         custom = {"HorizontalFlip": {"p": 1.0}}
@@ -2392,46 +2250,13 @@ class TestMakeCocoTransformsAugConfig:
         assert len(aug_wrappers) == 1
         assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
 
-    @pytest.mark.parametrize(
-        "make_transforms,expected_resize_wrappers",
-        [
-            pytest.param(make_coco_transforms, 0, id="make_coco_transforms"),
-            pytest.param(make_coco_transforms_square_div_64, 0, id="make_coco_transforms_square_div_64"),
-        ],
-    )
-    def test_aug_config_not_applied_on_val(self, make_transforms, expected_resize_wrappers):
-        """aug_config is ignored for val splits and defaults to torchvision resize."""
-        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+    @pytest.mark.parametrize("split", ["val", "val_speed", "test"])
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_aug_config_ignored_outside_train(self, make_transforms, split):
+        """aug_config is ignored for val, val_speed and test splits, which keep the torchvision resize."""
+        pipeline = make_transforms(split, 640, aug_config={"HorizontalFlip": {"p": 1.0}})
 
-        assert len(wrappers) == expected_resize_wrappers
-
-    @pytest.mark.parametrize(
-        "make_transforms",
-        [
-            make_coco_transforms,
-            make_coco_transforms_square_div_64,
-        ],
-    )
-    def test_aug_config_not_applied_on_val_speed(self, make_transforms):
-        """aug_config is ignored for val_speed splits and defaults to torchvision resize."""
-        pipeline = make_transforms("val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-
-        assert len(wrappers) == 0
-
-    @pytest.mark.parametrize(
-        "make_transforms,expected_resize_wrappers",
-        [
-            pytest.param(make_coco_transforms, 0, id="make_coco_transforms"),
-            pytest.param(make_coco_transforms_square_div_64, 0, id="make_coco_transforms_square_div_64"),
-        ],
-    )
-    def test_aug_config_not_applied_on_test(self, make_transforms, expected_resize_wrappers):
-        """aug_config is ignored for test splits and defaults to torchvision resize."""
-        pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        assert len(wrappers) == expected_resize_wrappers
+        assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
 
 class TestMakeCocoTransformsOutputSize:
@@ -2487,15 +2312,6 @@ class TestMakeCocoTransformsOutputSize:
         tensor, _ = transform(image, None)
         height, width = tensor.shape[-2], tensor.shape[-1]
         assert max(height, width) <= 1333
-
-    def test_nonsquare_val_does_not_pass_original_dimensions(self) -> None:
-        """Non-square val transform must not emit the original 1920x1080 dimensions — the core regression."""
-        transform = make_coco_transforms("val", self._RESOLUTION)
-        tensor, _ = transform(self._make_image(), None)
-        height, width = tensor.shape[-2], tensor.shape[-1]
-        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
-            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
-        )
 
     def test_square_val_does_not_pass_original_dimensions(self) -> None:
         """Square val transform must not emit the original 1920x1080 dimensions — the core regression."""
@@ -2559,15 +2375,7 @@ class TestKeypointScalingAcrossResolutions:
             "keypoints": torch.tensor([[[self._KP_X, self._KP_Y, 2.0], [0.0, 0.0, 0.0]]]),
         }
 
-    @pytest.mark.parametrize(
-        "resolution",
-        [
-            pytest.param(576, id="default_576"),
-            pytest.param(640, id="larger_640"),
-            pytest.param(768, id="larger_768"),
-            pytest.param(960, id="larger_960"),
-        ],
-    )
+    @pytest.mark.parametrize("resolution", [576, 640, 768, 960])
     def test_val_pipeline_keypoints_normalised_to_unit_range(self, resolution: int) -> None:
         """After Normalize, visible keypoint coords are in [0, 1] for every resolution."""
         transform = make_coco_transforms_square_div_64("val", resolution)
@@ -2584,15 +2392,7 @@ class TestKeypointScalingAcrossResolutions:
         )
         assert kp[0, 0, 2].item() == pytest.approx(2.0), "visibility must be preserved after normalisation"
 
-    @pytest.mark.parametrize(
-        "resolution",
-        [
-            pytest.param(576, id="default_576"),
-            pytest.param(640, id="larger_640"),
-            pytest.param(768, id="larger_768"),
-            pytest.param(960, id="larger_960"),
-        ],
-    )
+    @pytest.mark.parametrize("resolution", [576, 640, 768, 960])
     def test_val_pipeline_invisible_keypoints_stay_zero(self, resolution: int) -> None:
         """Zero-visibility keypoints must remain at (0, 0, 0) after the full pipeline."""
         transform = make_coco_transforms_square_div_64("val", resolution)
@@ -2608,15 +2408,7 @@ class TestKeypointScalingAcrossResolutions:
             atol=0.0,
         )
 
-    @pytest.mark.parametrize(
-        "resolution",
-        [
-            pytest.param(576, id="default_576"),
-            pytest.param(640, id="larger_640"),
-            pytest.param(768, id="larger_768"),
-            pytest.param(960, id="larger_960"),
-        ],
-    )
+    @pytest.mark.parametrize("resolution", [576, 640, 768, 960])
     def test_train_pipeline_visible_keypoints_normalised_in_unit_range(self, resolution: int) -> None:
         """Train transform (random resize/crop) must produce normalised keypoints in [0, 1]."""
         transform = make_coco_transforms_square_div_64("train", resolution, aug_config={})
@@ -2625,26 +2417,17 @@ class TestKeypointScalingAcrossResolutions:
         _, transformed = transform(image, self._make_target())
 
         kp = transformed["keypoints"]  # shape (N, K, 3); x and y already normalised by Normalize
-        visible_mask = kp[:, :, 2] > 0  # (N, K) bool
-        if visible_mask.any():
-            visible_x = kp[:, :, 0][visible_mask]
-            visible_y = kp[:, :, 1][visible_mask]
-            assert (visible_x >= 0).all() and (visible_x <= 1.0).all(), (
-                f"normalised keypoint x out of [0, 1] at resolution={resolution}: {visible_x}"
-            )
-            assert (visible_y >= 0).all() and (visible_y <= 1.0).all(), (
-                f"normalised keypoint y out of [0, 1] at resolution={resolution}: {visible_y}"
-            )
+        visible_mask = kp[:, :, 2] > 0  # (N, K) bool; an empty selection passes vacuously
+        visible_x = kp[:, :, 0][visible_mask]
+        visible_y = kp[:, :, 1][visible_mask]
+        assert (visible_x >= 0).all() and (visible_x <= 1.0).all(), (
+            f"normalised keypoint x out of [0, 1] at resolution={resolution}: {visible_x}"
+        )
+        assert (visible_y >= 0).all() and (visible_y <= 1.0).all(), (
+            f"normalised keypoint y out of [0, 1] at resolution={resolution}: {visible_y}"
+        )
 
-    @pytest.mark.parametrize(
-        "resolution",
-        [
-            pytest.param(576, id="default_576"),
-            pytest.param(640, id="larger_640"),
-            pytest.param(768, id="larger_768"),
-            pytest.param(960, id="larger_960"),
-        ],
-    )
+    @pytest.mark.parametrize("resolution", [576, 640, 768, 960])
     def test_output_tensor_shape_matches_resolution(self, resolution: int) -> None:
         """Transform output image tensor must be (C, resolution, resolution) for all resolutions."""
         transform = make_coco_transforms_square_div_64("val", resolution, aug_config={})
@@ -2660,7 +2443,7 @@ class TestKeypointScalingAcrossResolutions:
 class TestNormalize:
     """Unit tests for Normalize.__call__."""
 
-    def test_normalize_call_is_bound_method(self) -> None:
+    def test_call_is_bound_method(self) -> None:
         """Normalize.__call__ must be a class method, not a module-level function."""
         import inspect
 
@@ -2668,7 +2451,7 @@ class TestNormalize:
         assert callable(normalize), "Normalize instance must be callable"
         assert inspect.ismethod(normalize.__call__), "__call__ must be a bound method"
 
-    def test_normalize_call_image_only_returns_normalized_tensor(self) -> None:
+    def test_call_image_only_returns_tensor_and_none(self) -> None:
         """Normalize(image, None) returns (tensor, None) without raising."""
         normalize = Normalize()
         image = torch.zeros(3, 64, 64)
@@ -2693,7 +2476,7 @@ class TestNormalize:
             ),
         ],
     )
-    def test_normalize_call_normalizes_boxes(
+    def test_call_normalizes_boxes(
         self,
         boxes: torch.Tensor,
         image_hw: tuple[int, int],
@@ -2707,7 +2490,7 @@ class TestNormalize:
         _, out_tgt = normalize(image, target)
         torch.testing.assert_close(out_tgt["boxes"], expected_cxcywh_norm, atol=1e-4, rtol=0.0)
 
-    def test_normalize_call_normalizes_keypoints_to_unit_range(self) -> None:
+    def test_call_normalizes_keypoints_to_unit_range(self) -> None:
         """Normalize.__call__ divides keypoint x by width and y by height."""
         normalize = Normalize()
         height, width = 100, 200
@@ -2719,7 +2502,7 @@ class TestNormalize:
         assert out_tgt["keypoints"][0, 0, 1].item() == pytest.approx(0.5, abs=1e-5)
         assert out_tgt["keypoints"][0, 0, 2].item() == pytest.approx(2.0)
 
-    def test_normalize_call_does_not_mutate_original_target(self) -> None:
+    def test_call_does_not_mutate_original_target(self) -> None:
         """Normalize.__call__ must not mutate the caller's target dict."""
         normalize = Normalize()
         image = torch.zeros(3, 50, 100)
@@ -2918,8 +2701,10 @@ class TestFromConfigStrict:
 
     def test_strict_true_raises_on_unbuildable_transform(self):
         """Strict mode surfaces a RuntimeError so a corrupt required pipeline fails loudly."""
-        with pytest.raises(RuntimeError, match="NotARealTransform"):
+        with pytest.raises(RuntimeError) as exc_info:
             AlbumentationsWrapper.from_config([{"NotARealTransform": {"p": 1.0}}], strict=True)
+
+        assert "NotARealTransform" in str(exc_info.value)
 
     def test_strict_true_builds_valid_config(self):
         """Strict mode still returns wrappers when every transform builds successfully."""

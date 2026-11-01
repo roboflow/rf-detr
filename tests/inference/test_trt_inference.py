@@ -24,7 +24,7 @@ import rfdetr.export.benchmark as benchmark
 from rfdetr.export._tensorrt import inference as trt_inference
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
-from rfdetr.export.benchmark import infer_transforms
+from rfdetr.export.benchmark import _static_dim, box_cxcywh_to_xyxy, infer_transforms, post_process
 from rfdetr.utilities.imports import _IS_FASTER_COCO_EVAL_INSTALLED
 
 faster_coco_eval_only = pytest.mark.skipif(
@@ -603,7 +603,7 @@ def fake_cuda_graphs(monkeypatch: pytest.MonkeyPatch) -> _FakeCudaGraphs:
     Every stand-in first binds its arguments to the installed torch's own signature (see :func:`_signature_checked`),
     so the code under test cannot pass torch an argument it would reject. What a replay computes, and the output
     shapes TensorRT resolves, are not modelled here: ``TestTensorRTEndToEnd`` in
-    ``tests/export/test_tensorrt_export.py`` checks those on a real engine
+    ``tests/export/tensorrt/test_tensorrt_export.py`` checks those on a real engine
     (``test_cuda_graph_matches_the_plain_call_on_new_inputs`` and
     ``test_cuda_graph_waits_for_an_input_still_in_flight_on_the_callers_stream``), and
     ``test_cuda_graph_is_refused_for_the_dynamic_batch_engine`` replaces the mixed-batch test now that a graph runtime
@@ -718,7 +718,7 @@ class TestTRTInferenceDynamicBatch:
 
         assert runtime.bindings["dets"].shape == (7, 5, 4)
 
-    def test_an_unresolved_non_batch_axis_names_the_tensor_and_the_axis(self) -> None:
+    def test_unresolved_non_batch_axis_names_the_tensor_and_the_axis(self) -> None:
         """A dimension left at ``-1`` past the batch axis is reported with its tensor and axis.
 
         Only axis 0 is exported dynamic, so an engine with another dynamic axis is shaped differently than this runtime
@@ -727,10 +727,13 @@ class TestTRTInferenceDynamicBatch:
         """
         engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, -1, 4))}, profile_max=4)
 
-        with pytest.raises(ValueError, match=r"'dets'.*axis 1"):
+        with pytest.raises(ValueError) as refusal:
             _runtime_around(engine)
 
-    def test_an_unresolvable_batch_axis_is_reported_rather_than_allocated(self) -> None:
+        assert "'dets'" in str(refusal.value)
+        assert "axis 1" in str(refusal.value)
+
+    def test_unresolvable_batch_axis_is_reported_rather_than_allocated(self) -> None:
         """An engine with a dynamic output but no dynamic input leaves the batch axis unresolved.
 
         Nothing declares a shape to the context in that case, so TensorRT keeps reporting ``-1`` and there is no profile
@@ -738,8 +741,11 @@ class TestTRTInferenceDynamicBatch:
         """
         engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (-1, 5, 4))})
 
-        with pytest.raises(ValueError, match=r"'dets'.*axis 0"):
+        with pytest.raises(ValueError) as refusal:
             _runtime_around(engine)
+
+        assert "'dets'" in str(refusal.value)
+        assert "axis 0" in str(refusal.value)
 
     def test_input_bindings_carry_no_device_buffer(self) -> None:
         """An input binding allocates nothing, keeping only the shape and a placeholder address.
@@ -756,7 +762,7 @@ class TestTRTInferenceDynamicBatch:
         assert runtime.bindings_addr["input"] == 0
         assert runtime.bindings["input"].shape == (4, 3, 8, 8)
 
-    def test_an_unchanged_input_shape_is_declared_only_once(self) -> None:
+    def test_unchanged_input_shape_is_declared_only_once(self) -> None:
         """A repeated batch does not re-issue ``set_input_shape``; the context already holds that shape.
 
         The construction-time declaration at the profile maximum does not seed the memo, so the first call still
@@ -774,7 +780,7 @@ class TestTRTInferenceDynamicBatch:
             call("input", (3, 3, 8, 8)),
         ]
 
-    def test_a_changed_input_shape_is_declared_again(self) -> None:
+    def test_changed_input_shape_is_declared_again(self) -> None:
         """A different batch always reaches the context, so the memo can never suppress a needed declaration."""
         engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
         runtime = _runtime_around(engine)
@@ -813,10 +819,7 @@ class TestTRTInferenceDynamicBatch:
 
     def test_run_sync_declares_the_input_shape_and_trims_outputs(self) -> None:
         """Each call sets the real input shape on the context and returns only the rows the engine produced."""
-        engine = _FakeEngine(
-            {"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))},
-            profile_max=4,
-        )
+        engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
         runtime = _runtime_around(engine)
         blob = {"input": torch.zeros(3, 3, 8, 8)}
 
@@ -853,7 +856,7 @@ class TestTRTInferenceDynamicBatch:
         runtime.context.execute_v2.assert_not_called()
         runtime.context.execute_async_v3.assert_not_called()
 
-    def test_a_static_engine_refuses_a_blob_of_the_wrong_shape(self) -> None:
+    def test_static_engine_refuses_a_blob_of_the_wrong_shape(self) -> None:
         """A fixed-batch engine validates the blob it is handed instead of binding it by raw pointer.
 
         Nothing declares a static engine's shape to TensorRT, so there is no ``set_input_shape`` to reject a
@@ -1040,7 +1043,7 @@ class TestTRTInferenceInputValidation:
         with pytest.raises(ValueError, match="device"):
             runtime({"input": stand_in})
 
-    def test_a_bad_input_is_named_among_several_good_ones(self) -> None:
+    def test_bad_input_is_named_among_several_good_ones(self) -> None:
         """``_check_input_memory`` attributes the refusal to the one bad input, not the whole call.
 
         Every other input-validation test above uses a single-input engine, so nothing confirms the per-name loop in
@@ -1053,8 +1056,11 @@ class TestTRTInferenceInputValidation:
         good = torch.rand(1, 3, 8, 8)
         bad = torch.rand(1, 3, 8, 8).to(memory_format=torch.channels_last)  # non-contiguous, same shape as "good"
 
-        with pytest.raises(ValueError, match="'b'.*not contiguous"):
+        with pytest.raises(ValueError) as refusal:
             runtime({"a": good, "b": bad})
+
+        assert "'b'" in str(refusal.value)
+        assert "not contiguous" in str(refusal.value)
 
     @pytest.mark.parametrize(
         ("engine_shape", "shape", "misleading_advice"),
@@ -1068,7 +1074,7 @@ class TestTRTInferenceInputValidation:
             pytest.param((4,), (), "dynamic_batch", id="static-scalar-input"),
         ],
     )
-    def test_a_shape_refusal_advises_only_a_fix_that_applies(
+    def test_shape_refusal_advises_only_a_fix_that_applies(
         self, engine_shape: tuple[int, ...], shape: tuple[int, ...], misleading_advice: str
     ) -> None:
         """A larger ``max_batch_size`` or ``dynamic_batch=True`` only fixes a batch the engine cannot take.
@@ -1079,9 +1085,10 @@ class TestTRTInferenceInputValidation:
         engine = _FakeEngine({"input": ("input", engine_shape), "dets": ("output", (engine_shape[0], 5, 4))})
         runtime = _runtime_around(engine)
 
-        with pytest.raises(ValueError, match=re.escape(str(shape))) as refusal:
+        with pytest.raises(ValueError) as refusal:
             runtime({"input": torch.zeros(shape)})
 
+        assert str(shape) in str(refusal.value)
         assert misleading_advice not in str(refusal.value)
 
     @pytest.mark.parametrize(
@@ -1092,7 +1099,7 @@ class TestTRTInferenceInputValidation:
             pytest.param((2, 3, 8, 8), (1, 3, 8, 8), 2, id="static-smaller-batch"),
         ],
     )
-    def test_a_batch_refusal_advises_an_export_that_serves_the_refused_batch(
+    def test_batch_refusal_advises_an_export_that_serves_the_refused_batch(
         self, engine_shape: tuple[int, ...], shape: tuple[int, ...], export_batch_size: int
     ) -> None:
         """The advised settings, added to the original export, pass the TensorRT exporter's checks and fit the batch.
@@ -1138,13 +1145,12 @@ class TestTRTInferenceInputValidation:
         engine.get_tensor_profile_shape = lambda name, profile_index: ((1, 3, 4, 4), (2, 3, 8, 8), (4, 3, 8, 8))
         runtime = _runtime_around(engine)
 
-        with pytest.raises(ValueError, match=re.escape(str(shape))) as refusal:
+        with pytest.raises(ValueError) as refusal:
             runtime({"input": torch.zeros(shape)})
 
+        assert str(shape) in str(refusal.value)
         assert ("max_batch_size=5" in str(refusal.value)) is advised
 
-
-#: Tensors of an engine with a dynamic batch axis on its input and output; each test sets the profile maximum.
 
 #: What identifies the one graph a static engine captures: the shape of its only input.
 _STATIC_SHAPES = ((1, 3, 8, 8),)
@@ -1240,7 +1246,7 @@ class TestTRTInferenceCudaGraph:
             ),
         ],
     )
-    def test_a_refused_input_captures_nothing(
+    def test_refused_input_captures_nothing(
         self,
         fake_cuda_graphs: _FakeCudaGraphs,
         make_engine: Callable[[], _FakeEngine],
@@ -1258,9 +1264,7 @@ class TestTRTInferenceCudaGraph:
 
         assert (fake_cuda_graphs.graphs, runtime._graphs) == ([], {})
 
-    def test_a_valid_call_after_a_refused_one_replays_the_captured_graph(
-        self, fake_cuda_graphs: _FakeCudaGraphs
-    ) -> None:
+    def test_valid_call_after_a_refused_one_replays_the_captured_graph(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
         """A refused input leaves the captured graph in place: the next valid call replays it instead of capturing.
 
         The graph is captured first, then a batch the engine was not built for is refused before any copy.
@@ -1278,7 +1282,7 @@ class TestTRTInferenceCudaGraph:
         )
 
     @pytest.mark.parametrize(("arrange_failure", "cause"), _CAPTURE_FAILURES)
-    def test_a_failed_capture_raises_and_the_next_call_captures_again(
+    def test_failed_capture_raises_and_the_next_call_captures_again(
         self,
         fake_cuda_graphs: _FakeCudaGraphs,
         arrange_failure: Callable[[_FakeCudaGraphs, TRTInference], None],
@@ -1292,14 +1296,16 @@ class TestTRTInferenceCudaGraph:
         example = {"input": torch.zeros(1, 3, 8, 8)}
         arrange_failure(fake_cuda_graphs, runtime)
 
-        with pytest.raises(RuntimeError, match=f"CUDA graph: {re.escape(cause.rstrip('.'))}.*sync_mode=True"):
+        with pytest.raises(RuntimeError) as refusal:
             runtime(example)
+        assert f"CUDA graph: {cause.rstrip('.')}" in str(refusal.value)
+        assert "sync_mode=True" in str(refusal.value)
         assert runtime._graphs == {}
 
         runtime(example)
         assert sorted(runtime._graphs) == [_STATIC_SHAPES]
 
-    def test_a_refused_launch_raises(self) -> None:
+    def test_refused_launch_raises(self) -> None:
         """``execute_async_v3`` reports failure by returning ``False``; that must not be mistaken for a capture."""
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
         runtime.context.execute_async_v3.return_value = False
@@ -1328,7 +1334,7 @@ class TestTRTInferenceCudaGraph:
 
         runtime.context.execute_v2.assert_not_called()
 
-    def test_a_refused_input_address_raises_before_any_launch(self) -> None:
+    def test_refused_input_address_raises_before_any_launch(self) -> None:
         """``set_tensor_address`` reports a refusal by returning ``False``; the capture must not go on without it."""
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
         runtime.context.set_tensor_address.return_value = False
@@ -1338,7 +1344,7 @@ class TestTRTInferenceCudaGraph:
 
         runtime.context.execute_async_v3.assert_not_called()
 
-    def test_a_warm_up_under_inference_mode_leaves_buffers_later_calls_can_write(self) -> None:
+    def test_warm_up_under_inference_mode_leaves_buffers_later_calls_can_write(self) -> None:
         """Warming up under ``torch.inference_mode()`` must not make the static buffers inference tensors."""
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
         with torch.inference_mode():
@@ -1375,7 +1381,7 @@ class TestTRTInferenceCudaGraph:
         assert seen == [3 * 8 * 8, 3 * 8 * 8]
 
     @pytest.mark.parametrize(("arrange_failure", "cause"), _CAPTURE_FAILURES)
-    def test_a_failed_capture_keeps_the_cause(
+    def test_failed_capture_keeps_the_cause(
         self,
         fake_cuda_graphs: _FakeCudaGraphs,
         arrange_failure: Callable[[_FakeCudaGraphs, TRTInference], None],
@@ -1389,12 +1395,13 @@ class TestTRTInferenceCudaGraph:
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
         arrange_failure(fake_cuda_graphs, runtime)
 
-        with pytest.raises(RuntimeError, match="CUDA graph: .*restart.*sync_mode=True") as refusal:
+        with pytest.raises(RuntimeError) as refusal:
             runtime({"input": torch.zeros(1, 3, 8, 8)})
 
+        assert all(text in str(refusal.value) for text in ("CUDA graph: ", "restart", "sync_mode=True"))
         assert str(refusal.value.__cause__) == cause
 
-    def test_a_launch_refused_inside_the_capture_is_named_in_the_capture_error(self) -> None:
+    def test_launch_refused_inside_the_capture_is_named_in_the_capture_error(self) -> None:
         """A launch TensorRT refuses while capturing surfaces as the capture failure, carrying TensorRT's reason.
 
         The warm-up launch succeeds and the captured one returns ``False``: the wrapper must state the launch failure in
@@ -1410,7 +1417,7 @@ class TestTRTInferenceCudaGraph:
 
         assert str(err.value.__cause__) == "TensorRT execute_async_v3 reported a launch failure."
 
-    def test_an_input_that_requires_grad_leaves_no_autograd_history_on_the_buffer(self) -> None:
+    def test_input_that_requires_grad_leaves_no_autograd_history_on_the_buffer(self) -> None:
         """The buffers outlive every call, so they must not collect the graph of an input produced by a differentiable
         op."""
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
@@ -1420,7 +1427,7 @@ class TestTRTInferenceCudaGraph:
 
         assert runtime._static_inputs["input"].requires_grad is False
 
-    def test_an_input_that_requires_grad_is_accepted_after_a_no_grad_warm_up(self) -> None:
+    def test_input_that_requires_grad_is_accepted_after_a_no_grad_warm_up(self) -> None:
         """A view made under ``torch.no_grad()`` by the warm-up call can still be written by a call that needs grad."""
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
         with torch.no_grad():
@@ -1451,7 +1458,7 @@ class TestTRTInferenceCudaGraph:
 
         assert (first, second) == (192 + 200, 384 + 600)
 
-    def test_a_replay_waits_for_the_caller_then_copies_and_replays_on_the_graph_stream_then_synchronizes(
+    def test_replay_waits_for_caller_then_copies_replays_and_synchronizes_in_order(
         self, fake_cuda_graphs: _FakeCudaGraphs, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The order of a replayed call: mark and wait for the caller's stream, then copy and replay on the graph
@@ -1489,7 +1496,7 @@ class TestTRTInferenceCudaGraph:
         assert fake_cuda_graphs.capture_error_modes == ["thread_local"]
 
     @pytest.mark.parametrize(("arrange_failure", "cause"), _CAPTURE_FAILURES)
-    def test_a_failed_capture_gives_the_caller_its_stream_back(
+    def test_failed_capture_gives_the_caller_its_stream_back(
         self,
         fake_cuda_graphs: _FakeCudaGraphs,
         arrange_failure: Callable[[_FakeCudaGraphs, TRTInference], None],
@@ -1503,9 +1510,10 @@ class TestTRTInferenceCudaGraph:
         caller_stream = fake_cuda_graphs.current
         arrange_failure(fake_cuda_graphs, runtime)
 
-        with pytest.raises(RuntimeError, match=f"CUDA graph: {re.escape(cause.rstrip('.'))}"):
+        with pytest.raises(RuntimeError) as refusal:
             runtime({"input": torch.zeros(1, 3, 8, 8)})
 
+        assert f"CUDA graph: {cause.rstrip('.')}" in str(refusal.value)
         assert fake_cuda_graphs.current is caller_stream
 
     def test_every_launch_and_replay_runs_on_the_engine_device(
@@ -1611,7 +1619,7 @@ class TestTRTInferenceCudaGraphConstruction:
             pytest.param({"input": ("input", (-1, 3, 8, 8)), "aux": ("input", (-1, -1))}, id="dynamic-second-input"),
         ],
     )
-    def test_an_engine_whose_profile_lets_an_input_change_shape_is_refused(
+    def test_engine_whose_profile_lets_an_input_change_shape_is_refused(
         self,
         fake_tensorrt: _FakeTensorRTModule,
         tmp_path: Path,
@@ -1647,7 +1655,7 @@ class TestTRTInferenceCudaGraphConstruction:
         with pytest.raises(ValueError, match="sync_mode=True instead of cuda_graph=True"):
             TRTInference(engine_file, cuda_graph=True)
 
-    def test_a_fixed_batch_engine_with_a_dynamic_image_size_gets_the_error_of_every_mode(
+    def test_fixed_batch_engine_with_a_dynamic_image_size_gets_the_error_of_every_mode(
         self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
     ) -> None:
         """No mode can size such an input, so the refusal must not advise ``sync_mode=True`` for it."""
@@ -1683,7 +1691,7 @@ class TestTRTInferenceCudaGraphConstruction:
             ),
         ],
     )
-    def test_an_engine_whose_profile_0_pins_every_axis_is_accepted(
+    def test_engine_whose_profile_0_pins_every_axis_is_accepted(
         self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, engine: _FakeEngine
     ) -> None:
         """An engine that reports dynamic axes keeps graph replay when profile 0, the one the runtime runs, pins them.
@@ -1729,7 +1737,7 @@ class TestTRTInferenceCudaGraphConstruction:
 class TestTRTInferenceEngineLoading:
     """TensorRT reports an engine or context it cannot create by returning ``None``, never by raising."""
 
-    def test_an_undeserializable_engine_raises_a_rebuild_hint(
+    def test_undeserializable_engine_raises_a_rebuild_hint(
         self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
     ) -> None:
         """An engine from another TensorRT version or GPU, or a truncated copy, names the file and the fix.
@@ -1741,8 +1749,11 @@ class TestTRTInferenceEngineLoading:
         engine_file.write_bytes(b"not an engine for this machine")
         fake_tensorrt.runtime.engine = None
 
-        with pytest.raises(RuntimeError, match=re.escape(str(engine_file)) + ".*Rebuild"):
+        with pytest.raises(RuntimeError) as refusal:
             TRTInference(str(engine_file), device="cuda:0", sync_mode=True)
+
+        assert str(engine_file) in str(refusal.value)
+        assert "Rebuild" in str(refusal.value)
 
     @pytest.mark.parametrize(
         ("keywords", "allowed"),
@@ -1788,7 +1799,7 @@ class TestTRTInferenceEngineLoading:
         with pytest.raises(ValueError, match="engine_host_code_allowed"):
             TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=value)
 
-    def test_a_failure_with_host_code_allowed_does_not_suggest_allowing_it(
+    def test_failure_with_host_code_allowed_does_not_suggest_allowing_it(
         self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
     ) -> None:
         """The caller already opted in, so the message points at the other reasons an engine does not load."""
@@ -1803,7 +1814,7 @@ class TestTRTInferenceEngineLoading:
         assert "could not deserialize" in message
         assert "engine_host_code_allowed" not in message
 
-    def test_a_tensorrt_without_the_host_code_switch_still_loads_the_engine(
+    def test_tensorrt_without_the_host_code_switch_still_loads_the_engine(
         self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
     ) -> None:
         """A release that predates the switch has no gate to open, so the opt-in must not become an AttributeError."""
@@ -1817,7 +1828,7 @@ class TestTRTInferenceEngineLoading:
 
         assert loaded.engine is runtime.engine
 
-    def test_a_tensorrt_without_the_host_code_switch_says_the_opt_in_had_no_effect(
+    def test_tensorrt_without_the_host_code_switch_says_the_opt_in_had_no_effect(
         self, monkeypatch: pytest.MonkeyPatch, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
     ) -> None:
         """If the property is ever renamed, the caller who passed ``True`` must be told it did nothing."""
@@ -1845,10 +1856,12 @@ class TestTRTInferenceEngineLoading:
         engine_file.write_bytes(b"not an engine for this machine")
         fake_tensorrt.runtime.engine = None
 
-        with pytest.raises(RuntimeError, match=re.escape(phrase)):
+        with pytest.raises(RuntimeError) as refusal:
             TRTInference(str(engine_file), device="cuda:0", sync_mode=True)
 
-    def test_a_missing_execution_context_is_reported(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
+        assert phrase in str(refusal.value)
+
+    def test_missing_execution_context_is_reported(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
         """A context TensorRT could not create is reported at construction, not at the first call."""
         engine_file = tmp_path / "model.trt"
         engine_file.write_bytes(b"engine")
@@ -1947,7 +1960,7 @@ class TestTRTInferenceDevice:
         assert active == [torch.device("cpu")]
 
     @pytest.mark.parametrize("sync_mode", [True, False])
-    def test_a_launch_failure_propagates_and_exits_the_device_scope(
+    def test_launch_failure_propagates_and_exits_the_device_scope(
         self, cuda_device_recorder: _DeviceRecorder, sync_mode: bool
     ) -> None:
         """An exception from the real TensorRT launch call is neither swallowed nor left holding the device scope.
@@ -1966,9 +1979,7 @@ class TestTRTInferenceDevice:
         assert cuda_device_recorder.current is None
 
     @pytest.mark.parametrize("device", ["cpu", "mps", "xpu", pytest.param("cuda:x", id="malformed-index")])
-    def test_a_non_cuda_device_is_refused(
-        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, device: str
-    ) -> None:
+    def test_non_cuda_device_is_refused(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, device: str) -> None:
         """TensorRT cannot run on anything but CUDA; ``device="cpu"`` used to load the engine with buffers in host
         memory.
 
@@ -2016,6 +2027,8 @@ class TestTRTInferenceDevice:
 
 
 class TestBenchmarkMain:
+    """``benchmark.main`` routes the requested device and engine options to the matching runtime."""
+
     @pytest.mark.parametrize(
         ("device", "expected_torch_device"),
         [
@@ -2024,21 +2037,17 @@ class TestBenchmarkMain:
         ],
     )
     def test_onnx_benchmark_uses_requested_cuda_device(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        device: int,
-        expected_torch_device: str,
+        self, monkeypatch: pytest.MonkeyPatch, mocker, device: int, expected_torch_device: str
     ) -> None:
         """ONNX Runtime and PyTorch should use the requested CUDA device."""
-        session = Mock()
-        inference_session = Mock(return_value=session)
+        session = mocker.Mock()
+        inference_session = mocker.Mock(return_value=session)
         onnxruntime = ModuleType("onnxruntime")
         onnxruntime.InferenceSession = inference_session  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
 
-        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
-        infer_onnx = Mock()
-        monkeypatch.setattr(benchmark, "infer_onnx", infer_onnx)
+        mocker.patch.object(benchmark, "get_image_list", return_value=[])
+        infer_onnx = mocker.patch.object(benchmark, "infer_onnx")
 
         benchmark.main("model.onnx", device=device, disable_eval=True)
 
@@ -2052,14 +2061,14 @@ class TestBenchmarkMain:
         assert infer_onnx.call_args.kwargs["repeats"] == 1
 
     @pytest.mark.parametrize("device", [0, 7])
-    def test_trt_benchmark_uses_requested_cuda_device(self, monkeypatch: pytest.MonkeyPatch, device: int) -> None:
+    def test_trt_benchmark_uses_requested_cuda_device(
+        self, monkeypatch: pytest.MonkeyPatch, mocker, device: int
+    ) -> None:
         """The TensorRT branch hands the requested device to the runtime, the input pipeline and the latency timer."""
-        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
-        load_session = Mock()
-        monkeypatch.setattr(benchmark, "_load_tensorrt_session", load_session)
+        mocker.patch.object(benchmark, "get_image_list", return_value=[])
+        load_session = mocker.patch.object(benchmark, "_load_tensorrt_session")
         monkeypatch.delattr(trt_inference, "TRTInference")
-        infer_engine = Mock()
-        monkeypatch.setattr(benchmark, "infer_engine", infer_engine)
+        infer_engine = mocker.patch.object(benchmark, "infer_engine")
 
         benchmark.main("model.trt", device=device, disable_eval=True)
 
@@ -2070,17 +2079,14 @@ class TestBenchmarkMain:
         assert infer_engine.call_args.args[2].device == torch.device(f"cuda:{device}")
 
     @pytest.mark.parametrize("engine_path", ["model.trt", "model.engine"])
-    def test_trt_benchmark_forwards_the_host_code_opt_in(
-        self, monkeypatch: pytest.MonkeyPatch, engine_path: str
-    ) -> None:
+    def test_trt_benchmark_forwards_the_host_code_opt_in(self, mocker, engine_path: str) -> None:
         """A version-compatible engine can be benchmarked once the caller opts in, as with ``TRTInference`` itself.
 
         Both engine suffixes the benchmark routes to TensorRT carry the opt-in.
         """
-        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
-        load_session = Mock()
-        monkeypatch.setattr(benchmark, "_load_tensorrt_session", load_session)
-        monkeypatch.setattr(benchmark, "infer_engine", Mock())
+        mocker.patch.object(benchmark, "get_image_list", return_value=[])
+        load_session = mocker.patch.object(benchmark, "_load_tensorrt_session")
+        mocker.patch.object(benchmark, "infer_engine")
 
         benchmark.main(engine_path, disable_eval=True, engine_host_code_allowed=True)
 
@@ -2088,17 +2094,16 @@ class TestBenchmarkMain:
 
     @faster_coco_eval_only
     def test_eval_enabled_passes_a_loaded_coco_object_to_the_evaluator(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
     ) -> None:
         """``main`` loads the annotation file so ``CocoEvaluator`` receives a COCO object, not a path string."""
         annotations = tmp_path / "annotations"
         annotations.mkdir()
         (annotations / "instances_val2017.json").write_text(json.dumps(_MINIMAL_COCO))
         onnxruntime = ModuleType("onnxruntime")
-        onnxruntime.InferenceSession = Mock(return_value=Mock())  # type: ignore[attr-defined]
+        onnxruntime.InferenceSession = mocker.Mock(return_value=mocker.Mock())  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
-        infer_onnx = Mock()
-        monkeypatch.setattr(benchmark, "infer_onnx", infer_onnx)
+        infer_onnx = mocker.patch.object(benchmark, "infer_onnx")
 
         benchmark.main("model.onnx", coco_path=str(tmp_path), disable_eval=False)
 
@@ -2126,30 +2131,13 @@ class TestBenchmarkShapeParameterization:
 
         assert image_tensor.shape == (3, 640, 640)
 
-    def test_static_dim_returns_concrete_int(self) -> None:
-        """A concrete positive dimension is returned unchanged."""
-        from rfdetr.export.benchmark import _static_dim
-
-        assert _static_dim(384, 640) == 384
-
-    @pytest.mark.parametrize(
-        "value",
-        [
-            pytest.param("height", id="dynamic-string"),
-            pytest.param(None, id="none"),
-            pytest.param(-1, id="negative"),
-        ],
-    )
-    def test_static_dim_falls_back_for_dynamic_axis(self, value) -> None:
-        """Dynamic/unknown axes fall back to the provided default."""
-        from rfdetr.export.benchmark import _static_dim
-
-        assert _static_dim(value, 640) == 640
+    @pytest.mark.parametrize(("value", "expected"), [(384, 384), ("height", 640), (None, 640), (-1, 640)])
+    def test_static_dim_keeps_concrete_size_and_defaults_dynamic_axis(self, value: object, expected: int) -> None:
+        """A concrete positive dimension is returned unchanged; dynamic or unknown axes fall back to the default."""
+        assert _static_dim(value, 640) == expected
 
     def test_post_process_respects_num_queries(self) -> None:
         """post_process selects exactly num_queries detections per image."""
-        from rfdetr.export.benchmark import post_process
-
         num_queries = 5
         outputs = {
             "labels": torch.rand(1, 20, 3),
@@ -2167,8 +2155,6 @@ class TestBenchmarkShapeParameterization:
         Each pick must reproduce that query's exact box, so duplicated and out-of-order query indices have to copy the
         source row verbatim for every occurrence.
         """
-        from rfdetr.export.benchmark import box_cxcywh_to_xyxy, post_process
-
         logits = torch.full((1, 4, 3), -10.0)
         logits[0, 2, 0] = 3.0  # query 2, class 0 -> rank 1
         logits[0, 2, 1] = 2.0  # query 2, class 1 -> rank 2 (same query twice)

@@ -21,6 +21,7 @@ backend.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from unittest import mock
 
 import numpy as np
@@ -47,10 +48,25 @@ def _reference_select_topk(
 
 
 class TestTopkSelectionParity:
-    def test_float32_partial_selection_uses_partition_without_full_sort(self) -> None:
-        """The common float32 partial-selection path partitions instead of sorting the complete score grid."""
-        rng = np.random.default_rng(12)
-        scores_all = rng.random((300, 91), dtype=np.float32)
+    """The export decoder's top-k selection matches ``PostProcess._select_topk`` for the same scores."""
+
+    @pytest.mark.parametrize(
+        ("seed", "num_classes", "partition_calls", "lexsort_calls"),
+        [
+            pytest.param(12, 91, 1, 0, id="sparse-partitions"),
+            pytest.param(13, 2, 0, 1, id="dense-full-sort"),
+        ],
+    )
+    def test_float32_selection_partitions_only_when_sparse(
+        self, seed: int, num_classes: int, partition_calls: int, lexsort_calls: int
+    ) -> None:
+        """Partial selection partitions the score grid; selecting over a quarter of it keeps the full sort.
+
+        The common float32 path avoids sorting the complete grid, while selecting more than one quarter of it avoids the
+        partition overhead.
+        """
+        rng = np.random.default_rng(seed)
+        scores_all = rng.random((300, num_classes), dtype=np.float32)
         num_select = 300
         flat_scores = scores_all.reshape(-1)
         flat_idx = np.arange(flat_scores.size, dtype=np.int64)
@@ -62,28 +78,7 @@ class TestTopkSelectionParity:
         ):
             scores, labels, queries = _select_topk_multiclass(scores_all, threshold=-1.0, num_select=num_select)
 
-        partition.assert_called_once()
-        lexsort.assert_not_called()
-        np.testing.assert_array_equal(scores.view(np.uint32), flat_scores[expected_idx].view(np.uint32))
-        np.testing.assert_array_equal(queries * scores_all.shape[1] + labels, expected_idx)
-
-    def test_dense_float32_selection_retains_full_sort(self) -> None:
-        """Selecting more than one quarter of the grid avoids partition overhead."""
-        rng = np.random.default_rng(13)
-        scores_all = rng.random((300, 2), dtype=np.float32)
-        num_select = 300
-        flat_scores = scores_all.reshape(-1)
-        flat_idx = np.arange(flat_scores.size, dtype=np.int64)
-        expected_idx = np.lexsort((flat_idx, -flat_scores))[:num_select]
-
-        with (
-            mock.patch("rfdetr.export._topk.np.argpartition", wraps=np.argpartition) as partition,
-            mock.patch("rfdetr.export._topk.np.lexsort", wraps=np.lexsort) as lexsort,
-        ):
-            scores, labels, queries = _select_topk_multiclass(scores_all, threshold=-1.0, num_select=num_select)
-
-        partition.assert_not_called()
-        lexsort.assert_called_once()
+        assert (partition.call_count, lexsort.call_count) == (partition_calls, lexsort_calls)
         np.testing.assert_array_equal(scores.view(np.uint32), flat_scores[expected_idx].view(np.uint32))
         np.testing.assert_array_equal(queries * scores_all.shape[1] + labels, expected_idx)
 
@@ -139,10 +134,8 @@ class TestTopkSelectionParity:
         threshold = 0.3
 
         fg_logits = rng.normal(loc=-1.0, scale=3.0, size=(num_queries, num_fg_classes)).astype(np.float32)
-        # No-object slot: deeply suppressed, matching real training (class_embed never receives a
-        # positive target for it — see rfdetr/export/_topk.py) so it never wins topk in the
-        # reference either. This keeps the comparison apples-to-apples with what _run_inference
-        # actually computes: it drops this column before calling our helper (inference.py:238-240).
+        # No-object slot is deeply suppressed as in real training (see rfdetr/export/_topk.py) so it never wins topk;
+        # _run_inference drops this column before calling our helper (inference.py:238-240).
         bg_logits = np.full((num_queries, 1), -100.0, dtype=np.float32)
         logits_with_bg = torch.from_numpy(np.concatenate([fg_logits, bg_logits], axis=1))
 
@@ -162,10 +155,8 @@ class TestTopkSelectionParity:
         got_scores, got_labels, got_query = _select_topk_multiclass(scores_all, threshold, num_select=300)
         got_by_pair = {(int(q), int(c)): float(s) for q, c, s in zip(got_query, got_labels, got_scores)}
 
-        # Compare which (query, class) pairs were selected exactly; compare their scores with a
-        # tight tolerance rather than exact equality — torch's fused sigmoid kernel and this
-        # module's `1/(1+exp(-x))` NumPy formula can differ in the last float32 ULP on the same
-        # input, which is expected numerical noise, not a selection-logic discrepancy.
+        # Pairs must match exactly; scores get a tight tolerance because torch's fused sigmoid and the NumPy
+        # `1/(1+exp(-x))` can differ in the last float32 ULP (numerical noise, not a selection discrepancy).
         assert set(got_by_pair) == set(ref_by_pair)
         for pair, ref_s in ref_by_pair.items():
             assert got_by_pair[pair] == pytest.approx(ref_s, abs=1e-4)
@@ -216,9 +207,17 @@ class TestTopkSelectionParity:
         assert got_labels.shape == (num_select,)
         assert got_query.tolist() == list(range(num_select))
 
-    def test_zero_selection_returns_empty_arrays(self) -> None:
-        """Selecting zero pairs returns no detections, even when scores clear the threshold."""
-        scores, labels, queries = _select_topk_multiclass(np.array([[0.9, 0.8]], dtype=np.float32), 0.0, num_select=0)
+    @pytest.mark.parametrize(
+        ("scores_all", "kwargs"),
+        [
+            pytest.param(np.array([[0.9, 0.8]], dtype=np.float32), {"num_select": 0}, id="zero-selection"),
+            pytest.param(np.empty((0, 3), dtype=np.float32), {}, id="empty-query-grid"),
+        ],
+    )
+    def test_nothing_to_select_returns_empty_arrays(self, scores_all: np.ndarray, kwargs: dict[str, int]) -> None:
+        """Selecting zero pairs, or an empty query grid, returns typed empty outputs even when scores clear the
+        threshold."""
+        scores, labels, queries = _select_topk_multiclass(scores_all, 0.0, **kwargs)
 
         assert scores.shape == (0,)
         assert labels.shape == (0,)
@@ -235,12 +234,21 @@ class TestTopkSelectionParity:
         np.testing.assert_array_equal(labels, reference_labels.numpy())
         np.testing.assert_array_equal(queries, reference_queries.numpy())
 
-    def test_negative_selection_is_rejected(self) -> None:
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(
+                lambda: _select_topk_multiclass(np.ones((1, 1), dtype=np.float32), 0.0, num_select=-1), id="export"
+            ),
+            pytest.param(lambda: PostProcess(num_select=-1), id="postprocess"),
+        ],
+    )
+    def test_negative_selection_is_rejected(self, build: Callable[[], object]) -> None:
         """Negative selection caps are invalid for both export and PyTorch postprocessing."""
-        with pytest.raises(ValueError, match="non-negative"):
-            _select_topk_multiclass(np.ones((1, 1), dtype=np.float32), 0.0, num_select=-1)
-        with pytest.raises(ValueError, match="non-negative"):
-            PostProcess(num_select=-1)
+        with pytest.raises(ValueError) as refusal:
+            build()
+
+        assert "non-negative" in str(refusal.value)
 
     def test_nan_cutoff_matches_postprocess_filtering(self) -> None:
         """NaN scores consume the same ranked slot and are then removed by the threshold filter."""
@@ -250,14 +258,6 @@ class TestTopkSelectionParity:
         scores, labels, queries = _select_topk_multiclass(torch.sigmoid(logits).numpy(), 0.3, num_select=1)
 
         assert reference_kept.shape == (0,)
-        assert scores.shape == (0,)
-        assert labels.shape == (0,)
-        assert queries.shape == (0,)
-
-    def test_empty_query_grid_returns_empty_arrays(self) -> None:
-        """An empty query grid is valid and produces typed empty outputs."""
-        scores, labels, queries = _select_topk_multiclass(np.empty((0, 3), dtype=np.float32), 0.0)
-
         assert scores.shape == (0,)
         assert labels.shape == (0,)
         assert queries.shape == (0,)

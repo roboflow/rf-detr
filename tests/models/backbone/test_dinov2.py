@@ -13,7 +13,6 @@ change to `compute_window_block_indexes` is a deliberate, visible decision rathe
 
 import copy
 import logging
-from unittest import mock
 
 import pytest
 import torch
@@ -60,21 +59,17 @@ class TestComputeWindowBlockIndexes:
         "out_feature_indexes, expected",
         [
             pytest.param(
-                # `RFDETRBaseConfig` here is a drift-guard introspection target: it reads the config's live
-                # default value so this test fails loudly if that default ever changes, not a usage example.
-                # AGENTS.md's guidance against RFDETRBaseConfig/RFDETRBase is scoped to models/examples/tests
-                # that *run* the deprecated model — it does not apply to introspecting a pydantic field default.
+                # Drift guard: reads RFDETRBaseConfig's live default so the test fails if it changes. AGENTS.md's ban on
+                # Base models covers running them, not introspecting a pydantic field default.
                 RFDETRBaseConfig.model_fields["out_feature_indexes"].default,
                 [0, 1, 3, 4, 6, 7, 9, 10],
                 id="base-config-2-5-8-11",
             ),
             pytest.param(
-                # Verified via `grep out_feature_indexes src/rfdetr/config.py` (and rfdetr_plus/models/detection.py):
-                # every released non-Base config shares this exact default — Nano, Small, Medium, Large, XLarge, and
-                # 2XLarge detection configs, every RFDETRSeg* size (Preview/Nano/Small/Medium/Large/XLarge/2XLarge),
-                # and RFDETRKeypointPreviewConfig. `compute_window_block_indexes` is a pure function of its input
-                # list with no per-variant branching, so this single case already covers all of them — pinning each
-                # variant separately would add rows with zero new failure-mode coverage.
+                # Shared by every released non-Base config (all detection sizes Nano-2XLarge, every RFDETRSeg* size,
+                # RFDETRKeypointPreviewConfig), verified via grep of out_feature_indexes in src/rfdetr/config.py and
+                # rfdetr_plus/models/detection.py. The function is pure with no per-variant branching, so one case
+                # covers them all.
                 RFDETRSmallConfig.model_fields["out_feature_indexes"].default,
                 [0, 1, 2, 4, 5, 7, 8, 10, 11],
                 id="small-config-3-6-9-12-shared-by-all-released-non-base-variants",
@@ -289,19 +284,18 @@ class TestSkippedDinov2WeightsWarning:
 
         assert len(self._skipped_weights_messages(caplog)) == expected_count
 
-    def test_no_warning_when_requested_weights_match_dinov2_shape(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_no_warning_when_requested_weights_match_dinov2_shape(
+        self, mocker, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Requesting DINOv2 weights with the DINOv2 patch size and positional encodings stays silent and loads them.
 
         Guards against over-gating: with patch size 14 and 37 positional encodings the shapes match, so the hub loader
         must still run and no skipped-weights warning may appear. The hub call is the network boundary, so it is
         replaced.
         """
-        with (
-            mock.patch.object(
-                WindowedDinov2WithRegistersBackbone, "from_pretrained", return_value=nn.Identity()
-            ) as hub,
-            caplog.at_level(logging.WARNING, logger="rf-detr"),
-        ):
+        hub = mocker.patch.object(WindowedDinov2WithRegistersBackbone, "from_pretrained", return_value=nn.Identity())
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
             DinoV2(
                 out_feature_indexes=[12],
                 size="small",

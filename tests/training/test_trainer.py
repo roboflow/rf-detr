@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import sys
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -36,25 +36,23 @@ class TestProgressBarCallbacks:
     checked with ``isinstance`` against the base PTL classes rather than exact ``type(cb) in [...]`` matches.
     """
 
-    def test_rich_progress_bar_installed_for_rich(self, base_model_config, base_train_config):
-        """progress_bar='rich' must add a RichProgressBar and no TQDMProgressBar."""
-        mc = base_model_config()
-        tc = base_train_config(progress_bar="rich")
-        trainer = build_trainer(tc, mc, accelerator="cpu")
-        assert any(isinstance(cb, RichProgressBar) for cb in trainer.callbacks)
-        assert not any(isinstance(cb, TQDMProgressBar) for cb in trainer.callbacks)
-        assert any(isinstance(cb, GPUMemoryRichProgressBar) for cb in trainer.callbacks)
+    @pytest.mark.parametrize(
+        ("progress_bar", "installed_cls", "other_cls", "gpu_memory_cls"),
+        [
+            pytest.param("rich", RichProgressBar, TQDMProgressBar, GPUMemoryRichProgressBar, id="rich"),
+            pytest.param("tqdm", TQDMProgressBar, RichProgressBar, GPUMemoryTQDMProgressBar, id="tqdm"),
+        ],
+    )
+    def test_installs_matching_progress_bar(
+        self, base_model_config, base_train_config, progress_bar, installed_cls, other_cls, gpu_memory_cls
+    ):
+        """progress_bar='rich'/'tqdm' installs the matching GPU-memory bar and none of the other kind."""
+        trainer = build_trainer(base_train_config(progress_bar=progress_bar), base_model_config(), accelerator="cpu")
+        assert any(isinstance(cb, installed_cls) for cb in trainer.callbacks)
+        assert not any(isinstance(cb, other_cls) for cb in trainer.callbacks)
+        assert any(isinstance(cb, gpu_memory_cls) for cb in trainer.callbacks)
 
-    def test_tqdm_progress_bar_installed_for_tqdm(self, base_model_config, base_train_config):
-        """progress_bar='tqdm' must add a TQDMProgressBar and no RichProgressBar."""
-        mc = base_model_config()
-        tc = base_train_config(progress_bar="tqdm")
-        trainer = build_trainer(tc, mc, accelerator="cpu")
-        assert any(isinstance(cb, TQDMProgressBar) for cb in trainer.callbacks)
-        assert not any(isinstance(cb, RichProgressBar) for cb in trainer.callbacks)
-        assert any(isinstance(cb, GPUMemoryTQDMProgressBar) for cb in trainer.callbacks)
-
-    def test_progress_bar_refresh_rate_is_five(self, base_model_config, base_train_config):
+    def test_progress_bar_refreshes_every_five_batches(self, base_model_config, base_train_config):
         """The installed progress bar callback should refresh every five batches."""
         mc = base_model_config()
         tc = base_train_config(progress_bar="tqdm")
@@ -63,7 +61,7 @@ class TestProgressBarCallbacks:
 
         assert progress_bar.refresh_rate == 5
 
-    def test_rich_progress_bar_leaves_completed_epoch_bars(self, base_model_config, base_train_config):
+    def test_rich_bar_leaves_completed_epochs(self, base_model_config, base_train_config):
         """progress_bar='rich' must leave each completed epoch bar in the terminal history.
 
         Without ``leave=True``, ``RichProgressBar`` overwrites the previous epoch's bar in place, so a run that never
@@ -76,7 +74,7 @@ class TestProgressBarCallbacks:
 
         assert progress_bar._leave is True
 
-    def test_no_progress_bar_callback_for_none(self, base_model_config, base_train_config):
+    def test_no_progress_bar_for_none(self, base_model_config, base_train_config):
         """progress_bar=None must not add any progress bar callback."""
         mc = base_model_config()
         tc = base_train_config(progress_bar=None)
@@ -97,7 +95,7 @@ class TestProgressBarCallbacks:
 
         assert trainer.num_sanity_val_steps == 2
 
-    def test_num_sanity_val_steps_kwarg_overrides_disabled_default(self, base_model_config, base_train_config):
+    def test_num_sanity_val_steps_kwarg_overrides_default(self, base_model_config, base_train_config):
         """A caller-supplied ``num_sanity_val_steps`` kwarg must survive the trainer_config.update() merge.
 
         build_trainer() disables sanity validation by default (see the previous test). A caller that explicitly wants
@@ -127,9 +125,7 @@ class TestRichProgressBarLoggerIntegration:
     mid-epoch from inside a callback hook, while Rich's ``Live`` display is genuinely active.
     """
 
-    def test_logger_call_during_rich_fit_tracks_the_live_redirected_stream(
-        self, base_model_config, base_train_config
-    ) -> None:
+    def test_logger_tracks_rich_live_redirect_during_fit(self, base_model_config, base_train_config, mocker) -> None:
         """A logger constructed before fit() (mirrors the real module-import call site) must still follow the redirect
         Rich installs for the duration of ``Trainer.fit()``, not the stream it saw at construction time.
 
@@ -164,25 +160,22 @@ class TestRichProgressBarLoggerIntegration:
                 logger.info("checkpoint-style message mid-epoch")
                 seen_during_batch.append((stdout_handler.stream, sys.stdout))
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4)),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
-            progress_bar_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RichProgressBar))
-            progress_bar_cb._console_kwargs = {"force_terminal": True}
-            trainer.callbacks.append(_LogDuringBatch())
-            trainer.fit(module, datamodule=datamodule)
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+        )
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4))
+        mocker.patch(
+            "rfdetr.training.module_model.get_param_dict", side_effect=lambda args, model: _make_param_dicts(model)
+        )
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
+        progress_bar_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RichProgressBar))
+        progress_bar_cb._console_kwargs = {"force_terminal": True}
+        trainer.callbacks.append(_LogDuringBatch())
+        trainer.fit(module, datamodule=datamodule)
 
         assert seen_during_batch, "on_train_batch_end never fired — fast_dev_run did not run a batch"
         handler_stream, live_stdout = seen_during_batch[0]
@@ -205,14 +198,8 @@ class TestCoerceLegacyProgressBar:
     """_coerce_legacy_progress_bar must normalise legacy bool values."""
 
     @pytest.mark.parametrize(
-        "value, expected",
-        [
-            pytest.param(True, "tqdm", id="True->tqdm"),
-            pytest.param(False, None, id="False->None"),
-            pytest.param("rich", "rich", id="rich_passthrough"),
-            pytest.param("tqdm", "tqdm", id="tqdm_passthrough"),
-            pytest.param(None, None, id="None_passthrough"),
-        ],
+        ("value", "expected"),
+        [(True, "tqdm"), (False, None), ("rich", "rich"), ("tqdm", "tqdm"), (None, None)],
     )
     def test_coerce(self, base_train_config, value, expected):
         """progress_bar field normalises legacy bool and passes through string/None."""

@@ -6,7 +6,6 @@
 """Tests for PostProcess box clamping behaviour."""
 
 import weakref
-from unittest.mock import patch
 
 import pytest
 import torch
@@ -17,23 +16,104 @@ from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities import box_ops
 from tests._markers import requires_torch_xla
 
+_skip_without_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+
+
+def _cyclic_mask_case(
+    num_queries: int,
+    num_select: int,
+    mask_hw: int = 8,
+    size: int = 64,
+    device: str | torch.device = "cpu",
+    target_device: str | torch.device | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Return ``_postprocess_masks`` arguments for one image whose top-k cycles through the queries.
+
+    Args:
+        num_queries: Number of mask-head queries.
+        num_select: Number of selected detections; query ``i % num_queries`` is picked for detection ``i``.
+        mask_hw: Side of the square native mask-head resolution.
+        size: Side of the square target image size.
+        device: Device of every tensor except possibly ``target_sizes``.
+        target_device: Device of ``target_sizes``; defaults to ``device``.
+
+    Returns:
+        ``(out_masks, scores, labels, boxes, topk_boxes, target_sizes)``.
+
+    Examples:
+        >>> out_masks, _, _, _, topk_boxes, target_sizes = _cyclic_mask_case(4, 6)
+        >>> out_masks.shape, topk_boxes.tolist(), target_sizes.tolist()
+        (torch.Size([1, 4, 8, 8]), [[0, 1, 2, 3, 0, 1]], [[64, 64]])
+    """
+    target_device = device if target_device is None else target_device
+    out_masks = torch.randn(1, num_queries, mask_hw, mask_hw, device=device)
+    scores = torch.rand(1, num_select, device=device)
+    labels = torch.zeros(1, num_select, dtype=torch.long, device=device)
+    boxes = torch.zeros(1, num_select, 4, device=device)
+    topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to(device)
+    target_sizes = torch.tensor([[size, size]], device=target_device)
+    return out_masks, scores, labels, boxes, topk_boxes, target_sizes
+
+
+def _chunked_upsampled_masks(out_masks: torch.Tensor, topk_boxes: torch.Tensor, size: int) -> torch.Tensor:
+    """Return the selected masks resized chunk by chunk to ``size`` x ``size`` and thresholded at 0 (reference result).
+
+    Examples:
+        >>> _chunked_upsampled_masks(torch.ones(1, 2, 4, 4), torch.tensor([[0, 1, 0]]), 8).shape
+        torch.Size([3, 1, 8, 8])
+    """
+    selected = out_masks[0].index_select(0, topk_boxes[0])
+    chunk = postprocess._MASK_CHUNK
+    return torch.cat(
+        [
+            F.interpolate(
+                selected[start : start + chunk].unsqueeze(1), size=(size, size), mode="bilinear", align_corners=False
+            )
+            > 0.0
+            for start in range(0, selected.shape[0], chunk)
+        ],
+        dim=0,
+    )
+
 
 class TestGatherAndScaleBoxes:
     """Tests for :meth:`PostProcess._gather_and_scale_boxes`."""
 
-    def test_clamps_boxes_to_image_bounds(self):
-        """Boxes that extrapolate beyond [0, 1] in normalized space are clamped to pixel-space image dimensions after
-        scaling."""
-        # Three synthetic boxes in cxcywh normalized coords:
-        #   [0] cx=0.01, w=0.10 → x1 = (0.01 - 0.05) * 640 = -25.6  ← negative
-        #   [1] cx=0.99, w=0.10 → x2 = (0.99 + 0.05) * 640 = 665.6  ← overflow
-        #   [2] cx=0.50, w=0.20 → fully in-bounds
+    @pytest.fixture
+    def duplicate_query_boxes(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return in-bounds ``(out_bbox, topk_boxes, target_sizes)`` selecting query 2 twice, then query 1.
+
+        All boxes are in-bounds, so clamping is a no-op and the gather is an exact row copy.
+
+        Examples:
+            Pytest fixtures cannot be called directly outside fixture injection.
+
+            >>> TestGatherAndScaleBoxes.duplicate_query_boxes(None)  # doctest: +SKIP
+        """
         out_bbox = torch.tensor(
             [
                 [
-                    [0.01, 0.01, 0.10, 0.10],  # negative x1, y1 after scale
-                    [0.99, 0.99, 0.10, 0.10],  # x2 > img_w, y2 > img_h after scale
-                    [0.50, 0.50, 0.20, 0.20],  # in-bounds control
+                    [0.20, 0.30, 0.10, 0.10],
+                    [0.50, 0.50, 0.20, 0.20],
+                    [0.70, 0.40, 0.15, 0.25],
+                ]
+            ]
+        )  # (B=1, Q=3, 4)
+        topk_boxes = torch.tensor([[2, 2, 1]])  # query 2 selected twice, then query 1 (out of order)
+        target_sizes = torch.tensor([[480, 640]])  # (h, w)
+        return out_bbox, topk_boxes, target_sizes
+
+    def test_clamps_boxes_to_image_bounds(self):
+        """Boxes that extrapolate beyond [0, 1] in normalized space are clamped to pixel-space image dimensions after
+        scaling."""
+        # cxcywh normalized: [0] negative x1/y1 after scale (-25.6, -19.2), [1] x2/y2 overflow (665.6, 499.2),
+        # [2] in-bounds control.
+        out_bbox = torch.tensor(
+            [
+                [
+                    [0.01, 0.01, 0.10, 0.10],
+                    [0.99, 0.99, 0.10, 0.10],
+                    [0.50, 0.50, 0.20, 0.20],
                 ]
             ]
         )  # shape (B=1, Q=3, 4)
@@ -54,11 +134,9 @@ class TestGatherAndScaleBoxes:
         assert (boxes[..., 1] <= img_h).all()
         assert (boxes[..., 3] <= img_h).all()
 
-        # Exact clamped values — bounds-only check cannot catch a clamp returning e.g. 1.0 instead of 0.0
-        # box [0]: x1_raw=-25.6, y1_raw=-19.2 → clamped to 0.0
+        # Exact clamped values — a bounds-only check cannot catch a clamp returning e.g. 1.0 instead of 0.0
         assert boxes[0, 0, 0].item() == pytest.approx(0.0), "x1 of underflowing box must clamp to 0"
         assert boxes[0, 0, 1].item() == pytest.approx(0.0), "y1 of underflowing box must clamp to 0"
-        # box [1]: x2_raw=665.6 → clamped to img_w=640.0; y2_raw=499.2 → clamped to img_h=480.0
         assert boxes[0, 1, 2].item() == pytest.approx(640.0), "x2 of overflowing box must clamp to img_w"
         assert boxes[0, 1, 3].item() == pytest.approx(480.0), "y2 of overflowing box must clamp to img_h"
 
@@ -115,43 +193,18 @@ class TestGatherAndScaleBoxes:
 
         boxes = PostProcess._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
-        # Image 0: all coords must be in [0, 400]×[0, 300]
-        assert (boxes[0, :, 0] >= 0).all(), "img0 x1: expected >= 0"
-        assert (boxes[0, :, 0] <= 400).all(), "img0 x1: expected <= img_w (400)"
-        assert (boxes[0, :, 1] >= 0).all(), "img0 y1: expected >= 0"
-        assert (boxes[0, :, 1] <= 300).all(), "img0 y1: expected <= img_h (300)"
-        assert (boxes[0, :, 2] >= 0).all(), "img0 x2: expected >= 0"
-        assert (boxes[0, :, 2] <= 400).all(), "img0 x2: expected <= img_w (400)"
-        assert (boxes[0, :, 3] >= 0).all(), "img0 y2: expected >= 0"
-        assert (boxes[0, :, 3] <= 300).all(), "img0 y2: expected <= img_h (300)"
+        # Per-image upper bounds for (x1, y1, x2, y2): (img_w, img_h, img_w, img_h)
+        upper = torch.tensor([[[400.0, 300.0, 400.0, 300.0]], [[800.0, 600.0, 800.0, 600.0]]])
+        assert (boxes >= 0).all(), f"Negative coords present: {boxes[boxes < 0]}"
+        assert (boxes <= upper).all(), f"Coords exceed their own image size.\nBounds:\n{upper}\nGot:\n{boxes}"
 
-        # Image 1: all coords must be in [0, 800]×[0, 600]
-        assert (boxes[1, :, 0] >= 0).all(), "img1 x1: expected >= 0"
-        assert (boxes[1, :, 0] <= 800).all(), "img1 x1: expected <= img_w (800)"
-        assert (boxes[1, :, 1] >= 0).all(), "img1 y1: expected >= 0"
-        assert (boxes[1, :, 1] <= 600).all(), "img1 y1: expected <= img_h (600)"
-        assert (boxes[1, :, 2] >= 0).all(), "img1 x2: expected >= 0"
-        assert (boxes[1, :, 2] <= 800).all(), "img1 x2: expected <= img_w (800)"
-        assert (boxes[1, :, 3] >= 0).all(), "img1 y2: expected >= 0"
-        assert (boxes[1, :, 3] <= 600).all(), "img1 y2: expected <= img_h (600)"
-
-    def test_gathers_duplicate_and_out_of_order_indices(self):
+    def test_gathers_duplicate_and_out_of_order_indices(self, duplicate_query_boxes):
         """Top-k can pick the same query under two classes; each pick must reproduce that query's exact scaled box.
 
         The box gather selects whole rows by query index, so duplicated and out-of-order indices must copy the source
         box verbatim for every occurrence. Mirrors the TRT-benchmark twin on the shipped PostProcess path.
         """
-        out_bbox = torch.tensor(
-            [
-                [
-                    [0.20, 0.30, 0.10, 0.10],
-                    [0.50, 0.50, 0.20, 0.20],
-                    [0.70, 0.40, 0.15, 0.25],
-                ]
-            ]
-        )  # (B=1, Q=3, 4); all in-bounds so clamping is a no-op and the copy is exact
-        topk_boxes = torch.tensor([[2, 2, 1]])  # query 2 selected twice, then query 1 (out of order)
-        target_sizes = torch.tensor([[480, 640]])  # (h, w)
+        out_bbox, topk_boxes, target_sizes = duplicate_query_boxes
 
         boxes = PostProcess._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
@@ -163,21 +216,11 @@ class TestGatherAndScaleBoxes:
         assert torch.equal(boxes[0, 2], expected[1])
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_gather_and_scale_boxes_cuda_matches_cpu_for_duplicated_indices(self):
+    @_skip_without_cuda
+    def test_cuda_matches_cpu_for_duplicated_indices(self, duplicate_query_boxes):
         """Box selection is an arithmetic-free row copy, so CUDA must reproduce the CPU result bit-for-bit even with
         duplicated and out-of-order indices."""
-        out_bbox = torch.tensor(
-            [
-                [
-                    [0.20, 0.30, 0.10, 0.10],
-                    [0.50, 0.50, 0.20, 0.20],
-                    [0.70, 0.40, 0.15, 0.25],
-                ]
-            ]
-        )
-        topk_boxes = torch.tensor([[2, 2, 1]])
-        target_sizes = torch.tensor([[480, 640]])
+        out_bbox, topk_boxes, target_sizes = duplicate_query_boxes
 
         cpu_boxes = PostProcess._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
         cuda_boxes = PostProcess._gather_and_scale_boxes(out_bbox.cuda(), topk_boxes.cuda(), target_sizes.cuda())
@@ -188,15 +231,15 @@ class TestGatherAndScaleBoxes:
 class TestPostProcessForward:
     """Integration tests for :meth:`PostProcess.forward`."""
 
-    def test_forward_clamps_edge_boxes_to_bounds(self):
+    def test_clamps_edge_boxes_to_bounds(self):
         """PostProcess.forward returns non-negative in-bounds boxes for edge-hugging predictions."""
-        postprocess = PostProcess(num_select=2)
+        post_process = PostProcess(num_select=2)
         outputs = {
             "pred_logits": torch.tensor([[[10.0, -10.0], [9.0, -10.0]]]),
             "pred_boxes": torch.tensor([[[0.01, 0.01, 0.10, 0.10], [0.99, 0.99, 0.10, 0.10]]]),
         }
         target_sizes = torch.tensor([[480, 640]])
-        results = postprocess(outputs, target_sizes)
+        results = post_process(outputs, target_sizes)
         boxes = results[0]["boxes"]
         assert (boxes >= 0).all(), f"Negative coords present: {boxes[boxes < 0]}"
         assert (boxes[..., 0] <= 640).all(), "x1 exceeds img_w (640)"
@@ -210,39 +253,23 @@ class TestPostProcessMasks:
 
     def test_chunked_upsample_preserves_shape_for_large_k(self):
         """Chunked upsampling of K=64 masks returns full-resolution boolean masks of shape [K, 1, H, W]."""
-        batch, num_queries, mask_h, mask_w = 1, 64, 16, 16
-        num_select, img_h, img_w = 64, 512, 512
-        out_masks = torch.randn(batch, num_queries, mask_h, mask_w)
-        scores = torch.rand(batch, num_select)
-        labels = torch.zeros(batch, num_select, dtype=torch.long)
-        boxes = torch.zeros(batch, num_select, 4)
-        topk_boxes = torch.arange(num_select).unsqueeze(0)
-        target_sizes = torch.tensor([[img_h, img_w]])
+        args = _cyclic_mask_case(64, 64, mask_hw=16, size=512)
 
-        results = PostProcess._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes)
+        results = PostProcess._postprocess_masks(*args)
 
         masks = results[0]["masks"]
-        assert masks.shape == (num_select, 1, img_h, img_w)
+        assert masks.shape == (64, 1, 512, 512)
         assert masks.dtype == torch.bool
 
     def test_native_resolution_skips_upsample_when_flag_false(self):
         """upsample_masks_to_image_size=False returns masks at native mask-head resolution instead of target_sizes (opt-
         in validation-cost reduction, see TrainConfig.eval_masks_head_resolution)."""
-        batch, num_queries, mask_h, mask_w = 1, 8, 16, 16
-        num_select, img_h, img_w = 8, 512, 512
-        out_masks = torch.randn(batch, num_queries, mask_h, mask_w)
-        scores = torch.rand(batch, num_select)
-        labels = torch.zeros(batch, num_select, dtype=torch.long)
-        boxes = torch.zeros(batch, num_select, 4)
-        topk_boxes = torch.arange(num_select).unsqueeze(0)
-        target_sizes = torch.tensor([[img_h, img_w]])
+        args = _cyclic_mask_case(8, 8, mask_hw=16, size=512)
 
-        results = PostProcess._postprocess_masks(
-            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=False
-        )
+        results = PostProcess._postprocess_masks(*args, upsample_masks_to_image_size=False)
 
         masks = results[0]["masks"]
-        assert masks.shape == (num_select, 1, mask_h, mask_w)
+        assert masks.shape == (8, 1, 16, 16)
         assert masks.dtype == torch.bool
 
     def test_native_resolution_thresholds_at_zero_same_as_upsampled_path(self):
@@ -261,6 +288,7 @@ class TestPostProcessMasks:
         expected = torch.tensor([[True, False], [False, True]])
         assert torch.equal(results[0]["masks"].squeeze(1)[0], expected)
 
+    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=[pytest.mark.gpu, _skip_without_cuda])])
     @pytest.mark.parametrize(
         ("batch", "upsample", "expected_calls"),
         [
@@ -270,15 +298,18 @@ class TestPostProcessMasks:
         ],
     )
     def test_target_sizes_are_read_once_per_upsampled_batch(
-        self, batch: int, upsample: bool, expected_calls: list[tuple[int, ...]]
+        self, mocker, device: str, batch: int, upsample: bool, expected_calls: list[tuple[int, ...]]
     ) -> None:
-        """A non-empty upsampled batch reads all target sizes together; other paths do not read them."""
-        out_masks = torch.randn(batch, 1, 2, 2)
-        scores = torch.ones(batch, 1)
-        labels = torch.zeros(batch, 1, dtype=torch.long)
-        boxes = torch.zeros(batch, 1, 4)
-        topk_boxes = torch.zeros(batch, 1, dtype=torch.long)
-        target_sizes = torch.full((batch, 2), 8, dtype=torch.long)
+        """A non-empty upsampled batch reads all target sizes together; other paths do not read them.
+
+        On CUDA this is the device-to-host synchronization collapsed from one per image to one per batch.
+        """
+        out_masks = torch.randn(batch, 1, 2, 2, device=device)
+        scores = torch.ones(batch, 1, device=device)
+        labels = torch.zeros(batch, 1, dtype=torch.long, device=device)
+        boxes = torch.zeros(batch, 1, 4, device=device)
+        topk_boxes = torch.zeros(batch, 1, dtype=torch.long, device=device)
+        target_sizes = torch.full((batch, 2), 8, dtype=torch.long, device=device)
         calls: list[tuple[int, ...]] = []
         original_tolist = torch.Tensor.tolist
 
@@ -287,16 +318,11 @@ class TestPostProcessMasks:
             calls.append(tuple(tensor.shape))
             return original_tolist(tensor)
 
-        with patch.object(torch.Tensor, "tolist", tracked_tolist):
-            PostProcess._postprocess_masks(
-                out_masks,
-                scores,
-                labels,
-                boxes,
-                topk_boxes,
-                target_sizes,
-                upsample_masks_to_image_size=upsample,
-            )
+        mocker.patch.object(torch.Tensor, "tolist", tracked_tolist)
+
+        PostProcess._postprocess_masks(
+            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=upsample
+        )
 
         assert calls == expected_calls
 
@@ -321,52 +347,13 @@ class TestPostProcessMasks:
         results = PostProcess._postprocess_masks(out_masks, scores, labels, boxes, topk_boxes, target_sizes)
 
         expected_masks = [
-            torch.nn.functional.interpolate(
-                out_masks[0, 0][None, None], size=(4, 9), mode="bilinear", align_corners=False
-            )
-            > 0.0,
-            torch.nn.functional.interpolate(
-                out_masks[1, 0][None, None], size=(9, 4), mode="bilinear", align_corners=False
-            )
-            > 0.0,
+            F.interpolate(out_masks[0, 0][None, None], size=(4, 9), mode="bilinear", align_corners=False) > 0.0,
+            F.interpolate(out_masks[1, 0][None, None], size=(9, 4), mode="bilinear", align_corners=False) > 0.0,
         ]
         assert results[0]["masks"].shape == (1, 1, 4, 9)
         assert results[1]["masks"].shape == (1, 1, 9, 4)
         assert torch.equal(results[0]["masks"], expected_masks[0])
         assert torch.equal(results[1]["masks"], expected_masks[1])
-
-    @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_target_sizes_are_read_once_per_upsampled_batch_cuda(self) -> None:
-        """Same call-count guarantee as ``test_target_sizes_are_read_once_per_upsampled_batch`` above, with every input
-        tensor on CUDA — the actual site of the device-to-host synchronization this PR collapses from one per image to
-        one per batch."""
-        out_masks = torch.randn(4, 1, 2, 2, device="cuda")
-        scores = torch.ones(4, 1, device="cuda")
-        labels = torch.zeros(4, 1, dtype=torch.long, device="cuda")
-        boxes = torch.zeros(4, 1, 4, device="cuda")
-        topk_boxes = torch.zeros(4, 1, dtype=torch.long, device="cuda")
-        target_sizes = torch.full((4, 2), 8, dtype=torch.long, device="cuda")
-        calls: list[tuple[int, ...]] = []
-        original_tolist = torch.Tensor.tolist
-
-        def tracked_tolist(tensor: torch.Tensor) -> object:
-            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
-            calls.append(tuple(tensor.shape))
-            return original_tolist(tensor)
-
-        with patch.object(torch.Tensor, "tolist", tracked_tolist):
-            PostProcess._postprocess_masks(
-                out_masks,
-                scores,
-                labels,
-                boxes,
-                topk_boxes,
-                target_sizes,
-                upsample_masks_to_image_size=True,
-            )
-
-        assert calls == [(4, 2)]
 
     def test_duplicate_query_selection_repeats_the_same_mask_rows(self):
         """Top-k can pick the same query under two classes; each pick must yield that query's exact mask.
@@ -417,46 +404,32 @@ class TestPostProcessMasks:
         assert masks.shape == (num_select, 1, 64, 64)
         # Independent reference: resize query 2's source plane the same way the production path does.
         expected = (
-            torch.nn.functional.interpolate(
-                out_masks[0, 2][None, None], size=(64, 64), mode="bilinear", align_corners=False
-            )
-            > 0.0
+            F.interpolate(out_masks[0, 2][None, None], size=(64, 64), mode="bilinear", align_corners=False) > 0.0
         )[0]
         assert torch.equal(masks[0], masks[40])  # both occurrences identical across the chunk boundary
         assert torch.equal(masks[0], expected)  # and each maps to the correct source query, not query 0
 
-    def test_upsample_writes_chunks_into_preallocated_result_without_final_cat(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("device", "num_select"),
+        [
+            pytest.param("cpu", 48),
+            # Five chunks reach the preallocated CUDA branch; low-K CUDA selections keep the list/concat path.
+            pytest.param("cuda", 160, marks=[pytest.mark.gpu, _skip_without_cuda]),
+        ],
+    )
+    def test_upsample_writes_chunks_into_preallocated_result_without_final_cat(
+        self, mocker, device: str, num_select: int
+    ) -> None:
         """Upsampling must preserve exact chunked interpolation while avoiding a full-size bool concat."""
-        num_queries, num_select = 4, 48
-        out_masks = torch.randn(1, num_queries, 8, 8)
-        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0)
-        scores = torch.rand(1, num_select)
-        labels = torch.zeros(1, num_select, dtype=torch.long)
-        boxes = torch.zeros(1, num_select, 4)
-        target_sizes = torch.tensor([[64, 64]])
-
-        selected = out_masks[0].index_select(0, topk_boxes[0])
-        expected = torch.cat(
-            [
-                F.interpolate(
-                    selected[start : start + postprocess._MASK_CHUNK].unsqueeze(1),
-                    size=(64, 64),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                > 0.0
-                for start in range(0, num_select, postprocess._MASK_CHUNK)
-            ],
-            dim=0,
+        args = _cyclic_mask_case(4, num_select, device=device)
+        expected = _chunked_upsampled_masks(args[0], args[4], 64)
+        mocker.patch.object(
+            torch,
+            "cat",
+            side_effect=AssertionError("mask upsampling must write into the preallocated result without torch.cat"),
         )
 
-        def _cat_must_not_run(*args, **kwargs):
-            raise AssertionError("mask upsampling must write into the preallocated result without torch.cat")
-
-        monkeypatch.setattr(torch, "cat", _cat_must_not_run)
-        result = PostProcess._postprocess_masks(
-            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
-        )[0]["masks"]
+        result = PostProcess._postprocess_masks(*args, upsample_masks_to_image_size=True)[0]["masks"]
 
         assert torch.equal(result, expected)
 
@@ -468,14 +441,7 @@ class TestPostProcessMasks:
         `F.interpolate` call, so two chunks are briefly alive at once -- the same double-buffering this whole
         preallocation is meant to avoid, just smaller and confined to one loop iteration.
         """
-        num_queries, num_select = 4, 96  # 3 chunks of 32, so the guard is exercised across two boundaries
-        out_masks = torch.randn(1, num_queries, 8, 8)
-        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0)
-        scores = torch.rand(1, num_select)
-        labels = torch.zeros(1, num_select, dtype=torch.long)
-        boxes = torch.zeros(1, num_select, 4)
-        target_sizes = torch.tensor([[64, 64]])
-
+        args = _cyclic_mask_case(4, 96)  # 3 chunks of 32, so the guard is exercised across two boundaries
         previous_chunk_ref = None
         real_interpolate = F.interpolate
 
@@ -497,69 +463,19 @@ class TestPostProcessMasks:
 
         monkeypatch.setattr(postprocess.F, "interpolate", _tracking_interpolate)
 
-        PostProcess._postprocess_masks(
-            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
-        )
+        PostProcess._postprocess_masks(*args, upsample_masks_to_image_size=True)
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_upsample_on_cuda_writes_chunks_into_preallocated_result_without_final_cat(self):
-        """Same guarantee as the CPU test above for larger CUDA selections: bit-identical output, no final cat.
-
-        Low-K CUDA selections and unverified backends retain the established list/concat path.
-        """
-        num_queries, num_select = 4, 160  # Five chunks use the preallocated CUDA branch.
-        out_masks = torch.randn(1, num_queries, 8, 8, device="cuda")
-        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to("cuda")
-        scores = torch.rand(1, num_select, device="cuda")
-        labels = torch.zeros(1, num_select, dtype=torch.long, device="cuda")
-        boxes = torch.zeros(1, num_select, 4, device="cuda")
-        target_sizes = torch.tensor([[64, 64]], device="cuda")
-
-        selected = out_masks[0].index_select(0, topk_boxes[0])
-        expected = torch.cat(
-            [
-                F.interpolate(
-                    selected[start : start + postprocess._MASK_CHUNK].unsqueeze(1),
-                    size=(64, 64),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                > 0.0
-                for start in range(0, num_select, postprocess._MASK_CHUNK)
-            ],
-            dim=0,
-        )
-
-        def _cat_must_not_run(*args, **kwargs):
-            raise AssertionError("CUDA mask upsampling must write into the preallocated result without torch.cat")
-
-        with patch("torch.cat", side_effect=_cat_must_not_run):
-            result = PostProcess._postprocess_masks(
-                out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
-            )[0]["masks"]
-
-        assert torch.equal(result, expected)
-
-    @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_upsample_on_cuda_uses_legacy_path_for_low_k_memory_regression(self):
+    @_skip_without_cuda
+    def test_upsample_on_cuda_uses_legacy_path_for_low_k_memory_regression(self, mocker):
         """Low-K CUDA selections retain the lower-peak list/concat strategy."""
-        num_queries, num_select = 4, 100  # Four chunks cover shipped SegNano/SegSmall defaults.
-        out_masks = torch.randn(1, num_queries, 8, 8, device="cuda")
-        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to("cuda")
-        scores = torch.rand(1, num_select, device="cuda")
-        labels = torch.zeros(1, num_select, dtype=torch.long, device="cuda")
-        boxes = torch.zeros(1, num_select, 4, device="cuda")
-        target_sizes = torch.tensor([[64, 64]], device="cuda")
+        args = _cyclic_mask_case(4, 100, device="cuda")  # four chunks cover shipped SegNano/SegSmall defaults
+        cat = mocker.patch("torch.cat", wraps=torch.cat)
 
-        with patch("torch.cat", wraps=torch.cat) as cat:
-            result = PostProcess._postprocess_masks(
-                out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
-            )[0]["masks"]
+        result = PostProcess._postprocess_masks(*args, upsample_masks_to_image_size=True)[0]["masks"]
 
         assert cat.call_count == 1
-        assert result.shape == (num_select, 1, 64, 64)
+        assert result.shape == (100, 1, 64, 64)
 
     @pytest.mark.xla
     @requires_torch_xla
@@ -567,33 +483,10 @@ class TestPostProcessMasks:
         """XLA exercises mask postprocessing without dispatching the unverified ``out=`` overload."""
         import torch_xla
 
-        device = torch_xla.device()
-        num_queries, num_select = 4, 48
-        out_masks = torch.randn(1, num_queries, 8, 8, device=device)
-        topk_boxes = (torch.arange(num_select) % num_queries).unsqueeze(0).to(device)
-        scores = torch.rand(1, num_select, device=device)
-        labels = torch.zeros(1, num_select, dtype=torch.long, device=device)
-        boxes = torch.zeros(1, num_select, 4, device=device)
-        target_sizes = torch.tensor([[64, 64]])
+        args = _cyclic_mask_case(4, 48, device=torch_xla.device(), target_device="cpu")
+        expected = _chunked_upsampled_masks(args[0], args[4], 64)
 
-        selected = out_masks[0].index_select(0, topk_boxes[0])
-        expected = torch.cat(
-            [
-                F.interpolate(
-                    selected[start : start + postprocess._MASK_CHUNK].unsqueeze(1),
-                    size=(64, 64),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                > 0.0
-                for start in range(0, num_select, postprocess._MASK_CHUNK)
-            ],
-            dim=0,
-        )
-
-        result = PostProcess._postprocess_masks(
-            out_masks, scores, labels, boxes, topk_boxes, target_sizes, upsample_masks_to_image_size=True
-        )[0]["masks"]
+        result = PostProcess._postprocess_masks(*args, upsample_masks_to_image_size=True)[0]["masks"]
 
         assert torch.equal(result, expected)
 
@@ -619,6 +512,11 @@ class TestPostProcessMasks:
 
         Scores descend within each image so a threshold of 0.5 keeps a known prefix, and each image starts lower than
         the previous one so a batch keeps a different number of rows per image.
+
+        Examples:
+            >>> out_masks, scores, *_ = TestPostProcessMasks._mask_case(num_select=4, batch=2)
+            >>> out_masks.shape, scores.shape
+            (torch.Size([2, 16, 8, 8]), torch.Size([2, 4]))
         """
         out_masks = torch.randn(batch, num_queries, mask_hw, mask_hw)
         scores = torch.stack([torch.linspace(0.95 - 0.3 * i, 0.05, num_select) for i in range(batch)])
@@ -629,7 +527,7 @@ class TestPostProcessMasks:
         return out_masks, scores, labels, boxes, topk_boxes, target_sizes
 
     @pytest.mark.parametrize("threshold", [0.5, 1.0])
-    def test_score_threshold_upsamples_only_the_kept_masks(self, threshold):
+    def test_score_threshold_upsamples_only_the_kept_masks(self, mocker, threshold):
         """Masks that the caller's threshold discards must never reach the interpolation.
 
         The upsample runs at target-image resolution while the kept fraction is small (at ``num_select=100`` a COCO-
@@ -641,21 +539,14 @@ class TestPostProcessMasks:
         so the count also proves the chunked upsample loop stays correct under early filtering.
         """
         args = self._mask_case(num_select=100, num_queries=100)
-        scores = args[1]
-        expected_kept = int((scores[0] > threshold).sum())
+        expected_kept = int((args[1][0] > threshold).sum())
+        interpolate = mocker.patch("rfdetr.models.postprocess.F.interpolate", wraps=F.interpolate)
 
-        rows = []
-        orig = torch.nn.functional.interpolate
+        results = PostProcess._postprocess_masks(*args, score_threshold=threshold)
 
-        def counting_interpolate(tensor, *a, **kw):
-            rows.append(tensor.shape[0])
-            return orig(tensor, *a, **kw)
-
-        with patch("rfdetr.models.postprocess.F.interpolate", counting_interpolate):
-            results = PostProcess._postprocess_masks(*args, score_threshold=threshold)
-
-        assert sum(rows) == expected_kept, (
-            f"interpolated {sum(rows)} mask rows but only {expected_kept} survive the "
+        interpolated_rows = sum(c.args[0].shape[0] for c in interpolate.call_args_list)
+        assert interpolated_rows == expected_kept, (
+            f"interpolated {interpolated_rows} mask rows but only {expected_kept} survive the "
             "caller's threshold; masks below it must be dropped before the resize"
         )
         assert results[0]["masks"].shape[0] == expected_kept
@@ -675,9 +566,10 @@ class TestPostProcessMasks:
         full = PostProcess._postprocess_masks(*args, upsample)[0]
         keep = full["scores"] > threshold
 
-        for key in ("scores", "labels", "boxes"):
-            assert torch.equal(filtered_early[key], full[key][keep])
-        assert torch.equal(filtered_early["masks"], full["masks"][keep])
+        keys = ("scores", "labels", "boxes", "masks")
+        torch.testing.assert_close(
+            {key: filtered_early[key] for key in keys}, {key: full[key][keep] for key in keys}, rtol=0.0, atol=0.0
+        )
 
     def test_score_threshold_filters_each_image_independently(self):
         """A batch keeps a different number of rows per image, not one count applied to all of them."""
@@ -696,36 +588,35 @@ class TestPostProcessMasks:
             "threshold was applied batch-wide instead of per image"
         )
 
-    def test_score_threshold_is_ignored_by_the_keypoint_path(self):
-        """The keypoint head must return the same thing with and without the argument.
+    def test_score_threshold_is_ignored_by_the_keypoint_head(self):
+        """The keypoint head returns the same thing with and without the argument.
 
         ``predict()`` passes the threshold for every model, so a head that cannot use it has to ignore it rather than
         fail. The keypoint path rewrites scores after selection (uncertainty fusion), so filtering on the pre-fusion
         scores would not match the caller's own filter.
         """
-        batch, num_queries, num_classes = 1, 4, 2
         outputs = {
-            "pred_logits": torch.randn(batch, num_queries, num_classes),
-            "pred_boxes": torch.rand(batch, num_queries, 4),
+            "pred_logits": torch.randn(1, 4, 2),
+            "pred_boxes": torch.rand(1, 4, 4),
             # (B, Q, num_keypoint_classes * max_num_keypoints, D) with D >= 7 so precision is emitted.
-            "pred_keypoints": torch.randn(batch, num_queries, 6, 7),
+            "pred_keypoints": torch.randn(1, 4, 6, 7),
         }
-        postprocess = PostProcess(num_select=num_queries, num_keypoints_per_class=[3, 3])
+        post_process = PostProcess(num_select=4, num_keypoints_per_class=[3, 3])
         target_sizes = torch.tensor([[128, 128]])
 
-        baseline = postprocess(outputs, target_sizes)[0]
-        with_threshold = postprocess(outputs, target_sizes, score_threshold=0.9)[0]
+        baseline = post_process(outputs, target_sizes)[0]
+        with_threshold = post_process(outputs, target_sizes, score_threshold=0.9)[0]
 
-        assert baseline.keys() == with_threshold.keys()
-        for key in baseline:
-            torch.testing.assert_close(baseline[key], with_threshold[key], rtol=0.0, atol=0.0, equal_nan=True)
+        torch.testing.assert_close(with_threshold, baseline, rtol=0.0, atol=0.0, equal_nan=True)
 
 
 class TestPostProcessBoxScoreThreshold:
     """The box-only path drops the rows a caller's threshold discards, without a full sort, on CPU."""
 
     @staticmethod
-    def _box_outputs(batch: int = 2, num_queries: int = 30, num_classes: int = 7, seed: int = 0):
+    def _box_outputs(
+        batch: int = 2, num_queries: int = 30, num_classes: int = 7, seed: int = 0
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         """Return box-only model outputs whose logits hold repeated values, so stable tie order matters.
 
         Examples:
@@ -741,7 +632,9 @@ class TestPostProcessBoxScoreThreshold:
         return {"pred_logits": logits, "pred_boxes": boxes}, sizes
 
     @staticmethod
-    def _filtered_full_path(postprocess, outputs, sizes, threshold):
+    def _filtered_full_path(
+        post_process: PostProcess, outputs: dict[str, torch.Tensor], sizes: torch.Tensor, threshold: float
+    ) -> list[dict[str, torch.Tensor]]:
         """Run the full-sort path, then keep the rows above ``threshold`` as ``predict()`` does.
 
         Examples:
@@ -751,7 +644,7 @@ class TestPostProcessBoxScoreThreshold:
             0
         """
         results = []
-        for result in postprocess(outputs, sizes):
+        for result in post_process(outputs, sizes):
             keep = result["scores"] > threshold
             results.append({key: value[keep] for key, value in result.items()})
         return results
@@ -764,42 +657,32 @@ class TestPostProcessBoxScoreThreshold:
         ``num_select=5`` makes more rows pass than the top-k keeps, so the full sort still decides which survive;
         ``num_select=300`` exceeds the 210 query/class pairs, so every passing row is kept.
         """
-        postprocess = PostProcess(num_select=num_select)
+        post_process = PostProcess(num_select=num_select)
         outputs, sizes = self._box_outputs()
 
-        expected = self._filtered_full_path(postprocess, outputs, sizes, threshold)
-        actual = postprocess(outputs, sizes, score_threshold=threshold)
+        expected = self._filtered_full_path(post_process, outputs, sizes, threshold)
+        actual = post_process(outputs, sizes, score_threshold=threshold)
 
-        assert len(actual) == len(expected)
-        for got, want in zip(actual, expected):
-            assert got.keys() == want.keys()
-            for key in want:
-                assert torch.equal(got[key], want[key]), key
+        torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
 
     def test_each_image_keeps_its_own_rows(self):
         """A batch keeps a different number of rows per image, not one count padded across the batch."""
-        postprocess = PostProcess(num_select=300)
+        post_process = PostProcess(num_select=300)
         outputs, sizes = self._box_outputs()
         outputs["pred_logits"][1] -= 3.0
+        expected_counts = (outputs["pred_logits"].sigmoid() > 0.5).flatten(1).sum(dim=1).tolist()
 
-        results = postprocess(outputs, sizes, score_threshold=0.5)
+        results = post_process(outputs, sizes, score_threshold=0.5)
 
-        counts = [int((outputs["pred_logits"][i].sigmoid() > 0.5).sum()) for i in range(2)]
-        assert [len(result["scores"]) for result in results] == counts
-        assert counts[0] > counts[1]
+        assert [len(result["scores"]) for result in results] == expected_counts
+        assert expected_counts[0] > expected_counts[1]
 
-    def test_does_not_sort_every_score_when_few_rows_pass(self, monkeypatch):
+    def test_does_not_sort_every_score_when_few_rows_pass(self, mocker):
         """With fewer passing rows than ``num_select``, only those rows are sorted, not every query/class pair."""
-        pp = PostProcess(num_select=300)
+        post_process = PostProcess(num_select=300)
         outputs, sizes = self._box_outputs(batch=1, num_queries=300, num_classes=91)
-        sorted_lengths = []
-        original = torch.argsort
+        argsort = mocker.patch.object(postprocess.torch, "argsort", wraps=torch.argsort)
 
-        def recording_argsort(tensor, *args, **kwargs):
-            sorted_lengths.append(tensor.shape[-1])
-            return original(tensor, *args, **kwargs)
+        result = post_process(outputs, sizes, score_threshold=0.999)[0]
 
-        monkeypatch.setattr(postprocess.torch, "argsort", recording_argsort)
-        result = pp(outputs, sizes, score_threshold=0.999)[0]
-
-        assert sorted_lengths == [len(result["scores"])]
+        assert [call.args[0].shape[-1] for call in argsort.call_args_list] == [len(result["scores"])]

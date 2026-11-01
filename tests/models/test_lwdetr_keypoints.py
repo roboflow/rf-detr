@@ -9,13 +9,15 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.transformer import Transformer
 from rfdetr.utilities.tensors import NestedTensor
+
+_HIDDEN_DIM = 8
 
 
 def _build_feature_batch(batch_size: int, hidden_dim: int) -> list[NestedTensor]:
@@ -31,6 +33,50 @@ def _build_feature_batch(batch_size: int, hidden_dim: int) -> list[NestedTensor]
             torch.zeros(batch_size, 4, 4, dtype=torch.bool),
         )
     ]
+
+
+def _mock_backbone(batch_size: int, hidden_dim: int) -> MagicMock:
+    """Return a mocked backbone that yields zero feature maps and positional encodings.
+
+    Examples:
+        >>> features, poss, _ = _mock_backbone(batch_size=1, hidden_dim=8)(None)
+        >>> len(features), len(poss)
+        (1, 1)
+    """
+    backbone = MagicMock()
+    backbone.return_value = (
+        _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim),
+        [torch.zeros(batch_size, hidden_dim, 4, 4)],
+        None,
+    )
+    return backbone
+
+
+def _keypoint_transformer_outputs(
+    batch_size: int, num_queries: int, hidden_dim: int, ref_unsigmoid: Tensor | None = None
+) -> tuple[Tensor, ...]:
+    """Build the zero-valued 17-keypoint tuple a GroupPose transformer returns to ``LWDETR``.
+
+    Args:
+        batch_size: Batch dimension of every tensor.
+        num_queries: Number of object queries.
+        hidden_dim: Transformer hidden size.
+        ref_unsigmoid: Optional replacement for the decoder reference points, e.g. one that requires grad.
+
+    Examples:
+        >>> outputs = _keypoint_transformer_outputs(batch_size=2, num_queries=3, hidden_dim=8)
+        >>> len(outputs), tuple(outputs[5].shape)
+        (7, (2, 3, 17, 8))
+    """
+    return (
+        torch.zeros(2, batch_size, num_queries, hidden_dim),  # hs
+        torch.zeros(2, batch_size, num_queries, 4) if ref_unsigmoid is None else ref_unsigmoid,  # ref_unsigmoid
+        torch.zeros(batch_size, num_queries, hidden_dim),  # hs_enc
+        torch.zeros(batch_size, num_queries, 4),  # ref_enc
+        torch.zeros(2, batch_size, num_queries, 17, hidden_dim),  # keypoint_hs
+        torch.zeros(batch_size, num_queries, 17, 8),  # enc_kp_predictions
+        torch.zeros(batch_size, num_queries, 17, hidden_dim),  # unused keypoint encoder hidden state
+    )
 
 
 class _DummyKeypointDecoder(nn.Module):
@@ -58,33 +104,19 @@ class _DummyKeypointTransformer(nn.Module):
         self.keypoint_query_initializer_enc = ConditionalQueryInitializer(hidden_dim, sum(num_keypoints_per_class))
 
 
-def test_lwdetr_keypoint_forward_outputs() -> None:
+def test_keypoint_forward_outputs() -> None:
     """GroupPose mode should expose keypoint tensors in model outputs."""
     batch_size = 2
     num_queries = 3
     hidden_dim = 8
     num_classes = 6
 
-    features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
-    poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
-
-    backbone = MagicMock()
-    backbone.return_value = (features, poss, None)
-
     transformer = MagicMock()
     transformer.d_model = hidden_dim
-    transformer.return_value = (
-        torch.zeros(2, batch_size, num_queries, hidden_dim),  # hs
-        torch.zeros(2, batch_size, num_queries, 4),  # ref_unsigmoid
-        torch.zeros(batch_size, num_queries, hidden_dim),  # hs_enc
-        torch.zeros(batch_size, num_queries, 4),  # ref_enc
-        torch.zeros(2, batch_size, num_queries, 17, hidden_dim),  # keypoint_hs
-        torch.zeros(batch_size, num_queries, 17, 8),  # enc_kp_predictions
-        torch.zeros(batch_size, num_queries, 17, hidden_dim),  # unused keypoint encoder hidden state
-    )
+    transformer.return_value = _keypoint_transformer_outputs(batch_size, num_queries, hidden_dim)
 
     model = LWDETR(
-        backbone=backbone,
+        backbone=_mock_backbone(batch_size, hidden_dim),
         transformer=transformer,
         segmentation_head=None,
         num_classes=num_classes,
@@ -109,7 +141,7 @@ def test_lwdetr_keypoint_forward_outputs() -> None:
     assert "keypoint_hidden_states" not in outputs["aux_outputs"][0]
 
 
-def test_lwdetr_keypoint_nan_delta_does_not_poison_ref_wh_gradient() -> None:
+def test_nan_keypoint_delta_keeps_ref_gradient_finite() -> None:
     """A non-finite keypoint-embed output must not poison ``ref_unsigmoid``'s gradient.
 
     Regression: ``keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy`` combines the
@@ -125,27 +157,13 @@ def test_lwdetr_keypoint_nan_delta_does_not_poison_ref_wh_gradient() -> None:
     hidden_dim = 8
     num_classes = 6
 
-    features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
-    poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
-
-    backbone = MagicMock()
-    backbone.return_value = (features, poss, None)
-
     ref_unsigmoid = torch.zeros(2, batch_size, num_queries, 4, requires_grad=True)
     transformer = MagicMock()
     transformer.d_model = hidden_dim
-    transformer.return_value = (
-        torch.zeros(2, batch_size, num_queries, hidden_dim),  # hs
-        ref_unsigmoid,
-        torch.zeros(batch_size, num_queries, hidden_dim),  # hs_enc
-        torch.zeros(batch_size, num_queries, 4),  # ref_enc
-        torch.zeros(2, batch_size, num_queries, 17, hidden_dim),  # keypoint_hs
-        torch.zeros(batch_size, num_queries, 17, 8),  # enc_kp_predictions
-        torch.zeros(batch_size, num_queries, 17, hidden_dim),  # unused keypoint encoder hidden state
-    )
+    transformer.return_value = _keypoint_transformer_outputs(batch_size, num_queries, hidden_dim, ref_unsigmoid)
 
     model = LWDETR(
-        backbone=backbone,
+        backbone=_mock_backbone(batch_size, hidden_dim),
         transformer=transformer,
         segmentation_head=None,
         num_classes=num_classes,
@@ -192,7 +210,7 @@ def test_lwdetr_keypoint_nan_delta_does_not_poison_ref_wh_gradient() -> None:
         pytest.param(True, 2, float("nan"), id="reparam_box_nan_findable"),
     ],
 )
-def test_two_stage_encoder_keypoint_nonfinite_delta_preserves_finite_predictions_and_box_gradients(
+def test_two_stage_encoder_nonfinite_keypoint_delta_stays_finite(
     bbox_reparam: bool,
     nonfinite_channel: int,
     nonfinite_delta: float,
@@ -295,13 +313,12 @@ def test_two_stage_encoder_keypoint_nonfinite_delta_preserves_finite_predictions
     assert torch.count_nonzero(keypoint_head_grad) > 0
 
 
-def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> None:
-    """Keypoint schema reinit should resize masks and learned keypoint query embeddings."""
-    hidden_dim = 8
-    transformer = _DummyKeypointTransformer(hidden_dim=hidden_dim, num_keypoints_per_class=[17])
-    model = LWDETR(
+@pytest.fixture
+def dummy_keypoint_model() -> LWDETR:
+    """A 17-keypoint ``LWDETR`` wrapping a minimal dummy transformer, used by the schema-dependent tests."""
+    return LWDETR(
         backbone=MagicMock(),
-        transformer=transformer,
+        transformer=_DummyKeypointTransformer(hidden_dim=_HIDDEN_DIM, num_keypoints_per_class=[17]),
         segmentation_head=None,
         num_classes=3,
         num_queries=2,
@@ -314,6 +331,13 @@ def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> N
         num_keypoints_per_class=[17],
         grouppose_keypoint_dim_downscale=1,
     )
+
+
+def test_reinitialize_keypoint_head_resizes_schema_state(dummy_keypoint_model: LWDETR) -> None:
+    """Keypoint schema reinit should resize masks and learned keypoint query embeddings."""
+    model = dummy_keypoint_model
+    transformer = model.transformer
+    hidden_dim = _HIDDEN_DIM
 
     model.reinitialize_keypoint_head([2, 1])
 
@@ -329,25 +353,10 @@ def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> N
     assert transformer.keypoint_query_initializer_enc.queries.shape == (3, hidden_dim)
 
 
-def test_lwdetr_reset_keypoint_gaussian_parameters_preserves_non_gaussian_rows() -> None:
+def test_reset_gaussian_parameters_zeroes_only_precision_rows(dummy_keypoint_model: LWDETR) -> None:
     """Gaussian reset should only zero precision-Cholesky output rows on decoder and encoder keypoint heads."""
-    hidden_dim = 8
-    transformer = _DummyKeypointTransformer(hidden_dim=hidden_dim, num_keypoints_per_class=[17])
-    model = LWDETR(
-        backbone=MagicMock(),
-        transformer=transformer,
-        segmentation_head=None,
-        num_classes=3,
-        num_queries=2,
-        aux_loss=False,
-        group_detr=1,
-        two_stage=True,
-        lite_refpoint_refine=True,
-        bbox_reparam=False,
-        use_grouppose_keypoints=True,
-        num_keypoints_per_class=[17],
-        grouppose_keypoint_dim_downscale=1,
-    )
+    model = dummy_keypoint_model
+    hidden_dim = _HIDDEN_DIM
     with torch.no_grad():
         model.keypoint_embed.layers[-1].weight.fill_(3.0)
         model.keypoint_embed.layers[-1].bias.fill_(4.0)
@@ -368,25 +377,19 @@ def test_lwdetr_reset_keypoint_gaussian_parameters_preserves_non_gaussian_rows()
     torch.testing.assert_close(model.transformer.enc_out_keypoint_embed[0].layers[-1].bias[4:7], torch.zeros(3))
 
 
-def test_lwdetr_get_num_keypoints_per_class_from_checkpoint() -> None:
+def test_num_keypoints_recovered_from_checkpoint() -> None:
     """Checkpoint keypoint schema should be recoverable from `_kp_active_mask`."""
     state_dict = {"_kp_active_mask": torch.tensor([[True, True], [True, False]])}
 
     assert LWDETR.get_num_keypoints_per_class_from_checkpoint(state_dict) == [2, 1]
 
 
-def test_lwdetr_default_detection_contract_unchanged() -> None:
+def test_default_detection_omits_keypoint_outputs() -> None:
     """Default detection mode should not expose keypoint outputs."""
     batch_size = 2
     num_queries = 3
     hidden_dim = 8
     num_classes = 6
-
-    features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
-    poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
-
-    backbone = MagicMock()
-    backbone.return_value = (features, poss, None)
 
     transformer = MagicMock()
     transformer.d_model = hidden_dim
@@ -398,7 +401,7 @@ def test_lwdetr_default_detection_contract_unchanged() -> None:
     )
 
     model = LWDETR(
-        backbone=backbone,
+        backbone=_mock_backbone(batch_size, hidden_dim),
         transformer=transformer,
         segmentation_head=None,
         num_classes=num_classes,

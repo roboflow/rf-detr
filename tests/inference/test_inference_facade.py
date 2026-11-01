@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+from pytest_mock import MockerFixture
 from supervision import Detections, KeyPoints
 
 from rfdetr.detr import RFDETR, _default_compile_backend
@@ -29,6 +30,7 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
+from tests._markers import requires_mps
 
 from .helpers import _DummyModel, _DummyRFDETR
 
@@ -188,7 +190,7 @@ class TestLiveModelDevicePolicy:
     @pytest.mark.parametrize("device", ["cpu", "not_a_device", pytest.param(torch.device("cpu"), id="torch-device")])
     def test_explicit_device_is_rejected(self, nano_model: RFDETRNano, device: str | torch.device) -> None:
         """Even a matching device must be configured on the native source itself."""
-        with pytest.raises(ValueError, match="live model.*device"):
+        with pytest.raises(ValueError, match="A live model owns its device policy"):
             RFDETRInference(nano_model, device=device)
 
     @pytest.mark.parametrize("source_device", ["cuda", "cuda:0"])
@@ -197,7 +199,7 @@ class TestLiveModelDevicePolicy:
     ) -> None:
         """An explicit borrowed-model request has the same outcome before the deferred move."""
         nano_model.model.device = torch.device(source_device)
-        with pytest.raises(ValueError, match="live model.*device"):
+        with pytest.raises(ValueError, match="A live model owns its device policy"):
             RFDETRInference(nano_model, device="cuda:0")
 
 
@@ -329,15 +331,11 @@ class TestCheckpointSource:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=0, rtol=0)
         np.testing.assert_array_equal(actual.class_id, expected.class_id)
 
-    def test_checkpoint_loader_omits_auto_device_and_forwards_trust(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
+    def test_checkpoint_loader_omits_auto_device_and_forwards_trust(self, mocker, tmp_path: Path) -> None:
         """Automatic checkpoint loading leaves device selection to the native loader."""
         loaded_model = SimpleNamespace(model=SimpleNamespace(device=torch.device("cpu")))
-        loader = Mock(return_value=loaded_model)
-        monkeypatch.setattr(RFDETR, "from_checkpoint", classmethod(lambda cls, path, **kwargs: loader(path, **kwargs)))
+        loader = mocker.Mock(return_value=loaded_model)
+        mocker.patch.object(RFDETR, "from_checkpoint", classmethod(lambda cls, path, **kwargs: loader(path, **kwargs)))
         checkpoint = tmp_path / "model.ckpt"
 
         RFDETRInference(checkpoint, trust_checkpoint=True)
@@ -386,7 +384,7 @@ class TestCheckpointSource:
 
 
 @pytest.fixture
-def stopped_runtime_load(monkeypatch: pytest.MonkeyPatch) -> tuple[ExportMetadata, Mock]:
+def stopped_runtime_load(mocker) -> tuple[ExportMetadata, Mock]:
     """Stop an exported-artifact load at the runtime loader, returning the metadata it reads and the loader mock.
 
     Examples:
@@ -408,12 +406,13 @@ def stopped_runtime_load(monkeypatch: pytest.MonkeyPatch) -> tuple[ExportMetadat
         patch_size=1,
         num_windows=1,
     )
-    load_runtime = Mock(side_effect=RuntimeError("stop after runtime load"))
     # Patch the module the facade's call-time import resolves (sys.modules), not a parent-package attribute: a
     # sys.modules restore in another test can leave the two pointing at different module objects.
     context_module = importlib.import_module("rfdetr.export._runtime.context")
-    monkeypatch.setattr(context_module, "read_metadata", Mock(return_value=contract))
-    monkeypatch.setattr(context_module, "load_runtime", load_runtime)
+    mocker.patch.object(context_module, "read_metadata", return_value=contract)
+    load_runtime = mocker.patch.object(
+        context_module, "load_runtime", side_effect=RuntimeError("stop after runtime load")
+    )
     return contract, load_runtime
 
 
@@ -494,12 +493,14 @@ class TestFacadeContracts:
 
     @pytest.mark.parametrize("keyword", ["threhsold", "confidence"])
     def test_unknown_prediction_keyword_fails_before_placement(
-        self, nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch, keyword: str
+        self, nano_model: RFDETRNano, mocker, keyword: str
     ) -> None:
         """A typo must fail before a borrowed model changes device or executes."""
         facade = RFDETRInference(nano_model)
-        placement = Mock(side_effect=AssertionError("Unknown options must fail before placement."))
-        monkeypatch.setattr("rfdetr.detr._move_model_context_to_device", placement)
+        placement = mocker.patch(
+            "rfdetr.detr._move_model_context_to_device",
+            side_effect=AssertionError("Unknown options must fail before placement."),
+        )
 
         with pytest.raises(TypeError, match="unexpected keyword argument"):
             facade.predict(np.zeros((64, 64, 3), dtype=np.uint8), **{keyword: 0.9})
@@ -537,8 +538,10 @@ class TestFacadeContracts:
         facade = nano_model.inference(batch_size=2)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
-        with pytest.raises(ValueError, match=r"native_model.inference\(batch_size="):
+        with pytest.raises(ValueError) as exc_info:
             facade.predict(image)
+
+        assert "native_model.inference(batch_size=" in str(exc_info.value)
 
         replacement = nano_model.inference(batch_size=1)
         result = replacement.predict(image)
@@ -551,8 +554,10 @@ class TestFacadeContracts:
         facade = nano_model.inference(compile=False)
         image = np.zeros((64, 64, 3), dtype=np.uint8)
 
-        with pytest.raises(ValueError, match=r"native_model.predict\("):
+        with pytest.raises(ValueError) as exc_info:
             facade.predict(image, shape=(128, 128))
+
+        assert "native_model.predict(" in str(exc_info.value)
 
         result = nano_model.predict(image, shape=(128, 128))
         assert isinstance(result, Detections)
@@ -645,7 +650,7 @@ class TestMpsSnapshotRewrites:
 
         assert _snapshot_rewrites(_snapshot_module(predictor)) == (False, False)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_source_model_is_not_rewritten(self, mps_nano_model: RFDETRNano) -> None:
         """Only the snapshot copy changes, never the trainable source.
 
@@ -656,14 +661,14 @@ class TestMpsSnapshotRewrites:
 
         assert _snapshot_rewrites(mps_nano_model.model.model) == (False, False)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_mps_eager_snapshot_is_rewritten(self, mps_nano_model: RFDETRNano) -> None:
         """An MPS ``compile=False`` snapshot samples with ``F.grid_sample`` and has its LayerScales folded."""
         predictor = mps_nano_model.inference(compile=False)
 
         assert _snapshot_rewrites(_snapshot_module(predictor)) == (True, True)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     @pytest.mark.parametrize("compile", [False, True])
     def test_mps_snapshot_matches_the_source(self, mps_scaled_nano_model: RFDETRNano, compile: bool) -> None:
         """An MPS snapshot, eager or a TorchScript trace, predicts what the source predicts.
@@ -699,23 +704,16 @@ class TestMpsSnapshotRewrites:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
-    def test_mps_inductor_snapshot_keeps_layer_scales(
-        self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @requires_mps
+    def test_mps_inductor_snapshot_keeps_layer_scales(self, mps_nano_model: RFDETRNano, mocker: MockerFixture) -> None:
         """Inductor fuses the LayerScale multiply itself and folding measured no gain, so only the sampler changes."""
-        compiled: list[torch.nn.Module] = []
+        compile_mock = mocker.patch.object(torch, "compile", side_effect=lambda module, **_: module)
 
-        def fake_compile(module: torch.nn.Module, **_: object) -> torch.nn.Module:
-            compiled.append(module)
-            return module
-
-        monkeypatch.setattr(torch, "compile", fake_compile)
         mps_nano_model.inference(compile_backend="inductor")
 
-        assert _snapshot_rewrites(compiled[0]) == (True, False)
+        assert _snapshot_rewrites(compile_mock.call_args.args[0]) == (True, False)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_mps_fold_runs_in_the_snapshot_dtype(self, mps_nano_model: RFDETRNano) -> None:
         """A float16 source widened to a float32 snapshot folds LayerScale in float32.
 
@@ -769,7 +767,7 @@ def scaled_checkpoint(nano_model: RFDETRNano, tmp_path: Path) -> Path:
 class TestMpsCheckpointRewrites:
     """A checkpoint the facade loads on MPS belongs to it and takes the snapshot rewrites; a live model never does."""
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_mps_checkpoint_model_is_rewritten(self, scaled_checkpoint: Path) -> None:
         """The loaded model samples with ``F.grid_sample`` and has its LayerScales folded."""
         facade = RFDETRInference(scaled_checkpoint, device="mps")
@@ -777,7 +775,7 @@ class TestMpsCheckpointRewrites:
         assert facade._native_model is not None
         assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_auto_device_checkpoint_on_mps_is_rewritten(self, scaled_checkpoint: Path) -> None:
         """The default ``device="auto"`` resolves to MPS on Apple Silicon and takes the rewrites there.
 
@@ -790,7 +788,7 @@ class TestMpsCheckpointRewrites:
         assert torch.device(facade._native_model.model.device).type == "mps"
         assert _snapshot_rewrites(facade._native_model.model.model) == (True, True)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_mps_checkpoint_matches_the_unrewritten_model(self, scaled_checkpoint: Path) -> None:
         """The rewritten checkpoint model predicts what the same weights predict without the rewrites."""
         image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
@@ -801,7 +799,7 @@ class TestMpsCheckpointRewrites:
         np.testing.assert_allclose(actual.confidence, expected.confidence, atol=1e-5)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-3)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_borrowed_mps_model_is_not_rewritten(self, mps_nano_model: RFDETRNano) -> None:
         """A live model passed to the facade stays trainable: no sampler swap, no folded LayerScale."""
         RFDETRInference(mps_nano_model).predict(np.zeros((64, 64, 3), dtype=np.uint8))
@@ -829,10 +827,10 @@ class TestDefaultCompileBackend:
         ],
     )
     def test_backend_per_device(
-        self, monkeypatch: pytest.MonkeyPatch, device: str, codegen_installed: bool, expected: str
+        self, mocker: MockerFixture, device: str, codegen_installed: bool, expected: str
     ) -> None:
         """Inductor only on MPS, and only when the installed PyTorch has its MPS code generator."""
-        monkeypatch.setattr("rfdetr.detr.is_installed", lambda name: codegen_installed)
+        mocker.patch("rfdetr.detr.is_installed", return_value=codegen_installed)
 
         assert _default_compile_backend(torch.device(device)) == expected
 
@@ -843,41 +841,29 @@ class TestDefaultCompileBackend:
         assert predictor._native_model is not None
         assert isinstance(predictor._native_model.model.inference_model, torch.jit.ScriptModule)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
-    def test_mps_default_compiles_with_inductor(
-        self, mps_nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @requires_mps
+    def test_mps_default_compiles_with_inductor(self, mps_nano_model: RFDETRNano, mocker: MockerFixture) -> None:
         """The MPS default goes through ``torch.compile``; a TorchScript trace would bypass it."""
-        compiled: list[torch.nn.Module] = []
+        compile_mock = mocker.patch.object(torch, "compile", side_effect=lambda module, **_: module)
+        mocker.patch("rfdetr.detr.is_installed", return_value=True)
 
-        def fake_compile(module: torch.nn.Module, **_: object) -> torch.nn.Module:
-            compiled.append(module)
-            return module
-
-        monkeypatch.setattr(torch, "compile", fake_compile)
-        monkeypatch.setattr("rfdetr.detr.is_installed", lambda name: True)
         mps_nano_model.inference()
 
-        assert len(compiled) == 1
+        compile_mock.assert_called_once()
 
     def test_inductor_off_cuda_compiles_without_cuda_graphs(
-        self, nano_model: RFDETRNano, monkeypatch: pytest.MonkeyPatch
+        self, nano_model: RFDETRNano, mocker: MockerFixture
     ) -> None:
         """Off CUDA, inductor compiles in the default mode, not ``reduce-overhead``.
 
         ``reduce-overhead`` only adds CUDA graph trees. On MPS, the default inductor device, it records nothing and logs
         a warning on every compile, so the mode is kept for CUDA alone.
         """
-        modes: list[object] = []
+        compile_mock = mocker.patch.object(torch, "compile", side_effect=lambda module, **_: module)
 
-        def fake_compile(module: torch.nn.Module, mode: object = None, **_: object) -> torch.nn.Module:
-            modes.append(mode)
-            return module
-
-        monkeypatch.setattr(torch, "compile", fake_compile)
         nano_model.inference(compile_backend="inductor")
 
-        assert modes == ["default"]
+        assert [call.kwargs["mode"] for call in compile_mock.call_args_list] == ["default"]
 
     @_skip_without_mps_inductor
     def test_mps_default_predicts_without_recompiling(self, mps_nano_model: RFDETRNano) -> None:

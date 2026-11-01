@@ -17,13 +17,14 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 from PIL import Image
+from pytest_mock import MockerFixture
 from torch.utils.data import DistributedSampler
 
 from rfdetr.config import CocoEvalBackend, RFDETRBaseConfig, TrainConfig
@@ -64,7 +65,7 @@ _HOOKS = {
     "val": ("on_validation_epoch_start", "on_validation_batch_end", "on_validation_epoch_end"),
     "test": ("on_test_epoch_start", "on_test_batch_end", "on_test_epoch_end"),
 }
-_SPLITS = [pytest.param("val", id="val"), pytest.param("test", id="test")]
+_SPLITS = ["val", "test"]
 
 
 def _annotation(
@@ -416,8 +417,7 @@ class TestCrowdRegionsReachEvaluation:
         assert scored[0]["boxes"][1].tolist() == [116.0, 16.0, 180.0, 80.0], "image 2 must get its own crowd region"
 
     def test_degenerate_crowd_box_reaches_ground_truth_without_crashing(self, tmp_path: Path, split: str) -> None:
-        """A crowd annotation whose bbox has zero width or height is appended as-is, unlike ``ConvertCoco``'s training
-        path, which drops degenerate boxes.
+        """A zero-width crowd bbox is appended as-is, unlike the training path, which drops degenerate boxes.
 
         ``crowd_regions_from_coco`` builds its crowd box straight from the raw bbox with no equivalent filter. Such a
         box has zero IoU with every prediction, so it can never be scored as a false positive either way — this only
@@ -547,10 +547,9 @@ _PARITY_ANNOTATIONS = [
     _annotation(6, 2, [160, 32, 48, 48], category_id=2),
     _annotation(7, 3, [100, 40, 40, 60]),
 ]
-# Per image: xyxy boxes, scores, labels. The in-crowd person detections lie 100%, 62.5% and 30% inside the crowd, so
-# pycocotools ignores each at a different subset of IoU thresholds; a car inside the person crowd stays a false
-# positive because a crowd region only ignores its own category. No overlap lands exactly on a 0.05 threshold step,
-# where float32 and float64 threshold grids could disagree.
+# Per image: xyxy boxes, scores, labels. In-crowd person detections lie 100%, 62.5% and 30% inside the crowd; a car in
+# the person crowd stays a false positive (crowds ignore only their own category). No overlap sits exactly on a 0.05
+# IoU step, where float32 and float64 threshold grids could disagree.
 _PARITY_DETECTIONS = [
     (
         [
@@ -618,7 +617,7 @@ def _pycocotools_stats(
 
 @pycocotools_only
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
-@pytest.mark.parametrize("segmentation", [pytest.param(False, id="bbox"), pytest.param(True, id="bbox+segm")])
+@pytest.mark.parametrize("segmentation", [False, True])
 def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmentation: bool) -> None:
     """On a small COCO file with crowd regions, callback box and mask metrics equal pycocotools."""
     dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3, include_masks=segmentation)
@@ -691,7 +690,7 @@ def test_missing_image_id_only_drops_its_own_targets_crowd_rows(tmp_path: Path) 
     assert scored[2]["iscrowd"].tolist() == [0]
 
 
-def test_crowd_regions_resolved_once_and_cached_across_batches(tmp_path: Path) -> None:
+def test_crowd_regions_resolved_once_and_cached_across_batches(tmp_path: Path, mocker: MockerFixture) -> None:
     """The COCO API lookup backing crowd-region resolution runs once per split, not once per batch.
 
     ``_get_crowd_regions`` caches its result in ``self._crowd_regions[split]`` on first use. A caching regression that
@@ -706,11 +705,11 @@ def test_crowd_regions_resolved_once_and_cached_across_batches(tmp_path: Path) -
     callback.map_metric = MagicMock(name="map_metric")
     callback.on_validation_epoch_start(trainer, module)
     outputs = {"results": _NO_PREDICTION, "targets": _eval_targets(dataset)}
-
-    with patch(
+    get_coco_api = mocker.patch(
         "rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", wraps=get_coco_api_from_dataset
-    ) as get_coco_api:
-        callback.on_validation_batch_end(trainer, module, outputs, None, 0)
-        callback.on_validation_batch_end(trainer, module, outputs, None, 1)
+    )
+
+    callback.on_validation_batch_end(trainer, module, outputs, None, 0)
+    callback.on_validation_batch_end(trainer, module, outputs, None, 1)
 
     get_coco_api.assert_called_once()

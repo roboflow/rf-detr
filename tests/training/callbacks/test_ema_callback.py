@@ -10,10 +10,11 @@ from __future__ import annotations
 import math
 import warnings
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from pytorch_lightning import Callback, LightningModule, Trainer
 from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import Tensor, nn
@@ -75,14 +76,7 @@ class _GuardedExtraStateLinear(_GuardedExtraStateMixin, nn.Linear):
 class TestAvgFnDecayFormula:
     """Verify the tau / no-tau decay formula matches ModelEma."""
 
-    @pytest.mark.parametrize(
-        "num_averaged",
-        [
-            pytest.param(0, id="step-0"),
-            pytest.param(5, id="step-5"),
-            pytest.param(99, id="step-99"),
-        ],
-    )
+    @pytest.mark.parametrize("num_averaged", [0, 5, 99])
     def test_tau_zero_uses_fixed_decay(self, num_averaged: int) -> None:
         """With tau=0 the effective decay equals the base decay at every step."""
         decay = 0.99
@@ -96,8 +90,7 @@ class TestAvgFnDecayFormula:
         assert torch.allclose(result, expected, atol=1e-7)
 
     def test_tau_warmup_at_step_1(self) -> None:
-        """At the first call (num_averaged=0) with tau>0 the effective decay uses updates=1 matching ModelEma's
-        1-indexed counter."""
+        """At num_averaged=0 with tau>0 the effective decay uses updates=1, matching ModelEma's 1-indexed counter."""
         decay = 0.993
         tau = 100
         cb = RFDETREMACallback(decay=decay, tau=tau)
@@ -152,25 +145,25 @@ class TestModelEmaParity:
 
 
 class TestShouldUpdate:
-    """Verify should_update triggers on steps and epochs."""
+    """should_update triggers on steps and epochs."""
 
-    def test_should_update_on_step(self) -> None:
-        cb = RFDETREMACallback()
-        assert cb.should_update(step_idx=42) is True
-
-    def test_should_update_on_epoch(self) -> None:
-        cb = RFDETREMACallback()
-        assert cb.should_update(epoch_idx=3) is True
-
-    def test_should_update_neither(self) -> None:
-        cb = RFDETREMACallback()
-        assert cb.should_update() is False
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            pytest.param({"step_idx": 42}, True, id="step"),
+            pytest.param({"epoch_idx": 3}, True, id="epoch"),
+            pytest.param({}, False, id="neither"),
+        ],
+    )
+    def test_triggers_on_step_or_epoch_index(self, kwargs: dict[str, int], expected: bool) -> None:
+        """An update is due when a step or epoch index is given, and not when neither is."""
+        assert RFDETREMACallback().should_update(**kwargs) is expected
 
 
 class TestInit:
     """Construction and EMA-state access behavior."""
 
-    def test_init_emits_no_user_warning(self) -> None:
+    def test_emits_no_user_warning(self) -> None:
         """Instantiation should not emit runtime UserWarnings."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -228,9 +221,9 @@ class TestInit:
         cb._average_model.update_parameters(pl_module)
         assert int(cb._average_model.n_averaged) == 2
 
-    @patch("rfdetr.training.callbacks.ema.AveragedModel")
-    def test_xla_keeps_averaged_model_counter_on_cpu(self, averaged_model) -> None:
+    def test_xla_keeps_averaged_model_counter_on_cpu(self, mocker: MockerFixture) -> None:
         """XLA must not place AveragedModel's Python-control-flow counter on the lazy device."""
+        averaged_model = mocker.patch("rfdetr.training.callbacks.ema.AveragedModel")
         cb = RFDETREMACallback()
         pl_module = MagicMock(device=torch.device("xla"))
 
@@ -340,9 +333,11 @@ class TestInit:
 
 
 class TestXLARealDeviceExecution:
-    """Real torch_xla PJRT execution -- proves the EMA counter lookup never reads a lazy device tensor back to the host
-    (T1-lane pattern already established by ``test_denominator_is_not_read_back_to_the_host_on_xla`` in
-    ``tests/models/test_criterion.py``; runs on any PJRT backend, so ``PJRT_DEVICE=CPU`` exercises it with no TPU)."""
+    """Real torch_xla PJRT execution: the EMA counter lookup never reads a lazy device tensor back to the host.
+
+    Same T1-lane pattern as ``test_denominator_is_not_read_back_to_the_host_on_xla`` in
+    ``tests/models/test_criterion.py``; runs on any PJRT backend, so ``PJRT_DEVICE=CPU`` exercises it with no TPU.
+    """
 
     @pytest.mark.xla
     @requires_torch_xla
@@ -373,11 +368,19 @@ class TestXLARealDeviceExecution:
 class TestExtraStateTransfers:
     """EMA state transfers must not deserialize Transformer Engine extra state."""
 
-    def test_on_train_end_copies_ema_weights_without_loading_extra_state(self) -> None:
-        """Training end must load EMA weights even when FP8 extra state rejects deserialization."""
-        cb = RFDETREMACallback()
+    @pytest.fixture
+    def guarded_module(self) -> _EMAContainerModule:
+        """Container module whose ``model`` rejects FP8-like extra-state deserialization."""
         pl_module = _EMAContainerModule()
         pl_module.model = _GuardedExtraStateLinear(4, 2)
+        return pl_module
+
+    def test_on_train_end_copies_ema_weights_without_loading_extra_state(
+        self, guarded_module: _EMAContainerModule
+    ) -> None:
+        """Training end must load EMA weights even when FP8 extra state rejects deserialization."""
+        cb = RFDETREMACallback()
+        pl_module = guarded_module
         trainer = MagicMock()
         cb.on_fit_start(trainer, pl_module)
         assert cb._average_model is not None
@@ -390,11 +393,10 @@ class TestExtraStateTransfers:
 
         assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 5.0))
 
-    def test_get_ema_model_state_dict_omits_extra_state(self) -> None:
+    def test_get_ema_model_state_dict_omits_extra_state(self, guarded_module: _EMAContainerModule) -> None:
         """Checkpoint export must retain model tensors while omitting guarded FP8 metadata."""
         cb = RFDETREMACallback()
-        pl_module = _EMAContainerModule()
-        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        pl_module = guarded_module
         cb.on_fit_start(MagicMock(), pl_module)
 
         state = cb.get_ema_model_state_dict()
@@ -430,11 +432,12 @@ class TestExtraStateTransfers:
             torch.full_like(restored_callback._average_model.module.model.weight, 5.0),
         )
 
-    def test_swap_models_round_trip_copies_weights_without_loading_extra_state(self) -> None:
+    def test_swap_models_round_trip_copies_weights_without_loading_extra_state(
+        self, guarded_module: _EMAContainerModule
+    ) -> None:
         """Test-time EMA swapping must restore live weights without deserializing FP8 state."""
         cb = RFDETREMACallback()
-        pl_module = _EMAContainerModule()
-        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        pl_module = guarded_module
         trainer = MagicMock()
         cb.on_fit_start(trainer, pl_module)
         assert cb._average_model is not None
@@ -451,22 +454,23 @@ class TestExtraStateTransfers:
         assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 7.0))
         assert cb._swapped_state_dict is None
 
-    def test_swap_models_rejects_non_extra_state_shape_mismatch(self) -> None:
+    def test_swap_models_rejects_non_extra_state_shape_mismatch(self, guarded_module: _EMAContainerModule) -> None:
         """Ignoring FP8 extra state must not hide an EMA parameter shape mismatch."""
         cb = RFDETREMACallback()
-        pl_module = _EMAContainerModule()
-        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        pl_module = guarded_module
         trainer = MagicMock()
         cb.on_fit_start(trainer, pl_module)
         assert cb._average_model is not None
         cb._average_model.module.model = nn.Linear(5, 2)
 
-        with pytest.raises(RuntimeError, match=r"size mismatch for model\.weight"):
+        with pytest.raises(RuntimeError) as exc_info:
             cb._swap_models(pl_module)
+
+        assert "size mismatch for model.weight" in str(exc_info.value)
 
 
 class TestUpdateInterval:
-    """Verify update_interval_steps throttles EMA updates on step hooks."""
+    """update_interval_steps throttles EMA updates on step hooks."""
 
     def test_updates_only_on_interval_steps(self) -> None:
         """update_interval_steps=2 updates on steps 2, 4, ...
@@ -558,8 +562,7 @@ class TestEpochBoundaryNoDoubleUpdate:
     """
 
     def test_on_train_epoch_end_is_not_overridden(self) -> None:
-        """The callback must not define its own ``on_train_epoch_end`` — PTL's per-step ``on_train_batch_end`` already
-        fires for the last batch of every epoch, so a separate epoch-end trigger would update on top of that same
+        """The callback defines no ``on_train_epoch_end``: PTL's ``on_train_batch_end`` already covers each epoch's last
         step."""
         assert "on_train_epoch_end" not in RFDETREMACallback.__dict__
 
@@ -592,8 +595,7 @@ class TestEpochBoundaryNoDoubleUpdate:
                 global_step += 1
                 trainer.global_step = global_step
                 cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=global_step - 1)
-            # Lightning still calls on_train_epoch_end every epoch; resolve it through the
-            # instance so a still-present override (the bug) fires, not just the base no-op.
+            # Resolved through the instance so a still-present override (the bug) fires, not just the base no-op.
             cb.on_train_epoch_end(trainer, pl_module)
 
         total_steps = n_epochs * steps_per_epoch
@@ -806,6 +808,27 @@ class _EMAStartSnapshotProbe(Callback):
             self.average_state = {key: value.clone() for key, value in average_model.state_dict().items()}
 
 
+def _make_cpu_trainer(tmp_path: Path, max_epochs: int, callbacks: list[Callback]) -> Trainer:
+    """Build a quiet CPU ``Trainer`` limited to 4 train and 1 validation batches per epoch.
+
+    Examples:
+        >>> _make_cpu_trainer(Path("."), 2, []).max_epochs
+        2
+    """
+    return Trainer(
+        max_epochs=max_epochs,
+        accelerator="cpu",
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        logger=False,
+        num_sanity_val_steps=0,
+        limit_train_batches=4,
+        limit_val_batches=1,
+        callbacks=callbacks,
+        default_root_dir=str(tmp_path),
+    )
+
+
 class TestRealTrainerResume:
     """Regression: ``average_model_state_dict`` must survive a real ``Trainer.fit(ckpt_path=...)`` resume.
 
@@ -819,28 +842,23 @@ class TestRealTrainerResume:
     so it never exercised ``RFDETREMACallback``'s own resume path.
     """
 
-    def test_average_model_state_survives_real_trainer_fit_resume(self, tmp_path: Path) -> None:
-        """A fresh ``RFDETREMACallback`` resumed via ``ckpt_path=`` must recover the saved EMA average."""
+    @pytest.fixture
+    def loaders(self) -> tuple[DataLoader, DataLoader]:
+        """Train and validation loaders over the same 8 seeded samples, batch size 2."""
         torch.manual_seed(0)
         x = torch.randn(8, 4)
         y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        return DataLoader(TensorDataset(x, y), batch_size=2), DataLoader(TensorDataset(x, y), batch_size=2)
+
+    def test_average_model_state_survives_real_trainer_fit_resume(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
+        """A fresh ``RFDETREMACallback`` resumed via ``ckpt_path=`` must recover the saved EMA average."""
+        train_loader, val_loader = loaders
 
         best_cb1 = BestModelCallback(output_dir=str(tmp_path), run_test=False)
         ema_cb1 = RFDETREMACallback(decay=0.5, tau=0)
-        trainer_first = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=4,
-            limit_val_batches=1,
-            callbacks=[best_cb1, ema_cb1],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 1, [best_cb1, ema_cb1])
         trainer_first.fit(_EMAResumeModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
 
         ckpt_path = tmp_path / "checkpoint_best_regular.pth"
@@ -854,27 +872,14 @@ class TestRealTrainerResume:
         }
         assert expected_avg_state, "checkpoint must embed the EMA average model's weights"
 
-        # Sanity: the averaged weights genuinely diverged from the live regular weights saved
-        # alongside them (decay=0.5 vs a full live SGD step) — otherwise a broken restore could
-        # accidentally "pass" by coincidence.
+        # Averaged weights must differ from the live ones (decay=0.5 vs a full SGD step), else a broken restore passes.
         live_weights = saved["model"]
         assert not torch.allclose(expected_avg_state["weight"], live_weights["weight"])
 
         best_cb2 = BestModelCallback(output_dir=str(tmp_path), run_test=False)
         ema_cb2 = RFDETREMACallback(decay=0.5, tau=0)
         probe = _EMAStartSnapshotProbe(ema_cb2)
-        trainer_second = Trainer(
-            max_epochs=2,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=4,
-            limit_val_batches=1,
-            callbacks=[best_cb2, ema_cb2, probe],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_second = _make_cpu_trainer(tmp_path, 2, [best_cb2, ema_cb2, probe])
         trainer_second.fit(
             _EMAResumeModule(),
             train_dataloaders=train_loader,
@@ -890,13 +895,11 @@ class TestRealTrainerResume:
                 "RFDETREMACallback starts averaging from the just-resumed live weights instead"
             )
 
-    def test_last_ema_preserves_full_state_and_resumes_batch_updates(self, tmp_path: Path) -> None:
+    def test_last_ema_preserves_full_state_and_resumes_batch_updates(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """A ``last_ema.pth`` resume restores EMA state without suppressing new batch updates."""
-        torch.manual_seed(0)
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         best_cb1 = BestModelCallback(
             output_dir=str(tmp_path),
@@ -904,18 +907,7 @@ class TestRealTrainerResume:
             run_test=False,
         )
         ema_cb1 = RFDETREMACallback(decay=0.5, tau=0)
-        trainer_first = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=4,
-            limit_val_batches=1,
-            callbacks=[best_cb1, ema_cb1],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 1, [best_cb1, ema_cb1])
         trainer_first.fit(_EMAResumeModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
 
         ckpt_path = tmp_path / "last_ema.pth"
@@ -933,20 +925,8 @@ class TestRealTrainerResume:
         )
         ema_cb2 = RFDETREMACallback(decay=0.5, tau=0)
         probe = _EMAStartSnapshotProbe(ema_cb2)
-        trainer_second = Trainer(
-            # ``last_ema.pth`` is written after the first phase advances the
-            # fit-loop epoch counter to 2, so allow one additional real epoch.
-            max_epochs=3,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=4,
-            limit_val_batches=1,
-            callbacks=[best_cb2, ema_cb2, probe],
-            default_root_dir=str(tmp_path),
-        )
+        # ``last_ema.pth`` is written after the first phase advances the epoch counter to 2: allow one more epoch.
+        trainer_second = _make_cpu_trainer(tmp_path, 3, [best_cb2, ema_cb2, probe])
         trainer_second.fit(
             _EMAResumeModule(),
             train_dataloaders=train_loader,

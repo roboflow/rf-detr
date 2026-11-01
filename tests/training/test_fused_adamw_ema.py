@@ -102,6 +102,34 @@ class _TwoBatches(Dataset[tuple[NestedTensor, list[dict[str, torch.Tensor]]]]):
         return samples, targets
 
 
+def _nano_config() -> RFDETRNanoConfig:
+    """Build the compiled Nano config of the production-module tests: no pretrained weights, no CUDA graphs.
+
+    Examples:
+        >>> _nano_config().compile, _nano_config().cuda_graphs
+        (True, False)
+    """
+    return RFDETRNanoConfig(num_classes=3, pretrain_weights=None, compile=True, cuda_graphs=False)
+
+
+def _gpu_train_config(tmp_path: Path) -> TrainConfig:
+    """Build the single-GPU train config with EMA every step used by the production-module tests.
+
+    Examples:
+        >>> _gpu_train_config(Path(".")).ema_update_interval
+        1
+    """
+    return TrainConfig(
+        dataset_dir=tmp_path,
+        output_dir=tmp_path / "output",
+        multi_scale=False,
+        expanded_scales=False,
+        use_ema=True,
+        ema_update_interval=1,
+        accelerator="gpu",
+    )
+
+
 def _optimizer(model: nn.Module, average_model: AveragedModel) -> FusedAdamWEMA:
     """Build the combined optimizer for ``model`` with ``average_model`` attached as its EMA copy.
 
@@ -357,7 +385,7 @@ def test_rejects_adamw_modes_not_implemented_by_combined_kernel() -> None:
     """Opt-in AdamW variants must fail instead of silently changing their arithmetic."""
     model = nn.Linear(2, 1)
 
-    with pytest.raises(ValueError, match="amsgrad"):
+    with pytest.raises(ValueError) as exc_info:
         FusedAdamWEMA(
             model.parameters(),
             named_parameters=dict(model.named_parameters()),
@@ -368,6 +396,8 @@ def test_rejects_adamw_modes_not_implemented_by_combined_kernel() -> None:
             amsgrad=True,
         )
 
+    assert "amsgrad" in str(exc_info.value)
+
 
 def test_rejects_a_second_ema_owner() -> None:
     """Two EMA callbacks cannot silently redirect one optimizer's fused writes."""
@@ -376,8 +406,10 @@ def test_rejects_a_second_ema_owner() -> None:
     second = AveragedModel(model)
     optimizer = _optimizer(model, first)
 
-    with pytest.raises(RuntimeError, match="exactly one RFDETREMACallback"):
+    with pytest.raises(RuntimeError) as exc_info:
         optimizer.attach_ema_model(second)
+
+    assert "exactly one RFDETREMACallback" in str(exc_info.value)
 
 
 def test_cpu_step_falls_back_to_standard_adamw() -> None:
@@ -782,21 +814,8 @@ def test_optimizer_and_ema_resume_continue_counters() -> None:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_production_compiled_module_runs_combined_update(tmp_path: Path) -> None:
     """The production constructor routes a real compiled detection step through the combined optimizer."""
-    model_config = RFDETRNanoConfig(
-        num_classes=3,
-        pretrain_weights=None,
-        compile=True,
-        cuda_graphs=False,
-    )
-    train_config = TrainConfig(
-        dataset_dir=tmp_path,
-        output_dir=tmp_path / "output",
-        multi_scale=False,
-        expanded_scales=False,
-        use_ema=True,
-        ema_update_interval=1,
-        accelerator="gpu",
-    )
+    model_config = _nano_config()
+    train_config = _gpu_train_config(tmp_path)
     module = RFDETRModelModule(model_config, train_config).cuda().train()
     trainer = SimpleNamespace(
         estimated_stepping_batches=10,
@@ -853,16 +872,8 @@ def test_production_parameter_groups_match_torch_update_on_identical_gradients(
     training runs.
     """
     monkeypatch.setattr(FusedAdamWEMA, "_standard_step", _fail_on_fallback)
-    model_config = RFDETRNanoConfig(num_classes=3, pretrain_weights=None, compile=True, cuda_graphs=False)
-    train_config = TrainConfig(
-        dataset_dir=tmp_path,
-        output_dir=tmp_path / "output",
-        multi_scale=False,
-        expanded_scales=False,
-        use_ema=True,
-        ema_update_interval=1,
-        accelerator="gpu",
-    )
+    model_config = _nano_config()
+    train_config = _gpu_train_config(tmp_path)
 
     torch.manual_seed(0)
     candidate = _build_arm(model_config, train_config, True, None)
@@ -905,16 +916,8 @@ def test_trainer_resume_with_accumulation_continues_combined_update(
 ) -> None:
     """A real fit with gradient accumulation, then a checkpoint resume, keeps the kernels, counters, and EMA in step."""
     monkeypatch.setattr(FusedAdamWEMA, "_standard_step", _fail_on_fallback)
-    model_config = RFDETRNanoConfig(num_classes=3, pretrain_weights=None, compile=True, cuda_graphs=False)
-    train_config = TrainConfig(
-        dataset_dir=tmp_path,
-        output_dir=tmp_path / "output",
-        multi_scale=False,
-        expanded_scales=False,
-        use_ema=True,
-        ema_update_interval=1,
-        accelerator="gpu",
-    )
+    model_config = _nano_config()
+    train_config = _gpu_train_config(tmp_path)
     checkpoint_path = tmp_path / "resume.ckpt"
 
     trainer, _ = _fit(model_config, train_config, max_epochs=1, resume_from=None)

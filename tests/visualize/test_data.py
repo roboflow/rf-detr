@@ -6,11 +6,11 @@
 """Tests for the RF-DETR ground-truth/prediction visualization helper."""
 
 from pathlib import Path
-from unittest import mock
 
 import numpy as np
 import pytest
 from PIL import Image
+from pytest_mock import MockerFixture
 
 from rfdetr.visualize.data import save_gt_predictions_visualization
 
@@ -93,55 +93,53 @@ class TestSaveGtPredictionsVisualization:
         ],
     )
     def test_pred_label_reflects_iou_availability(
-        self, tmp_path: Path, pred_iou: float | None, expected_label: str
+        self, mocker: MockerFixture, tmp_path: Path, pred_iou: float | None, expected_label: str
     ) -> None:
         """Prediction labels append the IoU segment only when an IoU value is known.
 
         An unmatched false-positive prediction carries `iou=None`; the label loop must drop the IoU segment in that case
         instead of formatting `None` into the string.
         """
-        with (
-            mock.patch("rfdetr.visualize.data.BoxAnnotator"),
-            mock.patch("rfdetr.visualize.data.LabelAnnotator") as mock_label_annotator,
-        ):
-            save_gt_predictions_visualization(
-                scenario_name="scenario_d",
-                image_width=6,
-                image_height=6,
-                gt_boxes=[[0.0, 0.0, 1.0, 1.0]],
-                gt_class_ids=[1],
-                pred_boxes=[[0.0, 0.0, 2.0, 2.0]],
-                pred_class_ids=[2],
-                pred_confidences=[0.876],
-                pred_ious=[pred_iou],
-                save_dir=tmp_path,
-            )
+        mocker.patch("rfdetr.visualize.data.BoxAnnotator")
+        mock_label_annotator = mocker.patch("rfdetr.visualize.data.LabelAnnotator")
+
+        save_gt_predictions_visualization(
+            scenario_name="scenario_d",
+            image_width=6,
+            image_height=6,
+            gt_boxes=[[0.0, 0.0, 1.0, 1.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[0.0, 0.0, 2.0, 2.0]],
+            pred_class_ids=[2],
+            pred_confidences=[0.876],
+            pred_ious=[pred_iou],
+            save_dir=tmp_path,
+        )
 
         pred_labels = mock_label_annotator.return_value.annotate.call_args_list[-1].kwargs["labels"]
         assert pred_labels == [expected_label]
 
-    def test_gt_and_pred_boxes_offset_by_top_padding(self, tmp_path: Path) -> None:
+    def test_gt_and_pred_boxes_offset_by_top_padding(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """Both GT and prediction boxes are shifted down by the 60px top padding before annotation.
 
         Verifies the xywh->xyxy conversion sees the offset y-coordinate, and that each side's class ids (and the
         prediction's confidence) reach the annotator unchanged.
         """
-        with (
-            mock.patch("rfdetr.visualize.data.BoxAnnotator") as mock_box_annotator,
-            mock.patch("rfdetr.visualize.data.LabelAnnotator"),
-        ):
-            save_gt_predictions_visualization(
-                scenario_name="scenario_e",
-                image_width=8,
-                image_height=6,
-                gt_boxes=[[0.0, 0.0, 4.0, 4.0]],
-                gt_class_ids=[1],
-                pred_boxes=[[1.0, 1.0, 2.0, 2.0]],
-                pred_class_ids=[2],
-                pred_confidences=[0.75],
-                pred_ious=[None],
-                save_dir=tmp_path,
-            )
+        mock_box_annotator = mocker.patch("rfdetr.visualize.data.BoxAnnotator")
+        mocker.patch("rfdetr.visualize.data.LabelAnnotator")
+
+        save_gt_predictions_visualization(
+            scenario_name="scenario_e",
+            image_width=8,
+            image_height=6,
+            gt_boxes=[[0.0, 0.0, 4.0, 4.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[1.0, 1.0, 2.0, 2.0]],
+            pred_class_ids=[2],
+            pred_confidences=[0.75],
+            pred_ious=[None],
+            save_dir=tmp_path,
+        )
 
         gt_call, pred_call = mock_box_annotator.return_value.annotate.call_args_list
         np.testing.assert_array_equal(gt_call.kwargs["detections"].xyxy, np.array([[0.0, 60.0, 4.0, 64.0]]))
@@ -154,60 +152,33 @@ class TestSaveGtPredictionsVisualization:
 class TestSaveGtPredictionsVisualizationEmptyBoxes:
     """An empty ``gt_boxes`` or ``pred_boxes`` list must be a no-op for that side, not a crash."""
 
-    def test_empty_gt_boxes_does_not_raise(self, tmp_path: Path) -> None:
-        """A scenario with no ground-truth boxes still saves a visualization for the predictions.
+    @pytest.mark.parametrize(
+        ("num_gt", "num_pred"),
+        [
+            (0, 1),  # no ground truth: former IndexError, 1-D np.array([]) indexed as 2-D by xywh_to_xyxy
+            (1, 0),  # no predictions: same IndexError on the prediction side
+            (0, 0),  # neither side: blank visualization
+        ],
+    )
+    def test_saves_png_when_a_side_is_empty(self, tmp_path: Path, num_gt: int, num_pred: int) -> None:
+        """A scenario with an empty GT and/or prediction side still saves its visualization.
 
-        Regression test for an ``IndexError``: an empty ``gt_boxes`` list produced a 1-D ``np.array([])`` that
-        ``xywh_to_xyxy`` then indexed as 2-D.
+        Regression test for an ``IndexError``: an empty box list produced a 1-D ``np.array([])`` that ``xywh_to_xyxy``
+        then indexed as 2-D.
         """
+        scenario_name = f"gt{num_gt}_pred{num_pred}"
+
         save_gt_predictions_visualization(
-            scenario_name="empty_gt",
+            scenario_name=scenario_name,
             image_width=32,
             image_height=32,
-            gt_boxes=[],
-            gt_class_ids=[],
-            pred_boxes=[[4.0, 4.0, 8.0, 8.0]],
-            pred_class_ids=[1],
-            pred_confidences=[0.9],
-            pred_ious=[None],
+            gt_boxes=[[4.0, 4.0, 8.0, 8.0]] * num_gt,
+            gt_class_ids=[1] * num_gt,
+            pred_boxes=[[4.0, 4.0, 8.0, 8.0]] * num_pred,
+            pred_class_ids=[1] * num_pred,
+            pred_confidences=[0.9] * num_pred,
+            pred_ious=[None] * num_pred,
             save_dir=tmp_path,
         )
 
-        assert (tmp_path / "empty_gt.png").exists()
-
-    def test_empty_pred_boxes_does_not_raise(self, tmp_path: Path) -> None:
-        """A scenario with no predictions still saves a visualization for the ground truth.
-
-        Regression test for the same ``IndexError`` on the prediction side of the function.
-        """
-        save_gt_predictions_visualization(
-            scenario_name="empty_pred",
-            image_width=32,
-            image_height=32,
-            gt_boxes=[[4.0, 4.0, 8.0, 8.0]],
-            gt_class_ids=[1],
-            pred_boxes=[],
-            pred_class_ids=[],
-            pred_confidences=[],
-            pred_ious=[],
-            save_dir=tmp_path,
-        )
-
-        assert (tmp_path / "empty_pred.png").exists()
-
-    def test_both_empty_does_not_raise(self, tmp_path: Path) -> None:
-        """A scenario with neither GT nor predictions still saves a (blank) visualization."""
-        save_gt_predictions_visualization(
-            scenario_name="both_empty",
-            image_width=32,
-            image_height=32,
-            gt_boxes=[],
-            gt_class_ids=[],
-            pred_boxes=[],
-            pred_class_ids=[],
-            pred_confidences=[],
-            pred_ious=[],
-            save_dir=tmp_path,
-        )
-
-        assert (tmp_path / "both_empty.png").exists()
+        assert (tmp_path / f"{scenario_name}.png").exists()

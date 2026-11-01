@@ -47,7 +47,8 @@ def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
 
 @pytest.mark.parametrize("model_class", [RFDETRLarge, RFDETRNano])
 @pytest.mark.parametrize("channels", [1, 4])
-def test_multispectral_support(model_class, channels: int) -> None:
+def test_patch_embed_in_channels_match_num_channels(model_class, channels: int) -> None:
+    """A model built with ``num_channels=N`` projects N-channel input in its patch embedding."""
     model = model_class(
         num_channels=channels,
         device="cpu",

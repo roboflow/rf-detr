@@ -26,6 +26,7 @@ import pytest
 import torch
 import yaml
 from jsonargparse import Namespace
+from pytest_mock import MockerFixture
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary, Timer
 from pytorch_lightning.cli import SaveConfigCallback
@@ -308,18 +309,6 @@ class TestRFDETRCliArgumentLinking:
         cli.add_arguments_to_parser(_FakeParser())
         return captured
 
-    def test_model_config_link_registered(self):
-        """model.model_config is linked to data.model_config."""
-        links = self._collect_links()
-        sources = [lnk["source"] for lnk in links]
-        assert "model.model_config" in sources
-
-    def test_train_config_link_registered(self):
-        """model.train_config is linked to data.train_config."""
-        links = self._collect_links()
-        sources = [lnk["source"] for lnk in links]
-        assert "model.train_config" in sources
-
     @pytest.mark.parametrize(
         "source, expected_target",
         [
@@ -476,7 +465,7 @@ class TestRFDETRCliTrainer:
         save_config = next(callback for callback in first.trainer.callbacks if isinstance(callback, SaveConfigCallback))
         save_config.setup(first.trainer, first.model, stage="fit")
 
-        with pytest.warns(UserWarning, match=r"train_config\.epochs=100"):
+        with pytest.warns(UserWarning, match="train_config.epochs=100"):
             rerun = _cli(tmp_path, "--config", str(tmp_path / "config.yaml"), "--trainer.max_epochs=3")
 
         assert rerun.trainer.max_epochs == 3
@@ -613,7 +602,7 @@ class TestRFDETRCliTrainer:
         assert saved["rfdetr_cli_trainer_overrides"] == ["accumulate_grad_batches", "max_epochs"]
 
     def test_root_config_value_matching_subcommand_uses_root_parser(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
     ) -> None:
         """A root config value equal to the subcommand is not mistaken for the command position."""
         config = yaml.safe_load(_NANO_CONFIG.read_text())
@@ -634,14 +623,13 @@ class TestRFDETRCliTrainer:
             "--trainer.max_epochs=3",
         ]
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_fake_criterion(), _fake_postprocess()),
-            ),
-            pytest.warns(UserWarning, match=r"train_config\.epochs=100"),
-        ):
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_fake_criterion(), _fake_postprocess()),
+        )
+
+        with pytest.warns(UserWarning, match="train_config.epochs=100"):
             cli = _NoRunCli(RFDETRModelModule, RFDETRDataModule, args=args, run=True)
 
         assert cli.trainer.max_epochs == 3
@@ -681,7 +669,7 @@ class TestRFDETRCliTrainer:
     @pytest.mark.parametrize("run_length_flag", ["--trainer.max_epochs=3", "--trainer.max_steps=200"])
     def test_run_length_flag_warns_that_the_schedules_follow_epochs(self, tmp_path: Path, run_length_flag: str) -> None:
         """``--trainer.max_epochs`` or ``max_steps`` ends the run; the schedules follow ``train_config.epochs``."""
-        with pytest.warns(UserWarning, match=r"train_config\.epochs=7"):
+        with pytest.warns(UserWarning, match="train_config.epochs=7"):
             _cli(tmp_path, "--model.train_config.init_args.epochs=7", run_length_flag)
 
     def test_trainer_callbacks_are_added_once_to_the_rfdetr_callbacks(self, tmp_path: Path) -> None:
@@ -777,18 +765,21 @@ class TestRFDETRCliTrainer:
         ],
     )
     def test_fit_resumes_from_ckpt_path_or_train_config_resume(
-        self, tmp_path: Path, ckpt_path: str | None, resumed_from: str
+        self, tmp_path: Path, mocker: MockerFixture, ckpt_path: str | None, resumed_from: str
     ) -> None:
         """``--ckpt_path`` wins; otherwise ``resume`` in ``train_config`` resumes, as ``RFDETR.train()`` does."""
         cli = _cli(tmp_path, f"--model.train_config.init_args.resume={tmp_path / 'resume.ckpt'}", subcommand=None)
 
-        with patch.object(cli.trainer, "fit") as trainer_fit:
-            RFDETRCli.fit(cli, cli.model, ckpt_path=ckpt_path and str(tmp_path / ckpt_path))
+        trainer_fit = mocker.patch.object(cli.trainer, "fit")
+
+        RFDETRCli.fit(cli, cli.model, ckpt_path=ckpt_path and str(tmp_path / ckpt_path))
 
         assert trainer_fit.call_args.kwargs["ckpt_path"] == str(tmp_path / resumed_from)
 
     @pytest.mark.parametrize("subcommand", ["validate", "test"])
-    def test_evaluation_hides_the_missing_logger_warning(self, tmp_path: Path, subcommand: str) -> None:
+    def test_evaluation_hides_the_missing_logger_warning(
+        self, tmp_path: Path, mocker: MockerFixture, subcommand: str
+    ) -> None:
         """The evaluation-only trainer has no logger; Lightning's warning about that, once per metric, is not shown."""
         cli = _cli(tmp_path, subcommand=subcommand)
         metrics = [{"val/mAP_50_95": 0.5}]
@@ -797,10 +788,9 @@ class TestRFDETRCliTrainer:
             warnings.warn("You called `self.log(...)` but have no logger configured.", UserWarning, stacklevel=1)
             return metrics
 
-        with (
-            patch.object(cli.trainer, subcommand, side_effect=run_logging_one_metric),
-            warnings.catch_warnings(record=True) as caught,
-        ):
+        mocker.patch.object(cli.trainer, subcommand, side_effect=run_logging_one_metric)
+
+        with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             results = getattr(RFDETRCli, subcommand)(cli, model=cli.model)
 
@@ -815,12 +805,13 @@ class TestRFDETRCliTrainer:
 class TestRFDETRCliRequirement:
     """The CLI names the install command when the jsonargparse it needs is missing or too old."""
 
-    def test_jsonargparse_before_4_46_gets_the_install_command(self, tmp_path: Path) -> None:
+    def test_jsonargparse_before_4_46_gets_the_install_command(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """Without ``subclasses_enabled``, added in 4.46, the CLI names the extra to install, not a bare TypeError."""
         missing_keyword = TypeError("set_parsing_settings() got an unexpected keyword argument 'subclasses_enabled'")
 
-        with (
-            patch("jsonargparse.set_parsing_settings", side_effect=missing_keyword),
-            pytest.raises(ModuleNotFoundError, match=r"pip install -U 'rfdetr\[cli\]'"),
-        ):
+        mocker.patch("jsonargparse.set_parsing_settings", side_effect=missing_keyword)
+
+        with pytest.raises(ModuleNotFoundError) as exc_info:
             _cli(tmp_path)
+
+        assert "pip install -U 'rfdetr[cli]'" in str(exc_info.value)

@@ -77,8 +77,10 @@ class TestKeypointKorniaPaddedBatchGuard:
             multi_scale=multi_scale,
         )
 
-        with pytest.raises(ValueError, match="does not support keypoint training with padded batches"):
+        with pytest.raises(ValueError) as exc_info:
             _run_fit_setup(datamodule)
+
+        assert "does not support keypoint training with padded batches" in str(exc_info.value)
 
     @pytest.mark.parametrize("multi_scale", ["off", "per-batch"])
     def test_uniform_square_batches_are_accepted(self, tmp_path, multi_scale):

@@ -14,6 +14,7 @@ both, which split the model into extra CoreML partitions with CPU round-trips be
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import pytest
@@ -26,6 +27,7 @@ from tests._markers import onnx_only
 
 if TYPE_CHECKING:
     import onnx
+    from pytest_mock import MockerFixture
 
 
 __doctest_requires__ = {
@@ -199,11 +201,18 @@ def find_zero_dim_float_concat_nodes(graph: onnx.GraphProto) -> list[str]:
 class TestTwoStageExportGraph:
     """The exported two-stage graph must not contain the degenerate Concats CoreML rejects."""
 
-    def test_has_no_single_input_concat(self, two_stage_onnx: onnx.ModelProto) -> None:
-        assert find_single_input_concat_nodes(two_stage_onnx.graph) == []
-
-    def test_has_no_float_concat_with_empty_input(self, two_stage_onnx: onnx.ModelProto) -> None:
-        assert find_zero_dim_float_concat_nodes(two_stage_onnx.graph) == []
+    @pytest.mark.parametrize(
+        "find_nodes",
+        [
+            pytest.param(find_single_input_concat_nodes, id="single-input"),
+            pytest.param(find_zero_dim_float_concat_nodes, id="empty-float-input"),
+        ],
+    )
+    def test_has_no_degenerate_concat(
+        self, two_stage_onnx: onnx.ModelProto, find_nodes: Callable[..., list[str]]
+    ) -> None:
+        """The exported graph has no ``Concat`` with one input or with a zero-sized float input."""
+        assert find_nodes(two_stage_onnx.graph) == []
 
 
 class TestTwoStageQueryAssembly:
@@ -217,6 +226,7 @@ class TestTwoStageQueryAssembly:
         ],
     )
     def test_decoder_receives_every_query(self, num_queries: int) -> None:
+        """The decoder output keeps all ``num_queries`` slots whether proposals fill them or learned queries remain."""
         wrapper = _build_two_stage_wrapper(num_queries=num_queries)
 
         with torch.no_grad():
@@ -224,10 +234,12 @@ class TestTwoStageQueryAssembly:
 
         assert hs.shape[-2:] == (num_queries, _D_MODEL)
 
-    def test_learned_query_suffix_matches_raw_input_when_queries_remain(self) -> None:
-        """The learned-query suffix (``refpoint_embed[..., ts_len:, :]``) is concatenated as-is, with no transform
-        applied, so it must reach the decoder unchanged, in the same order -- not zeroed, reordered, or mis-combined
-        with the two-stage-selected slots ahead of it."""
+    def test_learned_query_suffix_matches_raw_input_when_queries_remain(self, mocker: MockerFixture) -> None:
+        """The learned-query suffix (``refpoint_embed[..., ts_len:, :]``) reaches the decoder unchanged and in order.
+
+        It is concatenated as-is, so it must not be zeroed, reordered, or mis-combined with the two-stage-selected slots
+        ahead of it.
+        """
         num_queries = _NUM_PROPOSALS + 4
         ts_len = _NUM_PROPOSALS  # topk = min(num_queries, encoder proposals) = min(20, 16) = 16
         wrapper = _build_two_stage_wrapper(num_queries=num_queries)
@@ -237,28 +249,25 @@ class TestTwoStageQueryAssembly:
         )
         src, pos, _, query_feat = _example_inputs(num_queries=num_queries)
 
-        original_decoder_forward = wrapper.transformer.decoder.forward
-        captured: dict[str, torch.Tensor] = {}
-
-        def _spy_decoder_forward(*args: object, **kwargs: object) -> object:
-            captured["refpoints_unsigmoid"] = kwargs["refpoints_unsigmoid"]
-            return original_decoder_forward(*args, **kwargs)
-
-        wrapper.transformer.decoder.forward = _spy_decoder_forward
+        decoder_forward = mocker.patch.object(
+            wrapper.transformer.decoder, "forward", wraps=wrapper.transformer.decoder.forward
+        )
 
         with torch.no_grad():
             wrapper(src, pos, refpoint_embed, query_feat)
 
-        actual_suffix = captured["refpoints_unsigmoid"][0, ts_len:, :]
+        actual_suffix = decoder_forward.call_args.kwargs["refpoints_unsigmoid"][0, ts_len:, :]
         torch.testing.assert_close(actual_suffix, refpoint_embed[ts_len:, :])
 
 
 class TestSingleLevelProposalsFastPath:
-    """``gen_encoder_output_proposals``'s single-level fast path (``proposals[0]``) must match the general
-    ``torch.cat(proposals, dim=1)`` path it replaces for exactly one level -- only checked for graph shape/node absence
-    in ``TestTwoStageExportGraph`` above, never against the ``torch.cat`` reference values."""
+    """``gen_encoder_output_proposals``'s single-level fast path matches the ``torch.cat(proposals, dim=1)`` path.
+
+    ``TestTwoStageExportGraph`` only checks graph shape and node absence, never the ``torch.cat`` reference values.
+    """
 
     def test_single_level_fast_path_matches_cat_reference(self) -> None:
+        """For one level, ``proposals[0]`` equals concatenating the single-level proposals along dim 1."""
         torch.manual_seed(0)
         memory = torch.randn(1, _NUM_PROPOSALS, _D_MODEL)
 
@@ -274,7 +283,8 @@ class TestGroupDetrOneTrainingMode:
     The branch is logic-identical in train/eval, so this is a coverage addition, not a bug-hunt.
     """
 
-    def test_group_detr_one_in_training_mode_does_not_error(self) -> None:
+    def test_group_detr_one_in_training_mode_keeps_every_query(self) -> None:
+        """A ``group_detr == 1`` transformer in training mode returns hidden states for every query slot."""
         num_queries = 6
         wrapper = _build_two_stage_wrapper(num_queries=num_queries)
         wrapper.train()
@@ -285,9 +295,10 @@ class TestGroupDetrOneTrainingMode:
 
 
 class TestNumRegistersWithFullProposalRemainder:
-    """Register insertion (``num_registers > 0``) has no regression case combined with the full-remainder branch
-    (``ts_len == num_queries``, i.e. ``refpoint_embed_subset.shape[-2] == 0``): both conditions land together whenever a
-    model with decoder registers also has every query slot filled by two-stage proposals.
+    """Register insertion (``num_registers > 0``) combined with the full-remainder branch (``ts_len == num_queries``).
+
+    ``refpoint_embed_subset.shape[-2] == 0`` there; both conditions land together whenever a model with decoder
+    registers also has every query slot filled by two-stage proposals.
 
     Exercised in the non-export eval path: register removal (``hs.split(n_with_reg, dim=2)``) indexes the
     decoder's stacked-intermediate-layers output, a shape only the non-export decoder path produces (export mode
@@ -296,6 +307,7 @@ class TestNumRegistersWithFullProposalRemainder:
     """
 
     def test_registers_and_full_remainder_together(self) -> None:
+        """A non-export eval forward with decoder registers and a full two-stage remainder keeps every query slot."""
         num_queries = 6  # ts_len == num_queries -> refpoint_embed_subset.shape[-2] == 0 (full remainder)
         transformer = Transformer(
             d_model=_D_MODEL,

@@ -7,13 +7,12 @@
 
 import math
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
 import torch
 from PIL import Image
-from supervision import Detections
+from supervision import Detections, KeyPoints
 
 from rfdetr import ClassThresholds, RFDETRInference
 from rfdetr.detr import RFDETR
@@ -27,8 +26,10 @@ class TestInferenceLoading:
 
     def test_missing_artifact(self, tmp_path: Path) -> None:
         """A missing artifact reports its path rather than constructing a native network."""
-        with pytest.raises(FileNotFoundError, match="missing.onnx"):
+        with pytest.raises(FileNotFoundError) as exc_info:
             RFDETRInference(tmp_path / "missing.onnx")
+
+        assert "missing.onnx" in str(exc_info.value)
 
 
 # The graph helper doctest writes a real ONNX file, so it needs the package the class-level skipif cannot gate.
@@ -48,8 +49,8 @@ def _channel_readout_graph(path: Path, channels: int = 3) -> None:
 
     Query 0's box centre x, centre y and width move with the red, green and blue channel means, and its class-0 logit
     moves with the green mean, so a wrong mean, std or channel order changes the prediction. With one channel only
-    query 0's centre x reads the grayscale input. Query 1 is a constant
-    low-score box. The batch axis is symbolic, so the same graph serves fixed- and dynamic-batch metadata.
+    query 0's centre x reads the grayscale input. Query 1 is a constant low-score box. The batch axis is symbolic, so
+    the same graph serves fixed- and dynamic-batch metadata.
 
     Examples:
         >>> import tempfile
@@ -218,7 +219,7 @@ def exported_segmentation(exported_detection: tuple[Path, dict[str, object]]) ->
 class TestInferenceCapabilities:
     """The public constructor returns an inference-only type."""
 
-    def test_distinct_type(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+    def test_load_returns_inference_only_instance(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """The public constructor loads an export into an inference-only instance."""
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
@@ -230,15 +231,12 @@ class TestInferenceCapabilities:
 class TestExportedPrediction:
     """A real runtime returns the existing Supervision prediction contract."""
 
-    def test_detection(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+    def test_detection_scales_boxes_to_source_size(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """Native preprocessing reaches the graph, and boxes scale back to a non-square source.
 
         The graph reads each normalized channel mean, so a wrong mean, std or channel order on this channel-distinct
         image moves the box or the score; the 64x96 source checks scaling to its own height and width.
         """
-        import numpy as np
-        import supervision as sv
-
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         image = np.full((64, 96, 3), (48, 96, 144), dtype=np.uint8)
@@ -246,7 +244,7 @@ class TestExportedPrediction:
 
         result = model.predict(image)
 
-        assert isinstance(result, sv.Detections)
+        assert isinstance(result, Detections)
         np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
         np.testing.assert_allclose(result.confidence, [expected_score], rtol=0, atol=1e-5)
         assert list(result.data["class_name"]) == ["object"]
@@ -258,8 +256,6 @@ class TestExportedPrediction:
         Two uniform images of different colours and sizes run as one batch of two; a batch-axis mix-up or a shared
         source size would give both results the same box or score.
         """
-        import numpy as np
-
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=dict(metadata, input_shape=[-1, 3, 32, 48]), device="cpu")
         images = [np.full((64, 96, 3), (48, 96, 144), np.uint8), np.full((40, 80, 3), (200, 30, 90), np.uint8)]
@@ -453,16 +449,11 @@ class TestExportedPrediction:
         self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, input_kind: str
     ) -> None:
         """PIL, file paths, and CHW tensors match the array prediction and source image."""
-        import numpy as np
-        import supervision as sv
-        import torch
-        from PIL import Image
-
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         image = np.full((64, 96, 3), (48, 96, 144), dtype=np.uint8)
         baseline = model.predict(image)
-        assert isinstance(baseline, sv.Detections)
+        assert isinstance(baseline, Detections)
         pil_image = Image.fromarray(image)
         if input_kind == "pil":
             supplied = pil_image
@@ -475,7 +466,7 @@ class TestExportedPrediction:
 
         result = model.predict(supplied)
 
-        assert isinstance(result, sv.Detections)
+        assert isinstance(result, Detections)
         np.testing.assert_array_equal(result.xyxy, baseline.xyxy)
         np.testing.assert_array_equal(result.class_id, baseline.class_id)
         np.testing.assert_array_equal(result.confidence, baseline.confidence)
@@ -503,11 +494,10 @@ class TestExportedPrediction:
             RFDETRInference(path, metadata=metadata, device=device)
 
     @pytest.mark.parametrize("as_list", [False, True])
-    def test_result_container(self, exported_detection: tuple[Path, dict[str, object]], as_list: bool) -> None:
+    def test_list_input_returns_list_and_single_image_returns_single(
+        self, exported_detection: tuple[Path, dict[str, object]], as_list: bool
+    ) -> None:
         """A one-item list stays a list, while a single image stays a single result."""
-        import numpy as np
-        import supervision as sv
-
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         image = np.zeros((32, 48, 3), dtype=np.uint8)
@@ -517,13 +507,11 @@ class TestExportedPrediction:
             prediction = result[0]
         else:
             prediction = result
-        assert isinstance(prediction, sv.Detections)
+        assert isinstance(prediction, Detections)
         assert "source_image" not in prediction.metadata
 
-    def test_batch_mismatch(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+    def test_list_larger_than_fixed_batch_raises(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """Fixed-batch artifacts reject lists that cannot execute as one batch."""
-        import numpy as np
-
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         image = np.zeros((32, 48, 3), dtype=np.uint8)
@@ -535,8 +523,6 @@ class TestExportedPrediction:
 
         Without the explicit bound the list runs as one batch of two and the artifact rejects it.
         """
-        import numpy as np
-
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         image = np.zeros((32, 48, 3), dtype=np.uint8)
@@ -546,23 +532,15 @@ class TestExportedPrediction:
         assert isinstance(results, list)
         assert len(results) == 2
 
-    def test_shape_mismatch(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
-        """A prediction shape cannot override the artifact's fixed shape."""
-        import numpy as np
-
+    @pytest.mark.parametrize(("shape", "message"), [((32, 32), "requires shape"), (42, "shape must be a sequence")])
+    def test_unusable_prediction_shape_raises(
+        self, exported_detection: tuple[Path, dict[str, object]], shape: object, message: str
+    ) -> None:
+        """A shape that differs from the fixed artifact shape, or is not a sequence, raises the native ValueError."""
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
-        with pytest.raises(ValueError, match="requires shape"):
-            model.predict(np.zeros((32, 48, 3), dtype=np.uint8), shape=(32, 32))
-
-    def test_invalid_shape(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
-        """Invalid shape types retain the native ValueError contract."""
-        import numpy as np
-
-        path, metadata = exported_detection
-        model = RFDETRInference(path, metadata=metadata, device="cpu")
-        with pytest.raises(ValueError, match="shape must be a sequence"):
-            model.predict(np.zeros((32, 48, 3), dtype=np.uint8), shape=42)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match=message):
+            model.predict(np.zeros((32, 48, 3), dtype=np.uint8), shape=shape)  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(
         "operation",
@@ -576,7 +554,9 @@ class TestExportedPrediction:
             "export_for_roboflow",
         ],
     )
-    def test_native_operations_absent(self, exported_detection: tuple[Path, dict[str, object]], operation: str) -> None:
+    def test_native_operations_are_absent(
+        self, exported_detection: tuple[Path, dict[str, object]], operation: str
+    ) -> None:
         """The inference type does not advertise native-model capabilities."""
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
@@ -594,18 +574,17 @@ class TestExportedPrediction:
         onnx.save(graph, path)
         metadata = dict(metadata, input_shape=[-1, 3, 32, 48])
 
-        with pytest.raises(ValueError, match="ONNX input shape.*disagrees"):
+        with pytest.raises(ValueError) as exc_info:
             RFDETRInference(path, metadata=metadata, device="cpu")
 
-    def test_embedded_metadata(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+        assert "ONNX input shape" in str(exc_info.value)
+        assert "disagrees" in str(exc_info.value)
+
+    def test_embedded_metadata_needs_no_caller_config(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """A self-describing ONNX artifact needs no caller configuration."""
         import json
 
-        import numpy as np
         import onnx
-        import supervision as sv
-
-        from rfdetr import RFDETRInference
 
         path, metadata = exported_detection
         graph = onnx.load(path)
@@ -615,18 +594,18 @@ class TestExportedPrediction:
         onnx.save(graph, path)
         model = RFDETRInference(path, device="cpu")
         result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8))
-        assert isinstance(result, sv.Detections)
+        assert isinstance(result, Detections)
         assert result.class_id is not None
         assert result.class_id.tolist() == [0]
         assert model.class_names == ["object"]
         assert model.runtime_info["backend"] == "onnx"
 
     @pytest.mark.parametrize("task", ["segment", "keypoints"])
-    def test_task_outputs(self, exported_detection: tuple[Path, dict[str, object]], task: str) -> None:
+    def test_segmentation_and_keypoint_outputs_use_native_postprocessing(
+        self, exported_detection: tuple[Path, dict[str, object]], task: str
+    ) -> None:
         """Masks and keypoints use native postprocessing and Supervision output types."""
-        import numpy as np
         import onnx
-        import supervision as sv
         from onnx import TensorProto, helper, numpy_helper
 
         path, metadata = exported_detection
@@ -652,12 +631,12 @@ class TestExportedPrediction:
         assert model.runtime_info["task"] == task
         result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8))
         if task == "segment":
-            assert isinstance(result, sv.Detections)
+            assert isinstance(result, Detections)
             assert result.mask is not None
             assert np.asarray(result.mask).shape == (1, 64, 96)
             assert np.asarray(result.mask).all()
         else:
-            assert isinstance(result, sv.KeyPoints)
+            assert isinstance(result, KeyPoints)
             np.testing.assert_allclose(result.xy, [[[48, 16]]])
             assert result.keypoint_confidence is not None
             np.testing.assert_allclose(result.keypoint_confidence, [[0.880797]], rtol=1e-5)
@@ -749,7 +728,7 @@ class TestExportedStreaming:
         self,
         exported_detection: tuple[Path, dict[str, object]],
         prediction_video: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        mocker,
         ending: str,
     ) -> None:
         """Real video captures close on completion, early close, and a rejected batch."""
@@ -759,8 +738,7 @@ class TestExportedStreaming:
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         capture = cv2.VideoCapture(str(prediction_video))
         assert capture.isOpened()
-        capture_factory = Mock(return_value=capture)
-        monkeypatch.setattr(cv2, "VideoCapture", capture_factory)
+        capture_factory = mocker.patch.object(cv2, "VideoCapture", return_value=capture)
         results = model.predict(prediction_video, stream=True, batch=2 if ending == "error" else 1)
         capture_factory.assert_not_called()
         if ending == "error":
@@ -793,7 +771,7 @@ class TestExportedStreaming:
             next(results)
 
     def test_dynamic_batch_flushes_final_image(
-        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, mocker
     ) -> None:
         """A dynamic export executes batches of two, two, then one without losing images."""
         import onnxruntime as ort
@@ -806,8 +784,8 @@ class TestExportedStreaming:
         for index, value in enumerate([20, 40, 60, 80, 100]):
             Image.fromarray(np.full((64, 96, 3), value, dtype=np.uint8)).save(source / f"{index}.png")
 
-        with patch.object(ort.InferenceSession, "run", autospec=True, side_effect=ort.InferenceSession.run) as execute:
-            results = list(model.predict(source, stream=True, batch=2))
+        execute = mocker.patch.object(ort.InferenceSession, "run", autospec=True, side_effect=ort.InferenceSession.run)
+        results = list(model.predict(source, stream=True, batch=2))
 
         assert [call.args[2]["images"].shape[0] for call in execute.call_args_list] == [2, 2, 1]
         assert len(results) == 5
@@ -819,23 +797,23 @@ class TestExportedStreaming:
 
     @_requires_opencv
     def test_two_camera_streams_fill_a_batch_two_export(
-        self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path
+        self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path, mocker
     ) -> None:
         """A `.streams` manifest of two cameras feeds one batch-two export frame by frame, in source order."""
         path, metadata = exported_batch_two
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         manifest = tmp_path / "cameras.streams"
         manifest.write_text("0\n1\n")
-        cameras = [Mock(), Mock()]
+        cameras = [mocker.Mock(), mocker.Mock()]
         for camera, value in zip(cameras, [40, 80]):
             camera.read.return_value = (True, np.full((64, 96, 3), value, dtype=np.uint8))
+        mocker.patch("cv2.VideoCapture", side_effect=cameras)
 
-        with patch("cv2.VideoCapture", side_effect=cameras):
-            results = model.predict(manifest, stream=True, stream_buffer=True)
-            try:
-                first, second = next(results), next(results)
-            finally:
-                results.close()
+        results = model.predict(manifest, stream=True, stream_buffer=True)
+        try:
+            first, second = next(results), next(results)
+        finally:
+            results.close()
 
         for result, value in zip([first, second], [40, 80]):
             assert isinstance(result, Detections)
@@ -845,17 +823,18 @@ class TestExportedStreaming:
             camera.release.assert_called_once()
 
     @_requires_opencv
-    def test_eager_live_source_warns_about_memory(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
+    def test_eager_live_source_warns_about_memory(
+        self, exported_detection: tuple[Path, dict[str, object]], mocker
+    ) -> None:
         """Eager prediction on a live camera warns that results accumulate in memory before opening the device."""
         path, metadata = exported_detection
         model = RFDETRInference(path, metadata=metadata, device="cpu")
-        camera = Mock()
+        camera = mocker.Mock()
         camera.isOpened.return_value = False
+        open_capture = mocker.patch("cv2.VideoCapture", return_value=camera)
 
-        with patch("cv2.VideoCapture", return_value=camera) as open_capture:
-            with pytest.warns(UserWarning, match="accumulate in memory"):
-                with pytest.raises(ValueError, match="Could not open"):
-                    model.predict(0)
+        with pytest.warns(UserWarning, match="accumulate in memory"), pytest.raises(ValueError, match="Could not open"):
+            model.predict(0)
 
         open_capture.assert_called_once()
 

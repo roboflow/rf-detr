@@ -97,45 +97,38 @@ def _make_polygon(mask: np.ndarray) -> list:
 class TestIsRle:
     """Tests for the ``_is_rle`` helper."""
 
-    def test_compressed_rle_detected(self) -> None:
-        assert _is_rle({"counts": "abc", "size": [100, 100]}) is True
-
-    def test_uncompressed_rle_detected(self) -> None:
-        assert _is_rle({"counts": [0, 5, 10], "size": [100, 100]}) is True
-
-    def test_bytes_counts_detected(self) -> None:
-        assert _is_rle({"counts": b"abc", "size": [100, 100]}) is True
-
-    def test_polygon_not_detected(self) -> None:
-        assert _is_rle([[30, 20, 70, 20, 70, 50, 30, 50]]) is False
-
-    def test_empty_list_not_detected(self) -> None:
-        assert _is_rle([]) is False
-
-    def test_none_not_detected(self) -> None:
-        assert _is_rle(None) is False
+    @pytest.mark.parametrize(
+        "segmentation,expected",
+        [
+            pytest.param({"counts": "abc", "size": [100, 100]}, True, id="compressed-rle"),
+            pytest.param({"counts": [0, 5, 10], "size": [100, 100]}, True, id="uncompressed-rle"),
+            pytest.param({"counts": b"abc", "size": [100, 100]}, True, id="bytes-counts"),
+            pytest.param([[30, 20, 70, 20, 70, 50, 30, 50]], False, id="polygon"),
+            pytest.param([], False, id="empty-list"),
+            pytest.param(None, False, id="none"),
+        ],
+    )
+    def test_classifies_segmentation_format(self, segmentation: object, expected: bool) -> None:
+        """RLE dicts (string, integer-list or bytes counts) are detected; polygons, empty lists and None are not."""
+        assert _is_rle(segmentation) is expected
 
 
 class TestConvertCocoPolyToMaskRle:
     """Tests for RLE support in ``convert_coco_poly_to_mask``."""
 
-    def test_compressed_rle_decodes_correctly(self) -> None:
-        """Compressed RLE (string counts) should decode to the expected mask."""
+    @pytest.mark.parametrize(
+        "encode",
+        [
+            pytest.param(_encode_compressed_rle, id="compressed-string-counts"),
+            pytest.param(_encode_uncompressed_rle, id="uncompressed-int-list-counts"),
+        ],
+    )
+    def test_rle_decodes_to_reference_mask(self, encode) -> None:
+        """Compressed (string counts) and uncompressed (int-list counts) RLE decode to the expected mask."""
         ref_mask = _make_reference_mask()
-        rle = _encode_compressed_rle(ref_mask)
+        rle = encode(ref_mask)
 
         result = convert_coco_poly_to_mask([rle], _H, _W)
-
-        assert result.shape == (1, _H, _W)
-        assert result.dtype == torch.uint8
-        assert torch.equal(result[0], torch.as_tensor(ref_mask, dtype=torch.uint8))
-
-    def test_uncompressed_rle_decodes_correctly(self) -> None:
-        """Uncompressed RLE (int-list counts) should decode to the expected mask."""
-        ref_mask = _make_reference_mask()
-        uncompressed = _encode_uncompressed_rle(ref_mask)
-
-        result = convert_coco_poly_to_mask([uncompressed], _H, _W)
 
         assert result.shape == (1, _H, _W)
         assert result.dtype == torch.uint8
@@ -177,15 +170,10 @@ class TestConvertCocoPolyToMaskRle:
         # Both should produce the same mask
         assert torch.equal(result[0], result[1])
 
-    def test_empty_segmentation_unchanged(self) -> None:
-        """Empty segmentation should produce a zero mask."""
-        result = convert_coco_poly_to_mask([[]], _H, _W)
-        assert result.shape == (1, _H, _W)
-        assert result.sum() == 0
-
-    def test_none_segmentation_unchanged(self) -> None:
-        """None segmentation should produce a zero mask."""
-        result = convert_coco_poly_to_mask([None], _H, _W)
+    @pytest.mark.parametrize("segmentations", [pytest.param([[]], id="empty"), pytest.param([None], id="none")])
+    def test_empty_or_none_segmentation_gives_zero_mask(self, segmentations: list) -> None:
+        """An empty or None segmentation should produce a zero mask."""
+        result = convert_coco_poly_to_mask(segmentations, _H, _W)
         assert result.shape == (1, _H, _W)
         assert result.sum() == 0
 
@@ -279,11 +267,13 @@ class TestConvertCocoClassWithRle:
             for i, role in enumerate(roles)
         ]
 
-    def test_rle_masks_included_in_target(self) -> None:
-        """ConvertCoco with include_masks=True should handle RLE segmentations."""
-        ref_mask = _make_reference_mask()
-        rle = _encode_compressed_rle(ref_mask)
-        anno = self._make_annotation(rle)
+    @pytest.mark.parametrize(
+        "make_segmentation",
+        [pytest.param(_encode_compressed_rle, id="rle"), pytest.param(_make_polygon, id="polygon")],
+    )
+    def test_masks_included_in_target(self, make_segmentation) -> None:
+        """ConvertCoco with include_masks=True builds a non-empty bool mask from RLE and from polygon segmentations."""
+        anno = self._make_annotation(make_segmentation(_make_reference_mask()))
 
         converter = ConvertCoco(include_masks=True)
         _, target = converter(_IMAGE, self._make_target([anno]))
@@ -292,18 +282,6 @@ class TestConvertCocoClassWithRle:
         assert target["masks"].shape == (1, _H, _W)
         assert target["masks"].dtype == torch.bool
         assert target["masks"][0].any()
-
-    def test_polygon_masks_still_work(self) -> None:
-        """ConvertCoco should still handle polygon segmentations."""
-        polygon = _make_polygon(_make_reference_mask())
-        anno = self._make_annotation(polygon)
-
-        converter = ConvertCoco(include_masks=True)
-        _, target = converter(_IMAGE, self._make_target([anno]))
-
-        assert "masks" in target
-        assert target["masks"].shape == (1, _H, _W)
-        assert target["masks"].dtype == torch.bool
 
     def test_mixed_rle_and_polygon_in_same_image(self) -> None:
         """An image with both polygon and RLE annotations across instances."""
@@ -415,21 +393,18 @@ class TestMalformedRle:
     will either handle them or raise a descriptive error rather than silently falling back.
     """
 
-    def test_missing_size_key_is_not_rle(self) -> None:
-        """Dict with 'counts' but no 'size' is not treated as RLE."""
-        assert _is_rle({"counts": [1, 2, 3]}) is False
-
-    def test_missing_counts_key_is_not_rle(self) -> None:
-        """Dict with 'size' but no 'counts' is not treated as RLE."""
-        assert _is_rle({"size": [100, 100]}) is False
-
-    def test_counts_none_is_classified_as_rle(self) -> None:
-        """_is_rle is a structural check: presence of both keys suffices regardless of value types."""
-        assert _is_rle({"counts": None, "size": [_H, _W]}) is True
-
-    def test_size_mismatch_is_still_classified_as_rle(self) -> None:
-        """Dicts with both keys are RLE even when the embedded size mismatches the image dimensions."""
-        assert _is_rle({"counts": [1, 2], "size": [50, 50]}) is True
+    @pytest.mark.parametrize(
+        "segmentation,expected",
+        [
+            pytest.param({"counts": [1, 2, 3]}, False, id="missing-size-key"),
+            pytest.param({"size": [100, 100]}, False, id="missing-counts-key"),
+            pytest.param({"counts": None, "size": [_H, _W]}, True, id="counts-none"),
+            pytest.param({"counts": [1, 2], "size": [50, 50]}, True, id="size-mismatch"),
+        ],
+    )
+    def test_classification_is_structural(self, segmentation: dict, expected: bool) -> None:
+        """Presence of both 'counts' and 'size' suffices, whatever the value types or the image dimensions."""
+        assert _is_rle(segmentation) is expected
 
 
 class TestDegeneratePolygonParts:

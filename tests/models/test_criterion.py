@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torch import Tensor
 
 import rfdetr.models.criterion as criterion_module
@@ -81,8 +82,10 @@ class TestOutputDevice:
         """ValueError raised when no top-level value is a tensor."""
         outputs = {"meta": "string_value", "count": 42}
 
-        with pytest.raises(ValueError, match="at least one tensor"):
+        with pytest.raises(ValueError) as exc_info:
             SetCriterion._output_device(outputs)
+
+        assert "at least one tensor" in str(exc_info.value)
 
     def test_skips_non_tensor_values(self):
         """Non-tensor entries at the top level are skipped; first tensor wins."""
@@ -126,7 +129,7 @@ class TestNumBoxesForTargets:
 
         assert result.item() == pytest.approx(1.0)
 
-    def test_counts_labels_correctly(self):
+    def test_counts_labels_across_targets(self):
         """Box count equals total number of labels across all targets in the batch."""
         criterion = _bare_criterion()
         outputs = {"pred_logits": torch.zeros(1, 1, 1)}
@@ -228,7 +231,7 @@ class TestTargetMaskPointSampling:
         ],
     )
     def test_cuda_bool_masks_are_gathered_not_copied(
-        self, monkeypatch: pytest.MonkeyPatch, variant: str, expected_sampled_rows: list[int]
+        self, mocker: MockerFixture, variant: str, expected_sampled_rows: list[int]
     ) -> None:
         """Contiguous CUDA boolean masks are read with a gather; grid sampling only resolves ties and NaNs.
 
@@ -250,8 +253,7 @@ class TestTargetMaskPointSampling:
             masks = [mask.transpose(1, 2) for mask in masks]
         elif variant == "coords_grad":
             coords.requires_grad_()
-        sampler = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", sampler)
+        sampler = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         criterion_module._sample_target_masks_at_points(
             [{"masks": mask} for mask in masks], [(index, index) for index in matched], coords
@@ -262,7 +264,7 @@ class TestTargetMaskPointSampling:
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.parametrize("variant", ["float", "all_empty", "different_shapes", "wrong_count"])
-    def test_cuda_per_image_sampling_retains_fallback(self, monkeypatch: pytest.MonkeyPatch, variant: str) -> None:
+    def test_cuda_per_image_sampling_retains_fallback(self, mocker: MockerFixture, variant: str) -> None:
         """Unsupported inputs retain native concatenation and sampler validation."""
         masks = [torch.ones(2, 24, 24, dtype=torch.bool, device="cuda") for _ in range(2)]
         matched = torch.arange(2) if variant != "all_empty" else torch.empty(0, dtype=torch.int64)
@@ -273,13 +275,13 @@ class TestTargetMaskPointSampling:
             masks[1] = masks[1][:, :12]
         elif variant == "wrong_count":
             coords = coords[:1]
-        sampler = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", sampler)
+        sampler = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
         if variant in ("different_shapes", "wrong_count"):
-            with pytest.raises(RuntimeError, match="Sizes of tensors must match|same batch size"):
+            with pytest.raises(RuntimeError) as exc_info:
                 criterion_module._sample_target_masks_at_points(
                     [{"masks": mask} for mask in masks], [(matched, matched)] * 2, coords
                 )
+            assert any(text in str(exc_info.value) for text in ("Sizes of tensors must match", "same batch size"))
         else:
             actual = criterion_module._sample_target_masks_at_points(
                 [{"masks": mask} for mask in masks], [(matched, matched)] * 2, coords
@@ -298,7 +300,7 @@ class TestTargetMaskPointSampling:
     )
     def test_matches_grid_sample_bitwise_and_routes_by_cost_guard(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        mocker: MockerFixture,
         height: int,
         width: int,
         groups: int,
@@ -314,11 +316,9 @@ class TestTargetMaskPointSampling:
         point_coords = torch.rand((matched.numel(), 17, 2), generator=generator)
         point_coords[:, :4] = torch.tensor(
             [
-                # 0.0/1.0 exactly unnormalize to an exact pixel-center tie for any mask size
-                # (-0.5 / size-0.5) and are covered separately by
-                # ``test_pixel_center_tie_corrects_only_the_tied_points``; these stay
-                # close to the edges without landing on that tie, so this case still exercises
-                # boundary clamping on the direct path.
+                # 0.0/1.0 unnormalize to an exact pixel-center tie for any mask size (covered by
+                # ``test_pixel_center_tie_corrects_only_the_tied_points``); these stay near the edges without
+                # tying, so this case still exercises boundary clamping on the direct path.
                 [0.001, 0.001],
                 [0.999, 0.999],
                 [-0.2, 1.2],
@@ -331,34 +331,49 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         assert fallback.call_count == expected_fallback_calls
 
-    def test_many_small_image_groups_fall_back_despite_clearing_the_aggregate_floor(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("height", "n_images", "masks_per_image", "matches_per_image", "n_points"),
+        [
+            pytest.param(64, 16, 2, 4, 64, id="many-small-image-groups"),
+            pytest.param(300, 8, 1, 1, 380, id="single-match-per-image-groups"),
+        ],
+    )
+    def test_groups_under_a_per_group_floor_fall_back(
+        self,
+        mocker: MockerFixture,
+        height: int,
+        n_images: int,
+        masks_per_image: int,
+        matches_per_image: int,
+        n_points: int,
     ) -> None:
-        """An aggregate element count above the cost floor is not enough if no single image clears it.
+        """Image groups that clear the aggregate cost floor but not a per-group one stay on ``point_sample``.
 
         The direct path pays a fixed per-image loop iteration cost (slicing, index computation, a device transfer, a
-        gather). 16 images with 4 matches each of 64x64 masks total 1,048,576 elements -- far above
-        ``_MIN_DIRECT_MASK_ELEMENTS`` (1048576) -- but each image alone contributes only 16,384 elements, well under the
-        floor. Measured on this machine: taking the direct path here is ~4.4x SLOWER than ``point_sample``, a stable
-        regression across 65536/262144/1048576-element totals, not machine noise -- the per-group floor below exists to
-        keep the guard from taking it.
+        gather) that is not amortized by a small or single-match group.
+
+        ``many-small-image-groups``: 16 images with 4 matches each of 64x64 masks total 1,048,576 elements -- far above
+        ``_MIN_DIRECT_MASK_ELEMENTS`` (1048576) -- but each image alone contributes only 16,384. Measured on this
+        machine: the direct path is ~4.4x SLOWER than ``point_sample``, stable across 65536/262144/1048576-element
+        totals, not machine noise.
+
+        ``single-match-per-image-groups``: 8 images with exactly 1 match each of 300x300 masks have a per-group element
+        count (90,000) that the per-group element floor does not reject, but the loop overhead is not amortized by one
+        match per group. Measured: the direct path is ~1.25-1.5x SLOWER than ``point_sample`` across 1-8 images. The
+        per-group MATCH COUNT floor (independent of mask resolution) keeps the guard from taking it.
         """
-        height = width = 64
-        n_images = 16
-        matches_per_image = 4
-        masks = [torch.rand(2, height, width) for _ in range(n_images)]
+        masks = [torch.rand(masks_per_image, height, height) for _ in range(n_images)]
         targets = [{"masks": image_masks} for image_masks in masks]
-        matched = torch.arange(2).repeat(matches_per_image // 2)
+        matched = torch.arange(masks_per_image).repeat(matches_per_image // masks_per_image)
         indices = [(matched, matched) for _ in range(n_images)]
-        point_coords = torch.rand(n_images * matches_per_image, 64, 2)
+        point_coords = torch.rand(n_images * matches_per_image, n_points, 2)
         expected_masks = torch.cat([image_masks[matched] for image_masks in masks])
         expected = criterion_module.point_sample(
             expected_masks.unsqueeze(1).float(),
@@ -366,49 +381,14 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points(targets, indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         fallback.assert_called_once()
 
-    def test_single_match_per_image_groups_fall_back_despite_large_masks(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A per-group element floor is not enough if a single large mask clears it on its own.
-
-        8 images with exactly 1 match each of 300x300 masks: each group's element count (90,000)
-        clears ``_MIN_DIRECT_MASK_ELEMENTS`` (1048576) by itself, so the existing per-group element
-        floor does not reject it -- but the direct path's fixed per-image loop overhead (slicing,
-        index computation, a device transfer, a gather) is not amortized when a group has only one
-        match to gather. Measured on this machine: the direct path here is ~1.25-1.5x SLOWER than
-        ``point_sample``, a stable regression across 1-8 images, all with a single match per group --
-        the per-group MATCH COUNT floor below (independent of mask resolution) exists to keep the
-        guard from taking it.
-        """
-        height = width = 300
-        n_images = 8
-        masks = [torch.rand(1, height, width) for _ in range(n_images)]
-        targets = [{"masks": image_masks} for image_masks in masks]
-        matched = torch.zeros(1, dtype=torch.int64)
-        indices = [(matched, matched) for _ in range(n_images)]
-        point_coords = torch.rand(n_images, 380, 2)
-        expected_masks = torch.cat([image_masks[matched] for image_masks in masks])
-        expected = criterion_module.point_sample(
-            expected_masks.unsqueeze(1).float(),
-            point_coords,
-            align_corners=False,
-            mode="nearest",
-        ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
-
-        actual = criterion_module._sample_target_masks_at_points(targets, indices, point_coords)
-
-        assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
-        fallback.assert_called_once()
-
-    def test_tied_points_grouped_by_mask_keep_their_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_tied_points_grouped_by_mask_keep_their_order(self, mocker: MockerFixture) -> None:
         """Grouping tied points by mask samples each point from its own mask and returns them in input order."""
         generator = torch.Generator().manual_seed(3)
         masks = torch.rand(5, 37, 53, generator=generator) > 0.5
@@ -417,8 +397,7 @@ class TestTargetMaskPointSampling:
         expected = criterion_module.point_sample(
             masks[mask_indices].unsqueeze(1).float(), coords.unsqueeze(1), align_corners=False, mode="nearest"
         ).flatten()
-        sampler = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", sampler)
+        sampler = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_tied_points(masks, mask_indices, coords)
 
@@ -427,88 +406,63 @@ class TestTargetMaskPointSampling:
         assert sampled_masks.shape[0] == 4  # distinct masks, not points
         assert padded_coords.shape == (4, 4, 2)  # mask 4 holds the most tied points
 
-    def test_pixel_center_tie_corrects_only_the_tied_points(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A coordinate landing on an exact pixel-center tie is corrected via ``point_sample``, not a full fallback.
+    @pytest.mark.parametrize(
+        ("axis", "height", "width"),
+        [
+            pytest.param(0, 560, 673, id="x-axis"),
+            pytest.param(1, 673, 560, id="y-axis"),
+        ],
+    )
+    def test_pixel_center_tie_corrects_only_the_tied_points(
+        self, mocker: MockerFixture, axis: int, height: int, width: int
+    ) -> None:
+        """A coordinate on an exact pixel-center tie, on either axis, is corrected via ``point_sample``, not a full
+        fallback.
 
-        ``x = 1 / 673`` unnormalizes to exactly ``0.5`` for ``width=673``, a tie where PyTorch's compiled
-        ``grid_sample`` nearest-mode kernel does not agree with ``torch.round`` (verified: it does for
-        ``width=96``, but not for ``width=673`` -- a float32 evaluation-order artifact of the kernel, not a
-        simple rounding-convention mismatch). Without a per-point correction this mask/coordinate pair
-        samples label ``0`` on the direct path where ``point_sample`` samples ``1``. A real point set of a
-        few hundred points routinely contains a tie like this one (verified: 22/30 runs of a
-        104-match x 380-point set did), so falling back for the WHOLE call whenever ANY point ties would
-        give away most of the optimization for no reason -- only the tied points should pay the
-        ``point_sample`` cost, not the other 152 points sampled in this call.
+        ``1 / 673`` unnormalizes to exactly ``0.5`` for a side of 673, a tie where PyTorch's compiled ``grid_sample``
+        nearest-mode kernel disagrees with ``torch.round`` (a float32 evaluation-order artifact; it agrees for 96).
+        Without a per-point correction this mask/coordinate pair samples label ``0`` where ``point_sample`` samples
+        ``1``. A real point set of a few hundred points routinely contains such a tie (22/30 runs of a 104-match x
+        380-point set did), so falling back for the whole call on any tie would give away most of the optimization: only
+        the tied points should pay the ``point_sample`` cost, not the other 152 points sampled in this call.
         """
-        height, width = 560, 673
         masks = torch.zeros(8, height, width, dtype=torch.uint8)
-        masks[:, :, 1] = 1  # column 1 is the only way to distinguish "rounded to 0" from "rounded to 1".
+        # Index 1 on the tied axis is the only way to tell "rounded to 0" from "to 1".
+        masks.select(2 - axis, 1).fill_(1)
         matched = torch.arange(8)
         indices = [(matched, matched)]
         generator = torch.Generator().manual_seed(0)
         point_coords = torch.rand(8, 20, 2, generator=generator)
-        point_coords[:, 0, 0] = 1.0 / 673.0  # ties every row's first point; the other 19 columns per row do not.
+        point_coords[:, 0, axis] = 1.0 / 673.0  # ties every row's first point; the other 19 columns per row do not.
         expected = criterion_module.point_sample(
-            masks[matched].unsqueeze(1).float(),
-            point_coords,
-            align_corners=False,
-            mode="nearest",
+            masks[matched].unsqueeze(1).float(), point_coords, align_corners=False, mode="nearest"
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         fallback.assert_called_once()
-        # The correction call must cover only the 8 tied points (one per row's column 0), not the full
-        # 8x20 = 160-point batch -- that's the whole point of correcting in place instead of falling back.
+        # The correction call covers only the 8 tied points (one per row's column 0), not all 8x20 = 160 sampled points.
         (correction_masks, correction_coords), _ = fallback.call_args
         assert correction_masks.shape[0] == 8
         assert correction_coords.shape == (8, 1, 2)
 
-    def test_pixel_center_y_tie_corrects_only_the_tied_points(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A y-axis pixel-center tie is corrected without falling back for all sampled points."""
-        height, width = 673, 560
-        masks = torch.zeros(8, height, width, dtype=torch.uint8)
-        masks[:, 1, :] = 1
-        matched = torch.arange(8)
-        indices = [(matched, matched)]
-        generator = torch.Generator().manual_seed(0)
-        point_coords = torch.rand(8, 20, 2, generator=generator)
-        point_coords[:, 0, 1] = 1.0 / 673.0
-        expected = criterion_module.point_sample(
-            masks[matched].unsqueeze(1).float(),
-            point_coords,
-            align_corners=False,
-            mode="nearest",
-        ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
-
-        actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
-
-        assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
-        fallback.assert_called_once()
-        (correction_masks, correction_coords), _ = fallback.call_args
-        assert correction_masks.shape[0] == 8
-        assert correction_coords.shape == (8, 1, 2)
-
-    def test_float64_point_coords_preserve_fallback_semantics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_float64_point_coords_preserve_fallback_semantics(self, mocker: MockerFixture) -> None:
         """Float64 coordinates remain on the established fallback path."""
         masks = torch.rand(8, 96, 96)
         matched = torch.arange(8)
         indices = [(matched, matched)]
         point_coords = torch.rand(8, 11, 2, dtype=torch.float64)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
-        with pytest.raises(RuntimeError, match="scalar type Float but found Double"):
+        with pytest.raises(RuntimeError) as exc_info:
             criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
+        assert "scalar type Float but found Double" in str(exc_info.value)
         fallback.assert_called_once()
 
-    def test_noncontiguous_masks_preserve_fallback_semantics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_noncontiguous_masks_preserve_fallback_semantics(self, mocker: MockerFixture) -> None:
         """Non-contiguous masks remain on the established fallback path."""
         masks = torch.rand(8, 96, 96).transpose(1, 2)
         assert not masks.is_contiguous()
@@ -521,15 +475,14 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         fallback.assert_called_once()
 
-    def test_non_int64_target_indices_preserve_fallback_semantics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_non_int64_target_indices_preserve_fallback_semantics(self, mocker: MockerFixture) -> None:
         """Non-int64 matcher indices remain on the established fallback path."""
         masks = torch.rand(8, 96, 96)
         matched = torch.arange(8, dtype=torch.int32)
@@ -541,23 +494,21 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         fallback.assert_called_once()
 
-    def test_positive_out_of_range_indices_preserve_fallback_semantics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_positive_out_of_range_indices_preserve_fallback_semantics(self, mocker: MockerFixture) -> None:
         """Positive out-of-range matcher indices remain on the established fallback path."""
         masks = torch.rand(8, 96, 96)
         matched = torch.tensor([0, 1, 2, 3, 4, 5, 6, 8])
         indices = [(matched, matched)]
         point_coords = torch.rand(8, 11, 2)
         fallback_targets = [{"masks": masks}]
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         with pytest.raises(IndexError):
             criterion_module._sample_target_masks_at_points(fallback_targets, indices, point_coords)
@@ -566,14 +517,15 @@ class TestTargetMaskPointSampling:
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda_point_coords_preserve_fallback_for_cpu_masks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cuda_point_coords_preserve_fallback_for_cpu_masks(self, mocker: MockerFixture) -> None:
         """CUDA point coordinates with CPU masks remain on the established fallback path."""
         masks = torch.rand(8, 96, 96)
         matched = torch.arange(8)
         indices = [(matched, matched)]
         point_coords = torch.rand(8, 11, 2, device="cuda")
-        fallback = MagicMock(return_value=torch.zeros(8, 1, 11, device="cuda"))
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(
+            criterion_module, "point_sample", return_value=torch.zeros(8, 1, 11, device="cuda")
+        )
 
         criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
@@ -581,20 +533,21 @@ class TestTargetMaskPointSampling:
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda_matcher_indices_preserve_fallback_semantics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cuda_matcher_indices_preserve_fallback_semantics(self, mocker: MockerFixture) -> None:
         """CUDA matcher indices remain on the established fallback path."""
         masks = torch.rand(8, 96, 96, device="cuda")
         matched = torch.arange(8, device="cuda")
         indices = [(matched, matched)]
         point_coords = torch.rand(8, 11, 2, device="cuda")
-        fallback = MagicMock(return_value=torch.zeros(8, 1, 11, device="cuda"))
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(
+            criterion_module, "point_sample", return_value=torch.zeros(8, 1, 11, device="cuda")
+        )
 
         criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         fallback.assert_called_once()
 
-    def test_negative_indices_preserve_existing_fallback_semantics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_negative_indices_preserve_existing_fallback_semantics(self, mocker: MockerFixture) -> None:
         """Valid negative advanced indices stay on the existing ``point_sample`` path."""
         height = width = 96
         masks = torch.rand(8, height, width)
@@ -607,15 +560,14 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         fallback.assert_called_once()
 
-    def test_direct_path_preserves_multi_image_match_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_direct_path_preserves_multi_image_match_order(self, mocker: MockerFixture) -> None:
         """Per-image direct samples concatenate in matcher order, including an empty middle image.
 
         Each non-empty group uses 16 matched targets at 256x256 (1,048,576 elements) so it clears the per-group cost
@@ -638,8 +590,7 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points(
             [{"masks": image_masks} for image_masks in masks], indices, point_coords
@@ -650,7 +601,7 @@ class TestTargetMaskPointSampling:
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_single_cuda_image_is_gathered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_single_cuda_image_is_gathered(self, mocker: MockerFixture) -> None:
         """A single CUDA image is gathered too: batch 1 at high resolution is where the float copies cost most."""
         torch.manual_seed(0)  # deterministic and, at this point count, verified to land no exact-tie coordinate.
         masks = (torch.rand(8, 96, 96, device="cuda") > 0.5).contiguous()
@@ -663,15 +614,14 @@ class TestTargetMaskPointSampling:
             align_corners=False,
             mode="nearest",
         ).squeeze(1)
-        fallback = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", fallback)
+        fallback = mocker.patch.object(criterion_module, "point_sample", wraps=criterion_module.point_sample)
 
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
         fallback.assert_not_called()
 
-    def test_loss_masks_uses_guarded_target_sampler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_loss_masks_uses_guarded_target_sampler(self, mocker: MockerFixture) -> None:
         """The tensor ``loss_masks`` path delegates target labels to the guarded sampler."""
         criterion = _bare_criterion()
         criterion.mask_point_sample_ratio = 16
@@ -679,8 +629,9 @@ class TestTargetMaskPointSampling:
         targets = [{"masks": torch.rand(8, 96, 96) > 0.5}]
         matched = torch.arange(8)
         indices = [(matched, matched)]
-        sampler = MagicMock(wraps=criterion_module._sample_target_masks_at_points)
-        monkeypatch.setattr(criterion_module, "_sample_target_masks_at_points", sampler)
+        sampler = mocker.patch.object(
+            criterion_module, "_sample_target_masks_at_points", wraps=criterion_module._sample_target_masks_at_points
+        )
 
         losses = criterion.loss_masks({"pred_masks": pred_masks}, targets, indices, num_boxes=torch.tensor(8.0))
         (losses["loss_mask_ce"] + losses["loss_mask_dice"]).backward()
@@ -701,6 +652,8 @@ class TestLossMasksNonEmptyMatchUsesRealSegmentationHeadOutput:
     """
 
     def test_loss_backprops_to_projection_weight_and_is_sensitive_to_it(self) -> None:
+        """Mask losses backpropagate to ``spatial_features_proj.weight`` and differ from the unprojected-features
+        losses."""
         torch.manual_seed(0)
         hidden, mask_size = 4, 8
         head = SegmentationHead(in_dim=hidden, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
@@ -766,6 +719,8 @@ class TestEncOutputsMaskLossThroughRealForwardPath:
     """
 
     def test_loss_mask_ce_enc_backprops_to_projection_weight(self) -> None:
+        """A real ``LWDETR`` forward feeds ``enc_outputs`` mask losses whose gradient reaches
+        ``spatial_features_proj.weight``."""
         torch.manual_seed(0)
         batch_size, hidden_dim, num_queries, num_queries_enc, num_classes, mask_size = 1, 4, 2, 3, 3, 8
 
@@ -879,7 +834,7 @@ class TestMatchedTargetCache:
         assert torch.equal(matched.labels, torch.tensor([2, 0]))
         assert torch.equal(matched.boxes, torch.tensor([[0.2, 0.3, 0.4, 0.5], [0.5, 0.5, 0.1, 0.2]]))
 
-    def test_forward_reuses_one_cached_call_per_layer_for_labels_and_boxes(self) -> None:
+    def test_forward_reuses_one_cached_call_per_layer_for_labels_and_boxes(self, mocker: MockerFixture) -> None:
         """``forward()`` must call ``_get_matched_targets`` exactly once per output layer, not once per loss.
 
         The other test in this class only checks ``_get_matched_targets``'s own return values in isolation -- it would
@@ -910,8 +865,9 @@ class TestMatchedTargetCache:
 
         outputs = {**_layer(), "aux_outputs": [_layer()], "enc_outputs": _layer()}
 
-        with patch.object(criterion, "_get_matched_targets", wraps=criterion._get_matched_targets) as spy:
-            losses = criterion(outputs, targets, num_boxes=1.0)
+        spy = mocker.patch.object(criterion, "_get_matched_targets", wraps=criterion._get_matched_targets)
+
+        losses = criterion(outputs, targets, num_boxes=1.0)
 
         assert spy.call_count == 3, "one cached call per output layer (final + aux + enc), not per loss"
         for suffix in ("", "_0", "_enc"):
@@ -919,13 +875,7 @@ class TestMatchedTargetCache:
             assert f"loss_bbox{suffix}" in losses
             assert f"loss_giou{suffix}" in losses
 
-    @pytest.mark.parametrize(
-        "loss_flag",
-        [
-            pytest.param("ia_bce_loss", id="ia_bce_loss"),
-            pytest.param("use_position_supervised_loss", id="use_position_supervised_loss"),
-        ],
-    )
+    @pytest.mark.parametrize("loss_flag", ["ia_bce_loss", "use_position_supervised_loss"])
     def test_loss_labels_matches_cached_and_recomputed_matched_targets(self, loss_flag: str) -> None:
         """``loss_labels`` must return the same ``loss_ce`` whether it recomputes ``idx``/``target_classes_o`` (and, for
         these two flags, ``target_boxes``) from ``targets``+``indices`` itself (``matched_targets=None``) or consumes a
@@ -1032,9 +982,7 @@ class TestMaskLossDenominatorStaysOnDevice:
     (``dec_layers=6``).
     """
 
-    def test_loss_masks_hands_the_jit_losses_the_num_boxes_tensor_unconverted(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_loss_masks_hands_the_jit_losses_the_num_boxes_tensor_unconverted(self, mocker: MockerFixture) -> None:
         """Prove the *production* call site, not just the two JIT leaves in isolation.
 
         Before this fix, ``loss_masks`` called ``float(num_boxes)`` ONCE and reused that single Python float for both
@@ -1050,10 +998,10 @@ class TestMaskLossDenominatorStaysOnDevice:
         matched = torch.arange(8)
         indices = [(matched, matched)]
         num_boxes = torch.tensor(8.0)
-        dice_spy = MagicMock(wraps=criterion_module.dice_loss_jit)
-        ce_spy = MagicMock(wraps=criterion_module.sigmoid_ce_loss_jit)
-        monkeypatch.setattr(criterion_module, "dice_loss_jit", dice_spy)
-        monkeypatch.setattr(criterion_module, "sigmoid_ce_loss_jit", ce_spy)
+        dice_spy = mocker.patch.object(criterion_module, "dice_loss_jit", wraps=criterion_module.dice_loss_jit)
+        ce_spy = mocker.patch.object(
+            criterion_module, "sigmoid_ce_loss_jit", wraps=criterion_module.sigmoid_ce_loss_jit
+        )
 
         criterion.loss_masks({"pred_masks": pred_masks}, targets, indices, num_boxes=num_boxes)
 
@@ -1217,7 +1165,7 @@ class TestMaskLossDenominatorStaysOnDevice:
         assert torch.allclose(dice_new, dice_loss(inputs, targets, torch.tensor(denom)))
         assert torch.allclose(ce_new, sigmoid_ce_loss(inputs, targets, torch.tensor(denom)))
 
-    def test_tensor_denominator_now_carries_gradient_a_new_capability_not_a_regression(self) -> None:
+    def test_tensor_denominator_carries_gradient(self) -> None:
         """Passing a ``requires_grad=True`` Tensor now backpropagates into the denominator; it never could before.
 
         Under the pre-fix ``float``-only signature, TorchScript's single-type binding accepted a Tensor too (by silently
@@ -1432,14 +1380,15 @@ class TestBatchedDetectionLosses:
 
         assert not criterion._can_batch_detection_losses(outputs, matched)
 
-    def test_cuda_batcher_compiles_lazily_once(self) -> None:
+    def test_cuda_batcher_compiles_lazily_once(self, mocker: MockerFixture) -> None:
         """CUDA resolves one cached dynamic compiler wrapper instead of recompiling each step."""
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
         compiled = MagicMock(wraps=criterion_module._batched_detection_loss_tensors)
 
-        with patch.object(torch, "compile", return_value=compiled) as compile_mock:
-            first = criterion._resolve_batched_detection_losses(torch.device("cuda"))
-            second = criterion._resolve_batched_detection_losses(torch.device("cuda"))
+        compile_mock = mocker.patch.object(torch, "compile", return_value=compiled)
+
+        first = criterion._resolve_batched_detection_losses(torch.device("cuda"))
+        second = criterion._resolve_batched_detection_losses(torch.device("cuda"))
 
         assert first is compiled
         assert second is compiled
@@ -1455,12 +1404,13 @@ class TestBatchedDetectionLosses:
         assert restored._compile_batched_detection_losses is True
         assert restored._compiled_batched_detection_losses is None
 
-    def test_cpu_batcher_stays_eager(self) -> None:
+    def test_cpu_batcher_stays_eager(self, mocker: MockerFixture) -> None:
         """CPU compatibility never initializes Inductor for the CUDA-only fast path."""
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
 
-        with patch.object(torch, "compile") as compile_mock:
-            resolved = criterion._resolve_batched_detection_losses(torch.device("cpu"))
+        compile_mock = mocker.patch.object(torch, "compile")
+
+        resolved = criterion._resolve_batched_detection_losses(torch.device("cpu"))
 
         assert resolved is criterion_module._batched_detection_loss_tensors
         compile_mock.assert_not_called()
@@ -1468,7 +1418,7 @@ class TestBatchedDetectionLosses:
     @pytest.mark.parametrize("padded", [False, True])
     @pytest.mark.parametrize("target_counts", [(3, 0, 7), (0, 0, 0)])
     def test_losses_and_gradients_match_per_layer_fallback(
-        self, padded: bool, target_counts: tuple[int, int, int]
+        self, mocker: MockerFixture, padded: bool, target_counts: tuple[int, int, int]
     ) -> None:
         """Batching preserves every diagnostic, optimized loss and output gradient, including padding masks."""
         outputs, layers, targets = _layered_detection_batch(
@@ -1478,31 +1428,27 @@ class TestBatchedDetectionLosses:
             targets = list(pad_targets_to_fixed_count(targets, 8))
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
 
-        with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
-            fallback_losses = criterion(outputs, targets, num_boxes=1.0)
+        can_batch = mocker.patch.object(criterion, "_can_batch_detection_losses", return_value=False)
+        fallback_losses = criterion(outputs, targets, num_boxes=1.0)
         sum(fallback_losses.values()).backward()
         fallback_gradients = [(layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in layers]
         for layer in layers:
             layer["pred_logits"].grad = None
             layer["pred_boxes"].grad = None
 
-        with (
-            patch.object(criterion, "_can_batch_detection_losses", return_value=True),
-            patch.object(
-                criterion, "_get_batched_detection_losses", wraps=criterion._get_batched_detection_losses
-            ) as batched,
-            patch.object(
-                criterion_module.box_ops,
-                "elementwise_box_iou",
-                wraps=criterion_module.box_ops.elementwise_box_iou,
-            ) as box_iou,
-            patch.object(
-                criterion_module.box_ops,
-                "elementwise_generalized_box_iou",
-                wraps=criterion_module.box_ops.elementwise_generalized_box_iou,
-            ) as generalized_box_iou,
-        ):
-            batched_losses = criterion(outputs, targets, num_boxes=1.0)
+        can_batch.return_value = True
+        batched = mocker.patch.object(
+            criterion, "_get_batched_detection_losses", wraps=criterion._get_batched_detection_losses
+        )
+        box_iou = mocker.patch.object(
+            criterion_module.box_ops, "elementwise_box_iou", wraps=criterion_module.box_ops.elementwise_box_iou
+        )
+        generalized_box_iou = mocker.patch.object(
+            criterion_module.box_ops,
+            "elementwise_generalized_box_iou",
+            wraps=criterion_module.box_ops.elementwise_generalized_box_iou,
+        )
+        batched_losses = criterion(outputs, targets, num_boxes=1.0)
         batched.assert_called_once()
         assert box_iou.call_count == 2  # one direct call plus generalized IoU's internal elementwise IoU
         generalized_box_iou.assert_called_once()
@@ -1517,7 +1463,9 @@ class TestBatchedDetectionLosses:
 
     @pytest.mark.parametrize("padded", [False, True])
     @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-    def test_low_precision_losses_keep_per_layer_dtype_and_values(self, dtype: torch.dtype, padded: bool) -> None:
+    def test_low_precision_losses_keep_per_layer_dtype_and_values(
+        self, mocker: MockerFixture, dtype: torch.dtype, padded: bool
+    ) -> None:
         """BF16/FP16 outputs return the per-layer path's dtypes, values and gradients, not low-precision quotients.
 
         The per-layer path divides a 0-dim sum by ``num_boxes``, which promotes to float32; a per-layer vector of sums
@@ -1538,16 +1486,16 @@ class TestBatchedDetectionLosses:
             ia_bce_loss=True,
         )
 
-        with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
-            fallback_losses = criterion(outputs, targets, num_boxes=10.0)
+        can_batch = mocker.patch.object(criterion, "_can_batch_detection_losses", return_value=False)
+        fallback_losses = criterion(outputs, targets, num_boxes=10.0)
         sum(fallback_losses[key] for key in fallback_losses if key.startswith("loss_")).backward()
         fallback_gradients = [(layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in layers]
         for layer in layers:
             layer["pred_logits"].grad = None
             layer["pred_boxes"].grad = None
 
-        with patch.object(criterion, "_can_batch_detection_losses", return_value=True):
-            batched_losses = criterion(outputs, targets, num_boxes=10.0)
+        can_batch.return_value = True
+        batched_losses = criterion(outputs, targets, num_boxes=10.0)
         sum(batched_losses[key] for key in batched_losses if key.startswith("loss_")).backward()
 
         tolerance = 4 * torch.finfo(dtype).eps
@@ -1888,13 +1836,15 @@ class TestPaddedTargets:
         assert padded["valid"].tolist() == expected_valid
         assert padded["orig_size"].tolist() == [640, 480], "non per-object entries stay untouched"
 
-    @pytest.mark.parametrize("pad_to", [0, -1], ids=["zero", "negative"])
+    @pytest.mark.parametrize("pad_to", [0, -1])
     def test_non_positive_pad_to_raises(self, pad_to) -> None:
         """A silently empty or a cryptic low-level error is worse than a clear, actionable one."""
         target = {"boxes": torch.rand(2, 4), "labels": torch.zeros(2, dtype=torch.int64)}
 
-        with pytest.raises(ValueError, match="pad_to must be a positive integer"):
+        with pytest.raises(ValueError) as exc_info:
             pad_targets_to_fixed_count([target], pad_to)
+
+        assert "pad_to must be a positive integer" in str(exc_info.value)
 
     def test_truncation_logs_the_dropped_box_count(self, caplog: pytest.LogCaptureFixture, monkeypatch) -> None:
         """Dropping real ground-truth boxes must be observable, even though it stays non-fatal."""
@@ -1997,8 +1947,10 @@ class TestPaddedTargets:
         outputs, targets = _padding_batch(0)
         criterion = _padding_criterion(ia_bce_loss=False)
 
-        with pytest.raises(NotImplementedError, match="IoU-aware BCE"):
+        with pytest.raises(NotImplementedError) as exc_info:
             criterion(outputs, list(pad_targets_to_fixed_count(targets, 12)))
+
+        assert "IoU-aware BCE" in str(exc_info.value)
 
     def test_mask_loss_refuses_padded_targets(self) -> None:
         """``loss_masks`` point-samples every matched pair, so a filler pair would contribute real gradient."""
@@ -2010,8 +1962,10 @@ class TestPaddedTargets:
         )
         indices = [(torch.arange(8), torch.arange(8))]
 
-        with pytest.raises(NotImplementedError, match="pad_targets_to unset for segmentation"):
+        with pytest.raises(NotImplementedError) as exc_info:
             criterion.loss_masks({"pred_masks": pred_masks}, targets, indices, num_boxes=torch.tensor(8.0))
+
+        assert "pad_targets_to unset for segmentation" in str(exc_info.value)
 
     def test_keypoints_loss_refuses_padded_targets(self) -> None:
         """``loss_keypoints`` reads every matched pair with no valid-row mask, so a filler pair would contribute real
@@ -2032,5 +1986,7 @@ class TestPaddedTargets:
         )
         indices = [(torch.arange(8), torch.arange(8))]
 
-        with pytest.raises(NotImplementedError, match="pad_targets_to unset for keypoint"):
+        with pytest.raises(NotImplementedError) as exc_info:
             criterion.loss_keypoints(outputs, targets, indices, num_boxes=torch.tensor(8.0))
+
+        assert "pad_targets_to unset for keypoint" in str(exc_info.value)

@@ -17,7 +17,6 @@ Use cases covered:
 import inspect
 import logging
 import os
-import re
 import subprocess
 import sys
 import types
@@ -26,12 +25,13 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import torch
 from pydantic import ValidationError
+from pytest_mock import MockerFixture
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
@@ -62,6 +62,33 @@ def _skip_metadata_publication_for_export_stubs(monkeypatch: pytest.MonkeyPatch)
         >>> _skip_metadata_publication_for_export_stubs(None)  # doctest: +SKIP
     """
     monkeypatch.setattr("rfdetr.export.base.write_metadata", lambda *_args, **_kwargs: None)
+
+
+@pytest.fixture
+def onnx_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """Stub the example input, ONNX conversion and model copy of ``RFDETR.export()``; return the stubbed ONNX path.
+
+    Examples:
+        Requires pytest's monkeypatch and tmp_path lifecycles, so this example cannot run standalone:
+        >>> onnx_output(None, None)  # doctest: +SKIP
+    """
+    path = str(tmp_path / "inference_model.onnx")
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: path)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    return path
+
+
+@pytest.fixture
+def tensorrt_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report TensorRT and Polygraphy as installed so a stubbed engine build is not refused on a CPU host.
+
+    Examples:
+        Requires pytest's monkeypatch lifecycle, so this example cannot run standalone:
+        >>> tensorrt_installed(None)  # doctest: +SKIP
+    """
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
 
 
 @contextmanager
@@ -252,8 +279,8 @@ def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @onnx_only
-def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
-    """Integration test: exporting a segmentation model should not crash.
+def test_segmentation_model_exports(tmp_path: Path) -> None:
+    """Integration test: exporting a segmentation model writes an ONNX file instead of crashing.
 
     This exercises the full export path to ensure no AttributeError occurs.
     """
@@ -271,8 +298,8 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @onnx_only
-def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_path: Path) -> None:
-    """Integration test: exporting with a valid rectangular shape should not crash.
+def test_export_accepts_rectangular_shape_differing_from_resolution(tmp_path: Path) -> None:
+    """Integration test: exporting with a valid rectangular shape writes an ONNX file instead of crashing.
 
     A mismatched shape forces the DINOv2 backbone to interpolate its position embeddings for the new grid size. This
     must not trace an antialiased bicubic resize (``aten::_upsample_bicubic2d_aa``), which has no ONNX opset-17
@@ -327,25 +354,17 @@ class TestExportedGraphAvoidsCoreMLRejectedOps:
         (onnx_path,) = tmp_path.glob("*.onnx")
         return onnx.shape_inference.infer_shapes(onnx.load(str(onnx_path))).graph
 
-    def test_detection_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRSegNano])
+    def test_graph_has_no_rejected_ops(
+        self, tmp_path: Path, model_class: type[RFDETRNano] | type[RFDETRSegNano]
+    ) -> None:
+        """A whole-model detection or segmentation graph holds no ``Einsum`` and no degenerate ``Concat`` node."""
         from tests.models.test_transformer_onnx_two_stage import (
             find_single_input_concat_nodes,
             find_zero_dim_float_concat_nodes,
         )
 
-        graph = self._exported_graph(tmp_path, RFDETRNano(pretrain_weights=None))
-
-        assert "Einsum" not in {node.op_type for node in graph.node}
-        assert find_single_input_concat_nodes(graph) == []
-        assert find_zero_dim_float_concat_nodes(graph) == []
-
-    def test_segmentation_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
-        from tests.models.test_transformer_onnx_two_stage import (
-            find_single_input_concat_nodes,
-            find_zero_dim_float_concat_nodes,
-        )
-
-        graph = self._exported_graph(tmp_path, RFDETRSegNano(pretrain_weights=None))
+        graph = self._exported_graph(tmp_path, model_class(pretrain_weights=None))
 
         assert "Einsum" not in {node.op_type for node in graph.node}
         assert find_single_input_concat_nodes(graph) == []
@@ -421,9 +440,9 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "dynamic_batch, segmentation_head",
     [
-        pytest.param(True, False, id="detection_dynamic"),
-        pytest.param(True, True, id="segmentation_dynamic"),
-        pytest.param(False, False, id="detection_static"),
+        (True, False),
+        (True, True),
+        (False, False),
     ],
 )
 def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
@@ -432,8 +451,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
     dynamic_batch: bool,
     segmentation_head: bool,
 ) -> None:
-    """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict to `export_onnx`;
-    `dynamic_batch=False` must pass `None`."""
+    """`dynamic_batch=True` forwards a batch-axis `dynamic_axes` dict to the converter; `False` forwards `None`."""
     model = _make_export_model(segmentation_head=segmentation_head)
 
     captured: dict = {}
@@ -519,15 +537,25 @@ def _make_mock_infer_tensor() -> MagicMock:
     return mock_tensor
 
 
-@pytest.mark.parametrize(
-    "export_format",
-    [
-        pytest.param("tensorrt", id="canonical"),
-        pytest.param("trt", id="alias"),
-    ],
-)
+def _built_engine(
+    tmp_path: Path, *, name: str = "inference_model.trt", fp16: bool = True, engine_facts: dict | None = None
+) -> _BuiltEngine:
+    """Build the ``_BuiltEngine`` a stubbed TensorRT ``_build`` returns, rooted in ``tmp_path``.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> _built_engine(Path("out")).path.endswith("inference_model.trt")
+        True
+        >>> _built_engine(Path("out"), name="other.trt", fp16=False).fp16
+        False
+    """
+    return _BuiltEngine(path=str(tmp_path / name), fp16=fp16, engine_facts=engine_facts)
+
+
+@pytest.mark.parametrize("export_format", ["tensorrt", "trt"])
+@pytest.mark.usefixtures("tensorrt_installed")
 def test_rfdetr_export_tensorrt_builds_the_engine_from_the_onnx_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str
+    mocker: MockerFixture, tmp_path: Path, onnx_output: str, export_format: str
 ) -> None:
     """`RFDETR.export(format="tensorrt")` — and its `"trt"` alias — must build the engine once from the ONNX path.
 
@@ -535,20 +563,7 @@ def test_rfdetr_export_tensorrt_builds_the_engine_from_the_onnx_path(
     `TestCliExportMain.test_tensorrt_flag_calls_build_engine` already covers).
     """
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
-    mock_build = MagicMock(
-        return_value=_BuiltEngine(path=str(tmp_path / "inference_model.trt"), fp16=True, engine_facts=None)
-    )
-
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
-    monkeypatch.setattr(
-        "rfdetr.export._tensorrt.exporter.TensorRTExporter._build",
-        lambda _self, *args, **kwargs: mock_build(*args, **kwargs),
-    )
+    mock_build = mocker.patch.object(TensorRTExporter, "_build", return_value=_built_engine(tmp_path))
 
     result = _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format=export_format, shape=(14, 14))
 
@@ -559,29 +574,26 @@ def test_rfdetr_export_tensorrt_builds_the_engine_from_the_onnx_path(
     assert str(result) == str(tmp_path / "inference_model.trt")
 
 
-def test_rfdetr_export_warns_when_max_batch_size_used_without_tensorrt(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+@pytest.mark.usefixtures("onnx_output")
+def test_rfdetr_export_warns_when_max_batch_size_used_without_tensorrt(tmp_path: Path) -> None:
     """`max_batch_size` outside `format="tensorrt"` is ignored and must warn rather than silently no-op.
 
     `format="onnx"` with `dynamic_batch=True` accepts a dynamic batch axis but has no optimization-profile concept for
     `max_batch_size` to tune, so passing it there previously vanished with no signal at all.
     """
     model = _make_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-
-    with pytest.warns(UserWarning, match=r"`max_batch_size`.*ignored"):
+    with pytest.warns(UserWarning) as record:
         _detr_module.RFDETR.export(
             model, output_dir=str(tmp_path), format="onnx", dynamic_batch=True, max_batch_size=0, shape=(14, 14)
         )
 
+    assert any("`max_batch_size`" in str(w.message) and "ignored" in str(w.message) for w in record)
 
+
+@pytest.mark.usefixtures("onnx_output", "tensorrt_installed")
 def test_rfdetr_export_warns_when_max_batch_size_used_without_dynamic_batch(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    mocker: MockerFixture, tmp_path: Path
 ) -> None:
     """`max_batch_size` on a static (`dynamic_batch=False`) TensorRT export is ignored and must warn.
 
@@ -589,70 +601,42 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_dynamic_batch(
     `max_batch_size` to bound -- so even an invalid value passed there is inert and should not fail validation.
     """
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
+    mocker.patch.object(TensorRTExporter, "_build", return_value=_built_engine(tmp_path))
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
-    monkeypatch.setattr(
-        "rfdetr.export._tensorrt.exporter.TensorRTExporter._build",
-        lambda _self, *args, **kwargs: _BuiltEngine(
-            path=str(tmp_path / "inference_model.trt"), fp16=True, engine_facts=None
-        ),
-    )
-
-    with pytest.warns(UserWarning, match=r"`max_batch_size`.*ignored"):
+    with pytest.warns(UserWarning) as record:
         _detr_module.RFDETR.export(
             model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=False, max_batch_size=0, shape=(14, 14)
         )
 
+    assert any("`max_batch_size`" in str(w.message) and "ignored" in str(w.message) for w in record)
 
-def test_rfdetr_export_warns_when_trt_timing_cache_used_for_another_format(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+
+@pytest.mark.usefixtures("onnx_output")
+def test_rfdetr_export_warns_when_trt_timing_cache_used_for_another_format(tmp_path: Path) -> None:
     """`trt_timing_cache` outside `format="tensorrt"` is ignored and must warn rather than silently no-op.
 
     Only TensorRT times kernels, so on `format="onnx"` there is no cache to load or save and the file is never touched.
     """
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
     cache = tmp_path / "engine.cache"
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-
-    with pytest.warns(UserWarning, match=r"`trt_timing_cache`.*ignored"):
+    with pytest.warns(UserWarning) as record:
         _detr_module.RFDETR.export(
             model, output_dir=str(tmp_path), format="onnx", trt_timing_cache=str(cache), shape=(14, 14)
         )
 
+    assert any("`trt_timing_cache`" in str(w.message) and "ignored" in str(w.message) for w in record)
     assert not cache.exists()
 
 
-def test_rfdetr_export_tensorrt_forwards_trt_timing_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.usefixtures("onnx_output", "tensorrt_installed")
+def test_rfdetr_export_tensorrt_forwards_trt_timing_cache(mocker: MockerFixture, tmp_path: Path) -> None:
     """`RFDETR.export(format="tensorrt", trt_timing_cache=...)` puts the path on the exporter's config, unwarned."""
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
     cache = tmp_path / "engine.cache"
+    build_engine = mocker.patch.object(TensorRTExporter, "_build", autospec=True, return_value=_built_engine(tmp_path))
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
-
-    with (
-        patch.object(
-            TensorRTExporter,
-            "_build",
-            autospec=True,
-            return_value=_BuiltEngine(path=str(tmp_path / "inference_model.trt"), fp16=True, engine_facts=None),
-        ) as build_engine,
-        warnings.catch_warnings(),
-    ):
+    with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         _detr_module.RFDETR.export(
             model, output_dir=str(tmp_path), format="tensorrt", trt_timing_cache=cache, shape=(14, 14)
@@ -683,8 +667,10 @@ def test_rfdetr_export_tensorrt_without_tensorrt_fails_before_any_model_work(
     monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", False)
 
-    with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
+    with pytest.raises(ImportError) as exc_info:
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
+
+    assert "rfdetr[tensorrt]" in str(exc_info.value)
 
 
 def test_exporter_check_dependencies_defaults_to_a_no_op() -> None:
@@ -707,33 +693,30 @@ def test_exporter_check_environment_defaults_to_a_no_op(tmp_path: Path) -> None:
         ("trt_hardware_compatibility", "ampere_plus"),
         ("trt_version_compatible", True),
         ("trt_version_compatible", "yes"),
+        ("trt_metadata", True),
     ],
 )
-def test_rfdetr_export_warns_when_a_tensorrt_portability_option_is_used_without_tensorrt(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keyword: str, value: object
+@pytest.mark.usefixtures("onnx_output")
+def test_rfdetr_export_warns_when_a_tensorrt_option_is_used_without_tensorrt(
+    tmp_path: Path, keyword: str, value: object
 ) -> None:
-    """A TensorRT portability option outside `format="tensorrt"` is ignored and must warn rather than silently no-op."""
+    """A TensorRT-only option outside `format="tensorrt"` is ignored and must warn rather than silently no-op."""
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-
-    with pytest.warns(UserWarning, match=rf"`{keyword}`.*ignored"):
+    with pytest.warns(UserWarning) as record:
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", shape=(14, 14), **{keyword: value})
 
+    assert any(f"`{keyword}`" in str(w.message) and "ignored" in str(w.message) for w in record)
 
-def test_rfdetr_export_does_not_warn_for_the_default_portability_settings(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Passing the defaults explicitly (`None` and `False`) is not a request, so it never warns on another format."""
+
+@pytest.mark.usefixtures("onnx_output")
+def test_rfdetr_export_does_not_warn_for_the_default_tensorrt_settings(tmp_path: Path) -> None:
+    """Passing the defaults explicitly (`None` and `False`) is not a request, so it never warns on another format.
+
+    Only a request that would have had an effect is worth a warning; for `trt_metadata=False` too, the explicit default
+    is not ignored in any way the caller needs to hear about.
+    """
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
-
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
@@ -744,21 +727,17 @@ def test_rfdetr_export_does_not_warn_for_the_default_portability_settings(
             shape=(14, 14),
             trt_hardware_compatibility=None,
             trt_version_compatible=False,
+            trt_metadata=False,
         )
 
 
+@pytest.mark.usefixtures("onnx_output", "tensorrt_installed")
 def test_rfdetr_export_tensorrt_forwards_the_portability_options(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`RFDETR.export(format="tensorrt", trt_...=...)` puts both settings on the exporter's configuration, unwarned."""
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter.ctypes.CDLL", lambda name: None)
     # With CDLL faked, the real lean package would import without its libraries and stay broken in sys.modules.
     monkeypatch.setitem(sys.modules, "tensorrt_lean_libs", types.ModuleType("tensorrt_lean_libs"))
@@ -768,15 +747,9 @@ def test_rfdetr_export_tensorrt_forwards_the_portability_options(
     fake_tensorrt.HardwareCompatibilityLevel = types.SimpleNamespace(SAME_COMPUTE_CAPABILITY=object())
     monkeypatch.setitem(sys.modules, "tensorrt", fake_tensorrt)
 
-    with (
-        patch.object(
-            TensorRTExporter,
-            "_build",
-            autospec=True,
-            return_value=_BuiltEngine(path=str(tmp_path / "inference_model.trt"), fp16=True, engine_facts=None),
-        ) as build_engine,
-        warnings.catch_warnings(),
-    ):
+    build_engine = mocker.patch.object(TensorRTExporter, "_build", autospec=True, return_value=_built_engine(tmp_path))
+
+    with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         _detr_module.RFDETR.export(
             model,
@@ -791,7 +764,8 @@ def test_rfdetr_export_tensorrt_forwards_the_portability_options(
     assert (config.hardware_compatibility, config.version_compatible) == ("same_compute_capability", True)
 
 
-@pytest.mark.parametrize("fp16", [pytest.param(True, id="fp16"), pytest.param(False, id="fp32")])
+@pytest.mark.parametrize("fp16", [True, False])
+@pytest.mark.usefixtures("onnx_output", "tensorrt_installed")
 def test_rfdetr_export_tensorrt_forwards_fp16(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fp16: bool) -> None:
     """`RFDETR.export(format="tensorrt", fp16=...)` must reach the exporter that builds the engine.
 
@@ -799,18 +773,12 @@ def test_rfdetr_export_tensorrt_forwards_fp16(monkeypatch: pytest.MonkeyPatch, t
     flag has to survive the trip through the configuration rather than silently reverting to the default.
     """
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
     captured: dict = {}
 
     def _fake_build(self, *_args, **_kwargs) -> _BuiltEngine:
         captured["fp16"] = self.config.fp16
-        return _BuiltEngine(path=str(tmp_path / "inference_model.trt"), fp16=self.config.fp16, engine_facts=None)
+        return _built_engine(tmp_path, fp16=self.config.fp16)
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter.TensorRTExporter._build", _fake_build)
 
     _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", fp16=fp16, shape=(14, 14))
@@ -818,40 +786,31 @@ def test_rfdetr_export_tensorrt_forwards_fp16(monkeypatch: pytest.MonkeyPatch, t
     assert captured["fp16"] == fp16
 
 
-def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_rfdetr_export_tensorrt_failure_restores_device(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """An engine build failure must still restore the live model to its original device.
 
     Regression test for the try/finally around the CPU-move .. TensorRT-conversion span in `RFDETR.export()` — a build
     failure previously (pre-merge) could strand the model on CPU.
     """
-    # Deliberately distinct from the "cpu" staging move inside export() — if this were "cpu" too, the
-    # assertion below would pass even with the `finally` restore deleted (both moves would look identical).
-    # Must also be a string `torch.device()` actually accepts: `prepare_export_graph()` resolves this value
-    # via `torch.device(device)` before `_convert()`/`_build()` ever run, so an invalid string (e.g. the
-    # former "original-device") raises RuntimeError there instead — the `finally` restore still fires and the
-    # assertion below still passes, but for the wrong reason: the mocked `_build` failure is never reached.
+    # Not "cpu" (the staging move), or the assertion would pass even without the `finally` restore; and a valid
+    # `torch.device()` string, or `prepare_export_graph()` would raise before the mocked `_build` is ever reached.
     original_device = "meta"
     model = _make_tensorrt_export_model(device=original_device)
     onnx_output = str(tmp_path / "inference_model.onnx")
-    mock_build = MagicMock(side_effect=RuntimeError("engine build failed"))
+    mock_build = mocker.patch.object(TensorRTExporter, "_build", side_effect=RuntimeError("engine build failed"))
 
     monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
     monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    # Real deepcopy (not identity) — the exported `model` local must be a distinct object from
-    # `self.model.model` so only the latter's `.to()` calls are tracked, matching production behavior.
-    monkeypatch.setattr(
-        "rfdetr.export._tensorrt.exporter.TensorRTExporter._build",
-        lambda _self, *args, **kwargs: mock_build(*args, **kwargs),
-    )
+    # No deepcopy patch: the exported copy must stay distinct from `self.model.model`, whose `.to()` calls are tracked.
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
 
     with pytest.raises(RuntimeError, match="engine build failed"):
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
 
-    # Proves the raised RuntimeError actually came from `_build` (i.e. `_convert` reached the TensorRT
-    # stage) rather than from an earlier failure — e.g. an invalid device string — that would raise before
-    # `_build` is ever called and make the restore assertion below pass for the wrong reason.
+    # The error must come from `_build`, not an earlier failure, or the restore assertion passes for the wrong reason.
     mock_build.assert_called_once()
 
     core_model = model.model.model
@@ -894,46 +853,9 @@ def test_rfdetr_export_moves_the_live_model_under_the_device_move_lock(
     )
 
 
-def test_rfdetr_export_warns_when_trt_metadata_used_without_tensorrt(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`trt_metadata=True` outside `format="tensorrt"` is ignored and must warn rather than silently no-op."""
-    model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
-
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-
-    with pytest.warns(UserWarning, match=r"`trt_metadata`.*ignored"):
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", trt_metadata=True, shape=(14, 14))
-
-
-def test_rfdetr_export_does_not_warn_when_trt_metadata_is_false_without_tensorrt(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`trt_metadata=False` is the default, so passing it explicitly for another format must stay silent.
-
-    Only a request that would have had an effect (`True`) is worth a warning; the explicit default is not ignored in any
-    way the caller needs to hear about.
-    """
-    model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
-
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", trt_metadata=False, shape=(14, 14))
-
-    assert [str(w.message) for w in caught if "trt_metadata" in str(w.message)] == []
-
-
 @pytest.mark.parametrize("value", ["yes", 1, None])
 def test_rfdetr_export_tensorrt_rejects_a_non_bool_trt_metadata_before_any_model_work(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: object
+    mocker: MockerFixture, tmp_path: Path, value: object
 ) -> None:
     """`RFDETR.export(format="tensorrt", trt_metadata=<not a bool>)` must raise instead of writing a file by accident.
 
@@ -941,8 +863,7 @@ def test_rfdetr_export_tensorrt_rejects_a_non_bool_trt_metadata_before_any_model
     validated before the model is moved, copied or traced, so none of that work may have happened when it raises.
     """
     model = _make_tensorrt_export_model()
-    prepare = MagicMock()
-    monkeypatch.setattr("rfdetr.export.prepare.prepare_export_graph", prepare)
+    prepare = mocker.patch("rfdetr.export.prepare.prepare_export_graph")
 
     with pytest.raises(ValueError, match="trt_metadata"):
         _detr_module.RFDETR.export(
@@ -953,29 +874,15 @@ def test_rfdetr_export_tensorrt_rejects_a_non_bool_trt_metadata_before_any_model
     assert model.model.model.to_calls == []
 
 
-def test_rfdetr_export_tensorrt_forwards_trt_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.usefixtures("onnx_output", "tensorrt_installed")
+def test_rfdetr_export_tensorrt_forwards_trt_metadata(mocker: MockerFixture, tmp_path: Path) -> None:
     """`RFDETR.export(format="tensorrt", trt_metadata=True)` sets it on the exporter's configuration, unwarned."""
     model = _make_tensorrt_export_model()
-    onnx_output = str(tmp_path / "inference_model.onnx")
+    mocker.patch.object(TensorRTExporter, "_write_metadata", return_value=None)
+    engine = _built_engine(tmp_path, engine_facts={"size": 0, "sha256": ""})
+    build = mocker.patch.object(TensorRTExporter, "_build", autospec=True, return_value=engine)
 
-    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
-    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter.TensorRTExporter._write_metadata", lambda *_a, **_kw: None)
-
-    with (
-        patch.object(
-            TensorRTExporter,
-            "_build",
-            autospec=True,
-            return_value=_BuiltEngine(
-                path=str(tmp_path / "inference_model.trt"), fp16=True, engine_facts={"size": 0, "sha256": ""}
-            ),
-        ) as build,
-        warnings.catch_warnings(),
-    ):
+    with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         _detr_module.RFDETR.export(
             model, output_dir=str(tmp_path), format="tensorrt", trt_metadata=True, shape=(14, 14)
@@ -984,44 +891,38 @@ def test_rfdetr_export_tensorrt_forwards_trt_metadata(monkeypatch: pytest.Monkey
     assert build.call_args.args[0].config.metadata is True
 
 
-def test_rfdetr_export_tensorrt_dynamic_batch_requires_max_batch_size(tmp_path: Path) -> None:
-    """`RFDETR.export(format="tensorrt", dynamic_batch=True)` without `max_batch_size` must raise.
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        pytest.param({}, "max_batch_size", id="missing-max-batch-size"),
+        pytest.param(
+            {"batch_size": 8, "max_batch_size": 4}, "1 <= batch_size <= max_batch_size", id="batch-size-over-max"
+        ),
+    ],
+)
+def test_rfdetr_export_tensorrt_dynamic_batch_rejects_invalid_bounds(
+    tmp_path: Path, settings: dict[str, int], message: str
+) -> None:
+    """`RFDETR.export(format="tensorrt", dynamic_batch=True)` needs `max_batch_size`, and `batch_size` may not exceed
+    it.
 
-    Covers the public facade users actually call (as opposed to `TestDynamicBatchConfig` in `test_tensorrt_export.py`,
-    which only exercises `TensorRTExporter`/`TensorRTConfig` directly). The exporter is constructed — and validated —
-    before any ONNX conversion work starts, so no conversion-chain monkeypatching is needed here.
+    Covers the public facade users call (as opposed to `TestDynamicBatchConfig` in `test_tensorrt_export.py`, which only
+    exercises `TensorRTConfig`). The exporter is constructed and validated before any ONNX conversion starts, and
+    `batch_size > max_batch_size` cannot form a valid optimization profile, so no conversion stubbing is needed.
     """
     model = _make_tensorrt_export_model()
 
-    with pytest.raises(ValueError, match="max_batch_size"):
+    with pytest.raises(ValueError) as exc_info:
         _detr_module.RFDETR.export(
-            model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=True, shape=(14, 14)
+            model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=True, shape=(14, 14), **settings
         )
 
-
-def test_rfdetr_export_tensorrt_dynamic_batch_rejects_batch_size_over_max(tmp_path: Path) -> None:
-    """`RFDETR.export(format="tensorrt", dynamic_batch=True, batch_size=..., max_batch_size=...)` enforces the bound.
-
-    `batch_size > max_batch_size` cannot form a valid optimization profile, and the facade must refuse it at the same
-    surface users call rather than only inside `TensorRTConfig` construction tests.
-    """
-    model = _make_tensorrt_export_model()
-
-    with pytest.raises(ValueError, match="1 <= batch_size <= max_batch_size"):
-        _detr_module.RFDETR.export(
-            model,
-            output_dir=str(tmp_path),
-            format="tensorrt",
-            dynamic_batch=True,
-            batch_size=8,
-            max_batch_size=4,
-            shape=(14, 14),
-        )
+    assert message in str(exc_info.value)
 
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-@pytest.mark.parametrize("mode", [pytest.param("train", id="train_mode"), pytest.param("eval", id="eval_mode")])
+@pytest.mark.parametrize("mode", ["train", "eval"])
 def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "eval"]) -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
     model = RFDETRSegNano()
@@ -1071,14 +972,14 @@ class TestExportPatchSize:
         monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
         return model
 
-    def test_export_patch_size_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_patch_size_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """export(patch_size=X) must raise ValueError when X != model_config.patch_size."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
         with pytest.raises(ValueError, match="patch_size"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=16)
 
     @pytest.mark.parametrize("bad_patch_size", [0, -1])
-    def test_export_invalid_patch_size_raises(
+    def test_invalid_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: int
     ) -> None:
         """Export() must raise ValueError when patch_size is not a positive integer."""
@@ -1088,9 +989,7 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
 
-    def test_export_shape_must_be_divisible_by_block_size(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_shape_must_be_divisible_by_block_size(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Export() must reject shapes not divisible by patch_size * num_windows."""
         # patch_size=16, num_windows=2 → block_size=32; shape (48, 64): 48 % 32 != 0
         model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
@@ -1106,7 +1005,7 @@ class TestExportPatchSize:
             pytest.param((64, 0), id="zero_width"),
         ],
     )
-    def test_export_negative_or_zero_shape_raises(
+    def test_non_positive_shape_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple[int, int]
     ) -> None:
         """Export() must reject non-positive shape dimensions (Python -N % M == 0 wraps silently)."""
@@ -1114,29 +1013,39 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="positive integers"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
 
-    def test_export_shape_valid_for_block_size(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Export() accepts shape divisible by patch_size * num_windows without error."""
-        # patch_size=16, num_windows=2 → block_size=32; shape (64, 64) is valid
-        model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
-        # Should not raise
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(64, 64))
+    @pytest.mark.parametrize(
+        "patch_size, num_windows, export_kwargs",
+        [
+            pytest.param(16, 2, {"shape": (64, 64)}, id="shape-divisible-by-block-size"),
+            pytest.param(14, 4, {"patch_size": 14}, id="patch-size-matches-config"),
+        ],
+    )
+    def test_accepts_valid_patch_size_and_shape(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        patch_size: int,
+        num_windows: int,
+        export_kwargs: dict[str, object],
+    ) -> None:
+        """Export() accepts a shape divisible by patch_size * num_windows and an explicit patch_size matching the
+        config.
+
+        patch_size=16, num_windows=2 gives block_size=32, so (64, 64) is valid; patch_size=14, num_windows=4 gives
+        block_size=56 and the scaffold's resolution of 112 (56 * 2).
+        """
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=patch_size, num_windows=num_windows)
+
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), **export_kwargs)
 
     @pytest.mark.parametrize("bad_patch_size", [True, False])
-    def test_export_bool_patch_size_raises(
+    def test_bool_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: bool
     ) -> None:
         """Export() must reject bool values for patch_size (isinstance(True, int) is True)."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
-
-    def test_export_explicit_patch_size_matching_config_succeeds(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """export(patch_size=X) must succeed when X matches model_config.patch_size."""
-        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
-        # patch_size=14 matches model_config.patch_size=14; block_size=56; resolution=112 (56*2)
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=14)
 
     @pytest.mark.parametrize(
         "bad_shape",
@@ -1148,16 +1057,14 @@ class TestExportPatchSize:
             pytest.param((14, False), id="bool_width"),
         ],
     )
-    def test_export_invalid_shape_type_raises(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple
-    ) -> None:
+    def test_invalid_shape_type_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple) -> None:
         """Export() must raise ValueError for float, bool, or wrong-arity shape tuples."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
         with pytest.raises(ValueError, match="shape"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
 
     @pytest.mark.parametrize("bad_num_windows", [0, -1, True])
-    def test_export_invalid_num_windows_raises(
+    def test_invalid_num_windows_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_num_windows: int
     ) -> None:
         """Export() must raise ValueError when model_config.num_windows is not a positive integer."""
@@ -1166,7 +1073,7 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="num_windows must be a positive integer"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path))
 
-    def test_export_default_resolution_not_divisible_by_block_size_raises(
+    def test_default_resolution_not_divisible_by_block_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Export() with shape=None must raise ValueError when model.resolution % block_size != 0."""
@@ -1178,7 +1085,7 @@ class TestExportPatchSize:
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path))
 
 
-def test_make_infer_image_produces_correct_rectangular_shape() -> None:
+def test_make_infer_image_keeps_rectangular_shape() -> None:
     """make_infer_image must produce a (B, C, H, W) tensor for non-square shapes.
 
     Regression test for the square-resize bug where ``Resize((shape[0], shape[0]))`` was used instead of
@@ -1202,28 +1109,18 @@ class TestExportOnnxVariantNaming:
     @pytest.mark.parametrize(
         "variant_name, backbone_only, output_name, output_names, expected_suffix",
         [
-            pytest.param("rfdetr-medium", False, None, ["dets"], "rfdetr-medium.onnx", id="variant_name"),
-            pytest.param(
-                "rfdetr-nano", True, None, ["features"], "rfdetr-nano-backbone.onnx", id="variant_name_with_backbone"
-            ),
-            pytest.param(None, False, None, ["dets"], "inference_model.onnx", id="default_name_without_variant"),
-            pytest.param(
-                None, True, None, ["features"], "backbone_model.onnx", id="default_backbone_name_without_variant"
-            ),
-            pytest.param(
-                "rfdetr-medium", False, "my-model", ["dets"], "my-model.onnx", id="output_name_overrides_variant_name"
-            ),
-            pytest.param(
-                None,
-                True,
-                "my-model",
-                ["features"],
-                "my-model-backbone.onnx",
-                id="output_name_with_backbone_keeps_structural_suffix",
-            ),
+            ("rfdetr-medium", False, None, ["dets"], "rfdetr-medium.onnx"),
+            ("rfdetr-nano", True, None, ["features"], "rfdetr-nano-backbone.onnx"),
+            (None, False, None, ["dets"], "inference_model.onnx"),
+            (None, True, None, ["features"], "backbone_model.onnx"),
+            ("rfdetr-medium", False, "my-model", ["dets"], "my-model.onnx"),
+            (None, True, "my-model", ["features"], "my-model-backbone.onnx"),
+            pytest.param("", False, None, ["dets"], "inference_model.onnx", id="empty_variant_name"),
+            ("foo/bar", False, None, ["dets"], "bar.onnx"),
+            ("/tmp/x", False, None, ["dets"], "x.onnx"),
         ],
     )
-    def test_onnx_export_filename_naming(
+    def test_artifact_filename(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -1233,11 +1130,11 @@ class TestExportOnnxVariantNaming:
         output_names: list[str],
         expected_suffix: str,
     ) -> None:
-        """export_onnx's output filename follows the variant/output-name/backbone-suffix naming rules.
+        """The ONNX artifact filename follows the variant/output-name/backbone-suffix naming rules.
 
-        Covers variant_name alone, variant_name + backbone_only (appends '-backbone'), no variant_name (falls back to
-        the default name, backbone or not), output_name overriding variant_name, and output_name + backbone_only still
-        appending the structural '-backbone' suffix.
+        Covers variant_name alone, variant_name + backbone_only (appends '-backbone'), no or empty variant_name (falls
+        back to the default name), path separators stripped from variant_name, output_name overriding variant_name, and
+        output_name + backbone_only still appending the structural '-backbone' suffix.
         """
         captured: dict = {}
 
@@ -1264,11 +1161,9 @@ class TestExportOnnxVariantNaming:
     @pytest.mark.parametrize(
         "size, output_name_kwarg, expected_variant_name, expected_output_name",
         [
-            pytest.param("rfdetr-medium", None, "rfdetr-medium", None, id="variant_name_from_size"),
-            pytest.param(None, None, None, None, id="none_when_size_not_set"),
-            pytest.param(
-                "rfdetr-medium", "my-model", "rfdetr-medium", "my-model", id="output_name_alongside_variant_name"
-            ),
+            ("rfdetr-medium", None, "rfdetr-medium", None),
+            (None, None, None, None),
+            ("rfdetr-medium", "my-model", "rfdetr-medium", "my-model"),
         ],
     )
     def test_rfdetr_export_passes_variant_and_output_name(
@@ -1308,42 +1203,6 @@ class TestExportOnnxVariantNaming:
 
         assert captured["variant_name"] == expected_variant_name
         assert captured["output_name"] == expected_output_name
-
-    @pytest.mark.parametrize(
-        "variant_name, expected_suffix",
-        [
-            pytest.param("", "inference_model.onnx", id="empty_string_falls_back_to_default"),
-            pytest.param("foo/bar", "bar.onnx", id="path_separator_stripped_to_basename"),
-            pytest.param("/tmp/x", "x.onnx", id="absolute_path_stripped_to_basename"),
-        ],
-    )
-    def test_variant_name_sanitization(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        variant_name: str,
-        expected_suffix: str,
-    ) -> None:
-        """variant_name edge cases: empty string falls back to default; path separators are stripped."""
-        captured: dict = {}
-
-        def _fake_onnx_export(*args, **kwargs) -> None:
-            captured["output_file"] = args[2]
-
-        monkeypatch.setattr(torch.onnx, "export", _fake_onnx_export)
-
-        _run_onnx_export(
-            output_dir=str(tmp_path),
-            model=torch.nn.Identity(),
-            input_names=["input"],
-            input_tensors=torch.randn(1, 3, 8, 8),
-            output_names=["dets"],
-            dynamic_axes=None,
-            verbose=False,
-            variant_name=variant_name or None,
-        )
-
-        assert captured["output_file"].endswith(expected_suffix)
 
 
 @pytest.mark.gpu
@@ -1430,7 +1289,7 @@ def _make_export_graph(*, backbone_only: bool = False) -> ExportGraph:
 
 
 @pytest.mark.parametrize("format", ["coreml", "executorch"])
-def test_prepared_backbone_module_reaches_the_exporter(tmp_path: Path, format: str) -> None:
+def test_prepared_backbone_module_reaches_the_exporter(mocker: MockerFixture, tmp_path: Path, format: str) -> None:
     """An exporter accepts a prepared backbone graph, whose module exposes no ``export`` method.
 
     Backbone-only exports hand over a wrapper rather than the detector, and the wrapper deliberately has no export-mode
@@ -1443,11 +1302,10 @@ def test_prepared_backbone_module_reaches_the_exporter(tmp_path: Path, format: s
     exporter = exporter_class(config)
     output_path = tmp_path / "backbone"
 
-    with (
-        patch.object(type(exporter), "check_dependencies"),
-        patch.object(type(exporter), "_convert", return_value=output_path) as convert,
-    ):
-        result = exporter(graph)
+    mocker.patch.object(type(exporter), "check_dependencies")
+    convert = mocker.patch.object(type(exporter), "_convert", return_value=output_path)
+
+    result = exporter(graph)
 
     assert result == output_path
     assert convert.call_args.args[0] is graph
@@ -1455,8 +1313,7 @@ def test_prepared_backbone_module_reaches_the_exporter(tmp_path: Path, format: s
 
 @pytest.mark.parametrize("backbone_only", [False, True])
 def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
-    tmp_path: Path,
-    backbone_only: bool,
+    mocker: MockerFixture, tmp_path: Path, backbone_only: bool
 ) -> None:
     """TensorRT receives the ONNX backbone marker when the caller supplies a custom name."""
     obj = _detr_module.RFDETR.__new__(_detr_module.RFDETR)
@@ -1488,18 +1345,14 @@ def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
     )
     stem = "custom-backbone" if backbone_only else "custom"
     onnx_path = tmp_path / f"{stem}.onnx"
-    with (
-        patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 32, 32)),
-        patch("rfdetr.export._onnx.exporter.OnnxExporter._convert", return_value=onnx_path),
-        patch("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True),
-        patch("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True),
-        patch.object(
-            TensorRTExporter,
-            "_build",
-            return_value=_BuiltEngine(path=str(tmp_path / f"{stem}.trt"), fp16=True, engine_facts=None),
-        ) as build,
-    ):
-        obj.export(format="tensorrt", backbone_only=backbone_only, output_name="custom", output_dir=str(tmp_path))
+    mocker.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 32, 32))
+    mocker.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert", return_value=onnx_path)
+    mocker.patch("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
+    mocker.patch("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
+    build = mocker.patch.object(TensorRTExporter, "_build", return_value=_built_engine(tmp_path, name=f"{stem}.trt"))
+
+    obj.export(format="tensorrt", backbone_only=backbone_only, output_name="custom", output_dir=str(tmp_path))
+
     assert build.call_args.kwargs["output_name"] == stem
 
 
@@ -1533,27 +1386,25 @@ class TestSwitchToExportMode:
             self.switches += 1
             self._forward_origin = self.forward
 
-    def test_switches_a_fresh_model(self) -> None:
-        """A model that has not been switched yet must have ``export()`` called on it.
+    @pytest.mark.parametrize(
+        "switch",
+        [
+            pytest.param(_switch_to_export_mode, id="first-call"),
+            pytest.param(
+                lambda model: (_switch_to_export_mode(model), _switch_to_export_mode(model)), id="second-call"
+            ),
+        ],
+    )
+    def test_switches_exactly_once(self, switch: Callable[[torch.nn.Module], object]) -> None:
+        """A fresh model is switched by the first call, and a model already in export mode is left alone afterwards.
 
-        This is the ordinary path taken by the ExecuTorch, CoreML and OpenVINO dispatchers, which receive a freshly
-        deepcopied module from ``RFDETR.export()``.
+        One call is the ordinary path of the ExecuTorch, CoreML and OpenVINO dispatchers, which receive a freshly
+        deepcopied module from ``RFDETR.export()``. A second ``export()`` would overwrite ``_forward_origin`` with
+        ``forward_export``, silently and unrecoverably, and two switches become reachable as soon as one exporter
+        composes another (a TFLite or TensorRT export running an ONNX export internally).
         """
         model = self._SwitchCountingModel()
-        _switch_to_export_mode(model)
-        assert model.switches == 1
-
-    def test_does_not_switch_twice(self) -> None:
-        """A model already in export mode must be left alone on a second call.
-
-        The failure this guards is silent and unrecoverable: the second ``export()`` would overwrite
-        ``_forward_origin`` with ``forward_export``, so the module could never be restored. Two
-        switches become reachable as soon as one exporter composes another (a TFLite or TensorRT
-        export running an ONNX export internally).
-        """
-        model = self._SwitchCountingModel()
-        _switch_to_export_mode(model)
-        _switch_to_export_mode(model)
+        switch(model)
         assert model.switches == 1
 
     def test_leaves_a_module_without_export_untouched(self) -> None:
@@ -1566,34 +1417,23 @@ class TestSwitchToExportMode:
         _switch_to_export_mode(model)
         assert not hasattr(model, "_export")
 
-    def test_onnx_exporter_routes_through_the_guarded_switch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        "prepare",
+        [
+            pytest.param(_switch_to_export_mode, id="already-switched"),
+            pytest.param(lambda _model: None, id="fresh"),
+        ],
+    )
+    def test_onnx_exporter_switches_exactly_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prepare: Callable[[torch.nn.Module], object]
     ) -> None:
-        """``OnnxExporter`` must share the choke point, so a composed ONNX export cannot switch twice.
+        """``OnnxExporter`` shares the guarded choke point: a switched model is not switched again, a fresh one is.
 
         A TFLite or TensorRT export runs an ONNX export internally after the model was already switched, so an unguarded
         ``model.export()`` here would overwrite ``_forward_origin`` with the export forward.
         """
         model = self._SwitchCountingModel()
-        _switch_to_export_mode(model)
-        monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
-        graph = ExportGraph(
-            model=model,
-            input_tensors=torch.zeros(1, 2),
-            input_names=("input",),
-            output_names=("output",),
-            dynamic_axes=None,
-            shape=(2, 2),
-            backbone_only=False,
-        )
-
-        OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))(graph)
-
-        assert model.switches == 1
-
-    def test_onnx_exporter_still_switches_a_fresh_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Routing through the guarded helper must not drop the switch for a fresh model."""
-        model = self._SwitchCountingModel()
+        prepare(model)
         monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
         graph = ExportGraph(
             model=model,
@@ -1701,27 +1541,15 @@ class TestExportSeamInventory:
     @pytest.mark.parametrize(
         "seam, export_format",
         [
-            pytest.param("rfdetr.detr.deepcopy", "onnx", id="deepcopy"),
-            pytest.param("rfdetr.export.prepare.make_infer_image", "onnx", id="make_infer_image"),
-            pytest.param("rfdetr.export._onnx.exporter.OnnxExporter._convert", "onnx", id="export_onnx"),
-            pytest.param("rfdetr.export._backend._resolve_export_backend", "onnx", id="resolve_export_backend"),
-            pytest.param("rfdetr.export._tensorrt.exporter.TensorRTExporter._build", "tensorrt", id="tensorrt_build"),
-            pytest.param(
-                "rfdetr.export._backend.preload_tensorflow_before_onnx", "tflite", id="preload_tensorflow_before_onnx"
-            ),
-            pytest.param(
-                "rfdetr.export._onnx.exporter.OnnxExporter.check_dependencies", "onnx", id="onnx_check_dependencies"
-            ),
-            pytest.param(
-                "rfdetr.export._tensorrt.exporter.TensorRTExporter.check_dependencies",
-                "tensorrt",
-                id="tensorrt_check_dependencies",
-            ),
-            pytest.param(
-                "rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies",
-                "tflite",
-                id="tflite_check_dependencies",
-            ),
+            ("rfdetr.detr.deepcopy", "onnx"),
+            ("rfdetr.export.prepare.make_infer_image", "onnx"),
+            ("rfdetr.export._onnx.exporter.OnnxExporter._convert", "onnx"),
+            ("rfdetr.export._backend._resolve_export_backend", "onnx"),
+            ("rfdetr.export._tensorrt.exporter.TensorRTExporter._build", "tensorrt"),
+            ("rfdetr.export._backend.preload_tensorflow_before_onnx", "tflite"),
+            ("rfdetr.export._onnx.exporter.OnnxExporter.check_dependencies", "onnx"),
+            ("rfdetr.export._tensorrt.exporter.TensorRTExporter.check_dependencies", "tensorrt"),
+            ("rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies", "tflite"),
         ],
     )
     def test_seam_is_invoked(
@@ -1739,9 +1567,9 @@ class TestExportSeamInventory:
     @pytest.mark.parametrize(
         "export_format, expected_name",
         [
-            pytest.param("onnx", "inference_model.onnx", id="onnx"),
-            pytest.param("tensorrt", "inference_model.trt", id="tensorrt"),
-            pytest.param("tflite", "inference_model_fp32.tflite", id="tflite"),
+            ("onnx", "inference_model.onnx"),
+            ("tensorrt", "inference_model.trt"),
+            ("tflite", "inference_model_fp32.tflite"),
         ],
     )
     def test_returns_the_converter_artifact_path(
@@ -1773,7 +1601,7 @@ class TestExportRejectsBeforeForwardPass:
     """
 
     @pytest.mark.parametrize(
-        "export_format, settings, error, match",
+        "export_format, settings, error, message",
         [
             pytest.param(
                 "tflite", {"quantization": "q4"}, ValueError, "Unsupported quantization", id="tflite-quantization"
@@ -1846,19 +1674,20 @@ class TestExportRejectsBeforeForwardPass:
     )
     def test_invalid_setting_never_reaches_the_forward_pass(
         self,
+        mocker: MockerFixture,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         export_format: str,
         settings: dict[str, object],
         error: type[Exception],
-        match: str,
+        message: str,
     ) -> None:
         """The request is refused, and ``make_infer_image``, which builds the forward pass's input, never runs."""
         stubs = _stub_export_dependencies(monkeypatch, tmp_path, export_format=export_format)
         # With the converter stubbed, a check that still lives inside `_convert` never raises at all.
-        monkeypatch.setattr(resolve_exporter(export_format), "_convert", MagicMock(return_value=tmp_path / "artifact"))
+        mocker.patch.object(resolve_exporter(export_format), "_convert", return_value=tmp_path / "artifact")
 
-        with pytest.raises(error, match=match):
+        with pytest.raises(error) as exc_info:
             _detr_module.RFDETR.export(
                 _make_tensorrt_export_model(),
                 output_dir=str(tmp_path),
@@ -1867,13 +1696,16 @@ class TestExportRejectsBeforeForwardPass:
                 **settings,
             )
 
+        assert message in str(exc_info.value)
         stubs["rfdetr.export.prepare.make_infer_image"].assert_not_called()
 
-    def test_notes_a_format_drops_are_not_serialized(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_notes_a_format_drops_are_not_serialized(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """A format with no metadata slot warns and drops ``notes``, so a value it never writes is not refused."""
         _stub_export_dependencies(monkeypatch, tmp_path, export_format="openvino")
-        monkeypatch.setattr(resolve_exporter("openvino"), "_convert", MagicMock(return_value=tmp_path / "model.xml"))
-        monkeypatch.setattr(resolve_exporter("openvino"), "check_dependencies", MagicMock(return_value=None))
+        mocker.patch.object(resolve_exporter("openvino"), "_convert", return_value=tmp_path / "model.xml")
+        mocker.patch.object(resolve_exporter("openvino"), "check_dependencies", return_value=None)
 
         with pytest.warns(UserWarning, match="`notes` is not forwarded"):
             _detr_module.RFDETR.export(
@@ -1885,17 +1717,16 @@ class TestExportRejectsBeforeForwardPass:
             )
 
     def test_invalid_executorch_backend_never_reaches_the_forward_pass(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """An unsupported ``backend`` for ``format='executorch'`` is refused while resolving the backend -- before
-        ``make_infer_image`` builds the forward pass's input, and even before an exporter class is resolved.
+        """An unsupported ``backend`` for ``format='executorch'`` is refused before the forward pass input is built.
 
-        This does not fit the table above: that table's default stubbing replaces ``_resolve_export_backend``
-        wholesale (every other row's format is backend-agnostic), which would silently discard the invalid
-        ``backend`` this test needs to reach the real validation.
+        The refusal happens while resolving the backend, even before an exporter class is resolved. This does not fit
+        the table above: that table's default stubbing replaces ``_resolve_export_backend`` wholesale (every other
+        row's format is backend-agnostic), which would silently discard the invalid ``backend`` this test needs to
+        reach the real validation.
         """
-        make_infer_image = MagicMock()
-        monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", make_infer_image)
+        make_infer_image = mocker.patch("rfdetr.export.prepare.make_infer_image")
 
         with pytest.raises(ValueError, match="Unsupported backend 'nonesuch'"):
             _detr_module.RFDETR.export(
@@ -1928,14 +1759,19 @@ class TestExportWarningLocation:
         ],
     )
     def test_construction_warnings_point_at_the_caller(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str, backend: str | None
+        self,
+        mocker: MockerFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        export_format: str,
+        backend: str | None,
     ) -> None:
         """The experimental and dropped-``notes`` warnings are reported at the line that called ``export``."""
         stubs = _stub_export_dependencies(monkeypatch, tmp_path, export_format=export_format)
         stubs["rfdetr.export._backend._resolve_export_backend"].return_value = (backend, None)
         exporter_class = resolve_exporter(export_format)
-        monkeypatch.setattr(exporter_class, "_convert", MagicMock(return_value=tmp_path / "artifact"))
-        monkeypatch.setattr(exporter_class, "check_dependencies", MagicMock(return_value=None))
+        mocker.patch.object(exporter_class, "_convert", return_value=tmp_path / "artifact")
+        mocker.patch.object(exporter_class, "check_dependencies", return_value=None)
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -1947,7 +1783,11 @@ class TestExportWarningLocation:
                 notes="provenance",
             )
 
-        reported = {warning.filename for warning in caught if re.search(r"experimental|`notes`", str(warning.message))}
+        reported = {
+            warning.filename
+            for warning in caught
+            if any(text in str(warning.message) for text in ("experimental", "`notes`"))
+        }
         assert reported == {__file__}
 
     def test_refused_request_does_not_warn_first(self, tmp_path: Path) -> None:
@@ -1991,31 +1831,29 @@ class TestExportFormatSpelling:
 
         stubs["rfdetr.export._onnx.exporter.OnnxExporter._convert"].assert_called_once()
 
-    def test_non_string_format_is_refused_with_a_clear_error(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    @pytest.mark.parametrize(
+        "export_format, message",
+        [
+            (123, "Unsupported export format 123"),
+            pytest.param(["onnx"], "Unsupported export format ['onnx']", id="list"),
+        ],
+    )
+    def test_non_string_format_is_refused(
+        self, mocker: MockerFixture, tmp_path: Path, export_format: object, message: str
     ) -> None:
-        """A non-string ``format`` (e.g. an int) fails with the same "unsupported format" message an unknown name gets,
-        not an opaque ``KeyError``/``TypeError`` from deep inside the registry, and no exporter is resolved."""
-        resolve_exporter_stub = MagicMock()
-        monkeypatch.setattr("rfdetr.export.registry.resolve_exporter", resolve_exporter_stub)
+        """A non-string ``format`` fails with the "unsupported format" message, and no exporter is resolved.
 
-        with pytest.raises(ValueError, match="Unsupported export format 123"):
+        Neither an int nor a list may surface as an opaque ``KeyError``/``TypeError`` from deep inside the registry
+        (such as a set-membership ``TypeError``).
+        """
+        resolve_exporter_stub = mocker.patch("rfdetr.export.registry.resolve_exporter")
+
+        with pytest.raises(ValueError) as exc_info:
             _detr_module.RFDETR.export(
-                _make_tensorrt_export_model(), output_dir=str(tmp_path), format=123, shape=(14, 14)
+                _make_tensorrt_export_model(), output_dir=str(tmp_path), format=export_format, shape=(14, 14)
             )
 
-        resolve_exporter_stub.assert_not_called()
-
-    def test_list_format_is_refused_with_a_clear_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """A list format raises ValueError at the public export boundary instead of set-membership TypeError."""
-        resolve_exporter_stub = MagicMock()
-        monkeypatch.setattr("rfdetr.export.registry.resolve_exporter", resolve_exporter_stub)
-
-        with pytest.raises(ValueError, match=r"Unsupported export format \['onnx'\]"):
-            _detr_module.RFDETR.export(
-                _make_tensorrt_export_model(), output_dir=str(tmp_path), format=["onnx"], shape=(14, 14)
-            )
-
+        assert message in str(exc_info.value)
         resolve_exporter_stub.assert_not_called()
 
 
@@ -2031,7 +1869,7 @@ class TestExportBatchSize:
             pytest.param(np.bool_(True), id="numpy-bool"),
             pytest.param(torch.tensor(True), id="bool-tensor"),
             2.0,
-            pytest.param("2", id="string"),
+            "2",
             None,
         ],
     )
@@ -2047,11 +1885,10 @@ class TestExportBatchSize:
             )
 
     def test_invalid_batch_size_is_refused_before_any_exporter_is_imported(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """No exporter module, and with it no optional dependency, is imported for a batch size that cannot work."""
-        resolve_exporter_stub = MagicMock()
-        monkeypatch.setattr("rfdetr.export.registry.resolve_exporter", resolve_exporter_stub)
+        resolve_exporter_stub = mocker.patch("rfdetr.export.registry.resolve_exporter")
 
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
             _detr_module.RFDETR.export(_make_tensorrt_export_model(), output_dir=str(tmp_path), batch_size=0)
@@ -2060,7 +1897,7 @@ class TestExportBatchSize:
 
     @pytest.mark.parametrize(
         "batch_size",
-        [1, 3, pytest.param(np.int64(3), id="numpy-int64"), pytest.param(2**31, id="no-upper-bound-enforced")],
+        [1, 3, pytest.param(np.int64(3), id="numpy-int64"), 2**31],
     )
     def test_integer_batch_size_sizes_the_example_batch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, batch_size: int | np.integer
@@ -2116,6 +1953,20 @@ class TestExportBatchSize:
             )
 
 
+def _run_in_fresh_interpreter(script: str, *, timeout: float = 120) -> subprocess.CompletedProcess[str]:
+    """Run ``script`` with ``python -c`` in a new interpreter that imports the same ``rfdetr`` as this process.
+
+    Examples:
+        >>> _run_in_fresh_interpreter("import rfdetr; print('ok')").stdout.strip().splitlines()[-1]
+        'ok'
+    """
+    source_root = str(Path(_detr_module.__file__).resolve().parents[1])
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [source_root, os.environ.get("PYTHONPATH")]))}
+    return subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env, timeout=timeout
+    )
+
+
 class TestExportDependencyCheck:
     """A format's missing package is reported before the forward pass, naming the extra that installs it.
 
@@ -2134,6 +1985,7 @@ class TestExportDependencyCheck:
     )
     def test_a_configuration_the_host_cannot_build_never_reaches_the_forward_pass(
         self,
+        mocker: MockerFixture,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         setting: dict[str, object],
@@ -2143,8 +1995,9 @@ class TestExportDependencyCheck:
 
         The check needs the configuration, which the ``check_dependencies`` class method does not see.
         """
-        make_infer_image = MagicMock(side_effect=lambda *_a, **_kw: _make_mock_infer_tensor())
-        monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", make_infer_image)
+        make_infer_image = mocker.patch(
+            "rfdetr.export.prepare.make_infer_image", side_effect=lambda *_a, **_kw: _make_mock_infer_tensor()
+        )
         monkeypatch.setattr(
             "rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: str(tmp_path / "model.onnx")
         )
@@ -2155,9 +2008,9 @@ class TestExportDependencyCheck:
         tensorrt.__version__ = "11.3.0.99"
         monkeypatch.setitem(sys.modules, "tensorrt", tensorrt)
         monkeypatch.setitem(sys.modules, "tensorrt_lean_libs", None)
-        monkeypatch.setattr(
+        mocker.patch(
             "rfdetr.export._tensorrt.exporter.ctypes.CDLL",
-            MagicMock(side_effect=OSError("libnvinfer_lean.so.11: cannot open shared object file")),
+            side_effect=OSError("libnvinfer_lean.so.11: cannot open shared object file"),
         )
 
         with pytest.raises(error):
@@ -2177,7 +2030,7 @@ class TestExportDependencyCheck:
         monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", False)
         monkeypatch.setitem(sys.modules, "tensorrt", None)
 
-        with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
+        with pytest.raises(ImportError) as exc_info:
             _detr_module.RFDETR.export(
                 _make_tensorrt_export_model(),
                 output_dir=str(tmp_path),
@@ -2186,29 +2039,33 @@ class TestExportDependencyCheck:
                 trt_version_compatible=True,
             )
 
-    def test_an_exporter_handed_a_graph_checks_its_configuration_before_converting(self, tmp_path: Path) -> None:
+        assert "rfdetr[tensorrt]" in str(exc_info.value)
+
+    def test_an_exporter_handed_a_graph_checks_its_configuration_before_converting(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
         """``Exporter.__call__`` repeats the check for a caller that skips ``RFDETR.export``, as for packages."""
         exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))
+        mocker.patch.object(OnnxExporter, "check_dependencies")
+        mocker.patch.object(OnnxExporter, "check_environment", side_effect=ImportError("a library is missing"))
+        convert = mocker.patch.object(OnnxExporter, "_convert")
 
-        with (
-            patch.object(OnnxExporter, "check_dependencies"),
-            patch.object(OnnxExporter, "check_environment", side_effect=ImportError("a library is missing")),
-            patch.object(OnnxExporter, "_convert") as convert,
-            pytest.raises(ImportError, match="a library is missing"),
-        ):
+        with pytest.raises(ImportError, match="a library is missing"):
             exporter(_make_export_graph())
 
         convert.assert_not_called()
 
-    def test_missing_onnx_never_reaches_the_forward_pass(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_missing_onnx_never_reaches_the_forward_pass(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """A base install without ``onnx`` learns which extra to install before the model runs, not after the trace."""
-        make_infer_image = MagicMock()
-        monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", make_infer_image)
+        make_infer_image = mocker.patch("rfdetr.export.prepare.make_infer_image")
         monkeypatch.setitem(sys.modules, "onnx", None)
 
-        with pytest.raises(ImportError, match=r'pip install "rfdetr\[onnx\]"'):
+        with pytest.raises(ImportError) as exc_info:
             _detr_module.RFDETR.export(_make_tensorrt_export_model(), output_dir=str(tmp_path), shape=(14, 14))
 
+        assert 'pip install "rfdetr[onnx]"' in str(exc_info.value)
         make_infer_image.assert_not_called()
 
     def test_onnx_installed_after_a_refused_check_is_found(
@@ -2223,29 +2080,30 @@ class TestExportDependencyCheck:
         exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))
         with monkeypatch.context() as before_install:
             before_install.setitem(sys.modules, "onnx", None)
-            with pytest.raises(ImportError, match=r"rfdetr\[onnx\]"):
+            with pytest.raises(ImportError) as exc_info:
                 exporter.check_dependencies()
+            assert "rfdetr[onnx]" in str(exc_info.value)
 
         exporter.check_dependencies()
 
     @pytest.mark.parametrize(
-        "init_source, message",
+        "init_source, prefix",
         [
             pytest.param(
                 'raise ImportError("DLL load failed while importing onnx_cpp2py_export")',
-                "^DLL load failed",
+                "DLL load failed",
                 id="native-extension-fails",
             ),
             pytest.param(
                 "raise ModuleNotFoundError(\"No module named 'onnx.onnx_cpp2py_export'\", "
                 'name="onnx.onnx_cpp2py_export")',
-                "^No module named 'onnx.onnx_cpp2py_export'",
+                "No module named 'onnx.onnx_cpp2py_export'",
                 id="submodule-missing",
             ),
         ],
     )
     def test_broken_onnx_install_raises_its_own_error(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, init_source: str, message: str
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, init_source: str, prefix: str
     ) -> None:
         """An installed ``onnx`` that fails to import is not reported as missing: reinstalling it would not help."""
         broken_package = tmp_path / "site" / "onnx"
@@ -2255,32 +2113,43 @@ class TestExportDependencyCheck:
         monkeypatch.syspath_prepend(str(tmp_path / "site"))
         exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))
 
-        with pytest.raises(ImportError, match=message):
+        with pytest.raises(ImportError) as exc_info:
             exporter.check_dependencies()
 
-    def test_invalid_shape_is_refused_before_the_dependency_check(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """A shape the model cannot take is named first: installing a missing extra would not make it valid."""
-        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock(side_effect=ImportError("missing package")))
+        assert str(exc_info.value).startswith(prefix)
 
-        with pytest.raises(ValueError, match="divisible"):
-            _detr_module.RFDETR.export(_make_tensorrt_export_model(), output_dir=str(tmp_path), shape=(15, 15))
-
-    def test_inplace_optimized_model_is_refused_before_the_dependency_check(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    @pytest.mark.parametrize(
+        "shape, optimized_inplace, error, message",
+        [
+            pytest.param((15, 15), False, ValueError, "divisible", id="invalid-shape"),
+            pytest.param((14, 14), True, RuntimeError, "after inplace optimization", id="inplace-optimized"),
+        ],
+    )
+    def test_invalid_request_is_refused_before_the_dependency_check(
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
+        shape: tuple[int, int],
+        optimized_inplace: bool,
+        error: type[Exception],
+        message: str,
     ) -> None:
-        """A legacy model whose base weights were cleared is refused before checking export dependencies."""
-        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock(side_effect=ImportError("missing package")))
+        """A request no install could satisfy is named first: installing a missing extra would not make it valid.
+
+        That covers a shape the model cannot take and a legacy model whose base weights were cleared.
+        """
+        mocker.patch.object(OnnxExporter, "check_dependencies", side_effect=ImportError("missing package"))
         model = _make_tensorrt_export_model()
-        model._optimized_inplace = True
+        model._optimized_inplace = optimized_inplace
 
-        with pytest.raises(RuntimeError, match="after inplace optimization"):
-            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
+        with pytest.raises(error) as exc_info:
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=shape)
+
+        assert message in str(exc_info.value)
 
     @pytest.mark.parametrize("export_format", sorted(REGISTRY))
     def test_direct_conversion_checks_dependencies_first(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str
     ) -> None:
         """An exporter handed a graph directly runs the same check before its conversion starts.
 
@@ -2290,26 +2159,27 @@ class TestExportDependencyCheck:
         # TFLite's registry preimport would otherwise load the real TensorFlow.
         monkeypatch.setattr("rfdetr.export._backend.preload_tensorflow_before_onnx", lambda: None)
         exporter_class = resolve_exporter(export_format)
-        monkeypatch.setattr(exporter_class, "check_dependencies", MagicMock(side_effect=ImportError("missing package")))
-        convert = MagicMock()
-        monkeypatch.setattr(exporter_class, "_convert", convert)
+        mocker.patch.object(exporter_class, "check_dependencies", side_effect=ImportError("missing package"))
+        convert = mocker.patch.object(exporter_class, "_convert")
         # build_config drops a setting the format does not read, so every format can take ExecuTorch's backend.
         exporter = exporter_class(exporter_class.build_config(output_dir=tmp_path, verbose=False, backend="xnnpack"))
 
-        with pytest.raises(ImportError, match="^missing package$"):
+        with pytest.raises(ImportError) as exc_info:
             exporter(_make_export_graph())
+
+        assert str(exc_info.value) == "missing package"
 
         convert.assert_not_called()
 
     @pytest.mark.parametrize(
-        "export_format, settings, patches, modules, message",
+        "export_format, settings, patches, modules, fragments",
         [
             pytest.param(
                 "onnx",
                 {},
                 {},
                 {"onnx": None},
-                r'missing \(onnx\)\. Install with: pip install "rfdetr\[onnx\]"$',
+                ('missing (onnx). Install with: pip install "rfdetr[onnx]"',),
                 id="onnx",
             ),
             pytest.param(
@@ -2321,7 +2191,7 @@ class TestExportDependencyCheck:
                     "rfdetr.export._tflite.exporter._check_onnx_graphsurgeon_available": lambda: None,
                 },
                 {"tensorflow": types.ModuleType("tensorflow"), "onnx2tf": None},
-                r"onnx2tf is not installed.*rfdetr\[tflite\]",
+                ("onnx2tf is not installed", "rfdetr[tflite]"),
                 id="tflite-onnx2tf",
             ),
             pytest.param(
@@ -2332,7 +2202,7 @@ class TestExportDependencyCheck:
                     "rfdetr.export._tflite.exporter._check_tf_keras_available": lambda: None,
                 },
                 {"tensorflow": types.ModuleType("tensorflow"), "onnx_graphsurgeon": None},
-                r'requires onnx_graphsurgeon.*pip install onnx_graphsurgeon \("rfdetr\[tflite\]" includes it',
+                ("requires onnx_graphsurgeon", 'pip install onnx_graphsurgeon ("rfdetr[tflite]" includes it'),
                 id="tflite-onnx_graphsurgeon",
             ),
             pytest.param(
@@ -2340,7 +2210,7 @@ class TestExportDependencyCheck:
                 {},
                 {"rfdetr.export._backend.preload_tensorflow_before_onnx": lambda: None},
                 {"tensorflow": types.ModuleType("tensorflow"), "tf_keras": None},
-                r"requires tf-keras.*rfdetr\[tflite\]",
+                ("requires tf-keras", "rfdetr[tflite]"),
                 id="tflite-tf_keras",
             ),
             pytest.param(
@@ -2348,7 +2218,7 @@ class TestExportDependencyCheck:
                 {},
                 {"rfdetr.export._backend.preload_tensorflow_before_onnx": lambda: None},
                 {"tensorflow": None, "onnx2tf": types.ModuleType("onnx2tf")},
-                r"requires TensorFlow.*rfdetr\[tflite\]",
+                ("requires TensorFlow", "rfdetr[tflite]"),
                 id="tflite-tensorflow",
             ),
             pytest.param(
@@ -2359,8 +2229,10 @@ class TestExportDependencyCheck:
                     "rfdetr.export._tflite.exporter._check_tf_keras_available": lambda: None,
                 },
                 {"tensorflow": types.ModuleType("tensorflow"), "onnx": None},
-                r'missing \(onnx\)\. Install it with: pip install "rfdetr\[tflite\]" '
-                r"\(the extra installs on Python 3\.12 only\)",
+                (
+                    'missing (onnx). Install it with: pip install "rfdetr[tflite]" '
+                    "(the extra installs on Python 3.12 only)",
+                ),
                 id="tflite-onnx",
             ),
             pytest.param(
@@ -2368,7 +2240,7 @@ class TestExportDependencyCheck:
                 {},
                 {"rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE": False},
                 {},
-                r"rfdetr\[tensorrt\]",
+                ("rfdetr[tensorrt]",),
                 id="tensorrt",
             ),
             pytest.param(
@@ -2381,18 +2253,18 @@ class TestExportDependencyCheck:
                     "rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE": True,
                 },
                 {"onnx": None},
-                r'missing \(onnx\)\. Install with: pip install "rfdetr\[tensorrt\]"$',
+                ('missing (onnx). Install with: pip install "rfdetr[tensorrt]"',),
                 id="tensorrt-onnx",
             ),
             pytest.param(
-                "executorch", {"backend": "xnnpack"}, {}, {"executorch": None}, r"rfdetr\[executorch\]", id="executorch"
+                "executorch", {"backend": "xnnpack"}, {}, {"executorch": None}, ("rfdetr[executorch]",), id="executorch"
             ),
             pytest.param(
                 "coreml",
                 {},
                 {"rfdetr.export._coreml.exporter._IS_COREMLTOOLS_AVAILABLE": False},
                 {},
-                r"rfdetr\[coreml\]",
+                ("rfdetr[coreml]",),
                 id="coreml",
             ),
             pytest.param(
@@ -2400,11 +2272,11 @@ class TestExportDependencyCheck:
                 {},
                 {"rfdetr.export._coreai.exporter._IS_COREAI_TORCH_AVAILABLE": False},
                 {},
-                r"rfdetr\[coreai\]",
+                ("rfdetr[coreai]",),
                 id="coreai",
             ),
-            pytest.param("openvino", {}, {}, {"openvino": None}, r"rfdetr\[openvino\]", id="openvino"),
-            pytest.param("litert", {}, {}, {"litert_torch": None}, r"rfdetr\[litert\]", id="litert"),
+            pytest.param("openvino", {}, {}, {"openvino": None}, ("rfdetr[openvino]",), id="openvino"),
+            pytest.param("litert", {}, {}, {"litert_torch": None}, ("rfdetr[litert]",), id="litert"),
         ],
     )
     def test_missing_package_names_its_extra(
@@ -2415,7 +2287,7 @@ class TestExportDependencyCheck:
         settings: dict[str, object],
         patches: dict[str, object],
         modules: dict[str, types.ModuleType | None],
-        message: str,
+        fragments: tuple[str, ...],
     ) -> None:
         """Each format's check fails on each package it needs, naming the ``rfdetr[...]`` extra that installs it.
 
@@ -2429,8 +2301,10 @@ class TestExportDependencyCheck:
         for name, module in modules.items():
             monkeypatch.setitem(sys.modules, name, module)
 
-        with pytest.raises(ImportError, match=message):
+        with pytest.raises(ImportError) as exc_info:
             exporter.check_dependencies()
+
+        assert all(fragment in str(exc_info.value) for fragment in fragments)
 
     def test_refused_tensorrt_request_does_not_import_onnx(self) -> None:
         """A host without TensorRT is refused before anything imports ``onnx``.
@@ -2448,9 +2322,7 @@ class TestExportDependencyCheck:
             "except ImportError:\n"
             "    print('onnx' in sys.modules)\n"
         )
-        source_root = str(Path(_detr_module.__file__).resolve().parents[1])
-        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [source_root, os.environ.get("PYTHONPATH")]))}
-        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env)
+        result = _run_in_fresh_interpreter(script)
 
         assert (result.returncode, result.stdout.strip().splitlines()[-1:]) == (0, ["False"]), result.stderr
 
@@ -2495,11 +2367,7 @@ class TestExportDependencyCheck:
             f"import {module}\n"
             "print(sorted(name for name in Refuse.executed if name.partition('.')[0] not in allowed))\n"
         )
-        source_root = str(Path(_detr_module.__file__).resolve().parents[1])
-        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [source_root, os.environ.get("PYTHONPATH")]))}
-        result = subprocess.run(
-            [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env, timeout=120
-        )
+        result = _run_in_fresh_interpreter(script)
 
         assert (result.returncode, result.stdout.strip().splitlines()[-1:]) == (0, ["[]"]), result.stderr
 
@@ -2516,16 +2384,15 @@ class TestExportRefusalHasNoSideEffects:
     )
     def test_refused_request_leaves_the_model_and_the_disk_untouched(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        mocker: MockerFixture,
         tmp_path: Path,
         shape: tuple[int, int],
         dependency_error: ImportError | None,
         error: type[Exception],
     ) -> None:
         """The live model is neither moved to the CPU nor copied, and no output directory is created."""
-        deepcopy = MagicMock()
-        monkeypatch.setattr("rfdetr.detr.deepcopy", deepcopy)
-        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock(side_effect=dependency_error))
+        deepcopy = mocker.patch("rfdetr.detr.deepcopy")
+        mocker.patch.object(OnnxExporter, "check_dependencies", side_effect=dependency_error)
         model = _make_tensorrt_export_model(device="original-device")
         output_dir = tmp_path / "out"
 
@@ -2543,15 +2410,14 @@ class TestExportRefusalHasNoSideEffects:
     )
     def test_format_independent_refusal_imports_no_exporter(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        mocker: MockerFixture,
         tmp_path: Path,
         optimized_inplace: bool,
         shape: tuple[int, int],
         error: type[Exception],
     ) -> None:
         """A request no format could export is refused before ``resolve_exporter`` imports the format's exporter."""
-        resolve_exporter_stub = MagicMock()
-        monkeypatch.setattr("rfdetr.export.registry.resolve_exporter", resolve_exporter_stub)
+        resolve_exporter_stub = mocker.patch("rfdetr.export.registry.resolve_exporter")
         model = _make_tensorrt_export_model()
         model._optimized_inplace = optimized_inplace
 
@@ -2743,18 +2609,16 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
 class TestExporterMetadataPublication:
     """Metadata errors do not hide converted artifacts or stop later variants."""
 
-    def test_metadata_validation_failure_keeps_export(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_metadata_validation_failure_keeps_export(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """Invalid inference metadata warns while the facade still writes the artifact."""
         with pytest.raises(ValidationError) as caught:
             ExportMetadata.model_validate({})
         artifact = tmp_path / "model.onnx"
         artifact.write_bytes(b"converted")
-        converter = MagicMock(return_value=artifact)
-        monkeypatch.setattr("rfdetr.export._runtime.metadata.metadata_from_model", MagicMock(side_effect=caught.value))
-        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock())
-        monkeypatch.setattr(OnnxExporter, "_convert", converter)
-        warning = MagicMock()
-        monkeypatch.setattr(_detr_module.logger, "warning", warning)
+        mocker.patch("rfdetr.export._runtime.metadata.metadata_from_model", side_effect=caught.value)
+        mocker.patch.object(OnnxExporter, "check_dependencies")
+        converter = mocker.patch.object(OnnxExporter, "_convert", return_value=artifact)
+        warning = mocker.patch.object(_detr_module.logger, "warning")
 
         result = _detr_module.RFDETR.export(_make_export_model(), output_dir=str(tmp_path), shape=(14, 14))
 
@@ -2769,14 +2633,11 @@ class TestExporterMetadataPublication:
         assert "RFDETRInference(metadata=<json>)" in rendered
         assert str(caught.value) in rendered
 
-    def test_unrelated_metadata_value_error_propagates(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_unrelated_metadata_value_error_propagates(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """The metadata guard must not hide ValueError bugs unrelated to schema validation."""
-        monkeypatch.setattr(
-            "rfdetr.export._runtime.metadata.metadata_from_model", MagicMock(side_effect=ValueError("metadata bug"))
-        )
-        monkeypatch.setattr(OnnxExporter, "check_dependencies", MagicMock())
-        converter = MagicMock()
-        monkeypatch.setattr(OnnxExporter, "_convert", converter)
+        mocker.patch("rfdetr.export._runtime.metadata.metadata_from_model", side_effect=ValueError("metadata bug"))
+        mocker.patch.object(OnnxExporter, "check_dependencies")
+        converter = mocker.patch.object(OnnxExporter, "_convert")
 
         with pytest.raises(ValueError, match="metadata bug"):
             _detr_module.RFDETR.export(_make_export_model(), output_dir=str(tmp_path), shape=(14, 14))
@@ -2843,9 +2704,7 @@ class TestExporterMetadataPublication:
         return exporter
 
     def test_metadata_failure_keeps_artifact_and_continues_variants(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """A failed metadata hook warns, returns the artifact, and publishes later variants."""
         import rfdetr.export.base as export_base
@@ -2871,8 +2730,7 @@ class TestExporterMetadataPublication:
             side_effect=[ValueError("signature has ambiguous outputs"), metadata, metadata]
         )
         monkeypatch.setattr(export_base, "write_metadata", write_metadata)
-        warning = MagicMock()
-        monkeypatch.setattr(export_base.logger, "warning", warning)
+        warning = mocker.patch.object(export_base.logger, "warning")
 
         result = exporter(self._graph(metadata))
 
@@ -2895,6 +2753,7 @@ class TestExporterMetadataPublication:
     )
     def test_write_failure_logged_metadata_loads_from_json_file(
         self,
+        mocker: MockerFixture,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
@@ -2914,7 +2773,7 @@ class TestExporterMetadataPublication:
         artifact.write_bytes(b"converted")
         exporter._convert = MagicMock(return_value=artifact)
         exporter._metadata_for_artifact = MagicMock(return_value=derived_metadata)
-        monkeypatch.setattr(export_base, "write_metadata", MagicMock(side_effect=OSError("sidecar is not writable")))
+        mocker.patch.object(export_base, "write_metadata", side_effect=OSError("sidecar is not writable"))
         monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
 
         with caplog.at_level(logging.DEBUG, logger="rf-detr"):
