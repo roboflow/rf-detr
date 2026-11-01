@@ -29,6 +29,9 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 35
     runs-on: Roboflow-GPU-VM-Runner
+    env:
+      # Read by both the install step and the completeness check after it.
+      EXTRAS: onnx,plus,train,augment,visual,data,cli
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
@@ -51,7 +54,11 @@ jobs:
         # Use uv pip install (not uv sync) to avoid universal lock resolution failing on
         # extras that require Python>=3.12 (e.g. tflite/onnx2tf) when project supports >=3.10.
         # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
-        run: uv pip install -e ".[onnx,plus,train,augment,visual,data,cli]" --group tests
+        run: uv pip install -e ".[$EXTRAS]" --group tests
+
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras "$EXTRAS" --groups tests
 
       - name: 📦 Restore shared model weights
         uses: ./.github/actions/cache-model-weights

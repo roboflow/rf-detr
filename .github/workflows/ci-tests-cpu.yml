@@ -64,6 +64,12 @@ jobs:
             EXTRAS="$EXTRAS,coreml"
           fi
           uv pip install -e ".[$EXTRAS]" --group tests
+          echo "EXTRAS=$EXTRAS" >> "$GITHUB_ENV"
+
+      - name: 🔎 Verify the installed extras are complete
+        # A package these extras declare but the install left out would turn its _IS_*_INSTALLED flag false and skip
+        # the tests it gates without failing anything; fail here instead.
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras "$EXTRAS" --groups tests
 
       - name: 🍎 Deselect DDP tests on macOS
         # Spawning gloo worker processes costs ~110 s per test on macOS under Python 3.13, against ~10 s on 3.10 and on
