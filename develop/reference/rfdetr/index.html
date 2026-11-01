@@ -9234,7 +9234,7 @@ optimising models, and uploading trained models for deployment.</p>
 </span><span id="__span-0-2146"><a id="__codelineno-0-2146" name="__codelineno-0-2146"></a><span class="sd">                to the ExecuTorch delegate; ``backend`` is ignored (with</span>
 </span><span id="__span-0-2147"><a id="__codelineno-0-2147" name="__codelineno-0-2147"></a><span class="sd">                a warning) and the native ``.mlpackage`` path always runs.</span>
 </span><span id="__span-0-2148"><a id="__codelineno-0-2148" name="__codelineno-0-2148"></a><span class="sd">                Detection, segmentation and keypoint models all have registry-clean and numerical-parity</span>
-</span><span id="__span-0-2149"><a id="__codelineno-0-2149" name="__codelineno-0-2149"></a><span class="sd">                test coverage for this format (see ``tests/export/test_coreml_op_coverage.py`` /</span>
+</span><span id="__span-0-2149"><a id="__codelineno-0-2149" name="__codelineno-0-2149"></a><span class="sd">                test coverage for this format (see ``tests/export/coreml/test_coreml_op_coverage.py`` /</span>
 </span><span id="__span-0-2150"><a id="__codelineno-0-2150" name="__codelineno-0-2150"></a><span class="sd">                ``test_coreml_export.py``).</span>
 </span><span id="__span-0-2151"><a id="__codelineno-0-2151" name="__codelineno-0-2151"></a><span class="sd">                When ``"coreai"`` is selected the model is exported via ``torch.export`` + ``coreai-torch`` to an</span>
 </span><span id="__span-0-2152"><a id="__codelineno-0-2152" name="__codelineno-0-2152"></a><span class="sd">                Apple Core AI ``.aimodel`` (requires ``pip install rfdetr[coreai]``; the asset runs on iOS,</span>
@@ -11811,7 +11811,7 @@ route instead. Passing both <code>format="coreml"</code> and
 to the ExecuTorch delegate; <code>backend</code> is ignored (with
 a warning) and the native <code>.mlpackage</code> path always runs.
 Detection, segmentation and keypoint models all have registry-clean and numerical-parity
-test coverage for this format (see <code>tests/export/test_coreml_op_coverage.py</code> /
+test coverage for this format (see <code>tests/export/coreml/test_coreml_op_coverage.py</code> /
 <code>test_coreml_export.py</code>).
 When <code>"coreai"</code> is selected the model is exported via <code>torch.export</code> + <code>coreai-torch</code> to an
 Apple Core AI <code>.aimodel</code> (requires <code>pip install rfdetr[coreai]</code>; the asset runs on iOS,
@@ -13021,7 +13021,7 @@ model has been cleared; instantiate a new :class:<code>RFDETR</code> to export).
 </span><span id="__span-0-2146"><a id="__codelineno-0-2146" name="__codelineno-0-2146"></a><span class="sd">            to the ExecuTorch delegate; ``backend`` is ignored (with</span>
 </span><span id="__span-0-2147"><a id="__codelineno-0-2147" name="__codelineno-0-2147"></a><span class="sd">            a warning) and the native ``.mlpackage`` path always runs.</span>
 </span><span id="__span-0-2148"><a id="__codelineno-0-2148" name="__codelineno-0-2148"></a><span class="sd">            Detection, segmentation and keypoint models all have registry-clean and numerical-parity</span>
-</span><span id="__span-0-2149"><a id="__codelineno-0-2149" name="__codelineno-0-2149"></a><span class="sd">            test coverage for this format (see ``tests/export/test_coreml_op_coverage.py`` /</span>
+</span><span id="__span-0-2149"><a id="__codelineno-0-2149" name="__codelineno-0-2149"></a><span class="sd">            test coverage for this format (see ``tests/export/coreml/test_coreml_op_coverage.py`` /</span>
 </span><span id="__span-0-2150"><a id="__codelineno-0-2150" name="__codelineno-0-2150"></a><span class="sd">            ``test_coreml_export.py``).</span>
 </span><span id="__span-0-2151"><a id="__codelineno-0-2151" name="__codelineno-0-2151"></a><span class="sd">            When ``"coreai"`` is selected the model is exported via ``torch.export`` + ``coreai-torch`` to an</span>
 </span><span id="__span-0-2152"><a id="__codelineno-0-2152" name="__codelineno-0-2152"></a><span class="sd">            Apple Core AI ``.aimodel`` (requires ``pip install rfdetr[coreai]``; the asset runs on iOS,</span>

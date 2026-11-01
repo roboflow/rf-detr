@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-26T17:28:12">
+  <meta property="article:modified_time" content="2026-11-01T00:15:36">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-26T17:28:12",
+    "dateModified": "2026-11-01T00:15:36",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3682,8 +3682,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Add it to <code>RFDETR.export()</code>'s <code>format</code> docstring in <code>src/rfdetr/detr.py</code> and to the user-facing export docs (<a href="../">Overview</a>, <a href="../basics/">Export Basics</a>, <a href="../advanced/">Advanced Export</a>) — installation extra, a basic example, output files, and an <code>RFDETRInference</code> prediction snippet. Keep raw tensor examples clearly marked as advanced. Existing ONNX and TFLite NumPy reference helpers remain useful for dependency-light numerical checks and share raw execution with their adapters. TensorRT and OpenVINO session loading and execution live in shared module-level functions. Their deprecated classes delegate to these functions for compatibility. Adapters call the functions directly, so removing the classes needs no runtime changes. CoreML and Core AI loaders use their vendor APIs directly.</p>
 <h3 id="7-test-it">7. Test it<a class="headerlink" href="#7-test-it" title="Permanent link">&para;</a></h3>
 <p>Some tests are parametrized over <code>REGISTRY</code>, so they pick your format up the moment you register it: in <code>tests/export/test_registry.py</code>, the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead; in <code>tests/export/test_export.py</code>, the check that an exporter handed a graph directly runs <code>check_dependencies</code> before <code>_convert</code>. Everything else is a hand-written case — add your format to the configuration-type list and to the per-format lists in <code>tests/export/test_export.py</code> (<code>TestExportDependencyCheck</code> for its missing package, <code>TestExportWarningLocation</code> if constructing it warns, <code>TestExportRejectsBeforeForwardPass</code> for each setting it validates), and write <code>tests/export/test_myformat_export.py</code> for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.</p>
-<p>Add a per-format adapter test class in <code>tests/export/test_runtime_adapter_contract.py</code>, following <code>TestONNXRuntimeAdapter</code>, to exercise device selection, metadata-to-output mapping, and output ownership through <code>load_runtime()</code> and <code>runtime.run()</code>.</p>
-<p>Most of those need no real model: build a throwaway <code>ExportGraph</code> around a <code>MagicMock</code> the way <code>tests/export/test_executorch_export.py</code> does, and only the parity test has to trace anything.</p>
+<p>Add a per-format adapter test class in <code>tests/export/runtime/test_runtime_adapter_contract.py</code>, following <code>TestONNXRuntimeAdapter</code>, to exercise device selection, metadata-to-output mapping, and output ownership through <code>load_runtime()</code> and <code>runtime.run()</code>.</p>
+<p>Most of those need no real model: build a throwaway <code>ExportGraph</code> around a <code>MagicMock</code> the way <code>tests/export/executorch/test_executorch_export.py</code> does, and only the parity test has to trace anything.</p>
 <h2 id="patterns-worth-copying">Patterns worth copying<a class="headerlink" href="#patterns-worth-copying" title="Permanent link">&para;</a></h2>
 <h3 id="two-stage-formats">Two-stage formats<a class="headerlink" href="#two-stage-formats" title="Permanent link">&para;</a></h3>
 <p>TFLite and TensorRT do not convert from PyTorch. They run an ONNX export first and convert its output, which means they must hand the ONNX stage a configuration rather than re-deriving one:</p>
@@ -3741,7 +3741,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 26, 2026 17:28:12 UTC">2026-10-26 17:28:12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 1, 2026 00:15:36 UTC">2026-11-01 00:15:36</span>
   </span>
 
     
