@@ -2883,22 +2883,28 @@ class TestGroupedSelfAttention:
             torch.testing.assert_close(actual_grad, expected_grad, rtol=0.0, atol=atol)
 
 
+#: Skip a CPU ``_LinearReLU`` case whose dtype has no CPU ``torch._addmm_activation`` kernel on the installed torch.
+_requires_cpu_addmm_activation_fp32 = pytest.mark.skipif(
+    not _cpu_addmm_activation_available(torch.float32), reason="torch._addmm_activation has no CPU float32 kernel"
+)
+_requires_cpu_addmm_activation_bf16 = pytest.mark.skipif(
+    not _cpu_addmm_activation_available(torch.bfloat16), reason="torch._addmm_activation has no CPU bfloat16 kernel"
+)
+_requires_cpu_addmm_activation_fp16 = pytest.mark.skipif(
+    not _cpu_addmm_activation_available(torch.float16), reason="torch._addmm_activation has no CPU float16 kernel"
+)
+
 #: ``(device, dtype)`` cases of ``_LinearReLU``: CUDA always, and CPU in every dtype for which
 #: the private ``torch._addmm_activation`` op exists on the installed torch, so a CPU job gets a signal on the op's
 #: drift across the supported torch range without failing where the op has no CPU kernel.
 _LINEAR_RELU_CASES = [
-    pytest.param(
-        device,
-        dtype,
-        id=f"{device}-{name}",
-        marks=_cuda_marks
-        if device == "cuda"
-        else pytest.mark.skipif(
-            not _cpu_addmm_activation_available(dtype), reason="torch._addmm_activation has no CPU kernel"
-        ),
-    )
+    pytest.param(device, dtype, id=f"{device}-{name}", marks=_cuda_marks if device == "cuda" else cpu_marker)
     for device in ("cpu", "cuda")
-    for name, dtype in (("fp32", torch.float32), ("bf16", torch.bfloat16), ("fp16", torch.float16))
+    for name, dtype, cpu_marker in (
+        ("fp32", torch.float32, _requires_cpu_addmm_activation_fp32),
+        ("bf16", torch.bfloat16, _requires_cpu_addmm_activation_bf16),
+        ("fp16", torch.float16, _requires_cpu_addmm_activation_fp16),
+    )
 ]
 
 

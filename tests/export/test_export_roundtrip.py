@@ -15,18 +15,16 @@ import numpy as np
 import pytest
 from supervision import KeyPoints
 
-from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
 from rfdetr.export._tflite import _IS_ONNX2TF_AVAILABLE
 from rfdetr.export.imports import (
     _IS_AI_EDGE_LITERT_INSTALLED,
-    _IS_COREAI_INSTALLED,
     _IS_LITERT_TORCH_INSTALLED,
     _IS_TENSORFLOW_INSTALLED,
     _IS_TFLITE_RUNTIME_INSTALLED,
 )
-from tests._markers import _requires_onnx_and_onnxruntime, _requires_openvino
+from tests._markers import _requires_coreai_runtime, _requires_onnx_and_onnxruntime, _requires_openvino
 from tests.export.conftest import _prediction_image, _prediction_model_for_task, assert_prediction_roundtrip
 
 #: Skip an OpenVINO round trip when the package that both converts and runs the model is absent.
@@ -47,11 +45,6 @@ _requires_executorch = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="
 _requires_coreml_runtime = pytest.mark.skipif(
     not _IS_COREMLTOOLS_AVAILABLE or sys.platform != "darwin",
     reason="CoreML round trips need coremltools and the macOS CoreML runtime",
-)
-#: Skip a Core AI round trip off macOS or without both the converter and the runtime package.
-_requires_coreai_runtime = pytest.mark.skipif(
-    not (_IS_COREAI_TORCH_AVAILABLE and _IS_COREAI_INSTALLED) or sys.platform != "darwin",
-    reason="Core AI round trips need coreai_torch and the coreai runtime on macOS",
 )
 
 

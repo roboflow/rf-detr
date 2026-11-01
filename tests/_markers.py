@@ -8,12 +8,19 @@
 from __future__ import annotations
 
 import os
+import platform
 import sys
 
 import pytest
 import torch
 
-from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED, _IS_OPENVINO_INSTALLED
+from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
+from rfdetr.export.imports import (
+    _IS_COREAI_INSTALLED,
+    _IS_ONNX_INSTALLED,
+    _IS_ONNXRUNTIME_INSTALLED,
+    _IS_OPENVINO_INSTALLED,
+)
 from rfdetr.utilities.imports import (
     _IS_ALBUMENTATIONS_INSTALLED,
     _IS_FASTER_COCO_EVAL_INSTALLED,
@@ -105,4 +112,28 @@ _requires_symlink_privilege = pytest.mark.skipif(
 #: Skip a test node that runs BF16 on CUDA.
 _requires_cuda_bf16 = pytest.mark.skipif(
     not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(), reason="CUDA BF16 unavailable"
+)
+
+
+def _coreai_runtime_available() -> bool:
+    """Return whether this host can convert and run ``.aimodel`` assets (Apple silicon, macOS 27 or later).
+
+    Converting needs ``coreai-torch``; running needs the ``coreai`` runtime package, which only loads a model on
+    Apple silicon with macOS 27 or later.
+
+    Examples:
+        >>> isinstance(_coreai_runtime_available(), bool)
+        True
+    """
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return False
+    if not (_IS_COREAI_TORCH_AVAILABLE and _IS_COREAI_INSTALLED):
+        return False
+    return int(platform.mac_ver()[0].split(".")[0] or 0) >= 27
+
+
+#: Skip a test node that exports a Core AI ``.aimodel`` and runs it.
+_requires_coreai_runtime = pytest.mark.skipif(
+    not _coreai_runtime_available(),
+    reason="Core AI export and execution need coreai_torch, the coreai runtime, and Apple silicon on macOS 27+",
 )
