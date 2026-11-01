@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -240,29 +239,24 @@ class TestPreparedAhead:
         with pytest.raises(ValueError, match="bad image b"):
             next(results)
 
-    def test_error_preparing_a_batch_never_read_is_logged_at_debug_level(
-        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_error_preparing_a_batch_never_read_is_logged_at_debug_level(self, mocker: MockerFixture) -> None:
         """Closing the stream before a batch that failed to prepare logs that error instead of dropping it silently.
 
         The serial loop would never have prepared that batch, so the error is not raised; a debug record keeps it
-        findable.
+        findable. The logger call is spied on directly: pytest 9.1 also captures on the non-propagating ``rf-detr``
+        logger, so with propagation forced on ``caplog`` holds each record twice.
         """
-        # The package logger does not propagate by default, so caplog only sees it once propagation is enabled.
-        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        debug = mocker.spy(pipelines.logger, "debug")
         mocker.patch.object(pipelines, "_decode_batch", side_effect=lambda prepared, _: [prepared.batch_tensor])
         results = pipelines._predict_prepared_ahead(
             iter([["a"], ["b"]]), self._recording_prepare([], failing="b"), torch.device("cuda"), in_worker=False
         )
 
-        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
-            next(results)
-            results.close()
+        next(results)
+        results.close()
 
-        (record,) = caplog.records
-        assert record.levelno == logging.DEBUG
-        assert record.exc_info is not None
-        assert str(record.exc_info[1]) == "bad image b"
+        debug.assert_called_once()
+        assert str(debug.call_args.kwargs["exc_info"]) == "bad image b"
 
     def test_batch_holding_cuda_tensor_is_prepared_on_the_caller_thread(self, mocker: MockerFixture) -> None:
         """An exported runtime's worker never prepares a batch holding a CUDA tensor; a host-only batch goes to it.
