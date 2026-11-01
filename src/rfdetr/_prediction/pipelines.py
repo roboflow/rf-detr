@@ -59,13 +59,14 @@ def _predict_stream(
     """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
 
     The model's channel count is read once from the first context so captured frames convert to grayscale for
-    one-channel models. Each batch runs through :func:`_predict_batch`, which re-reads the context. Closing the
-    generator closes the source reader.
+    one-channel models. Each batch runs the phases of :func:`_predict_batch`, :func:`_prepare_batch` and then
+    :func:`_decode_batch`, and re-reads the context when it is prepared. Closing the generator closes the source reader.
 
-    A source with no live input (see :func:`~rfdetr._prediction.sources.has_only_finite_images`) is read one batch
-    ahead for three-channel models on an accelerator: the next batch's image files decode on worker threads while the
-    current batch runs, so at most two batches of decoded images are held at once. Live sources, and models whose
-    context device is the CPU, keep reading one batch at a time.
+    A source with no live input (see :func:`~rfdetr._prediction.sources.has_only_finite_images`) is read ahead for
+    three-channel models, except a native model on the CPU: the image files of the batches after the current one
+    decode on worker threads while it runs. Those batches hold at least one batch and :data:`_DECODE_WORKERS` images,
+    or the rest of the source (see :func:`_decode_ahead`). Live sources, and native models on the CPU, keep reading one
+    batch at a time.
 
     With ``prepare_ahead``, such a source on a CUDA context also builds each batch's model input while the batch before
     it runs (see :func:`_predict_prepared_ahead`). That reads the next batch's context before the current batch's
@@ -106,8 +107,9 @@ def _predict_stream(
     )
     # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A native model
     # on the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
-    # slowed the forward pass by more than the overlap saved. Exported runtimes report a CPU context device whatever
-    # hardware they run on, and decode ahead: Core ML gained 18% from it and ONNX Runtime on the CPU lost nothing.
+    # slowed the forward pass by more than the overlap saved. Exported runtimes decode ahead whatever device their
+    # context reports (TensorRT reports CUDA, most others the CPU): Core ML gained 18% from it and ONNX Runtime on the
+    # CPU lost nothing.
     native_on_cpu = context.device.type == "cpu" and context.runtime_info.get("backend") == "pytorch"
     on_cuda = context.device.type == "cuda"
     may_run_ahead = (prepare_ahead and on_cuda) or (num_channels == 3 and not native_on_cpu)

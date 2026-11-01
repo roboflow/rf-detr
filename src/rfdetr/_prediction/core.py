@@ -303,11 +303,12 @@ def _normalization_tensors(
 def _copy_results_to_cpu_once(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
     """Copy a batch's boxes, scores and labels to the CPU in a single transfer.
 
-    The per-image filter that follows would otherwise sync twice per image on a synchronous accelerator such as MPS:
-    once to size its ``nonzero`` index and once to copy the kept rows. After this copy it runs on the CPU, where neither
-    waits. The rows are packed in float32, or float64 when the scores or boxes are float64, so every value round-trips
-    exactly: float16 and bfloat16 values, and class ids below 2**24, fit in float32. Every tensor gets its own dtype
-    back, unlike :func:`_copy_rows_to_cpu_once`, which returns float32 boxes and scores for the keypoint and mask paths.
+    The per-image filter that follows would otherwise wait for the device twice per image, once to size its ``nonzero``
+    index and once to copy the kept rows: MPS copies synchronously, and on CUDA both the ``nonzero`` size and the copy
+    to the CPU sync. After this copy it runs on the CPU, where neither waits. The rows are packed in float32, or
+    float64 when the scores or boxes are float64, so every value round-trips exactly: float16 and bfloat16 values, and
+    class ids below 2**24, fit in float32. Every tensor gets its own dtype back, unlike :func:`_copy_rows_to_cpu_once`,
+    which returns float32 boxes and scores for the keypoint and mask paths.
 
     Args:
         results: Per-image dictionaries holding ``boxes`` ``(N, 4)``, ``scores`` ``(N,)`` and ``labels`` ``(N,)``.
