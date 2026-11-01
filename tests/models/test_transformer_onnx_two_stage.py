@@ -23,7 +23,7 @@ from torch import nn
 
 from rfdetr.models.math import MLP
 from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals
-from tests._markers import onnx_only
+from tests._markers import _requires_onnx
 
 if TYPE_CHECKING:
     import onnx
@@ -195,7 +195,7 @@ def find_zero_dim_float_concat_nodes(graph: onnx.GraphProto) -> list[str]:
     ]
 
 
-@onnx_only
+@_requires_onnx
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestTwoStageExportGraph:

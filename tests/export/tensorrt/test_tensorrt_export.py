@@ -43,7 +43,13 @@ from rfdetr.export._tensorrt.exporter import (
 )
 from rfdetr.export.base import reject_unsupported_dynamic_batch
 from rfdetr.export.prepare import ExportGraph
-from tests._markers import requires_cuda
+from tests._markers import (
+    _requires_cuda,
+    _requires_mkfifo,
+    _requires_posix_permissions,
+    _requires_symlink_privilege,
+    _requires_two_cuda_devices,
+)
 from tests.export.conftest import (
     _structured_parity_input,
     assert_prediction_roundtrip,
@@ -51,12 +57,14 @@ from tests.export.conftest import (
     max_abs_output_diffs,
 )
 
-tensorrt_only = pytest.mark.skipif(
+_requires_tensorrt = pytest.mark.skipif(
     not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
 )
 
 
-fp16_caster_only = pytest.mark.skipif(not _IS_FP16_CASTER_AVAILABLE, reason="onnx/onnxconverter-common not installed")
+_requires_fp16_caster = pytest.mark.skipif(
+    not _IS_FP16_CASTER_AVAILABLE, reason="onnx/onnxconverter-common not installed"
+)
 
 if _IS_FP16_CASTER_AVAILABLE:
     import onnx
@@ -1305,7 +1313,7 @@ class TestTimingCache:
         assert captured["build"] == {"save_timing_cache": str(cache)}
 
     @pytest.mark.parametrize("dynamic_batch", [False, True])
-    @tensorrt_only
+    @_requires_tensorrt
     def test_the_keywords_handed_to_polygraphy_exist_in_its_api(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dynamic_batch: bool
     ) -> None:
@@ -1392,7 +1400,7 @@ class TestTimingCache:
         with pytest.raises(ValueError, match=r"trt_timing_cache.*names a directory"):
             TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=str(tmp_path / "cache") + os.sep))
 
-    @pytest.mark.skipif(os.name == "nt", reason="creating a symbolic link needs extra privileges on Windows")
+    @_requires_symlink_privilege
     def test_a_link_to_a_missing_file_is_refused_before_anything_is_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -1411,7 +1419,7 @@ class TestTimingCache:
 
         assert captured == {"config": {}, "build": {}}
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     def test_a_read_only_cache_file_is_refused_before_anything_is_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -1433,7 +1441,7 @@ class TestTimingCache:
         assert captured == {"config": {}, "build": {}}
         assert sorted(path.name for path in tmp_path.iterdir()) == ["engine.cache"]
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @_requires_posix_permissions
     def test_a_read_only_directory_is_refused_before_anything_is_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -1730,7 +1738,7 @@ class TestPortableEngines:
 
         assert captured["config"] == {"fp16": False, "version_compatible": True}
 
-    @tensorrt_only
+    @_requires_tensorrt
     def test_the_installed_polygraphy_create_config_accepts_the_portability_keywords(self) -> None:
         """The real ``CreateConfig`` still takes the two keywords the exporter passes for portable engines.
 
@@ -2218,7 +2226,7 @@ class TestBuildEngineCastArtifactCleanup:
             TensorRTExporter(TensorRTConfig(fp16=True)).build_engine(str(tmp_path / "model.onnx"))
 
 
-@fp16_caster_only
+@_requires_fp16_caster
 class TestCastOnnxToFp16:
     """Graph-level fp16 conversion: weights become FP16 while graph I/O stays FP32."""
 
@@ -2350,7 +2358,7 @@ def fp16_cast_graph_with_topk(tmp_path: Path) -> "onnx.GraphProto":
     return onnx.load(tensorrt_export._cast_onnx_to_fp16(str(source))).graph
 
 
-@fp16_caster_only
+@_requires_fp16_caster
 class TestCastOnnxToFp16WithBlockListedOps:
     """``onnxconverter-common`` keeps precision-sensitive ops FP32; the rewrite must not undo that."""
 
@@ -2381,7 +2389,7 @@ class TestCastOnnxToFp16WithBlockListedOps:
         onnx.checker.check_model(model, full_check=True)
 
 
-@fp16_caster_only
+@_requires_fp16_caster
 class TestCastOnnxToFp16GraphShapes:
     """Graph shapes whose boundary rewrite previously produced a structurally invalid fp16 model."""
 
@@ -2688,8 +2696,8 @@ def _distinct_batch(batch: int, resolution: int) -> torch.Tensor:
     return torch.cat([base * (1.0 + 0.15 * index) for index in range(batch)], dim=0).contiguous()
 
 
-@tensorrt_only
-@requires_cuda
+@_requires_tensorrt
+@_requires_cuda
 @pytest.mark.gpu
 @pytest.mark.integration
 @pytest.mark.e2e_tensorrt
@@ -3256,7 +3264,7 @@ class TestTensorRTEndToEnd:
         with pytest.raises(ValueError, match="outside the engine's optimization profile"):
             runtime({"input": _distinct_batch(5, resolution).to("cuda:0")})
 
-    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    @_requires_two_cuda_devices
     def test_trt_inference_runs_on_a_non_default_device(
         self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
     ) -> None:
@@ -3490,7 +3498,7 @@ class TestTensorRTEndToEnd:
 class TestTimingCacheSafety:
     """The timing cache Polygraphy is handed is one well-defined regular file, and a bad one is refused up front."""
 
-    @pytest.mark.skipif(os.name == "nt", reason="creating a symbolic link needs extra privileges on Windows")
+    @_requires_symlink_privilege
     def test_a_link_to_an_existing_cache_hands_polygraphy_its_target(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -3513,7 +3521,7 @@ class TestTimingCacheSafety:
             ["engine.cache", "engine.cache.lock", "link.cache"],
         )
 
-    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes need os.mkfifo, which only POSIX has")
+    @_requires_mkfifo
     def test_a_named_pipe_is_refused_before_anything_is_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

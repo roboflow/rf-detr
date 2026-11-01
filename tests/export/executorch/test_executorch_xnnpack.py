@@ -19,7 +19,7 @@ from torch import nn
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
 from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants, unmasked_attention
 
-executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
+_requires_executorch = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
 
 def _query_key_value(*batch: int, length: int = 7, source: int = 9, channels: int = 16) -> list[torch.Tensor]:
@@ -251,7 +251,7 @@ class TestDecomposeAttention:
         torch.testing.assert_close(decompose_attention(program).module()(*inputs), expected)
 
 
-@executorch_only
+@_requires_executorch
 @pytest.mark.e2e_executorch
 class TestFoldConstants:
     """``fold_constants`` computes the weight slices of ``nn.MultiheadAttention`` at export time.

@@ -52,7 +52,7 @@ from tests.export.conftest import (
 )
 from tests.export.coreml.test_coreml_ane import _IOS15_SPEC_VERSION
 
-coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
+_requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
 # FLOAT32 CoreML convert matches eager to ~1e-5 on boxes/logits; masks need a bit more
 # headroom (~8e-5 observed on SegNano; keypoints ~1e-5 observed on KeypointPreview). Bound stays
@@ -288,7 +288,7 @@ class TestCheckCoremltoolsAvailable:
         monkeypatch.setattr("rfdetr.export._coreml.exporter._IS_COREMLTOOLS_AVAILABLE", False)
         assert _check_coremltools_available(raise_error=False) is False
 
-    @coreml_only
+    @_requires_coremltools
     def test_returns_true_when_installed(self) -> None:
         """Installed ``coremltools`` must return ``True``."""
         assert _check_coremltools_available() is True
@@ -524,7 +524,7 @@ class TestExportCoremlBareDefaultNaming:
     by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
     """
 
-    @coreml_only
+    @_requires_coremltools
     def test_bare_default_stem_with_non_default_fp16_precision(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A bare default stem with fp16 precision still yields ``inference_model_fp16.mlpackage``.
 
@@ -961,7 +961,7 @@ def coreml_multiclass_keypoint_export(
     return model, example, Path(mlpackage_path)
 
 
-@coreml_only
+@_requires_coremltools
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:

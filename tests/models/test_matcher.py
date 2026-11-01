@@ -17,7 +17,7 @@ from rfdetr.models import _assignment
 from rfdetr.models import matcher as matcher_module
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher, _TargetSideSafety
-from tests._markers import requires_cpu_inductor
+from tests._markers import _cuda_marks, _requires_cpu_inductor, _requires_cuda
 
 
 @pytest.fixture()
@@ -1873,7 +1873,7 @@ class TestMasksPresentCompactHybrid:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 class TestMasksHybridPathOnCUDA:
     """The masks-hybrid path's CUDA branch (``_assignment.assign_many_bucketed``, gated on
     ``combined_cost_matrix.is_cuda``) had zero coverage under real CUDA kernels: every ``TestMasksPresentCompactHybrid``
@@ -2096,7 +2096,7 @@ class TestGateRoutesInputsThatDivergeBetweenPaths:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 class TestCompactPathOnCUDA:
     """The compact path's tensor ops (``pad_sequence``, gather, ``cdist``, ``torch.vmap(generalized_box_iou)``) must
     actually run under real CUDA kernels and agree with the fallback path there — CPU-only tests cannot exercise CUDA-
@@ -2226,7 +2226,7 @@ class TestCompactPathOnCUDA:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 class TestBatchedDetectionMatchingOnCUDA:
     """``_match_many``'s entire reason for existing -- solving every layer of a step together, under one host
     synchronization -- had zero test coverage under real CUDA kernels; every ``TestBatchedDetectionMatching`` case above
@@ -2280,10 +2280,10 @@ class TestCompiledL1Matching:
     @pytest.mark.parametrize(
         "device",
         [
-            pytest.param("cpu", marks=requires_cpu_inductor),
+            pytest.param("cpu", marks=_requires_cpu_inductor),
             pytest.param(
                 "cuda",
-                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
+                marks=_cuda_marks,
             ),
         ],
     )
@@ -2367,7 +2367,7 @@ class TestCompactPathCriterionEquivalence:
     checked, not just losses.
     """
 
-    @pytest.mark.parametrize("compiled", [False, pytest.param(True, marks=requires_cpu_inductor)])
+    @pytest.mark.parametrize("compiled", [False, pytest.param(True, marks=_requires_cpu_inductor)])
     @pytest.mark.parametrize("group_detr", [1, 2])
     def test_losses_and_gradients_match_between_compact_and_fallback_paths(
         self, monkeypatch: pytest.MonkeyPatch, compiled: bool, group_detr: int
@@ -2609,7 +2609,7 @@ class TestTargetSideSafetyCaching:
         assert calls == [], "the target-side sweep must not run when the mask hybrid is below threshold"
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @_requires_cuda
     def test_target_side_precheck_computed_once_for_eligible_masks_on_cuda(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -3372,7 +3372,7 @@ class TestGpuAssignmentPreservesEstablishedAssignments:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 class TestGpuAssignmentOnCUDA:
     """The device solve must agree with the host SciPy solve under real CUDA execution.
 
