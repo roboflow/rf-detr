@@ -279,6 +279,56 @@ class TestONNXRuntimeAdapter:
         with pytest.raises(RuntimeError, match="CUDAExecutionProvider is unavailable"):
             load_runtime(path, metadata, device="cuda:0")
 
+    @pytest.mark.parametrize(
+        "provider,torch_sees_cuda,labels_shape,expected",
+        [
+            pytest.param("CUDAExecutionProvider", True, ["batch", 2, 3], torch.device("cuda", 0), id="cuda-provider"),
+            pytest.param("CUDAExecutionProvider", False, ["batch", 2, 3], torch.device("cpu"), id="torch-without-cuda"),
+            pytest.param(
+                "CUDAExecutionProvider", True, ["batch", "queries", 3], torch.device("cpu"), id="dynamic-axis"
+            ),
+            pytest.param("CPUExecutionProvider", True, ["batch", 2, 3], torch.device("cpu"), id="cpu-provider"),
+        ],
+    )
+    def test_runtime_device_follows_the_provider(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mocker: MockerFixture,
+        tmp_path: Path,
+        provider: str,
+        torch_sees_cuda: bool,
+        labels_shape: list[int | str],
+        expected: torch.device,
+    ) -> None:
+        """The CUDA provider makes the runtime a CUDA device, so the batch is prepared and bound on the GPU.
+
+        It falls back to a CPU runtime, the path every provider took before, when torch cannot see the GPU or an output
+        has a dynamic axis other than the batch, whose buffer cannot be allocated before the run.
+        """
+        path = tmp_path / "model.onnx"
+        path.write_bytes(b"model")
+        session = mocker.Mock()
+        session.get_inputs.return_value = [SimpleNamespace(name="input", type="tensor(float)", shape=[1, 3, 8, 8])]
+        session.get_outputs.return_value = [
+            SimpleNamespace(name="dets", type="tensor(float)", shape=["batch", 2, 4]),
+            SimpleNamespace(name="labels", type="tensor(float)", shape=labels_shape),
+        ]
+        session.get_providers.return_value = [provider]
+        monkeypatch.setitem(sys.modules, "onnxruntime", SimpleNamespace(get_available_providers=lambda: [provider]))
+        mocker.patch("rfdetr.export._onnx.inference._create_onnx_session", return_value=session)
+        mocker.patch("rfdetr.export._onnx.inference.torch.cuda.is_available", return_value=torch_sees_cuda)
+        metadata = _metadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            input_name="input",
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        )
+
+        runtime = load_runtime(path, metadata, device="auto")
+
+        assert runtime.device == expected
+
 
 class TestTFLiteRuntimeAdapter:
     """Exercise layout conversion, dynamic batches, and positional outputs."""

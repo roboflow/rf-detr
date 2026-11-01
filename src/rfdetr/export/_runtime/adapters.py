@@ -148,8 +148,8 @@ def _validate_batch(batch: torch.Tensor, metadata: ExportMetadata) -> None:
             raise ValueError(f"Input axis {axis} must be {size}, got {actual}. Export a model for this batch or size.")
 
 
-def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[Any, Any]:
-    """Convert a normalized NCHW batch to the artifact's NumPy input interface."""
+def _input_tensor(batch: torch.Tensor, metadata: ExportMetadata) -> torch.Tensor:
+    """Lay out and cast a normalized NCHW batch as the artifact's input, on the batch's own device."""
     if metadata.input_layout == "NHWC":
         batch = batch.permute(0, 2, 3, 1)
     try:
@@ -158,8 +158,12 @@ def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[An
         raise ValueError(f"Unsupported export input dtype: {metadata.input_dtype!r}.") from exc
     if not np.issubdtype(dtype, np.floating):
         raise ValueError(f"Export input dtype {dtype} needs quantization parameters, which this adapter cannot infer.")
-    torch_dtype = torch.from_numpy(np.empty(0, dtype=dtype)).dtype
-    return np.ascontiguousarray(batch.detach().to("cpu", torch_dtype).numpy())
+    return batch.detach().to(torch.from_numpy(np.empty(0, dtype=dtype)).dtype).contiguous()
+
+
+def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[Any, Any]:
+    """Convert a normalized NCHW batch to the artifact's NumPy input interface."""
+    return np.ascontiguousarray(_input_tensor(batch, metadata).cpu().numpy())
 
 
 def _select_outputs(

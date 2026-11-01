@@ -16,9 +16,30 @@ from supervision import Detections, KeyPoints
 
 from rfdetr import ClassThresholds, RFDETRInference
 from rfdetr.detr import RFDETR
+from rfdetr.export.imports import _IS_ONNXRUNTIME_INSTALLED
 from tests._markers import _requires_onnx_and_onnxruntime
 
 from .helpers import _requires_opencv
+
+
+def _onnxruntime_has_cuda() -> bool:
+    """Report whether ONNX Runtime offers its CUDA execution provider on a host where torch sees a GPU.
+
+    Examples:
+        >>> isinstance(_onnxruntime_has_cuda(), bool)
+        True
+    """
+    if not (_IS_ONNXRUNTIME_INSTALLED and torch.cuda.is_available()):
+        return False
+    import onnxruntime
+
+    return "CUDAExecutionProvider" in onnxruntime.get_available_providers()
+
+
+# GPU CI installs the CPU onnxruntime, so this runs only where onnxruntime-gpu is installed.
+_requires_onnxruntime_cuda = pytest.mark.skipif(
+    not _onnxruntime_has_cuda(), reason="requires onnxruntime-gpu with the CUDA execution provider and a CUDA device"
+)
 
 
 class TestInferenceLoading:
@@ -268,6 +289,33 @@ class TestExportedPrediction:
         np.testing.assert_allclose(
             [first.confidence[0], second.confidence[0]], [first_score, second_score], rtol=0, atol=1e-5
         )
+
+    @pytest.mark.gpu
+    @_requires_onnxruntime_cuda
+    def test_cuda_provider_predicts_a_directory_as_the_cpu_provider_does(
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path
+    ) -> None:
+        """The CUDA provider prepares and binds each batch on the GPU, and predicts what the CPU provider does.
+
+        A directory runs in batches that the next batch's preparation overlaps, so a batch handed to ONNX Runtime before
+        its GPU preprocessing finished would give a wrong box or score.
+        """
+        path, metadata = exported_detection
+        metadata = dict(metadata, input_shape=[-1, 3, 32, 48])
+        source = tmp_path / "images"
+        source.mkdir()
+        for index in range(10):
+            Image.fromarray(np.full((64, 96, 3), (20 * index, 90, 200 - 15 * index), np.uint8)).save(
+                source / f"{index}.png"
+            )
+        expected = RFDETRInference(path, metadata=metadata, device="cpu").predict(source)
+        model = RFDETRInference(path, metadata=metadata, device="cuda")
+
+        actual = model.predict(source)
+
+        assert model._prediction_context().device.type == "cuda"
+        np.testing.assert_allclose([r.xyxy for r in actual], [r.xyxy for r in expected], rtol=0, atol=1e-3)
+        np.testing.assert_allclose([r.confidence for r in actual], [r.confidence for r in expected], rtol=0, atol=1e-5)
 
     @pytest.mark.parametrize(("threshold", "kept"), [([0.5], 1), ([1.0], 0)])
     def test_per_class_threshold_filters_the_exported_detections(
