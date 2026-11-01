@@ -15,7 +15,7 @@ from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, nodes_to_exclude, 
 from rfdetr.export._runtime.calibration import calibration_batches
 from rfdetr.export._tensorrt.exporter import TensorRTConfig
 from rfdetr.export._tflite.exporter import TFLiteConfig
-from tests._markers import onnx_and_onnxruntime_only, onnx_only
+from tests._markers import _requires_onnx, _requires_onnx_and_onnxruntime
 
 # The helper doctests build real ONNX graphs, so they need the package a class-level skipif cannot gate.
 __doctest_requires__ = {
@@ -244,7 +244,7 @@ def _attention_graph() -> object:
     return helper.make_graph(nodes, "attention", inputs, outputs)
 
 
-@onnx_only
+@_requires_onnx
 class TestNodeSelection:
     """Which nodes are held back from quantization."""
 
@@ -469,7 +469,7 @@ class TestSettingPlumbing:
         assert exporter.config.quantization is None
 
 
-@onnx_and_onnxruntime_only
+@_requires_onnx_and_onnxruntime
 class TestQuantizeInt8EndToEnd:
     """``quantize_int8`` run against a real ONNX Runtime on a small synthetic graph.
 

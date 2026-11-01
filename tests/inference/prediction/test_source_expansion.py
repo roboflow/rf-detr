@@ -26,7 +26,7 @@ from pytest_mock import MockerFixture
 from rfdetr._prediction import core
 from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
-from tests._markers import requires_mps
+from tests._markers import _requires_mps
 
 from ..helpers import _DummyRFDETR, _requires_opencv
 
@@ -168,7 +168,7 @@ def _symlinks_supported() -> bool:
     return True
 
 
-_skip_without_symlinks = pytest.mark.skipif(
+_requires_symlinks = pytest.mark.skipif(
     not _symlinks_supported(), reason="symbolic links cannot be created on this host"
 )
 
@@ -267,7 +267,7 @@ class TestManifestEdgeCases:
         with pytest.raises(ValueError, match="manifest cycle"):
             RFDETRInference(_DummyRFDETR()).predict(tmp_path / start)
 
-    @_skip_without_symlinks
+    @_requires_symlinks
     def test_symlink_alias_of_a_manifest_is_a_cycle_on_the_real_file(self, tmp_path: Path) -> None:
         """A symbolic link back to the manifest is caught on its first visit, and the error names the real file.
 
@@ -754,7 +754,7 @@ class TestDecodeAhead:
         results = RFDETRInference(model).predict(root, batch=2)
         return _source_pixels(results), threads
 
-    @requires_mps
+    @_requires_mps
     def test_accelerator_directory_predictions_match_and_decode_off_the_main_thread(
         self, tmp_path: Path, mocker: MockerFixture
     ) -> None:

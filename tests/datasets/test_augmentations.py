@@ -22,11 +22,7 @@ from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_squa
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
 from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
-
-albumentations_only = pytest.mark.skipif(
-    not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed; skip Albumentations wrapper tests"
-)
-pytestmark = albumentations_only
+from tests._markers import _requires_albumentations
 
 __doctest_requires__ = {"_has_albumentations_transform": ["albumentations"]}
 
@@ -76,6 +72,7 @@ class _FakeRandomSizedCropV1:
         self.p = p
 
 
+@_requires_albumentations
 class TestKeypointHFlipFiltering:
     """Shared keypoint hflip filtering behavior for augmentation backends."""
 
@@ -127,6 +124,14 @@ class TestKeypointHFlipFiltering:
         assert "HorizontalFlip" in str(warning.call_args)
 
 
+#: Skip a test node that needs Albumentations' ``SquareSymmetry``, which older releases lack.
+_requires_square_symmetry = pytest.mark.skipif(
+    not _has_albumentations_transform("SquareSymmetry"),
+    reason="SquareSymmetry is unavailable in this Albumentations version",
+)
+
+
+@_requires_albumentations
 class TestAlbumentationsWrapper:
     """Tests for AlbumentationsWrapper class."""
 
@@ -285,10 +290,7 @@ class TestAlbumentationsWrapper:
         torch.testing.assert_close(kp[0, 0], torch.tensor(19.0), rtol=1e-4, atol=1e-6)
         torch.testing.assert_close(kp[1, 0], torch.tensor(89.0), rtol=1e-4, atol=1e-6)
 
-    @pytest.mark.skipif(
-        not _has_albumentations_transform("SquareSymmetry"),
-        reason="SquareSymmetry is unavailable in this Albumentations version",
-    )
+    @_requires_square_symmetry
     def test_square_symmetry_explicit_pairs_keeps_instances_aligned(self, monkeypatch):
         """SquareSymmetry's horizontal element keeps image annotations and keypoint slots aligned."""
         import albumentations as alb
@@ -1375,6 +1377,7 @@ class TestAlbumentationsWrapper:
         assert aug_target["area"].shape == (0,)
 
 
+@_requires_albumentations
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""
 
@@ -1498,6 +1501,7 @@ class TestAlbumentationsWrapperFromConfig:
         torch.testing.assert_close(config_out["keypoints"], config_target["keypoints"], rtol=0, atol=0)
 
 
+@_requires_albumentations
 class TestRandomSizedCropCompat:
     """Tests for RandomSizedCrop cross-version parameter normalization edge cases."""
 
@@ -1609,6 +1613,7 @@ class TestRandomSizedCropCompat:
         assert transform_names == ["HorizontalFlip"]
 
 
+@_requires_albumentations
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
 
@@ -1892,6 +1897,7 @@ class TestAlbumentationsWrapperNestedConfig:
         assert "HorizontalFlip" in names
 
 
+@_requires_albumentations
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
 
@@ -2075,6 +2081,7 @@ class TestIntegration:
         assert aug_target["labels"].shape[0] == aug_target["boxes"].shape[0]
 
 
+@_requires_albumentations
 class TestTrainingLoop:
     """Test augmentations work correctly in training loop scenario."""
 
@@ -2220,6 +2227,7 @@ class TestTrainingLoop:
                 assert target["masks"].dtype == torch.bool
 
 
+@_requires_albumentations
 class TestMakeCocoTransformsAugConfig:
     """Tests for aug_config propagation in make_coco_transforms / make_coco_transforms_square_div_64."""
 
@@ -2259,6 +2267,7 @@ class TestMakeCocoTransformsAugConfig:
         assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
 
 
+@_requires_albumentations
 class TestMakeCocoTransformsOutputSize:
     """Regression tests for #979: transforms must resize high-resolution images to the target resolution.
 
@@ -2330,6 +2339,7 @@ class TestMakeCocoTransformsOutputSize:
         assert tensor.dtype == torch.float32
 
 
+@_requires_albumentations
 class TestAugPresets:
     """Regression tests for built-in augmentation presets."""
 
@@ -2351,6 +2361,7 @@ class TestAugPresets:
         assert lo < hi, f"AUG_AGGRESSIVE translate_percent must be a non-degenerate range; got {translate!r}"
 
 
+@_requires_albumentations
 class TestKeypointScalingAcrossResolutions:
     """Keypoint coordinates are correctly normalised when training at non-default resolutions.
 
@@ -2440,6 +2451,7 @@ class TestKeypointScalingAcrossResolutions:
         )
 
 
+@_requires_albumentations
 class TestNormalize:
     """Unit tests for Normalize.__call__."""
 
@@ -2512,6 +2524,7 @@ class TestNormalize:
         torch.testing.assert_close(target["boxes"], boxes_original, rtol=0.0, atol=0.0)
 
 
+@_requires_albumentations
 class TestReplayHorizontalFlipParity:
     """Unit tests for AlbumentationsWrapper._replay_horizontal_flip_parity using fixture dicts."""
 
@@ -2640,6 +2653,7 @@ class TestReplayHorizontalFlipParity:
         assert AlbumentationsWrapper._replay_horizontal_flip_parity(replay) == expected
 
 
+@_requires_albumentations
 class TestFirstUnloggedContainer:
     """Unit tests for AlbumentationsWrapper._first_unlogged_container using fixture container trees."""
 
@@ -2690,6 +2704,7 @@ class TestFirstUnloggedContainer:
         assert AlbumentationsWrapper._first_unlogged_container(tree) == "OneOrOther"
 
 
+@_requires_albumentations
 class TestFromConfigStrict:
     """AlbumentationsWrapper.from_config strict mode raises on required-transform failures instead of skipping."""
 

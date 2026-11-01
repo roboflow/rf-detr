@@ -21,7 +21,6 @@ import asyncio
 import contextlib
 import json
 import os
-import platform
 import sys
 import threading
 import warnings
@@ -45,6 +44,7 @@ from rfdetr.export._coreai.inference import _CoreAILoopBridge, _stop_loop, load_
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.prepare import ExportGraph, resolve_output_names
 from rfdetr.utilities.reproducibility import seed_all
+from tests._markers import _requires_coreai_runtime
 from tests.export.conftest import (
     _export_graph,
     _make_rfdetr,
@@ -54,23 +54,7 @@ from tests.export.conftest import (
     max_abs_output_diffs,
 )
 
-
-def _coreai_runtime_available() -> bool:
-    """Return whether this host can load and run ``.aimodel`` assets (Apple silicon, macOS 27 or later).
-
-    Examples:
-        >>> isinstance(_coreai_runtime_available(), bool)
-        True
-    """
-    if sys.platform != "darwin" or platform.machine() != "arm64" or not _IS_COREAI_TORCH_AVAILABLE:
-        return False
-    return int(platform.mac_ver()[0].split(".")[0] or 0) >= 27
-
-
-coreai_only = pytest.mark.skipif(not _IS_COREAI_TORCH_AVAILABLE, reason="coreai-torch not installed")
-coreai_runtime_only = pytest.mark.skipif(
-    not _coreai_runtime_available(), reason="running .aimodel assets needs the Core AI runtime (macOS 27+)"
-)
+_requires_coreai_torch = pytest.mark.skipif(not _IS_COREAI_TORCH_AVAILABLE, reason="coreai-torch not installed")
 
 # Float32 Core AI matches eager to ~1e-5 on boxes/logits on the CPU; masks and keypoints get the same headroom the
 # CoreML suite uses. The bound stays well under structural-failure scale (>= 1e-3).
@@ -392,7 +376,7 @@ class TestCheckCoreaiTorchAvailable:
         monkeypatch.setattr("rfdetr.export._coreai.exporter._IS_COREAI_TORCH_AVAILABLE", False)
         assert _check_coreai_torch_available(raise_error=False) is False
 
-    @coreai_only
+    @_requires_coreai_torch
     def test_returns_true_when_installed(self) -> None:
         """An installed ``coreai-torch`` is reported as available."""
         assert _check_coreai_torch_available() is True
@@ -747,8 +731,8 @@ def coreai_export(
     return model, example, Path(aimodel_path), output_names
 
 
-@coreai_only
-@coreai_runtime_only
+@_requires_coreai_torch
+@_requires_coreai_runtime
 @pytest.mark.integration
 @pytest.mark.e2e_coreai
 class TestCoreAIEndToEnd:

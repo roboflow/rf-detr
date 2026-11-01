@@ -23,12 +23,14 @@ from rfdetr.visualize.training import (
     plot_metrics,
 )
 
-pandas_only = pytest.mark.skipif(not _IS_PANDAS_INSTALLED, reason="pandas not installed; skip metrics DataFrame tests")
-plot_only = pytest.mark.skipif(
+_requires_pandas = pytest.mark.skipif(
+    not _IS_PANDAS_INSTALLED, reason="pandas not installed; skip metrics DataFrame tests"
+)
+_requires_plotting = pytest.mark.skipif(
     not (_IS_MATPLOTLIB_INSTALLED and _IS_PANDAS_INSTALLED),
     reason="matplotlib/pandas not installed; skip metric plotting tests",
 )
-plot_seaborn_only = pytest.mark.skipif(
+_requires_seaborn_plotting = pytest.mark.skipif(
     not (_IS_MATPLOTLIB_INSTALLED and _IS_PANDAS_INSTALLED and _IS_SEABORN_INSTALLED),
     reason="matplotlib/pandas/seaborn not installed; skip seaborn plotting tests",
 )
@@ -120,7 +122,7 @@ def test_build_metric_groups_includes_detection_and_keypoint_metrics() -> None:
     assert groups["F1 / Precision / Recall"] == ["val/F1", "val/precision", "val/recall"]
 
 
-@plot_seaborn_only
+@_requires_seaborn_plotting
 def test_plot_metrics_writes_keypoint_metrics_figure(tmp_path: Path) -> None:
     """plot_metrics should write a figure for CSVLogger files containing keypoint metrics."""
     import pandas as pd
@@ -155,7 +157,7 @@ def test_plot_metrics_writes_keypoint_metrics_figure(tmp_path: Path) -> None:
     plt.close(figure)
 
 
-@plot_seaborn_only
+@_requires_seaborn_plotting
 def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> None:
     """Loss and mAP plot helpers should build separate notebook-displayable figures."""
     import pandas as pd
@@ -198,7 +200,7 @@ def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> Non
     plt.close(map_figure)
 
 
-@pandas_only
+@_requires_pandas
 def test_metrics_reader_drops_trailing_post_fit_validation_epoch(tmp_path: Path) -> None:
     """Post-fit ``trainer.validate()`` rows should not appear as training-curve epochs."""
     import pandas as pd
@@ -220,7 +222,7 @@ def test_metrics_reader_drops_trailing_post_fit_validation_epoch(tmp_path: Path)
     assert epoch_df["val/mAP_50_95"].tolist() == pytest.approx([0.1, 0.2])
 
 
-@plot_only
+@_requires_plotting
 def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> None:
     """MAP plot should use one axes with dotted train lines and solid val lines."""
     import pandas as pd
@@ -248,7 +250,7 @@ def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> No
     plt.close(figure)
 
 
-@plot_only
+@_requires_plotting
 def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
     """MAP renderer should pair train/val lines by color and distinguish split by style."""
     import pandas as pd
@@ -284,7 +286,7 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
     plt.close(figure)
 
 
-@plot_only
+@_requires_plotting
 def test_map_renderer_preserves_negative_values() -> None:
     """MAP renderer should plot raw metric values from the CSV without sentinel masking."""
     import pandas as pd
@@ -307,7 +309,7 @@ def test_map_renderer_preserves_negative_values() -> None:
     plt.close(figure)
 
 
-@plot_only
+@_requires_plotting
 def test_loss_renderer_preserves_negative_component_losses() -> None:
     """Loss renderer should plot negative NLL values rather than treating them as COCO sentinels."""
     import pandas as pd
@@ -334,7 +336,7 @@ def test_loss_renderer_preserves_negative_component_losses() -> None:
     plt.close(figure)
 
 
-@plot_seaborn_only
+@_requires_seaborn_plotting
 def test_plot_metrics_warns_when_log_loss_has_non_positive_values(tmp_path: Path) -> None:
     """Loss log scale should fall back to linear scale when component losses are non-positive."""
     import pandas as pd
@@ -361,7 +363,7 @@ def test_plot_metrics_warns_when_log_loss_has_non_positive_values(tmp_path: Path
 class TestPlotMetricsNoSeaborn:
     """Verify plot_metrics falls back gracefully when seaborn is unavailable."""
 
-    @plot_only
+    @_requires_plotting
     def test_plot_metrics_succeeds_without_seaborn(self, tmp_path: Path, mocker) -> None:
         """plot_metrics returns a Figure when _IS_SEABORN_AVAILABLE is False (matplotlib-only fallback).
 
@@ -392,7 +394,7 @@ class TestPlotMetricsNoSeaborn:
 class TestSeabornErrorBands:
     """Error band rendering when seaborn is available."""
 
-    @plot_seaborn_only
+    @_requires_seaborn_plotting
     def test_multi_step_epoch_produces_error_band_on_train_metrics(self, tmp_path: Path) -> None:
         """Train metrics logged at multiple steps per epoch produce a shaded ±1-std band."""
         import pandas as pd
@@ -417,7 +419,7 @@ class TestSeabornErrorBands:
         plt.close(figure)
 
 
-@plot_only
+@_requires_plotting
 def test_plot_metrics_adds_legends_to_all_populated_subplots(tmp_path: Path) -> None:
     """Ensure that every populated metric has a legend."""
     import pandas as pd

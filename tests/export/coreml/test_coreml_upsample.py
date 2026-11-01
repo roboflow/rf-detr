@@ -30,12 +30,15 @@ import torch.nn.functional as F  # noqa: N812
 from rfdetr import RFDETRSegNano
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 
+#: Skip a test node that needs ``coremltools``.
+_requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools")
+
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.e2e_coreml,
-    pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="needs coremltools"),
 ]
-coreml_runtime_only = pytest.mark.skipif(sys.platform != "darwin", reason="needs the macOS Core ML runtime")
+_requires_macos = pytest.mark.skipif(sys.platform != "darwin", reason="needs the macOS Core ML runtime")
 
 # Core ML runs smaller resizes on the CPU, where the Neural Engine's offset never shows.
 _UPSAMPLE_INPUT_SHAPE = (1, 256, 36, 36)
@@ -166,6 +169,7 @@ def _assert_predicts_like_torch(model: Any, input_shape: tuple[int, ...], align_
     np.testing.assert_allclose(prediction, expected.numpy(), atol=1e-2)
 
 
+@_requires_coremltools
 @_PRECISIONS
 def test_upsample_becomes_matmuls_with_constant_right_operands(precision: str) -> None:
     """No ``upsample_bilinear`` is left, and each interpolation matrix is the right operand of its matmul.
@@ -187,7 +191,8 @@ def test_upsample_becomes_matmuls_with_constant_right_operands(precision: str) -
     assert matmul_operands_are_constant == [(False, True), (False, True)]
 
 
-@coreml_runtime_only
+@_requires_coremltools
+@_requires_macos
 def test_rewritten_upsample_matmuls_prefer_neural_engine() -> None:
     """Under ``CPU_AND_NE`` both matmuls of the rewritten fp16 upsample prefer the Neural Engine.
 
@@ -205,7 +210,8 @@ def test_rewritten_upsample_matmuls_prefer_neural_engine() -> None:
     assert all("NeuralEngine" in device for device in matmul_devices)
 
 
-@coreml_runtime_only
+@_requires_coremltools
+@_requires_macos
 @_INPUT_SHAPES
 @pytest.mark.parametrize("align_corners", [False, True])
 @_PRECISIONS
@@ -222,7 +228,8 @@ def test_rewritten_upsample_predicts_like_torch(
     _assert_predicts_like_torch(model, input_shape, align_corners)
 
 
-@coreml_runtime_only
+@_requires_coremltools
+@_requires_macos
 @_INPUT_SHAPES
 @pytest.mark.parametrize("align_corners", [False, True])
 def test_rewritten_upsample_predicts_like_torch_on_neural_engine(
@@ -241,6 +248,7 @@ def test_rewritten_upsample_predicts_like_torch_on_neural_engine(
     _assert_predicts_like_torch(model, input_shape, align_corners)
 
 
+@_requires_coremltools
 def test_segmentation_export_has_no_bilinear_resize(tmp_path: Path) -> None:
     """The fp16 segmentation export resizes its mask features with matmuls, so no bilinear resize reaches Core ML."""
     import coremltools as ct

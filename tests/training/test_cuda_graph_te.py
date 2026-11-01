@@ -29,10 +29,10 @@ from rfdetr.utilities.tensors import NestedTensor
 
 _FP8_CUDA_AVAILABLE = torch.cuda.is_available() and torch.cuda.get_device_capability(0) >= (8, 9)
 
-_skip_without_fp8_cuda = pytest.mark.skipif(
+_requires_fp8_cuda = pytest.mark.skipif(
     not _FP8_CUDA_AVAILABLE, reason="requires FP8-capable CUDA hardware (compute capability >= 8.9)"
 )
-_skip_without_transformer_engine = pytest.mark.skipif(
+_requires_transformer_engine = pytest.mark.skipif(
     not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires transformer-engine"
 )
 
@@ -166,6 +166,13 @@ def _fp8_samples(value: float, *, device: torch.device | str, batch_size: int = 
     )
 
 
+#: Skip a test node that checks the error raised when Transformer Engine is absent.
+_requires_no_transformer_engine = pytest.mark.skipif(
+    _IS_TRANSFORMER_ENGINE_INSTALLED,
+    reason="transformer_engine is installed in this environment; cannot exercise the absent-package path",
+)
+
+
 class TestTransformerEngineCaptureBoundary:
     """CPU tests for Transformer Engine selection and fatal-capture behavior."""
 
@@ -205,10 +212,7 @@ class TestTransformerEngineCaptureBoundary:
             "clone_param_grads_on_return": True,
         }
 
-    @pytest.mark.skipif(
-        _IS_TRANSFORMER_ENGINE_INSTALLED,
-        reason="transformer_engine is installed in this environment; cannot exercise the absent-package path",
-    )
+    @_requires_no_transformer_engine
     def test_runner_fp8_without_transformer_engine_raises_module_not_found_error(self) -> None:
         """A genuinely absent Transformer Engine fails construction with a clear import error.
 
@@ -390,8 +394,8 @@ class _FakeFp8Dataset(torch.utils.data.Dataset):
         return image, target
 
 
-@_skip_without_transformer_engine
-@_skip_without_fp8_cuda
+@_requires_transformer_engine
+@_requires_fp8_cuda
 class TestTransformerEngineCaptureGPU:
     """Unmocked CUDA checks; intentionally skipped on CPU-only development machines."""
 

@@ -29,7 +29,7 @@ from pytest_mock import MockerFixture
 from torch import nn
 
 from rfdetr.models.transformer import Transformer
-from tests._markers import onnx_and_onnxruntime_only, onnx_only
+from tests._markers import _requires_onnx, _requires_onnx_and_onnxruntime
 
 if TYPE_CHECKING:
     import onnx
@@ -312,7 +312,7 @@ _ONNX_LEVEL_FIXTURES = [
 ]
 
 
-@onnx_only
+@_requires_onnx
 @pytest.mark.parametrize("onnx_fixture", _ONNX_LEVEL_FIXTURES)
 def test_export_has_no_scatternd(onnx_fixture: str, request: pytest.FixtureRequest) -> None:
     """The exported Transformer must not contain a ScatterND (TRT shape-tensor killer), at 1 and 2 feature levels.
@@ -326,7 +326,7 @@ def test_export_has_no_scatternd(onnx_fixture: str, request: pytest.FixtureReque
     )
 
 
-@onnx_only
+@_requires_onnx
 @pytest.mark.parametrize("onnx_fixture", _ONNX_LEVEL_FIXTURES)
 def test_export_is_shape_derived(onnx_fixture: str, request: pytest.FixtureRequest) -> None:
     """Sanity-check that the exported Transformer graph contains Shape ops, at 1 and 2 feature levels.
@@ -345,7 +345,7 @@ def test_export_is_shape_derived(onnx_fixture: str, request: pytest.FixtureReque
 # ---------------------------------------------------------------------------
 
 
-@onnx_and_onnxruntime_only
+@_requires_onnx_and_onnxruntime
 @pytest.mark.parametrize("batch_size", [pytest.param(1, id="batch1"), pytest.param(2, id="batch2")])
 def test_dynamic_batch_inference(
     exported_dynamic_onnx_bytes: bytes,
