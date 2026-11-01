@@ -73,10 +73,7 @@ class TestNamespaceFromConfigs:
 
     def test_optimizer_fields_not_forwarded_to_namespace(self, base_model_config, base_train_config):
         """Optimizer config is PTL-only and must not leak into the legacy namespace."""
-        tc = base_train_config(
-            optimizer="sgd",
-            optimizer_kwargs={"momentum": 0.9},
-        )
+        tc = base_train_config(optimizer="sgd", optimizer_kwargs={"momentum": 0.9})
         args = _namespace_from_configs(base_model_config(), tc)
 
         assert not hasattr(args, "optimizer")
@@ -119,21 +116,19 @@ class TestNamespaceFromConfigs:
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
 
-    def test_segmentation_cls_loss_default_matches_pre_1_7_effective_weight(self, base_model_config, seg_train_config):
-        """Default segmentation classification loss weight must stay at the pre-1.7 effective value."""
+    @pytest.mark.parametrize(
+        ("train_overrides", "expected"),
+        [
+            pytest.param({}, 1.0, id="default-keeps-pre-1.7-effective-weight"),
+            pytest.param({"cls_loss_coef": 5.0}, 5.0, id="explicit-override-forwarded"),
+        ],
+    )
+    def test_segmentation_cls_loss_coef(self, base_model_config, seg_train_config, train_overrides, expected):
+        """Segmentation classification loss weight keeps its pre-1.7 default and honors an explicit override."""
         mc = base_model_config(segmentation_head=True)
-        tc = seg_train_config()
-        args = _namespace_from_configs(mc, tc)
+        args = _namespace_from_configs(mc, seg_train_config(**train_overrides))
 
-        assert args.cls_loss_coef == pytest.approx(1.0)
-
-    def test_segmentation_cls_loss_explicit_override_is_forwarded(self, base_model_config, seg_train_config):
-        """Explicit segmentation classification loss weight overrides are preserved."""
-        mc = base_model_config(segmentation_head=True)
-        tc = seg_train_config(cls_loss_coef=5.0)
-        args = _namespace_from_configs(mc, tc)
-
-        assert args.cls_loss_coef == pytest.approx(5.0)
+        assert args.cls_loss_coef == pytest.approx(expected)
 
     def test_segmentation_extras_default_for_plain_config(self, base_model_config, base_train_config):
         """mask_* attributes default to 5.0 for a plain TrainConfig (not segmentation)."""

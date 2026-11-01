@@ -16,6 +16,7 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr import detr as detr_module
@@ -186,15 +187,15 @@ class TestModelInferenceCudaDeviceContext:
         assert original.linear.weight.device.type == "cpu"
         assert source.model.device == target
 
-    def test_nullcontext_used_for_cpu_device(self) -> None:
+    def test_nullcontext_used_for_cpu_device(self, mocker: MockerFixture) -> None:
         """A CPU factory does not initialize a CUDA device context."""
         source = _FakeRFDETR()
-        with patch("torch.cuda.device") as device_context:
-            source.inference(compile=False)
+        device_context = mocker.patch("torch.cuda.device")
+        source.inference(compile=False)
         device_context.assert_not_called()
 
     @pytest.mark.gpu
-    def test_cold_cuda_source_stays_on_cpu_and_snapshot_fixes_device_index(self) -> None:
+    def test_cold_cuda_source_stays_on_cpu_and_snapshot_fixes_device_index(self, mocker: MockerFixture) -> None:
         """A deferred CUDA source stays on CPU while its predictor owns a concrete CUDA device."""
         source = _FakeRFDETR()
         source.model.device = torch.device("cuda")
@@ -214,8 +215,8 @@ class TestModelInferenceCudaDeviceContext:
         assert source.model.device == torch.device("cuda")
         assert source.model.inference_model is None
         # The device stays explicit even if a later call observes another current CUDA device.
-        with patch("torch.cuda.current_device", return_value=expected_device.index + 1):
-            assert snapshot.model.device == expected_device
+        mocker.patch("torch.cuda.current_device", return_value=expected_device.index + 1)
+        assert snapshot.model.device == expected_device
 
 
 class TestModelInferenceCompile:
@@ -409,12 +410,12 @@ class TestModelInferenceCompile:
         assert original.training is True
         assert source.model.inference_model is None
 
-    def test_compile_true_sets_compiled_flags(self) -> None:
+    def test_compile_true_sets_compiled_flags(self, mocker: MockerFixture) -> None:
         """_optimized_has_been_compiled=True and _optimized_batch_size should be set after compile=True."""
         rfdetr = _FakeRFDETR()
 
-        with patch("torch.jit.trace", side_effect=lambda module, _input: module):
-            predictor = rfdetr.inference(compile=True, batch_size=4)
+        mocker.patch("torch.jit.trace", side_effect=lambda module, _input: module)
+        predictor = rfdetr.inference(compile=True, batch_size=4)
 
         assert predictor._native_model._optimized_has_been_compiled is True
         assert predictor._native_model._optimized_batch_size == 4
@@ -474,7 +475,7 @@ class TestModelInferenceCompile:
 
         with (
             patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', or 'inductor'"),
+            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', 'inductor' or None"),
         ):
             rfdetr.inference(compile=True, compile_backend="unknown")  # type: ignore[arg-type]
 

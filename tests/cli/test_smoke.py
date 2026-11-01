@@ -13,7 +13,9 @@ with the YAML init_args, and verify every specified field survived the round-tri
 """
 
 import importlib
+import os
 import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -44,6 +46,8 @@ ALL_CONFIGS = [
 def _run_cli(*args: str) -> int:
     """Run RFDETRCli in-process with the given args; return the SystemExit code.
 
+    The doctest is skipped because the CLI prints its help text to stdout.
+
     >>> _run_cli("--help")  # doctest: +SKIP
     0
     """
@@ -59,7 +63,7 @@ def _run_cli(*args: str) -> int:
 def _load(name: str) -> dict:
     """Load a config YAML file by stem name.
 
-    >>> _load("rfdetr_small")["model"]["model_config"]["class_path"]  # doctest: +SKIP
+    >>> _load("rfdetr_small")["model"]["model_config"]["class_path"]
     'rfdetr.config.RFDETRSmallConfig'
     """
     return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
@@ -86,75 +90,42 @@ class TestCLIEntrypoint:
     """Module entrypoint and CLI import tests."""
 
     @pytest.mark.flaky(reruns=3, condition=sys.platform == "darwin")
-    def test_python_module_entrypoint_runs(self) -> None:
-        """Python -m rfdetr --help exits 0 and mentions rfdetr."""
-        import subprocess
+    def test_module_help_exits_zero(self) -> None:
+        """`python -m rfdetr --help` exits 0 and mentions rfdetr."""
+        result = subprocess.run([sys.executable, "-m", "rfdetr", "--help"], capture_output=True, text=True, timeout=30)
 
-        result = subprocess.run(
-            [sys.executable, "-m", "rfdetr", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
         assert result.returncode == 0
         assert "rfdetr" in result.stdout.lower() or "rfdetr" in result.stderr.lower()
 
-    def test_cli_main_is_importable(self) -> None:
-        """rfdetr.cli module is importable and exposes a callable main."""
-        import importlib
-
+    def test_main_is_callable(self) -> None:
+        """The `rfdetr.cli` module is importable and exposes a callable `main`."""
         mod = importlib.import_module("rfdetr.cli")
+
         assert callable(getattr(mod, "main", None))
 
 
 class TestCLIHelp:
-    """Rfdetr --help and subcommand --help must exit 0."""
+    """`rfdetr --help` and subcommand `--help` exit 0."""
 
-    def test_top_level_help(self):
-        """Rfdetr --help exits with code 0."""
-        assert _run_cli("--help") == 0
+    @pytest.mark.parametrize("command", ["--help", "fit --help", "validate --help"])
+    def test_help_exits_zero(self, command: str) -> None:
+        """Each help invocation exits with code 0."""
+        assert _run_cli(*command.split()) == 0
 
-    def test_fit_help(self):
-        """Rfdetr fit --help exits with code 0."""
-        assert _run_cli("fit", "--help") == 0
+    @pytest.mark.parametrize("section", ["model_config", "train_config"])
+    def test_fit_help_lists_section(self, section: str, capsys: pytest.CaptureFixture[str]) -> None:
+        """`rfdetr fit --help` output lists the model's `model_config` and `train_config` arguments."""
+        _run_cli("fit", "--help")
 
-    def test_validate_help(self):
-        """Rfdetr validate --help exits with code 0."""
-        assert _run_cli("validate", "--help") == 0
-
-    def test_fit_help_exposes_model_config(self):
-        """Rfdetr fit --help output lists model.model_config arguments."""
-        import io
-
-        buf = io.StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = buf
-        try:
-            _run_cli("fit", "--help")
-        finally:
-            sys.stdout = old_stdout
-        assert "model_config" in buf.getvalue()
-
-    def test_fit_help_exposes_train_config(self):
-        """Rfdetr fit --help output lists model.train_config arguments."""
-        import io
-
-        buf = io.StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = buf
-        try:
-            _run_cli("fit", "--help")
-        finally:
-            sys.stdout = old_stdout
-        assert "train_config" in buf.getvalue()
+        assert section in capsys.readouterr().out
 
 
 class TestShippedConfigsParse:
     """Every shipped config parses through the CLI, as ``rfdetr fit --config configs/<name>.yaml`` documents."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_fit_parses_the_shipped_config(self, name: str, capsys: pytest.CaptureFixture[str]) -> None:
-        """``--print_config`` exits 0 and keeps the config's own ``ModelConfig`` subclass."""
+    def test_fit_parses(self, name: str, capsys: pytest.CaptureFixture[str]) -> None:
+        """``fit --print_config`` exits 0 and keeps the config's own ``ModelConfig`` subclass."""
         exit_code = _run_cli("fit", "--config", str(CONFIGS_DIR / f"{name}.yaml"), "--print_config")
 
         printed = capsys.readouterr()
@@ -171,18 +142,14 @@ class TestModelConfigRoundtrip:
     """model_config init_args from YAML construct a valid config with matching values."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_model_config_fields_survive_roundtrip(self, name):
+    def test_fields_survive_roundtrip(self, name: str) -> None:
         """Every field in model_config.init_args is preserved after instantiation."""
-        data = _load(name)
-        mc_section = data["model"]["model_config"]
-        class_path = mc_section["class_path"]
+        mc_section = _load(name)["model"]["model_config"]
         init_args = mc_section.get("init_args", {})
 
-        mc = _instantiate(class_path, init_args)
-        for field, value in init_args.items():
-            assert getattr(mc, field) == value, (
-                f"{name}.yaml: model_config.{field} expected {value!r}, got {getattr(mc, field)!r}"
-            )
+        mc = _instantiate(mc_section["class_path"], init_args)
+
+        assert {field: getattr(mc, field) for field in init_args} == init_args, f"{name}.yaml: model_config mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -194,28 +161,20 @@ class TestTrainConfigRoundtrip:
     """train_config init_args from YAML construct a valid config with matching values."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_train_config_fields_survive_roundtrip(self, name, tmp_path):
+    def test_fields_survive_roundtrip(self, name: str, tmp_path: pathlib.Path) -> None:
         """Every field in train_config.init_args is preserved after instantiation.
 
         dataset_dir is rewritten to tmp_path so path expansion doesn't fail on the placeholder /data/coco value.
-        TrainConfig.expand_paths() converts relative paths containing separators to absolute, so both sides are
+        TrainConfig.expand_paths() converts relative path strings to absolute, so expected path-like strings are
         normalised with os.path.abspath before comparison.
         """
-        import os
+        tc_section = _load(name)["model"]["train_config"]
+        init_args = {**tc_section.get("init_args", {}), "dataset_dir": str(tmp_path)}
+        expected = {
+            field: os.path.abspath(value) if isinstance(value, str) and (os.sep in value or "/" in value) else value
+            for field, value in init_args.items()
+        }
 
-        data = _load(name)
-        tc_section = data["model"]["train_config"]
-        class_path = tc_section["class_path"]
-        init_args = dict(tc_section.get("init_args", {}))
+        tc = _instantiate(tc_section["class_path"], init_args)
 
-        # Substitute placeholder dataset_dir with a real tmp_path.
-        init_args["dataset_dir"] = str(tmp_path)
-
-        tc = _instantiate(class_path, init_args)
-        for field, value in init_args.items():
-            actual = getattr(tc, field)
-            # TrainConfig.expand_paths() resolves relative path strings to
-            # absolute, so normalise both sides for string path fields.
-            if isinstance(value, str) and (os.sep in value or "/" in value):
-                value = os.path.abspath(value)
-            assert actual == value, f"{name}.yaml: train_config.{field} expected {value!r}, got {actual!r}"
+        assert {field: getattr(tc, field) for field in init_args} == expected, f"{name}.yaml: train_config mismatch"

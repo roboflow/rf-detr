@@ -12,10 +12,10 @@ import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torch import Tensor, nn
 
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
@@ -109,6 +109,24 @@ class _FakeTransformerEngine:
         return modules
 
 
+def _install_fake_transformer_engine(monkeypatch: pytest.MonkeyPatch, make_graphed_callables: Any) -> None:
+    """Install a ``transformer_engine.pytorch`` module exposing ``make_graphed_callables`` in ``sys.modules``.
+
+    Examples:
+        >>> with pytest.MonkeyPatch.context() as patch:
+        ...     _install_fake_transformer_engine(patch, print)
+        ...     installed = sys.modules["transformer_engine.pytorch"].make_graphed_callables
+        >>> installed is print
+        True
+    """
+    package = ModuleType("transformer_engine")
+    package.__path__ = []  # type: ignore[attr-defined]
+    pytorch = ModuleType("transformer_engine.pytorch")
+    pytorch.make_graphed_callables = make_graphed_callables  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformer_engine", package)
+    monkeypatch.setitem(sys.modules, "transformer_engine.pytorch", pytorch)
+
+
 @pytest.fixture
 def fake_transformer_engine(monkeypatch: pytest.MonkeyPatch) -> _FakeTransformerEngine:
     """Install a Transformer Engine 2.19-shaped module without its CUDA extension.
@@ -118,12 +136,7 @@ def fake_transformer_engine(monkeypatch: pytest.MonkeyPatch) -> _FakeTransformer
         # Needs pytest's monkeypatch fixture; cannot run standalone.
     """
     fake = _FakeTransformerEngine()
-    package = ModuleType("transformer_engine")
-    package.__path__ = []  # type: ignore[attr-defined]
-    pytorch = ModuleType("transformer_engine.pytorch")
-    pytorch.make_graphed_callables = fake.make_graphed_callables  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "transformer_engine", package)
-    monkeypatch.setitem(sys.modules, "transformer_engine.pytorch", pytorch)
+    _install_fake_transformer_engine(monkeypatch, fake.make_graphed_callables)
     return fake
 
 
@@ -230,12 +243,7 @@ class TestTransformerEngineCaptureBoundary:
             capture_called = True
             return modules
 
-        package = ModuleType("transformer_engine")
-        package.__path__ = []  # type: ignore[attr-defined]
-        pytorch = ModuleType("transformer_engine.pytorch")
-        pytorch.make_graphed_callables = old_make_graphed_callables  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "transformer_engine", package)
-        monkeypatch.setitem(sys.modules, "transformer_engine.pytorch", pytorch)
+        _install_fake_transformer_engine(monkeypatch, old_make_graphed_callables)
 
         with pytest.raises(RuntimeError, match="Transformer Engine 2.19"):
             CudaGraphTrainingRunner(_TinyGraphableModel(), fp8_recipe=object())
@@ -485,7 +493,9 @@ class TestTransformerEngineCaptureGPU:
         assert len(runner._graphed_cache) == 1
 
     @pytest.mark.gpu
-    def test_fit_converts_to_transformer_engine_before_first_capture(self, tmp_path: Path) -> None:
+    def test_fit_converts_to_transformer_engine_before_first_capture(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """A real ``Trainer.fit()`` converts modules to Transformer Engine layers before FP8 capture fires.
 
         Unlike the two tests above, this drives the FULL ``RFDETRModelModule.on_train_start()`` ->
@@ -529,22 +539,21 @@ class TestTransformerEngineCaptureGPU:
             run_test=False,
         )
 
-        with (
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeFp8Dataset()),
-            patch("transformer_engine.pytorch.make_graphed_callables", side_effect=spying_make_graphed_callables),
-        ):
-            module = RFDETRModelModule(model_config, train_config)
-            datamodule = RFDETRDataModule(model_config, train_config)
-            trainer = build_trainer(
-                train_config,
-                model_config,
-                accelerator="cuda",
-                devices=1,
-                fast_dev_run=1,
-                enable_progress_bar=False,
-                enable_model_summary=False,
-                logger=False,
-            )
-            trainer.fit(module, datamodule=datamodule)
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeFp8Dataset())
+        mocker.patch("transformer_engine.pytorch.make_graphed_callables", side_effect=spying_make_graphed_callables)
+
+        module = RFDETRModelModule(model_config, train_config)
+        datamodule = RFDETRDataModule(model_config, train_config)
+        trainer = build_trainer(
+            train_config,
+            model_config,
+            accelerator="cuda",
+            devices=1,
+            fast_dev_run=1,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+        )
+        trainer.fit(module, datamodule=datamodule)
 
         assert conversion_seen_before_first_capture == [True]

@@ -33,7 +33,7 @@ from rfdetr.utilities.tensors import (
     nested_tensor_from_tensor_list,
     pack_targets,
 )
-from tests._markers import requires_torch_xla
+from tests._markers import requires_mps, requires_torch_xla
 
 
 def _grid_sample_reference(
@@ -385,14 +385,15 @@ class TestBilinearGridSampleDeviceRouting:
         "device_type",
         [pytest.param("mps", id="mps"), pytest.param("xla", id="xla")],
     )
-    def test_gather_path_taken_and_matches_reference(self, seed, device_type):
+    def test_gather_path_taken_and_matches_reference(self, seed, device_type, mocker):
         """Manual gather path is taken for mps/xla -- F.grid_sample itself is never called -- and matches it."""
         input = torch.randn(1, 3, 8, 8)
         grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
 
         expected = _grid_sample_reference(input, grid, "zeros", False)
-        with patch.object(F, "grid_sample", wraps=F.grid_sample) as mock_grid_sample:
-            actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
+        mock_grid_sample = mocker.patch.object(F, "grid_sample", wraps=F.grid_sample)
+
+        actual = _call_manual_path(input, grid, "zeros", False, device_type=device_type)
 
         mock_grid_sample.assert_not_called()
         torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
@@ -826,8 +827,8 @@ class TestMakeCollateFn:
         for t in targets:
             assert set(t.keys()) == {"boxes", "labels"}
 
-    def test_mixed_landscape_portrait_batch_masked_correctly(self) -> None:
-        """Mixed-orientation batch: all pad (batch + divisor) correctly marked True in mask."""
+    def test_mixed_orientation_batch_marks_all_padding_in_mask(self) -> None:
+        """Mixed-orientation batch: every padded pixel (batch padding plus divisor rounding) is True in the mask."""
         # landscape (H=100, W=200) and portrait (H=200, W=100).  block_size=32 rounds
         # batch max (200, 200) to (224, 224).
         collate = make_collate_fn(block_size=32)
@@ -1046,8 +1047,8 @@ class TestPackedTargets:
         assert not isinstance(result, PackedTargets)
         assert result == tuple(batch)
 
-    def test_as_list_gives_dicts_that_can_be_mutated_independently(self) -> None:
-        """`transfer_batch_to_device` hands these downstream, where they are mutated in place."""
+    def test_as_list_dicts_mutate_independently(self) -> None:
+        """`as_list` yields distinct dicts, since `transfer_batch_to_device` hands them downstream to be mutated."""
         packed = pack_targets(self._batch())
         assert isinstance(packed, PackedTargets)
         materialised = packed.as_list()
@@ -1390,8 +1391,10 @@ class TestNearestGridSampleParity:
         input = torch.randn(1, 1, 4, 4)
         grid = torch.zeros(1, 2, 2, 2)
 
-        with pytest.raises(ValueError, match="Unsupported padding_mode"):
+        with pytest.raises(ValueError) as exc_info:
             _call_manual_nearest(input, grid, padding_mode="reflection")
+
+        assert "Unsupported padding_mode" in str(exc_info.value)
 
 
 class TestNearestGridSampleDelegation:
@@ -1475,7 +1478,7 @@ class TestNativeGridSample:
 
         assert torch.equal(actual, expected)
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_matches_the_gather_sampler_on_mps(self) -> None:
         """On MPS it agrees with the gather-based training sampler to float rounding."""
         generator = torch.Generator().manual_seed(0)

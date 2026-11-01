@@ -8,17 +8,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from pytorch_lightning import Callback, LightningModule, Trainer
 from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 
-from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig
+from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig, TrainConfig
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 
@@ -86,6 +87,95 @@ def _make_pl_module() -> MagicMock:
     # Use a real dict so torch.save can pickle it (MagicMock is not picklable).
     pl_module.train_config = {"lr": 0.001}
     return pl_module
+
+
+_REGULAR_AND_EMA_CASES = [
+    pytest.param({}, {"val/mAP_50_95": 0.5}, "checkpoint_best_regular.pth", id="regular"),
+    pytest.param(
+        {"monitor_ema": "val/ema_mAP_50_95"},
+        {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
+        "checkpoint_best_ema.pth",
+        id="ema",
+    ),
+]
+
+
+class _ModuleWithTestStep(LightningModule):
+    """Real module defining ``test_step`` so BestModelCallback.on_fit_end considers running ``trainer.test()``."""
+
+    def test_step(self, batch: object, batch_idx: int) -> None:
+        """No-op test step."""
+
+
+def _make_test_step_module(
+    state_dict: dict[str, object] | None = None, missing_keys: list[str] | None = None
+) -> _ModuleWithTestStep:
+    """Build a real ``test_step`` module around a mocked model that reloads with the given ``missing_keys``.
+
+    A real ``_IncompatibleKeys`` is returned from ``load_state_dict`` because a MagicMock's truthy result would fail the
+    ``strict=False`` reload check.
+
+    Args:
+        state_dict: What the model's ``state_dict()`` returns; one zero tensor ``w`` by default.
+        missing_keys: Keys the reload reports as missing; none by default.
+
+    Returns:
+        The module with ``model``, ``train_config`` and the mocked reload set.
+
+    Examples:
+        >>> module = _make_test_step_module(missing_keys=["w"])
+        >>> module.model.load_state_dict({}, strict=False).missing_keys
+        ['w']
+    """
+    module = _ModuleWithTestStep()
+    module.model = MagicMock()
+    module.model.state_dict.return_value = state_dict if state_dict is not None else {"w": torch.zeros(1)}
+    module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys(missing_keys or [], [])
+    module.train_config = {"lr": 0.001}
+    return module
+
+
+def _make_cpu_trainer(
+    tmp_path: Path, max_epochs: int, callbacks: list[Callback], num_sanity_val_steps: int = 0
+) -> Trainer:
+    """Build a quiet CPU ``Trainer`` limited to 2 train and 1 validation batches per epoch.
+
+    Examples:
+        >>> _make_cpu_trainer(Path("."), 3, []).max_epochs
+        3
+    """
+    return Trainer(
+        max_epochs=max_epochs,
+        accelerator="cpu",
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        logger=False,
+        num_sanity_val_steps=num_sanity_val_steps,
+        limit_train_batches=2,
+        limit_val_batches=1,
+        callbacks=callbacks,
+        default_root_dir=str(tmp_path),
+    )
+
+
+@pytest.fixture
+def loaders() -> tuple[DataLoader, DataLoader]:
+    """Train and validation loaders over the same 8 random samples, batch size 2."""
+    x = torch.randn(8, 4)
+    y = torch.randn(8, 1)
+    return DataLoader(TensorDataset(x, y), batch_size=2), DataLoader(TensorDataset(x, y), batch_size=2)
+
+
+@pytest.fixture
+def ema_callback() -> MagicMock:
+    """EMA callback mock exposing weights ``{"w": ones}`` and a real-dict ``state_dict``.
+
+    torch.save cannot pickle a MagicMock.
+    """
+    callback = MagicMock()
+    callback.get_ema_model_state_dict.return_value = {"w": torch.ones(1)}
+    callback.state_dict.return_value = {}
+    return callback
 
 
 class _ResumeTinyModule(LightningModule):
@@ -370,7 +460,7 @@ class _SanityCheckEndProbe(Callback):
 class TestEvaluatesBaseModel:
     """Regular-track behaviour when validation does not evaluate the base model (``TrainConfig.eval_base_model``)."""
 
-    def test_regular_checkpoint_is_not_written_when_base_model_is_not_evaluated(self, tmp_path: Path) -> None:
+    def test_regular_checkpoint_skipped_when_base_model_unevaluated(self, tmp_path: Path) -> None:
         """No base-weights checkpoint may be saved while the primary key carries the EMA score.
 
         Under the default eval policy COCOEvalCallback mirrors the EMA score onto ``val/mAP_50_95``, so the key is
@@ -384,7 +474,7 @@ class TestEvaluatesBaseModel:
 
         assert not (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_ema_checkpoint_is_still_written_when_base_model_is_not_evaluated(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_written_when_base_model_unevaluated(self, tmp_path: Path) -> None:
         """Suppressing the regular track must not also suppress the EMA track.
 
         The EMA track is the only checkpoint tracking that runs under the default policy (#1285); disabling both would
@@ -397,7 +487,7 @@ class TestEvaluatesBaseModel:
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
 
-    def test_regular_checkpoint_is_written_when_base_model_is_evaluated(self, tmp_path: Path) -> None:
+    def test_regular_checkpoint_written_when_base_model_evaluated(self, tmp_path: Path) -> None:
         """eval_base_model=True (and every use_ema=False run) keeps the regular track working as before.
 
         The suppression must be scoped to the configuration that actually stops evaluating the base model, not applied
@@ -410,7 +500,7 @@ class TestEvaluatesBaseModel:
 
         assert (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_smoothing_accumulator_ignores_the_mirrored_ema_score(self, tmp_path: Path) -> None:
+    def test_smoothing_ignores_mirrored_ema_score(self, tmp_path: Path) -> None:
         """The regular smoothing accumulator must not absorb EMA values it will never checkpoint against.
 
         ``_smoothed_regular`` is persisted in the callback state and compared against the raw EMA score in
@@ -427,7 +517,7 @@ class TestEvaluatesBaseModel:
 class TestBestModelCallback:
     """Verify best-model checkpoint saving and selection."""
 
-    def test_existing_positional_arguments_keep_their_meaning(self, tmp_path: Path) -> None:
+    def test_legacy_positional_argument_order(self, tmp_path: Path) -> None:
         """Appending the new base-model flag preserves the legacy positional constructor order."""
         callback = BestModelCallback(str(tmp_path), "val/mAP_50_95", None, False, 3, 0.2)
 
@@ -529,7 +619,7 @@ class TestBestModelCallback:
         "kwargs",
         [
             pytest.param({}, id="default"),
-            pytest.param({"skip_best_epochs": 0}, id="explicit_zero"),
+            pytest.param({"skip_best_epochs": 0}, id="explicit-zero"),
         ],
     )
     def test_skip_best_epochs_zero_does_not_defer_epoch_zero(self, tmp_path: Path, kwargs: dict) -> None:
@@ -558,7 +648,7 @@ class TestBestModelCallback:
     @pytest.mark.parametrize(
         "invalid_value, exc_type",
         [
-            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param(True, TypeError, id="bool-true"),
             pytest.param(2.5, TypeError, id="float"),
             pytest.param("3", TypeError, id="string"),
             pytest.param(-1, ValueError, id="negative"),
@@ -676,7 +766,9 @@ class TestBestModelCallback:
 
         assert cb._smoothed_regular == 0.0
 
-    def test_ema_checkpoint_not_written_during_real_ptl_sanity_check(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_not_written_during_real_ptl_sanity_check(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """End-to-end: an unmodified Trainer with the sanity check enabled must not seed checkpoint_best_ema.pth.
 
         The three tests above call on_validation_end directly with trainer.sanity_checking mocked True — they pin the
@@ -687,27 +779,13 @@ class TestBestModelCallback:
         hook to pin down that no checkpoint exists at that exact moment — before a same-valued real epoch 0 could
         produce the same file for a legitimate reason.
         """
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         checkpoint_path = tmp_path / "checkpoint_best_ema.pth"
         save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
         ema_cb = RFDETREMACallback()
         probe = _SanityCheckEndProbe(checkpoint_path)
-        trainer = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=2,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[save_cb, ema_cb, probe],
-            default_root_dir=str(tmp_path),
-        )
+        trainer = _make_cpu_trainer(tmp_path, 1, [save_cb, ema_cb, probe], num_sanity_val_steps=2)
         # Same value on every validation call (sanity check and the real epoch both log unconditionally) —
         # reproduces #1348 exactly. The probe below, not the end-state checkpoint, is what pins the timing down.
         trainer.fit(
@@ -743,154 +821,73 @@ class TestBestModelCallback:
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
         assert not (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_ema_checkpoint_saves_ema_callback_weights(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_saves_ema_callback_weights(self, tmp_path: Path, ema_callback: MagicMock) -> None:
         """EMA checkpoint must store EMA callback weights, not live model weights."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        ema_state = {"w": torch.ones(1)}
-        ema_callback = MagicMock()
-        ema_callback.get_ema_model_state_dict.return_value = ema_state
-        # Real dict, not MagicMock's auto-generated one: _build_checkpoint_payload now calls
-        # callback.state_dict() on every trainer callback to populate the "callbacks" key
-        # (#checkpoint-resume-callbacks-fix), and torch.save can't pickle a bare MagicMock.
-        ema_callback.state_dict.return_value = {}
-        trainer = _make_trainer(
-            {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
-            callbacks=[ema_callback],
-        )
-        pl_module = _make_pl_module()
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6}, callbacks=[ema_callback])
 
-        cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(trainer, _make_pl_module())
 
         checkpoint = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
-        assert checkpoint["model"] == ema_state
+        assert checkpoint["model"] == ema_callback.get_ema_model_state_dict.return_value
 
-    def test_regular_checkpoint_uses_live_weights_when_ema_enabled(self, tmp_path: Path) -> None:
+    def test_regular_checkpoint_uses_live_weights_when_ema_enabled(
+        self, tmp_path: Path, ema_callback: MagicMock
+    ) -> None:
         """Regular checkpoint must store live weights even when EMA is tracked separately."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        ema_state = {"w": torch.ones(1)}
-        ema_callback = MagicMock()
-        ema_callback.get_ema_model_state_dict.return_value = ema_state
-        # Real dict, not MagicMock's auto-generated one: _build_checkpoint_payload now calls
-        # callback.state_dict() on every trainer callback to populate the "callbacks" key
-        # (#checkpoint-resume-callbacks-fix), and torch.save can't pickle a bare MagicMock.
-        ema_callback.state_dict.return_value = {}
-        trainer = _make_trainer(
-            {"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.6},
-            callbacks=[ema_callback],
-        )
-        pl_module = _make_pl_module()
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        trainer = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.6}, callbacks=[ema_callback])
 
-        cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(trainer, _make_pl_module())
 
         checkpoint = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
         assert checkpoint["model"] == {"w": torch.zeros(1)}
 
-    def test_best_total_regular_wins(self, tmp_path: Path) -> None:
-        """Regular model wins when best_regular > best_ema."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-            run_test=False,
-        )
-        pl_module = _make_pl_module()
-
-        # Epoch with regular=0.6, ema=0.5
-        trainer = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.5})
-        cb.on_validation_end(trainer, pl_module)
-
-        cb.on_fit_end(trainer, pl_module)
-
-        total = tmp_path / "checkpoint_best_total.pth"
-        assert total.exists()
-        data = torch.load(total, map_location="cpu", weights_only=False)
-        assert "model" in data
-        assert "args" in data
-        assert data["best_total_source"] == "regular"
-
-    def test_best_total_ema_wins(self, tmp_path: Path) -> None:
-        """EMA wins when best_ema > best_regular (strict >)."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-            run_test=False,
-        )
-        pl_module = _make_pl_module()
-
-        # Give regular a lower value, EMA a higher value
-        trainer = _make_trainer({"val/mAP_50_95": 0.5, "val/ema_mAP_50_95": 0.7})
-        cb.on_validation_end(trainer, pl_module)
-
-        cb.on_fit_end(trainer, pl_module)
-
-        total = tmp_path / "checkpoint_best_total.pth"
-        assert total.exists()
-        # The EMA checkpoint should have been the source
-        ema_data = torch.load(
-            tmp_path / "checkpoint_best_ema.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        total_data = torch.load(total, map_location="cpu", weights_only=False)
-        # total is stripped but keeps provenance keys (e.g. best_total_source) beyond model + args
-        assert total_data["model"] == ema_data["model"]
-        assert total_data["best_total_source"] == "ema"
-
-    def test_best_total_ema_equal_uses_regular(self, tmp_path: Path) -> None:
-        """When best_ema == best_regular, regular wins (strict > for EMA)."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-            run_test=False,
-        )
-        pl_module = _make_pl_module()
-
-        # Equal metrics
-        trainer = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.6})
-        cb.on_validation_end(trainer, pl_module)
-
-        cb.on_fit_end(trainer, pl_module)
-
-        total = tmp_path / "checkpoint_best_total.pth"
-        assert total.exists()
-        # Regular should have been chosen since EMA didn't strictly win
-        regular_data = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        total_data = torch.load(total, map_location="cpu", weights_only=False)
-        assert total_data["model"] == regular_data["model"]
-        assert total_data["best_total_source"] == "regular"
-
-    def test_last_ema_saved_when_ema_enabled(self, tmp_path: Path) -> None:
-        """on_fit_end writes last_ema.pth with the final EMA weights when EMA tracking is enabled."""
+    @pytest.mark.parametrize(
+        ("regular", "ema", "winner"),
+        [
+            pytest.param(0.6, 0.5, "regular", id="regular-wins"),
+            pytest.param(0.5, 0.7, "ema", id="ema-wins"),
+            pytest.param(0.6, 0.6, "regular", id="tie-goes-to-regular"),
+        ],
+    )
+    def test_best_total_comes_from_winning_source(
+        self, tmp_path: Path, regular: float, ema: float, winner: str
+    ) -> None:
+        """checkpoint_best_total.pth is built from the better track; EMA must strictly beat regular to win."""
         cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
         pl_module = _make_pl_module()
-        trainer = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.7})
+        trainer = _make_trainer({"val/mAP_50_95": regular, "val/ema_mAP_50_95": ema})
         cb.on_validation_end(trainer, pl_module)
 
         cb.on_fit_end(trainer, pl_module)
 
-        assert (tmp_path / "last_ema.pth").exists()
+        total_data = torch.load(tmp_path / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
+        source_data = torch.load(tmp_path / f"checkpoint_best_{winner}.pth", map_location="cpu", weights_only=False)
+        # total is stripped but keeps provenance keys (e.g. best_total_source) beyond model + args
+        assert "args" in total_data
+        assert total_data["model"] == source_data["model"]
+        assert total_data["best_total_source"] == winner
 
-    def test_last_ema_not_saved_when_ema_disabled(self, tmp_path: Path) -> None:
-        """on_fit_end must not write last_ema.pth when EMA tracking is disabled (monitor_ema=None)."""
-        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema=None, run_test=False)
+    @pytest.mark.parametrize(
+        ("monitor_ema", "metrics", "expect_file"),
+        [
+            pytest.param("val/ema_mAP_50_95", {"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.7}, True, id="ema-enabled"),
+            pytest.param(None, {"val/mAP_50_95": 0.6}, False, id="ema-disabled"),
+        ],
+    )
+    def test_last_ema_written_only_when_ema_enabled(
+        self, tmp_path: Path, monitor_ema: str | None, metrics: dict, expect_file: bool
+    ) -> None:
+        """on_fit_end writes last_ema.pth with the final EMA weights only when EMA tracking is enabled."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema=monitor_ema, run_test=False)
         pl_module = _make_pl_module()
-        trainer = _make_trainer({"val/mAP_50_95": 0.6})
+        trainer = _make_trainer(metrics)
         cb.on_validation_end(trainer, pl_module)
 
         cb.on_fit_end(trainer, pl_module)
 
-        assert not (tmp_path / "last_ema.pth").exists()
+        assert (tmp_path / "last_ema.pth").exists() is expect_file
 
     def test_best_ema_backfilled_when_metric_never_improved(self, tmp_path: Path) -> None:
         """When the EMA metric never beats 0.0, on_fit_end backfills checkpoint_best_ema.pth with final EMA weights."""
@@ -966,21 +963,7 @@ class TestBestModelCallback:
 
     def test_run_test_true_calls_trainer_test(self, tmp_path: Path) -> None:
         """run_test=True causes trainer.test() when module defines test_step()."""
-        from pytorch_lightning import LightningModule
-
-        class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None: ...
-
-        # Use a real subclass (not MagicMock) so type() inspection sees test_step.
-        pl_module = _ModuleWithTestStep()
-        pl_module.model = MagicMock()
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
-        # Regular-weight reload uses strict=False plus a manual incompatible-keys check (matching
-        # the EMA branch) so it can tolerate an FP8 model's missing Transformer Engine `_extra_state`
-        # after that entry is filtered from the loaded dict — a MagicMock's auto-mocked return value
-        # would otherwise be truthy and spuriously fail that check.
-        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys([], [])
-        pl_module.train_config = {"lr": 0.001}
+        pl_module = _make_test_step_module()
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
@@ -996,14 +979,7 @@ class TestBestModelCallback:
         Regression test: ``on_fit_end`` used to return early on every rank but the main one, so under DDP the main
         process called the collective ``trainer.test()`` alone and hung waiting for the others.
         """
-        from pytorch_lightning import LightningModule
-
-        class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None: ...
-
-        pl_module = _ModuleWithTestStep()
-        pl_module.model = MagicMock()
-        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys([], [])
+        pl_module = _make_test_step_module()
         torch.save({"model": {"w": torch.zeros(1)}}, tmp_path / "checkpoint_best_total.pth")
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
@@ -1023,16 +999,9 @@ class TestBestModelCallback:
         Regression test: calling ``trainer.test()`` from a ``ddp_spawn`` worker made ``_MultiProcessingLauncher``
         spawn another set of processes and fail with ``DistNetworkError: EADDRINUSE``.
         """
-        from pytorch_lightning import LightningModule
         from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
 
-        class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None: ...
-
-        pl_module = _ModuleWithTestStep()
-        pl_module.model = MagicMock()
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
-        pl_module.train_config = {"lr": 0.001}
+        pl_module = _make_test_step_module()
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
@@ -1062,15 +1031,7 @@ class TestBestModelCallback:
 
     def test_run_test_true_without_best_checkpoint_skips_trainer_test(self, tmp_path: Path) -> None:
         """run_test=True must not test final weights when no best checkpoint was produced."""
-        from pytorch_lightning import LightningModule
-
-        class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None: ...
-
-        pl_module = _ModuleWithTestStep()
-        pl_module.model = MagicMock()
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
-        pl_module.train_config = {"lr": 0.001}
+        pl_module = _make_test_step_module()
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True, skip_best_epochs=2)
         trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=0)
@@ -1087,20 +1048,7 @@ class TestBestModelCallback:
         Mirrors legacy main.py:602-609 which loads the best checkpoint into the model before running test evaluation so
         the test loop measures the best model, not the end-of-training state.
         """
-        from pytorch_lightning import LightningModule
-
-        class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None: ...
-
-        pl_module = _ModuleWithTestStep()
-        pl_module.model = MagicMock()
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
-        # strict=False plus a manual incompatible-keys check (mirroring the EMA branch) tolerates an
-        # FP8 model's missing Transformer Engine `_extra_state` once that entry is filtered from the
-        # loaded dict; supply a real IncompatibleKeys so that check doesn't see a MagicMock's
-        # auto-mocked (always-truthy) unexpected_keys and spuriously raise.
-        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys([], [])
-        pl_module.train_config = {"lr": 0.001}
+        pl_module = _make_test_step_module()
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
@@ -1108,8 +1056,7 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
         cb.on_fit_end(trainer, pl_module)
 
-        # Model weights must be loaded from checkpoint_best_total.pth with strict=False, plus a manual
-        # missing/unexpected-key check that tolerates only a filtered-out `_extra_state` entry.
+        # Weights come from checkpoint_best_total.pth with strict=False plus a manual missing/unexpected-key check.
         pl_module.model.load_state_dict.assert_called_once()
         call_args, call_kwargs = pl_module.model.load_state_dict.call_args
         assert call_kwargs.get("strict") is False, "load_state_dict must be called with strict=False"
@@ -1123,27 +1070,20 @@ class TestBestModelCallback:
         rejects their pickle round-trip via ``set_extra_state()``, so they must be excluded from the dict handed to
         ``load_state_dict`` rather than merely tolerated afterward via ``strict=False``.
         """
-        from pytorch_lightning import LightningModule
-
-        class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None: ...
-
-        pl_module = _ModuleWithTestStep()
-        pl_module.model = MagicMock()
-        pl_module.model.state_dict.return_value = {
-            "w": torch.zeros(1),
-            "layer._extra_state": b"fp8-scaling-history",
-        }
         # The model itself is missing the "w" tensor after reload — a genuine mismatch that must still raise.
-        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys(["w"], [])
-        pl_module.train_config = {"lr": 0.001}
+        pl_module = _make_test_step_module(
+            {"w": torch.zeros(1), "layer._extra_state": b"fp8-scaling-history"}, missing_keys=["w"]
+        )
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
         cb.on_validation_end(trainer, pl_module)
-        with pytest.raises(RuntimeError, match=r"Error loading best regular weights.*'w'"):
+        with pytest.raises(RuntimeError) as exc_info:
             cb.on_fit_end(trainer, pl_module)
+
+        assert "Error loading best regular weights" in str(exc_info.value)
+        assert "'w'" in str(exc_info.value)
 
         loaded_dict = pl_module.model.load_state_dict.call_args[0][0]
         assert "layer._extra_state" not in loaded_dict, "_extra_state must be filtered out before load_state_dict"
@@ -1160,91 +1100,27 @@ class TestBestModelCallback:
 
         trainer.test.assert_not_called()
 
+    @pytest.mark.parametrize(("cb_kwargs", "metrics", "checkpoint_filename"), _REGULAR_AND_EMA_CASES)
     @pytest.mark.parametrize(
-        (
-            "cb_kwargs",
-            "trainer_metrics",
-            "datamodule_class_names",
-            "train_config_kwargs",
-            "checkpoint_filename",
-            "expected",
-        ),
+        ("datamodule_class_names", "train_config_kwargs", "expected"),
         [
-            pytest.param(
-                {},
-                {"val/mAP_50_95": 0.5},
-                ["cat", "dog"],
-                {},
-                "checkpoint_best_regular.pth",
-                ["cat", "dog"],
-                id="regular-unset-config-uses-datamodule-names",
-            ),
-            pytest.param(
-                {"monitor_ema": "val/ema_mAP_50_95"},
-                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
-                ["cat", "dog"],
-                {},
-                "checkpoint_best_ema.pth",
-                ["cat", "dog"],
-                id="ema-unset-config-uses-datamodule-names",
-            ),
-            pytest.param(
-                {},
-                {"val/mAP_50_95": 0.5},
-                ["other_class"],  # would overwrite if bug exists
-                {"class_names": ["defect"]},
-                "checkpoint_best_regular.pth",
-                ["defect"],
-                id="regular-explicit-names-not-overwritten-by-datamodule",
-            ),
-            pytest.param(
-                {},
-                {"val/mAP_50_95": 0.5},
-                ["cat", "dog"],  # would overwrite if bug exists
-                # Guard-bypass regression: `not getattr(..., "class_names", None)` treated an explicit empty
-                # list the same as None (both falsy). The fix uses `is None` identity.
-                {"class_names": []},
-                "checkpoint_best_regular.pth",
-                [],
-                id="regular-explicit-empty-names-not-overwritten-by-datamodule",
-            ),
-            pytest.param(
-                {"monitor_ema": "val/ema_mAP_50_95"},
-                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
-                ["cat", "dog"],  # would overwrite if bug exists
-                {"class_names": []},
-                "checkpoint_best_ema.pth",
-                [],
-                id="ema-explicit-empty-names-not-overwritten-by-datamodule",
-            ),
-            pytest.param(
-                {},
-                {"val/mAP_50_95": 0.5},
-                [],
-                {},
-                "checkpoint_best_regular.pth",
-                [],
-                id="regular-unset-config-uses-empty-datamodule-names",
-            ),
-            pytest.param(
-                {"monitor_ema": "val/ema_mAP_50_95"},
-                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
-                [],
-                {},
-                "checkpoint_best_ema.pth",
-                [],
-                id="ema-unset-config-uses-empty-datamodule-names",
-            ),
+            pytest.param(["cat", "dog"], {}, ["cat", "dog"], id="unset-config-uses-datamodule-names"),
+            # The datamodule names would overwrite the explicit ones if the bug existed.
+            pytest.param(["other_class"], {"class_names": ["defect"]}, ["defect"], id="explicit-names-kept"),
+            # Guard-bypass regression: `not getattr(..., "class_names", None)` treated an explicit empty list like
+            # None (both falsy); the fix uses an `is None` identity check.
+            pytest.param(["cat", "dog"], {"class_names": []}, [], id="explicit-empty-names-kept"),
+            pytest.param([], {}, [], id="unset-config-uses-empty-datamodule-names"),
         ],
     )
     def test_checkpoint_class_names_reflects_datamodule_and_train_config(
         self,
         tmp_path: Path,
         cb_kwargs: dict,
-        trainer_metrics: dict,
+        metrics: dict,
+        checkpoint_filename: str,
         datamodule_class_names: list,
         train_config_kwargs: dict,
-        checkpoint_filename: str,
         expected: list,
     ) -> None:
         """Saved checkpoint args.class_names reflects dataset class names, explicit TrainConfig values winning.
@@ -1254,10 +1130,8 @@ class TestBestModelCallback:
         silently overwritten by the datamodule's names. Covers both the regular and EMA checkpoint paths across unset,
         explicit, and explicit-empty class_names in TrainConfig.
         """
-        from rfdetr.config import TrainConfig
-
         cb = BestModelCallback(output_dir=str(tmp_path), **cb_kwargs)
-        trainer = _make_trainer(trainer_metrics)
+        trainer = _make_trainer(metrics)
         trainer.datamodule.class_names = datamodule_class_names
 
         pl_module = _make_pl_module()
@@ -1265,19 +1139,13 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        checkpoint = torch.load(
-            tmp_path / checkpoint_filename,
-            map_location="cpu",
-            weights_only=False,
-        )
+        checkpoint = torch.load(tmp_path / checkpoint_filename, map_location="cpu", weights_only=False)
         assert checkpoint["args"]["class_names"] == expected
 
     # --- PTL-compatible format tests ---
 
     def test_regular_checkpoint_args_is_dict(self, tmp_path: Path) -> None:
         """Saved args must be a plain dict (not a Pydantic object) for weights_only=True compat."""
-        from rfdetr.config import TrainConfig
-
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
@@ -1289,33 +1157,32 @@ class TestBestModelCallback:
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=True)
         assert isinstance(ckpt["args"], dict)
 
-    def test_regular_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
-        """Saved regular checkpoint must include 'state_dict' with model.
+    @pytest.mark.parametrize(("cb_kwargs", "metrics", "checkpoint_filename"), _REGULAR_AND_EMA_CASES)
+    def test_checkpoint_has_ptl_state_dict_key(
+        self, tmp_path: Path, cb_kwargs: dict, metrics: dict, checkpoint_filename: str
+    ) -> None:
+        """Saved regular and EMA checkpoints include a 'state_dict' whose keys carry the 'model.' prefix."""
+        cb = BestModelCallback(output_dir=str(tmp_path), **cb_kwargs)
 
-        prefix.
-        """
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        pl_module = _make_pl_module()
+        cb.on_validation_end(_make_trainer(metrics), _make_pl_module())
 
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(tmp_path / checkpoint_filename, map_location="cpu", weights_only=False)
         assert "state_dict" in ckpt
         assert all(k.startswith("model.") for k in ckpt["state_dict"])
 
-    def test_regular_checkpoint_has_loops_key(self, tmp_path: Path) -> None:
-        """Saved regular checkpoint must include 'loops' with fit_loop epoch counter."""
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=3)
-        pl_module = _make_pl_module()
+    @pytest.mark.parametrize(("cb_kwargs", "metrics", "checkpoint_filename"), _REGULAR_AND_EMA_CASES)
+    @pytest.mark.parametrize("current_epoch", [3, 5])
+    def test_checkpoint_has_loops_key(
+        self, tmp_path: Path, cb_kwargs: dict, metrics: dict, checkpoint_filename: str, current_epoch: int
+    ) -> None:
+        """Saved regular and EMA checkpoints include 'loops' whose fit_loop completed-epoch counter is epoch + 1."""
+        cb = BestModelCallback(output_dir=str(tmp_path), **cb_kwargs)
 
-        cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(_make_trainer(metrics, current_epoch=current_epoch), _make_pl_module())
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(tmp_path / checkpoint_filename, map_location="cpu", weights_only=False)
         assert "loops" in ckpt
-        ep = ckpt["loops"]["fit_loop"]["epoch_progress"]
-        assert ep["current"]["completed"] == 4  # epoch 3 + 1
+        assert ckpt["loops"]["fit_loop"]["epoch_progress"]["current"]["completed"] == current_epoch + 1
 
     def test_regular_checkpoint_has_ptl_version_key(self, tmp_path: Path) -> None:
         """Saved regular checkpoint must include 'pytorch-lightning_version'."""
@@ -1327,34 +1194,6 @@ class TestBestModelCallback:
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
         assert ckpt.get("pytorch-lightning_version") == ptl_version
-
-    def test_ema_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
-        """Saved EMA checkpoint must include 'state_dict' with model.
-
-        prefix.
-        """
-        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        pl_module = _make_pl_module()
-
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
-        assert "state_dict" in ckpt
-        assert all(k.startswith("model.") for k in ckpt["state_dict"])
-
-    def test_ema_checkpoint_has_loops_key(self, tmp_path: Path) -> None:
-        """Saved EMA checkpoint must include 'loops' with fit_loop epoch counter."""
-        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6}, current_epoch=5)
-        pl_module = _make_pl_module()
-
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
-        assert "loops" in ckpt
-        ep = ckpt["loops"]["fit_loop"]["epoch_progress"]
-        assert ep["current"]["completed"] == 6  # epoch 5 + 1
 
     def test_state_dict_values_match_model_weights(self, tmp_path: Path) -> None:
         """state_dict values must be identical to the original model weights."""
@@ -1424,53 +1263,27 @@ class TestBestModelCallback:
 
         assert not (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_eval_interval_does_not_crash(self, tmp_path: Path) -> None:
+    def test_fit_completes_when_metric_missing_on_some_epochs(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """BestModelCallback must not crash over 3 epochs when metrics are only logged every 2nd epoch."""
-        torch.manual_seed(0)
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
-        trainer = Trainer(
-            max_epochs=3,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer = _make_cpu_trainer(tmp_path, 3, [cb])
         trainer.fit(_EvalIntervalModule(eval_interval=2), train_dataloaders=train_loader, val_dataloaders=val_loader)
 
         # Checkpoint must be written on eval epochs (0 and 2) — at least one must exist.
         assert (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(self, tmp_path: Path) -> None:
+    def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """checkpoint_best_total.pth must restore epoch/step when passed to Trainer.fit(ckpt_path=...)."""
-        torch.manual_seed(0)
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
-        trainer_first = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[save_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 1, [save_cb])
         trainer_first.fit(_ResumeTinyModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
 
         ckpt_path = tmp_path / "checkpoint_best_total.pth"
@@ -1481,18 +1294,7 @@ class TestBestModelCallback:
         assert ckpt_data["global_step"] == first_phase_global_step
 
         resume_probe = _ResumeProbeCallback()
-        trainer_second = Trainer(
-            max_epochs=2,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[resume_probe],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_second = _make_cpu_trainer(tmp_path, 2, [resume_probe])
         trainer_second.fit(
             _ResumeTinyModule(),
             train_dataloaders=train_loader,
@@ -1502,13 +1304,14 @@ class TestBestModelCallback:
 
         # PTL applies loop restoration by the first train epoch start.
         assert resume_probe.first_train_epoch == 1
-        # In the stripped-checkpoint resume path, optimizer state is intentionally
-        # fresh; this resumed phase contributes exactly one epoch with 2 steps.
+        # Optimizer state is intentionally fresh on a stripped-checkpoint resume: one epoch of 2 steps.
         assert trainer_second.current_epoch == 2
         assert trainer_second.global_step == 2
 
     @pytest.mark.parametrize("checkpoint_name", ["checkpoint_best_regular.pth", "checkpoint_best_total.pth"])
-    def test_best_model_score_survives_real_trainer_fit_resume(self, tmp_path: Path, checkpoint_name: str) -> None:
+    def test_best_model_score_survives_real_trainer_fit_resume(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader], checkpoint_name: str
+    ) -> None:
         """``best_model_score`` and the on-disk checkpoint must survive a real ``trainer.fit(ckpt_path=...)`` resume.
 
         Regression test for the "callbacks" key being absent from ``_build_checkpoint_payload``'s output — the bug this
@@ -1519,24 +1322,10 @@ class TestBestModelCallback:
         ``checkpoint_best_total.pth`` (built via ``shutil.copy2`` + ``strip_checkpoint``, a separate code path that
         needs ``"callbacks"`` in ``_PTL_COMPAT_KEYS``).
         """
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
-        trainer_first = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[save_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 1, [save_cb])
         trainer_first.fit(_MetricModule(0.7), train_dataloaders=train_loader, val_dataloaders=val_loader)
         assert save_cb.best_model_score is not None
         assert save_cb.best_model_score.item() == pytest.approx(0.7)
@@ -1550,18 +1339,7 @@ class TestBestModelCallback:
         # Fresh callback instance, resumed via a real Trainer.fit(ckpt_path=...) — exercises PTL's
         # own `_call_callbacks_load_state_dict`, not a direct load_state_dict() call.
         resumed_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
-        trainer_second = Trainer(
-            max_epochs=2,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[resumed_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_second = _make_cpu_trainer(tmp_path, 2, [resumed_cb])
         # Post-resume epoch logs a *worse* metric (0.3): without the fix, best_model_score resets to
         # None on a fresh callback and 0.3 trivially "improves" on it, overwriting the on-disk
         # checkpoint with worse weights — the exact failure mode from the issue this PR fixes.
@@ -1577,11 +1355,8 @@ class TestBestModelCallback:
             'best_model_score must be restored from the checkpoint\'s "callbacks" key; without the '
             "fix a fresh BestModelCallback starts with best_model_score=None and 0.3 wins by default"
         )
-        # The worse post-resume epoch must not have overwritten checkpoint_best_regular.pth on disk.
-        # checkpoint_best_total.pth IS re-copied by trainer_second's own on_fit_end (every trainer.fit()
-        # call re-runs on_fit_end, not just the first), so re-asserting equality there would only prove
-        # the second copy reproduced the first byte-for-byte, not that the regular checkpoint itself
-        # survived untouched — hence this assertion only runs for the regular checkpoint.
+        # Only checked for the regular file: checkpoint_best_total.pth is re-copied by the second fit's on_fit_end, so
+        # equality there would not prove the regular checkpoint survived.
         if checkpoint_name == "checkpoint_best_regular.pth":
             reloaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
             for key, value in reloaded["model"].items():
@@ -1590,7 +1365,9 @@ class TestBestModelCallback:
                     "epoch — the good checkpoint was overwritten"
                 )
 
-    def test_ema_and_early_stopping_state_survive_real_trainer_fit_resume(self, tmp_path: Path) -> None:
+    def test_ema_and_early_stopping_state_survive_real_trainer_fit_resume(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """RFDETREMACallback and RFDETREarlyStopping state must also survive a real ``ckpt_path`` resume.
 
         ``test_best_model_score_survives_real_trainer_fit_resume`` only registers ``BestModelCallback`` on the
@@ -1601,30 +1378,14 @@ class TestBestModelCallback:
         optimizer loop's global step, so EMA restores its averaged weights but resets its step guard to permit the
         first new batch update.
         """
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
-        # monitor_ema enables last_ema.pth: unlike checkpoint_best_regular.pth (only rewritten on a
-        # metric *improvement*, which is exactly the condition that resets RFDETREarlyStopping.wait_count
-        # to 0 — so it can never capture a nonzero wait_count), last_ema.pth is rebuilt unconditionally
-        # in on_fit_end with each callback's *live* end-of-training state.
+        # last_ema.pth (enabled by monitor_ema) is rebuilt in on_fit_end with live callback state, so it can hold a
+        # nonzero wait_count; checkpoint_best_regular.pth is only rewritten on improvement, which resets wait_count.
         save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
         ema_cb = RFDETREMACallback()
         early_stop_cb = RFDETREarlyStopping(patience=5, min_delta=0.001, verbose=False)
-        trainer_first = Trainer(
-            max_epochs=2,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[save_cb, ema_cb, early_stop_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 2, [save_cb, ema_cb, early_stop_cb])
         # Epoch 0: 0.7 (best, wait_count 0->0). Epoch 1: 0.5 (worse, wait_count 0->1) — training ends
         # with wait_count=1 and ema_cb mid-averaging, both captured live into last_ema.pth.
         trainer_first.fit(_VaryingMetricModule([0.7, 0.5]), train_dataloaders=train_loader, val_dataloaders=val_loader)
@@ -1642,26 +1403,17 @@ class TestBestModelCallback:
         ema_callback = RFDETREMACallback()
         early_stop_callback = RFDETREarlyStopping(patience=5, min_delta=0.001, verbose=False)
         capture = _CallbackStateCaptureCallback(ema_callback, early_stop_callback)
-        # last_ema.pth is built in on_fit_end, after the epoch counter has already advanced past both
-        # trained epochs (0 and 1) to 2 — one further than the on_validation_end-time snapshot
-        # _make_fit_loop_state assumes (see its docstring). PTL's restored fit_loop therefore treats 3
-        # epochs as already completed, so max_epochs must be 4 (not 3) for one real epoch to run here.
-        trainer_second = Trainer(
-            max_epochs=4,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[
+        # last_ema.pth is built in on_fit_end, after the epoch counter reached 2, so PTL's restored fit_loop counts 3
+        # epochs as completed: max_epochs must be 4 (not 3) for one real epoch to run.
+        trainer_second = _make_cpu_trainer(
+            tmp_path,
+            4,
+            [
                 BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False),
                 ema_callback,
                 early_stop_callback,
                 capture,
             ],
-            default_root_dir=str(tmp_path),
         )
         trainer_second.fit(
             _VaryingMetricModule([0.7, 0.5, 0.9, 0.9]),
@@ -1679,7 +1431,9 @@ class TestBestModelCallback:
             "without the fix a fresh callback starts at 0"
         )
 
-    def test_ema_checkpoint_weights_survive_real_trainer_fit_resume(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_weights_survive_real_trainer_fit_resume(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """``checkpoint_best_ema.pth`` weights must survive a real ``ckpt_path`` resume too.
 
         ``test_best_model_score_survives_real_trainer_fit_resume`` only parametrizes over
@@ -1691,25 +1445,11 @@ class TestBestModelCallback:
         overwrite the good EMA checkpoint on disk, exactly like the regular-checkpoint failure mode this
         PR fixes.
         """
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
         ema_cb = RFDETREMACallback()
-        trainer_first = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[save_cb, ema_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 1, [save_cb, ema_cb])
         trainer_first.fit(
             _EmaMetricModule(regular_value=0.4, ema_value=0.75),
             train_dataloaders=train_loader,
@@ -1728,18 +1468,7 @@ class TestBestModelCallback:
         # own averaging state, not a direct load_state_dict() call.
         resumed_save_cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
         resumed_ema_cb = RFDETREMACallback()
-        trainer_second = Trainer(
-            max_epochs=2,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[resumed_save_cb, resumed_ema_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_second = _make_cpu_trainer(tmp_path, 2, [resumed_save_cb, resumed_ema_cb])
         # Post-resume epoch logs a *worse* EMA metric (0.3): without the fix, _best_ema resets to 0.0 on
         # a fresh callback and 0.3 trivially "improves" on it, overwriting the on-disk EMA checkpoint.
         trainer_second.fit(
@@ -1761,7 +1490,9 @@ class TestBestModelCallback:
                 "epoch — the good EMA checkpoint was overwritten"
             )
 
-    def test_best_model_score_not_restored_when_output_dir_changes(self, tmp_path: Path) -> None:
+    def test_best_model_score_not_restored_when_output_dir_changes(
+        self, tmp_path: Path, loaders: tuple[DataLoader, DataLoader]
+    ) -> None:
         """A resumed ``output_dir`` different from the checkpoint's own does not restore ``best_model_score``.
 
         Pins PTL's own ``ModelCheckpoint.load_state_dict()`` gate (installed pytorch-lightning,
@@ -1776,24 +1507,10 @@ class TestBestModelCallback:
         restored, with no confound from a subsequent training epoch overwriting ``best_model_score``/``best_model_path``
         again on its own.
         """
-        x = torch.randn(8, 4)
-        y = torch.randn(8, 1)
-        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
-        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        train_loader, val_loader = loaders
 
         save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
-        trainer_first = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[save_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_first = _make_cpu_trainer(tmp_path, 1, [save_cb])
         trainer_first.fit(_MetricModule(0.7), train_dataloaders=train_loader, val_dataloaders=val_loader)
         assert save_cb.best_model_score.item() == pytest.approx(0.7)
 
@@ -1804,18 +1521,7 @@ class TestBestModelCallback:
         other_output_dir = tmp_path / "other_output_dir"
         other_output_dir.mkdir()
         resumed_cb = BestModelCallback(output_dir=str(other_output_dir), run_test=False)
-        trainer_second = Trainer(
-            max_epochs=1,
-            accelerator="cpu",
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            num_sanity_val_steps=0,
-            limit_train_batches=2,
-            limit_val_batches=1,
-            callbacks=[resumed_cb],
-            default_root_dir=str(tmp_path),
-        )
+        trainer_second = _make_cpu_trainer(tmp_path, 1, [resumed_cb])
         with pytest.warns(UserWarning, match="dirpath has changed"):
             trainer_second.fit(
                 _MetricModule(0.3),
@@ -1853,14 +1559,27 @@ class TestRFDETREarlyStopping:
         assert cb.wait_count == 0
         assert trainer.should_stop is False
 
-    def test_first_eligible_epoch_sets_baseline_with_zero_wait(self) -> None:
-        """First eligible epoch becomes best_score baseline; patience wait_count stays 0."""
-        cb = RFDETREarlyStopping(patience=1, min_delta=0.001, skip_best_epochs=2)
+    @pytest.mark.parametrize(
+        ("patience", "metrics", "baseline"),
+        [
+            pytest.param(1, [0.9, 0.8, 0.7], 0.7, id="patience-1-gentle-decline"),
+            pytest.param(2, [0.95, 0.85, 0.40], 0.40, id="patience-2-stronger-skipped-epochs"),
+        ],
+    )
+    def test_first_eligible_epoch_sets_baseline_with_zero_wait(
+        self, patience: int, metrics: list[float], baseline: float
+    ) -> None:
+        """The first eligible epoch becomes the best_score baseline even if skipped epochs scored higher.
+
+        With skip_best_epochs=2 the third epoch is the first eligible one; patience wait_count stays 0.
+        """
+        cb = RFDETREarlyStopping(patience=patience, min_delta=0.001, skip_best_epochs=2)
         pl_module = _make_pl_module()
-        cb.on_validation_end(_make_trainer({"val/mAP_50_95": 0.9}, current_epoch=0), pl_module)
-        cb.on_validation_end(_make_trainer({"val/mAP_50_95": 0.8}, current_epoch=1), pl_module)
-        cb.on_validation_end(_make_trainer({"val/mAP_50_95": 0.7}, current_epoch=2), pl_module)
-        assert cb.best_score.item() == pytest.approx(0.7)
+
+        for epoch, value in enumerate(metrics):
+            cb.on_validation_end(_make_trainer({"val/mAP_50_95": value}, current_epoch=epoch), pl_module)
+
+        assert cb.best_score.item() == pytest.approx(baseline)
         assert cb.wait_count == 0
 
     def test_patience_triggers_stop_after_skip_window(self) -> None:
@@ -1874,27 +1593,11 @@ class TestRFDETREarlyStopping:
         cb.on_validation_end(trainer, pl_module)
         assert trainer.should_stop is True
 
-    def test_skip_best_epochs_uses_first_eligible_epoch_as_baseline(self) -> None:
-        """A stronger skipped epoch must not block the first eligible epoch from becoming best."""
-        cb = RFDETREarlyStopping(patience=2, min_delta=0.001, skip_best_epochs=2)
-        pl_module = _make_pl_module()
-
-        trainer_epoch0 = _make_trainer({"val/mAP_50_95": 0.95}, current_epoch=0)
-        cb.on_validation_end(trainer_epoch0, pl_module)
-        trainer_epoch1 = _make_trainer({"val/mAP_50_95": 0.85}, current_epoch=1)
-        cb.on_validation_end(trainer_epoch1, pl_module)
-
-        trainer_epoch2 = _make_trainer({"val/mAP_50_95": 0.40}, current_epoch=2)
-        cb.on_validation_end(trainer_epoch2, pl_module)
-
-        assert cb.best_score.item() == pytest.approx(0.40)
-        assert cb.wait_count == 0
-
     @pytest.mark.parametrize(
         "kwargs",
         [
             pytest.param({}, id="default"),
-            pytest.param({"skip_best_epochs": 0}, id="explicit_zero"),
+            pytest.param({"skip_best_epochs": 0}, id="explicit-zero"),
         ],
     )
     def test_skip_best_epochs_zero_does_not_defer_epoch_zero(self, kwargs: dict) -> None:
@@ -1911,7 +1614,7 @@ class TestRFDETREarlyStopping:
     @pytest.mark.parametrize(
         "invalid_value, exc_type",
         [
-            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param(True, TypeError, id="bool-true"),
             pytest.param(2.5, TypeError, id="float"),
             pytest.param("3", TypeError, id="string"),
             pytest.param(-1, ValueError, id="negative"),
@@ -1922,38 +1625,22 @@ class TestRFDETREarlyStopping:
         with pytest.raises(exc_type):
             RFDETREarlyStopping(patience=5, skip_best_epochs=invalid_value)  # type: ignore[arg-type]
 
-    def test_no_stop_within_patience(self) -> None:
-        """3 epochs with no improvement, patience=5 -- training continues."""
-        cb = RFDETREarlyStopping(patience=5, min_delta=0.001)
+    @pytest.mark.parametrize(
+        ("patience", "expect_stop"),
+        [(5, False), (3, True)],
+    )
+    def test_stop_follows_patience_after_stagnation(self, patience: int, expect_stop: bool) -> None:
+        """Three epochs without improvement stop training only once ``patience`` is exhausted."""
+        cb = RFDETREarlyStopping(patience=patience, min_delta=0.001)
         pl_module = _make_pl_module()
+        cb.on_validation_end(_make_trainer({"val/mAP_50_95": 0.5}), pl_module)  # baseline
 
-        # Seed best_score with initial improvement
-        trainer0 = _make_trainer({"val/mAP_50_95": 0.5})
-        cb.on_validation_end(trainer0, pl_module)
-
-        # 3 stagnant epochs
         for _ in range(3):
             trainer = _make_trainer({"val/mAP_50_95": 0.5})
             cb.on_validation_end(trainer, pl_module)
 
-        assert trainer.should_stop is False
+        assert trainer.should_stop is expect_stop
         assert cb.wait_count == 3
-
-    def test_stops_after_patience_exceeded(self) -> None:
-        """Patience=3 with 3 no-improvement epochs triggers stop."""
-        cb = RFDETREarlyStopping(patience=3, min_delta=0.001)
-        pl_module = _make_pl_module()
-
-        # Set baseline
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        cb.on_validation_end(trainer, pl_module)
-
-        # 3 stagnant epochs
-        for _ in range(3):
-            trainer = _make_trainer({"val/mAP_50_95": 0.5})
-            cb.on_validation_end(trainer, pl_module)
-
-        assert trainer.should_stop is True
 
     def test_counter_resets_on_improvement(self) -> None:
         """2 stagnant epochs then 1 improvement resets counter to 0."""
@@ -1989,75 +1676,52 @@ class TestRFDETREarlyStopping:
         cb.on_validation_end(trainer, pl_module)
         assert cb.wait_count == 1  # not reset
 
-    def test_use_ema_true_monitors_ema_only(self) -> None:
-        """use_ema=True with both metrics available uses EMA value only."""
-        cb = RFDETREarlyStopping(patience=5, min_delta=0.001, use_ema=True)
-        pl_module = _make_pl_module()
+    @pytest.mark.parametrize(
+        ("use_ema", "metrics", "expected_best"),
+        [
+            pytest.param(
+                True, {"val/mAP_50_95": 0.8, "val/ema_mAP_50_95": 0.3}, 0.3, id="use-ema-true-tracks-ema-only"
+            ),
+            pytest.param(False, {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6}, 0.6, id="use-ema-false-tracks-max"),
+        ],
+    )
+    def test_best_score_follows_use_ema(self, use_ema: bool, metrics: dict, expected_best: float) -> None:
+        """With both metrics logged, use_ema=True tracks the EMA value alone and use_ema=False tracks their max."""
+        cb = RFDETREarlyStopping(patience=5, min_delta=0.001, use_ema=use_ema)
 
-        # EMA is 0.3 (low), regular is 0.8 (high)
-        trainer = _make_trainer({"val/mAP_50_95": 0.8, "val/ema_mAP_50_95": 0.3})
-        cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(_make_trainer(metrics), _make_pl_module())
 
-        # best_score should reflect EMA value, not regular
-        assert cb.best_score.item() == pytest.approx(0.3)
+        assert cb.best_score.item() == pytest.approx(expected_best)
 
-    def test_use_ema_false_monitors_max(self) -> None:
-        """use_ema=False with both metrics uses max(regular, ema)."""
-        cb = RFDETREarlyStopping(patience=5, min_delta=0.001, use_ema=False)
-        pl_module = _make_pl_module()
+    @pytest.mark.parametrize(
+        ("metrics", "expected_best"),
+        [
+            pytest.param({"val/mAP_50_95": 0.45}, 0.45, id="only-regular"),
+            pytest.param({"val/ema_mAP_50_95": 0.55}, 0.55, id="only-ema"),
+        ],
+    )
+    def test_single_available_metric_is_tracked(self, metrics: dict, expected_best: float) -> None:
+        """When only the regular or only the EMA monitor key is logged, that metric alone sets the baseline.
 
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        cb.on_validation_end(trainer, pl_module)
-
-        # max(0.4, 0.6) = 0.6
-        assert cb.best_score.item() == pytest.approx(0.6)
-
-    def test_only_regular_available(self) -> None:
-        """When EMA key is absent, uses regular metric without error."""
-        cb = RFDETREarlyStopping(patience=5, min_delta=0.001)
-        pl_module = _make_pl_module()
-
-        trainer = _make_trainer({"val/mAP_50_95": 0.45})
-        cb.on_validation_end(trainer, pl_module)
-
-        assert cb.best_score.item() == pytest.approx(0.45)
-        assert cb.wait_count == 0
-
-    def test_only_ema_available(self) -> None:
-        """When the regular monitor key is absent, falls back to EMA without error.
-
-        Mirrors `test_only_regular_available`; this is the exact shape `eval_ema_only` produces
-        (`val/mAP_50_95` never populated, see #1285) and was previously untested here, unlike
-        `BestModelCallback.on_validation_end`'s sibling guard where the same input shape was an
-        outright bug (see `test_ema_checkpoint_saved_when_regular_monitor_absent`). This callback's
-        `regular_val is None` branching already handled it correctly; this test locks that in.
+        Only-EMA is the shape ``eval_ema_only`` produces (``val/mAP_50_95`` never populated, see #1285). Unlike
+        ``BestModelCallback.on_validation_end``, where that shape was an outright bug (see
+        ``test_ema_checkpoint_saved_when_regular_monitor_absent``), this callback's ``regular_val is None`` branching
+        already handled it; this case locks that in.
         """
         cb = RFDETREarlyStopping(patience=5, min_delta=0.001)
-        pl_module = _make_pl_module()
 
-        trainer = _make_trainer({"val/ema_mAP_50_95": 0.55})
-        cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(_make_trainer(metrics), _make_pl_module())
 
-        assert cb.best_score.item() == pytest.approx(0.55)
+        assert cb.best_score.item() == pytest.approx(expected_best)
         assert cb.wait_count == 0
 
-    def test_neither_available_is_noop(self) -> None:
-        """Neither metric present causes no counter increment and no stop."""
-        cb = RFDETREarlyStopping(patience=1, min_delta=0.001)
-        pl_module = _make_pl_module()
-
-        trainer = _make_trainer({})  # no metrics at all
-        cb.on_validation_end(trainer, pl_module)
-
-        assert cb.wait_count == 0
-        assert trainer.should_stop is False
-
-    def test_train_epoch_end_ignores_missing_validation_metrics(self) -> None:
-        """Train-epoch end must not evaluate early stopping when validation did not run."""
+    @pytest.mark.parametrize("hook", ["on_validation_end", "on_train_epoch_end"])
+    def test_hook_without_validation_metrics_is_noop(self, hook: str) -> None:
+        """With no validation metric logged, neither hook counts patience or stops training."""
         cb = RFDETREarlyStopping(patience=1, min_delta=0.001)
         trainer = _make_trainer({})
 
-        cb.on_train_epoch_end(trainer, _make_pl_module())
+        getattr(cb, hook)(trainer, _make_pl_module())
 
         assert cb.wait_count == 0
         assert trainer.should_stop is False
@@ -2071,7 +1735,7 @@ class TestRFDETREarlyStopping:
                 3,
                 0.01,
                 5,
-                id="use_ema_false_plateau",
+                id="use-ema-false-plateau",
             ),
             pytest.param(
                 True,
@@ -2079,7 +1743,7 @@ class TestRFDETREarlyStopping:
                 3,
                 0.01,
                 5,
-                id="use_ema_true_plateau",
+                id="use-ema-true-plateau",
             ),
         ],
     )
@@ -2195,8 +1859,9 @@ class TestCheckpointModelName:
         pl_module = _make_pl_module()
         pl_module.model_config = RFDETRLargeDeprecatedConfig(model_name=None)
 
-        with pytest.raises(RuntimeError, match="Deprecated model config"):
+        with pytest.raises(RuntimeError) as exc_info:
             cb.on_validation_end(trainer, pl_module)
+        assert "Deprecated model config" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -2207,56 +1872,35 @@ class TestCheckpointModelName:
 class TestCheckpointRfdetrVersion:
     """Verify rfdetr_version is stored in checkpoint payloads."""
 
-    @patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
-    def test_regular_checkpoint_contains_rfdetr_version(self, mock_get_version, tmp_path: Path) -> None:
-        """Regular checkpoint includes rfdetr_version string."""
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        pl_module = _make_pl_module()
-        expected_version = "test-version"
+    @pytest.mark.parametrize(("cb_kwargs", "metrics", "checkpoint_filename"), _REGULAR_AND_EMA_CASES)
+    def test_checkpoint_contains_rfdetr_version(
+        self, mocker: MockerFixture, tmp_path: Path, cb_kwargs: dict, metrics: dict, checkpoint_filename: str
+    ) -> None:
+        """Regular and EMA checkpoints include the rfdetr_version string."""
+        mocker.patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
+        cb = BestModelCallback(output_dir=str(tmp_path), **cb_kwargs)
 
-        cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(_make_trainer(metrics), _make_pl_module())
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
-        assert "rfdetr_version" in ckpt
-        assert ckpt["rfdetr_version"] == expected_version
+        ckpt = torch.load(tmp_path / checkpoint_filename, weights_only=False)
+        assert ckpt["rfdetr_version"] == "test-version"
 
-    @patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
-    def test_ema_checkpoint_contains_rfdetr_version(self, mock_get_version, tmp_path: Path) -> None:
-        """EMA checkpoint also includes rfdetr_version."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        pl_module = _make_pl_module()
-        expected_version = "test-version"
-
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
-        assert "rfdetr_version" in ckpt
-        assert ckpt["rfdetr_version"] == expected_version
-
-    @patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
-    def test_best_total_preserves_rfdetr_version_after_strip(self, mock_get_version, tmp_path: Path) -> None:
+    def test_best_total_preserves_rfdetr_version_after_strip(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """strip_checkpoint must preserve rfdetr_version in the final checkpoint."""
+        mocker.patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
-        expected_version = "test-version"
 
         cb.on_validation_end(trainer, pl_module)
         cb.on_fit_end(trainer, pl_module)
 
-        total = tmp_path / "checkpoint_best_total.pth"
-        data = torch.load(total, map_location="cpu", weights_only=False)
-        assert "rfdetr_version" in data
-        assert data["rfdetr_version"] == expected_version
+        data = torch.load(tmp_path / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
+        assert data["rfdetr_version"] == "test-version"
 
-    @patch("rfdetr.training.callbacks.best_model.get_version", return_value=None)
-    def test_rfdetr_version_absent_when_get_version_returns_none(self, mock_get_version, tmp_path: Path) -> None:
+    def test_rfdetr_version_absent_when_get_version_returns_none(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """rfdetr_version must be omitted when get_version() cannot resolve the version."""
+        mocker.patch("rfdetr.training.callbacks.best_model.get_version", return_value=None)
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
@@ -2391,21 +2035,9 @@ class TestBestEmaStatePersistence:
     @pytest.mark.parametrize(
         ("mutate_state", "expected_best_ema"),
         [
-            pytest.param(
-                lambda state: state.pop("_best_ema"),
-                0.0,
-                id="missing_key",
-            ),
-            pytest.param(
-                lambda state: state.__setitem__("_best_ema", int(1)),
-                1.0,
-                id="int_coercion",
-            ),
-            pytest.param(
-                lambda state: state.__setitem__("_best_ema", str("0.75")),
-                0.75,
-                id="string_coercion",
-            ),
+            pytest.param(lambda state: state.pop("_best_ema"), 0.0, id="missing-key"),
+            pytest.param(lambda state: state.__setitem__("_best_ema", 1), 1.0, id="int-coercion"),
+            pytest.param(lambda state: state.__setitem__("_best_ema", "0.75"), 0.75, id="string-coercion"),
         ],
     )
     def test_load_state_dict_backward_compat(self, tmp_path: Path, mutate_state, expected_best_ema: float) -> None:
@@ -2421,11 +2053,7 @@ class TestBestEmaStatePersistence:
 
     @pytest.mark.parametrize(
         "bad_value",
-        [
-            pytest.param(float("nan"), id="nan"),
-            pytest.param(float("inf"), id="inf"),
-            pytest.param(float("-inf"), id="neg_inf"),
-        ],
+        [float("nan"), float("inf"), float("-inf")],
     )
     def test_load_state_dict_non_finite_values(self, bad_value) -> None:
         """load_state_dict() resets non-finite persisted _best_ema values to 0.0."""
@@ -2513,11 +2141,11 @@ class TestBestModelSmoothAlpha:
     @pytest.mark.parametrize(
         ("invalid_value", "exc_type"),
         [
-            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param(True, TypeError, id="bool-true"),
             pytest.param("0.5", TypeError, id="string"),
             pytest.param(-0.1, ValueError, id="negative"),
-            pytest.param(1.0, ValueError, id="exactly_one"),
-            pytest.param(1.5, ValueError, id="greater_than_one"),
+            pytest.param(1.0, ValueError, id="exactly-one"),
+            pytest.param(1.5, ValueError, id="greater-than-one"),
             pytest.param(float("nan"), ValueError, id="nan"),
             pytest.param(float("inf"), ValueError, id="inf"),
         ],
@@ -2619,11 +2247,7 @@ class TestBestModelSmoothAlpha:
 
     @pytest.mark.parametrize(
         "bad_value",
-        [
-            pytest.param(float("nan"), id="nan"),
-            pytest.param(float("inf"), id="inf"),
-            pytest.param(float("-inf"), id="neg_inf"),
-        ],
+        [float("nan"), float("inf"), float("-inf")],
     )
     def test_load_state_dict_non_finite_smoothed_regular_resets_to_zero(self, tmp_path: Path, bad_value: float) -> None:
         """load_state_dict() resets non-finite persisted _smoothed_regular values to 0.0."""
@@ -2646,19 +2270,14 @@ class TestBestModelSmoothAlpha:
 
         assert cb._smoothed_regular == 0.0
 
-    @pytest.mark.parametrize(
-        "skip_epochs",
-        [
-            pytest.param(2, id="skip_two"),
-        ],
-    )
-    def test_ema_accumulator_warms_up_during_skip_window(self, tmp_path: Path, skip_epochs: int) -> None:
+    def test_ema_accumulator_warms_up_during_skip_window(self, tmp_path: Path) -> None:
         """_smoothed_regular is pre-warmed by skip-window epochs so epoch 2 starts from a non-zero EMA.
 
         Scenario: skip_best_epochs=2, smooth_alpha=0.5, metric=0.5 each epoch.
         The EMA accumulator must update on epochs 0 and 1 (skip window) so that by epoch 2 it
         is already non-zero.  No checkpoint file should be written during the skip window.
         """
+        skip_epochs = 2
         cb = BestModelCallback(
             output_dir=str(tmp_path), monitor_regular="val/mAP_50_95", smooth_alpha=0.5, skip_best_epochs=skip_epochs
         )
@@ -2684,19 +2303,20 @@ class TestBestModelSmoothAlpha:
             "_smoothed_regular must be > 0.0 at epoch 2 because the skip-window epochs warmed the EMA"
         )
 
-    @patch(
-        "rfdetr.training.callbacks.best_model.ModelCheckpoint.on_validation_end",
-        side_effect=RuntimeError("simulated failure"),
-    )
-    def test_callback_metrics_restored_when_super_raises(self, mock_on_validation_end, tmp_path: Path) -> None:
+    def test_callback_metrics_restored_when_super_raises(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """trainer.callback_metrics[monitor] is restored in the finally block even when super() raises."""
+        mocker.patch(
+            "rfdetr.training.callbacks.best_model.ModelCheckpoint.on_validation_end",
+            side_effect=RuntimeError("simulated failure"),
+        )
         cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
         pl_module = _make_pl_module()
         trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
         raw_tensor = trainer.callback_metrics["val/mAP_50_95"]
 
-        with pytest.raises(RuntimeError, match="simulated failure"):
+        with pytest.raises(RuntimeError) as exc_info:
             cb.on_validation_end(trainer, pl_module)
+        assert "simulated failure" in str(exc_info.value)
 
         assert trainer.callback_metrics["val/mAP_50_95"] is raw_tensor
 
@@ -2712,16 +2332,19 @@ class TestCheckpointNotes:
     @pytest.mark.parametrize(
         "notes",
         [
-            pytest.param("simple string", id="string"),
+            "simple string",
             pytest.param({"date": "2026-01-01", "labeller": "Alice"}, id="dict"),
             pytest.param(["class_a", "class_b"], id="list"),
-            pytest.param(42, id="int"),
+            42,
+            pytest.param("", id="empty-string"),
+            pytest.param({}, id="empty-dict"),
+            pytest.param([], id="empty-list"),
+            0,
+            False,
         ],
     )
-    def test_notes_accessible_via_args_dict(self, tmp_path: Path, notes: object) -> None:
-        """Notes supplied via TrainConfig are accessible under checkpoint['args']['notes']."""
-        from rfdetr.config import TrainConfig
-
+    def test_notes_stored_in_args_dict(self, tmp_path: Path, notes: object) -> None:
+        """Notes from TrainConfig, falsy non-None values included, are stored under checkpoint['args']['notes']."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
@@ -2730,17 +2353,11 @@ class TestCheckpointNotes:
 
         cb.on_validation_end(trainer, pl_module)
 
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
+        checkpoint = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
         assert checkpoint["args"]["notes"] == notes
 
     def test_notes_absent_when_not_provided(self, tmp_path: Path) -> None:
         """When notes=None (default), no top-level 'notes' key is written to checkpoint."""
-        from rfdetr.config import TrainConfig
-
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
@@ -2749,41 +2366,8 @@ class TestCheckpointNotes:
 
         cb.on_validation_end(trainer, pl_module)
 
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
+        checkpoint = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
         assert "notes" not in checkpoint
-
-    @pytest.mark.parametrize(
-        "notes",
-        [
-            pytest.param("", id="empty_string"),
-            pytest.param({}, id="empty_dict"),
-            pytest.param([], id="empty_list"),
-            pytest.param(0, id="zero"),
-            pytest.param(False, id="false"),
-        ],
-    )
-    def test_falsy_notes_stored_in_args_dict(self, tmp_path: Path, notes: object) -> None:
-        """Falsy but non-None notes values are preserved in checkpoint['args']['notes']."""
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["notes"] == notes
 
 
 # ---------------------------------------------------------------------------
@@ -2803,54 +2387,43 @@ def _make_kp_active_mask(schema: list[int]) -> torch.Tensor:
 class TestSerializeModelConfig:
     """Verify _serialize_model_config syncs schema-critical fields from live model weights."""
 
-    def test_syncs_keypoint_schema_from_kp_active_mask(self) -> None:
-        """Stale num_keypoints_per_class in model_config is overridden by _kp_active_mask from weights."""
+    @pytest.mark.parametrize(
+        ("dumped_config", "weights", "field", "expected"),
+        [
+            pytest.param(
+                {"num_keypoints_per_class": [0, 17], "num_classes": 2},
+                {"_kp_active_mask": _make_kp_active_mask([0, 33])},
+                "num_keypoints_per_class",
+                [0, 33],
+                id="keypoint-schema-from-kp-active-mask",
+            ),
+            pytest.param(
+                {"num_keypoints_per_class": [0, 33], "num_classes": 90},
+                {"class_embed.weight": torch.zeros(3, 256)},
+                "num_classes",
+                2,
+                id="num-classes-from-class-embed-weight",
+            ),
+            pytest.param(
+                {"num_keypoints_per_class": [0, 17], "num_classes": 2},
+                {"w": torch.zeros(1)},
+                "num_keypoints_per_class",
+                [0, 17],
+                id="keypoint-schema-kept-without-kp-active-mask",
+            ),
+        ],
+    )
+    def test_schema_field_follows_live_weights(self, dumped_config: dict, weights: dict, field: str, expected) -> None:
+        """Stale schema fields in model_config are overridden by the live weights, and left alone without them."""
         pl_module = _make_pl_module()
         pl_module.model_config = MagicMock()
-        pl_module.model_config.model_dump.return_value = {
-            "num_keypoints_per_class": [0, 17],
-            "num_classes": 2,
-        }
-        pl_module.model.state_dict.return_value = {
-            "_kp_active_mask": _make_kp_active_mask([0, 33]),
-        }
+        pl_module.model_config.model_dump.return_value = dumped_config
+        pl_module.model.state_dict.return_value = weights
 
         result = BestModelCallback._serialize_model_config(pl_module)
 
         assert result is not None
-        assert result["num_keypoints_per_class"] == [0, 33]
-
-    def test_syncs_num_classes_from_class_embed_weight(self) -> None:
-        """Stale num_classes in model_config is overridden by class_embed.weight.shape[0] from weights."""
-        pl_module = _make_pl_module()
-        pl_module.model_config = MagicMock()
-        pl_module.model_config.model_dump.return_value = {
-            "num_keypoints_per_class": [0, 33],
-            "num_classes": 90,
-        }
-        pl_module.model.state_dict.return_value = {
-            "class_embed.weight": torch.zeros(3, 256),
-        }
-
-        result = BestModelCallback._serialize_model_config(pl_module)
-
-        assert result is not None
-        assert result["num_classes"] == 2
-
-    def test_no_sync_when_kp_mask_absent(self) -> None:
-        """num_keypoints_per_class is left unchanged when model has no _kp_active_mask."""
-        pl_module = _make_pl_module()
-        pl_module.model_config = MagicMock()
-        pl_module.model_config.model_dump.return_value = {
-            "num_keypoints_per_class": [0, 17],
-            "num_classes": 2,
-        }
-        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
-
-        result = BestModelCallback._serialize_model_config(pl_module)
-
-        assert result is not None
-        assert result["num_keypoints_per_class"] == [0, 17]
+        assert result[field] == expected
 
     def test_no_sync_when_field_absent_from_dumped_config(self) -> None:
         """_kp_active_mask in weights does not insert num_keypoints_per_class when key absent from config."""
@@ -2982,8 +2555,9 @@ class TestOnFitEndEMASwapSuppression:
         cb, ema_cb, pl_module, trainer, _observed = self._build_fit_end_scenario(tmp_path)
         trainer.test = MagicMock(side_effect=RuntimeError("boom"))
 
-        with pytest.raises(RuntimeError, match="boom"):
+        with pytest.raises(RuntimeError) as exc_info:
             cb.on_fit_end(trainer, pl_module)
+        assert "boom" in str(exc_info.value)
 
         assert ema_cb.suppress_test_swap is False
 
@@ -3016,17 +2590,16 @@ class TestFP8BestEMAWeightReload:
     """Exercise real checkpoint export and reload with converted-layer extra state."""
 
     @pytest.mark.parametrize(
-        "damage, error",
+        ("damage", "errors"),
         [
             pytest.param(None, None, id="intact-ema"),
-            pytest.param("missing", "Missing.*weight", id="missing-weight"),
-            pytest.param("unexpected", "Unexpected.*spurious", id="unexpected-key"),
-            pytest.param("shape", "size mismatch", id="wrong-shape"),
+            pytest.param("missing", ("Missing", "weight"), id="missing-weight"),
+            pytest.param("unexpected", ("Unexpected", "spurious"), id="unexpected-key"),
+            pytest.param("shape", ("size mismatch",), id="wrong-shape"),
         ],
     )
-    def test_final_ema_reload(self, tmp_path: Path, damage: str | None, error: str | None) -> None:
+    def test_final_ema_reload(self, tmp_path: Path, damage: str | None, errors: tuple[str, ...] | None) -> None:
         """Only absent extra state is tolerated; all tensor/key corruption remains fatal."""
-        torch.manual_seed(0)
         module = _TestStepLinearModule()
         module.model = torch.nn.Sequential(_GuardedExtraStateLinear(1, 1, bias=False))
         with torch.no_grad():
@@ -3049,9 +2622,10 @@ class TestFP8BestEMAWeightReload:
         with torch.no_grad():
             module.model[0].weight.fill_(7.0)
 
-        if error is not None:
-            with pytest.raises(RuntimeError, match=error):
+        if errors is not None:
+            with pytest.raises(RuntimeError) as exc_info:
                 callback.on_fit_end(trainer, module)
+            assert all(part in str(exc_info.value) for part in errors)
             trainer.test.assert_not_called()
         else:
             callback.on_fit_end(trainer, module)

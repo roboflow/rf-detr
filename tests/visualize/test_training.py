@@ -362,15 +362,13 @@ class TestPlotMetricsNoSeaborn:
     """Verify plot_metrics falls back gracefully when seaborn is unavailable."""
 
     @plot_only
-    def test_plot_metrics_succeeds_without_seaborn(self, tmp_path: Path) -> None:
+    def test_plot_metrics_succeeds_without_seaborn(self, tmp_path: Path, mocker) -> None:
         """plot_metrics returns a Figure when _IS_SEABORN_AVAILABLE is False (matplotlib-only fallback).
 
         Scenario: seaborn flag patched to False; plot_metrics called with a minimal DataFrame
         containing epoch and one metric column.  Expected outcome: call succeeds, returns a
         matplotlib Figure, raises no ImportError.
         """
-        from unittest.mock import patch
-
         import pandas as pd
         from matplotlib import pyplot as plt
         from matplotlib.figure import Figure
@@ -383,8 +381,9 @@ class TestPlotMetricsNoSeaborn:
             }
         ).to_csv(metrics_csv, index=False)
 
-        with patch("rfdetr.visualize.training._IS_SEABORN_AVAILABLE", False):
-            figure = plot_metrics(str(metrics_csv))
+        mocker.patch("rfdetr.visualize.training._IS_SEABORN_AVAILABLE", False)
+
+        figure = plot_metrics(str(metrics_csv))
 
         assert isinstance(figure, Figure), "plot_metrics must return a matplotlib Figure when seaborn is absent"
         plt.close(figure)

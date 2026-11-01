@@ -20,6 +20,8 @@ def reset_random_seeds():
 
 
 class TestAdaptInputConv:
+    """``_adapt_input_conv`` reshapes a 3-channel conv weight to any requested channel count."""
+
     @pytest.mark.parametrize(
         ("num_channels", "expected_shape", "expected_builder"),
         [

@@ -10,14 +10,21 @@ directly instead of requiring a pre-built SimpleNamespace. If these functions ca
 module-level pytestmark.
 """
 
+from dataclasses import replace
+
 import pytest
 
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
     RFDETRNanoConfig,
     RFDETRSegNanoConfig,
     SegmentationTrainConfig,
     TrainConfig,
 )
+from rfdetr.models import MODEL_DEFAULTS
+from rfdetr.models.criterion import SetCriterion
+from rfdetr.models.lwdetr import LWDETR, build_model
+from rfdetr.models.postprocess import PostProcess
 
 try:
     from rfdetr.models import build_criterion_from_config, build_model_from_config
@@ -37,13 +44,11 @@ class TestBuildModelFromConfig:
 
     def test_returns_lwdetr_for_base_config(self) -> None:
         """build_model_from_config with RFDETRNanoConfig returns an LWDETR instance."""
-        from rfdetr.models.lwdetr import LWDETR
-
         mc = RFDETRNanoConfig(num_classes=80)
         model = build_model_from_config(mc)
         assert isinstance(model, LWDETR), f"Expected LWDETR instance, got {type(model).__name__}"
 
-    def test_num_classes_correct(self) -> None:
+    def test_num_classes_includes_background_class(self) -> None:
         """num_classes=5 in config should produce class_embed with out_features=6.
 
         build_model adds +1 to num_classes (background class convention).
@@ -56,9 +61,6 @@ class TestBuildModelFromConfig:
 
     def test_parity_with_build_model_via_namespace(self) -> None:
         """Parameter count must match between config-native and namespace paths."""
-        from rfdetr._namespace import _namespace_from_configs
-        from rfdetr.models.lwdetr import build_model
-
         mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
@@ -89,30 +91,17 @@ class TestBuildModelFromConfig:
         assert hasattr(layers[-1], "drop_path")
         assert layers[-1].drop_path.drop_prob == pytest.approx(0.2)
 
-    def test_rejects_encoder_only_defaults(self) -> None:
-        """The config-native builder guarantees an LWDETR return value."""
-        from dataclasses import replace
-
-        from rfdetr.models import MODEL_DEFAULTS
-
+    @pytest.mark.parametrize("flag", ["encoder_only", "backbone_only"])
+    def test_rejects_non_model_defaults(self, flag: str) -> None:
+        """The config-native builder guarantees an LWDETR return value, so encoder_only/backbone_only raise
+        ValueError."""
         mc = RFDETRNanoConfig(num_classes=80)
 
-        with pytest.raises(ValueError, match="encoder_only=False"):
-            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, encoder_only=True))
+        with pytest.raises(ValueError, match=f"{flag}=False"):
+            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, **{flag: True}))
 
-    def test_rejects_backbone_only_defaults(self) -> None:
-        """backbone_only=True in defaults must also raise ValueError."""
-        from dataclasses import replace
-
-        from rfdetr.models import MODEL_DEFAULTS
-
-        mc = RFDETRNanoConfig(num_classes=80)
-
-        with pytest.raises(ValueError, match="backbone_only=False"):
-            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, backbone_only=True))
-
-    def test_none_train_config_uses_dummy(self) -> None:
-        """build_model_from_config with train_config=None must not raise."""
+    def test_none_train_config_builds_model(self) -> None:
+        """build_model_from_config with train_config=None falls back to a default train config and builds a model."""
         mc = RFDETRNanoConfig(num_classes=80)
         model = build_model_from_config(mc, train_config=None)
         assert model is not None, "Expected a model, got None"
@@ -121,11 +110,8 @@ class TestBuildModelFromConfig:
 class TestBuildCriterionFromConfig:
     """Tests for build_criterion_from_config(model_config, train_config, defaults)."""
 
-    def test_returns_tuple(self) -> None:
+    def test_returns_criterion_and_postprocess_tuple(self) -> None:
         """build_criterion_from_config must return a 2-tuple (SetCriterion, PostProcess)."""
-        from rfdetr.models.criterion import SetCriterion
-        from rfdetr.models.postprocess import PostProcess
-
         mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
         result = build_criterion_from_config(mc, tc)
@@ -151,26 +137,17 @@ class TestBuildCriterionFromConfig:
 
     def test_custom_defaults_focal_alpha_applied(self) -> None:
         """Custom focal_alpha in ModelDefaults must reach SetCriterion."""
-        from dataclasses import replace
-
-        from rfdetr.models import MODEL_DEFAULTS
-
         mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
         custom_defaults = replace(MODEL_DEFAULTS, focal_alpha=0.5)
         criterion, _ = build_criterion_from_config(mc, tc, defaults=custom_defaults)
         assert criterion.focal_alpha == pytest.approx(0.5), f"Expected focal_alpha=0.5, got {criterion.focal_alpha}"
 
-    def test_eval_masks_head_resolution_disables_postprocess_upsample(self) -> None:
-        """TrainConfig.eval_masks_head_resolution=True must reach PostProcess.upsample_masks_to_image_size=False."""
+    @pytest.mark.parametrize("eval_masks_head_resolution", [True, False])
+    def test_eval_masks_head_resolution_controls_postprocess_upsample(self, eval_masks_head_resolution: bool) -> None:
+        """TrainConfig.eval_masks_head_resolution disables PostProcess mask upsampling; the False default keeps it
+        on."""
         mc = RFDETRSegNanoConfig()
-        tc = SegmentationTrainConfig(dataset_dir="/tmp", eval_masks_head_resolution=True)
+        tc = SegmentationTrainConfig(dataset_dir="/tmp", eval_masks_head_resolution=eval_masks_head_resolution)
         _, postprocess = build_criterion_from_config(mc, tc)
-        assert postprocess.upsample_masks_to_image_size is False
-
-    def test_eval_masks_head_resolution_defaults_to_upsampling(self) -> None:
-        """eval_masks_head_resolution=False (default) preserves full-resolution mask upsampling."""
-        mc = RFDETRSegNanoConfig()
-        tc = SegmentationTrainConfig(dataset_dir="/tmp")
-        _, postprocess = build_criterion_from_config(mc, tc)
-        assert postprocess.upsample_masks_to_image_size is True
+        assert postprocess.upsample_masks_to_image_size is (not eval_masks_head_resolution)

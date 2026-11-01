@@ -128,12 +128,9 @@ class TestEvalForwardMasks:
 
     @pytest.mark.parametrize(
         ("all_layer_masks", "projections"),
-        [
-            pytest.param(False, 1, id="last_layer"),
-            pytest.param(True, _LAYERS + 1, id="all_layer_masks"),
-        ],
+        [(False, 1), (True, _LAYERS + 1)],
     )
-    def test_eval_forward_projects_only_for_the_masks_it_returns(self, all_layer_masks: bool, projections: int) -> None:
+    def test_eval_forward_projects_once_per_returned_mask_set(self, all_layer_masks: bool, projections: int) -> None:
         """Masks that eval mode leaves out are never computed: the head projects once per returned mask set."""
         model = _build_seg_lwdetr().eval()
         calls: list[None] = []

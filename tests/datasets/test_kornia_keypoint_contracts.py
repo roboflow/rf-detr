@@ -14,6 +14,12 @@ from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
 kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
 
 
+@pytest.fixture
+def flip_pipeline():
+    """Always-flip Kornia pipeline carrying keypoints with one flip pair."""
+    return build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1])
+
+
 @kornia_only
 class TestBuildKorniaPipelineFlipPairs:
     """``build_kornia_pipeline`` accepts flip pairs only when the pipeline actually transports keypoints."""
@@ -25,48 +31,41 @@ class TestBuildKorniaPipelineFlipPairs:
         ``include_keypoints`` alone only filters horizontal flips; without the keypoints data key the caller has no
         augmented joints to swap, so pairs would silently keep flips that corrupt left/right labels.
         """
-        with pytest.raises(ValueError, match="requires with_keypoints=True"):
+        with pytest.raises(ValueError) as exc_info:
             build_kornia_pipeline(
                 {"HorizontalFlip": {"p": 1.0}}, 16, include_keypoints=include_keypoints, keypoint_flip_pairs=[0, 1]
             )
 
-    def test_pairs_with_keypoint_data_key_build(self):
+        assert "requires with_keypoints=True" in str(exc_info.value)
+
+    def test_pairs_with_keypoint_data_key_build(self, flip_pipeline):
         """Even flip pairs with ``with_keypoints=True`` build a pipeline that keeps its horizontal flip.
 
         This is the supported keypoint configuration: the caller relabels joint slots after each flip.
         """
-        pipeline = build_kornia_pipeline(
-            {"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1]
-        )
-
-        assert len(list(pipeline.children())) == 1
+        assert len(list(flip_pipeline.children())) == 1
 
 
 @kornia_only
 class TestKeypointHorizontalFlipMask:
     """``keypoint_horizontal_flip_mask`` detects horizontal flips from the pipeline's own transforms."""
 
-    def test_reads_flip_draws_after_forward(self):
+    def test_reads_flip_draws_after_forward(self, flip_pipeline):
         """After a forward pass through an always-flip pipeline, every image is reported as flipped.
 
         This is the normal training use: the DataModule runs the pipeline, then asks which images to relabel.
         """
-        pipeline = build_kornia_pipeline(
-            {"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1]
-        )
-        pipeline(torch.zeros(2, 3, 16, 16), torch.zeros(2, 1, 4), torch.zeros(2, 1, 2))
+        flip_pipeline(torch.zeros(2, 3, 16, 16), torch.zeros(2, 1, 4), torch.zeros(2, 1, 2))
 
-        assert keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu")).tolist() == [True, True]
+        assert keypoint_horizontal_flip_mask(flip_pipeline, 2, torch.device("cpu")).tolist() == [True, True]
 
-    def test_missing_flip_draws_raise(self):
+    def test_missing_flip_draws_raise(self, flip_pipeline):
         """A pipeline holding a horizontal flip but no sampled draws raises instead of skipping relabeling.
 
         Before any forward pass Kornia has sampled nothing, which is indistinguishable from a Kornia release that
         stopped exposing the draws; silently returning "not flipped" would leave left/right joints swapped.
         """
-        pipeline = build_kornia_pipeline(
-            {"HorizontalFlip": {"p": 1.0}}, 16, with_keypoints=True, keypoint_flip_pairs=[0, 1]
-        )
+        with pytest.raises(RuntimeError) as exc_info:
+            keypoint_horizontal_flip_mask(flip_pipeline, 1, torch.device("cpu"))
 
-        with pytest.raises(RuntimeError, match="did not expose horizontal-flip draws"):
-            keypoint_horizontal_flip_mask(pipeline, 1, torch.device("cpu"))
+        assert "did not expose horizontal-flip draws" in str(exc_info.value)

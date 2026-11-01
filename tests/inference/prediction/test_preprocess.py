@@ -11,7 +11,6 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import PIL.Image
@@ -20,12 +19,16 @@ import requests
 import supervision as sv
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
+from pytest_mock import MockerFixture
 
 from rfdetr import RFDETRInference
 from rfdetr._prediction import core
 from rfdetr.detr import RFDETR
 
 from ..helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
+
+#: Zero mean and unit std for three channels, what a patched ``_normalization_tensors`` returns.
+_UNIT_NORMALIZATION = (torch.zeros(3, 1, 1), torch.ones(3, 1, 1))
 
 
 class TestPredictImagePinning:
@@ -38,7 +41,7 @@ class TestPredictImagePinning:
     gets no benefit from pinning at all.
     """
 
-    def test_cpu_tensor_inputs_transfer_pinned_buffers_to_cuda_non_blocking(self) -> None:
+    def test_cpu_tensor_inputs_transfer_pinned_buffers_to_cuda_non_blocking(self, mocker: MockerFixture) -> None:
         """Every CPU input transfers its own pinned buffer to CUDA and reaches the model boundary.
 
         The pinning call returns a different tensor, so this catches the regression where ``predict()`` pins an input
@@ -110,13 +113,11 @@ class TestPredictImagePinning:
 
         model_module = model.model.model
         assert model_module is not None
+        mocker.patch.object(torch.Tensor, "pin_memory", pin_spy)
+        mocker.patch.object(torch.Tensor, "to", to_spy)
+        mocker.patch.object(torch, "tensor", tensor_spy)
         with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
-            with (
-                patch.object(torch.Tensor, "pin_memory", pin_spy),
-                patch.object(torch.Tensor, "to", to_spy),
-                patch.object(torch, "tensor", tensor_spy),
-            ):
-                model.predict(source_tensors)
+            model.predict(source_tensors)
 
         assert len(pinned_inputs) == len(source_tensors)
         assert all(pinned_input is source_tensor for pinned_input, source_tensor in zip(pinned_inputs, source_tensors))
@@ -153,31 +154,33 @@ class TestPredictImagePinning:
         assert torch.equal(plain, pinned)
 
     @pytest.mark.gpu
-    def test_already_cuda_tensor_input_is_not_pinned(self) -> None:
+    def test_already_cuda_tensor_input_is_not_pinned(self, mocker: MockerFixture) -> None:
         """A tensor the caller already placed on the accelerator must never be routed through pin_memory()."""
         model = _DummyRFDETR()
         model.model.device = torch.device("cuda", 0)
         tensor = torch.rand(3, 48, 64, device="cuda")
-        pin_spy = MagicMock(side_effect=AssertionError("pin_memory() must not be called on a CUDA tensor"))
+        pin_spy = mocker.patch.object(
+            torch.Tensor, "pin_memory", side_effect=AssertionError("pin_memory() must not be called on a CUDA tensor")
+        )
 
-        with patch.object(torch.Tensor, "pin_memory", pin_spy):
-            model.predict(tensor)  # must not raise: pin_memory() on a CUDA tensor would itself raise RuntimeError
+        model.predict(tensor)  # must not raise: pin_memory() on a CUDA tensor would itself raise RuntimeError
 
         pin_spy.assert_not_called()
 
-    def test_cpu_target_device_does_not_pin(self) -> None:
+    def test_cpu_target_device_does_not_pin(self, mocker: MockerFixture) -> None:
         """A CPU-only target device gets no benefit from pinning, so it must be skipped entirely."""
         model = _DummyRFDETR()  # _DummyModel defaults to a CPU device
         tensor = torch.rand(3, 48, 64)
-        pin_spy = MagicMock(side_effect=AssertionError("pin_memory() must not be called for a CPU target device"))
+        pin_spy = mocker.patch.object(
+            torch.Tensor, "pin_memory", side_effect=AssertionError("pin_memory() must not be called for a CPU target")
+        )
 
-        with patch.object(torch.Tensor, "pin_memory", pin_spy):
-            model.predict(tensor)
+        model.predict(tensor)
 
         pin_spy.assert_not_called()
 
     @pytest.mark.gpu
-    def test_cuda_tensor_input_to_cpu_model_is_not_non_blocking(self) -> None:
+    def test_cuda_tensor_input_to_cpu_model_is_not_non_blocking(self, mocker: MockerFixture) -> None:
         """A tensor already on CUDA moving to a CPU-device model must use a blocking transfer.
 
         ``non_blocking=True`` only pays off, and is only safe without an explicit sync, when the destination is CUDA —
@@ -191,12 +194,19 @@ class TestPredictImagePinning:
         captured: list[bool] = []
 
         def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record the ``non_blocking`` flag of every transfer of the CUDA input, then run the real ``.to()``.
+
+            Examples:
+                This test-local closure requires CUDA and is covered by the enclosing GPU test:
+                >>> to_spy(torch.zeros(3, device="cuda"), "cpu")  # doctest: +SKIP
+            """
             if self is tensor:
                 captured.append(bool(kwargs.get("non_blocking", False)))
             return real_to(self, *args, **kwargs)
 
-        with patch.object(torch.Tensor, "to", to_spy):
-            model.predict(tensor)
+        mocker.patch.object(torch.Tensor, "to", to_spy)
+
+        model.predict(tensor)
 
         assert captured, "expected predict() to move the image tensor with .to()"
         assert not any(captured), "CUDA tensor -> CPU-model transfer must not set non_blocking=True"
@@ -297,7 +307,7 @@ class TestPredictUint8Conversion:
         ],
     )
     def test_local_image_decoder_skips_the_native_decode_of_a_16_bit_png(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, color_type: int, channels: int, pillow_mode: str
+        self, tmp_path: Path, mocker: MockerFixture, color_type: int, channels: int, pillow_mode: str
     ) -> None:
         """Every 16-bit PNG is recognised from its header, although Pillow reports most of them as 8-bit modes."""
         image_path = tmp_path / "image.png"
@@ -319,34 +329,31 @@ class TestPredictUint8Conversion:
         with PIL.Image.open(image_path) as header:
             # An 8-bit-looking mode is the reason the bit depth is read from the file rather than from ``header.mode``.
             assert header.mode == pillow_mode
-        decode = MagicMock()
-        monkeypatch.setattr(core, "decode_image", decode)
+        decode = mocker.patch.object(core, "decode_image")
 
         assert core._decode_local_image(str(image_path)) is None
         decode.assert_not_called()
 
     def test_local_image_decoder_rejects_a_decode_that_is_not_uint8(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """Whatever the header checks let through, a decode that is not ``uint8`` must fall back to Pillow."""
         image_path = tmp_path / "image.jpg"
         PIL.Image.new("RGB", (29, 17)).save(image_path)
-        decode = MagicMock(return_value=torch.zeros(3, 17, 29, dtype=torch.float32))
-        monkeypatch.setattr(core, "decode_image", decode)
+        decode = mocker.patch.object(core, "decode_image", return_value=torch.zeros(3, 17, 29, dtype=torch.float32))
 
         assert core._decode_local_image(str(image_path)) is None
         decode.assert_called_once()
 
     def test_predict_local_file_uses_pillow_without_torchvision_image_decode(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
     ) -> None:
         """Once torchvision drops its deprecated image codecs, a local file must still predict through Pillow."""
         image_path = tmp_path / "image.png"
         expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
         PIL.Image.fromarray(expected).save(image_path)
-        decode = MagicMock()
         monkeypatch.setattr(core, "_IS_TORCHVISION_IMAGE_DECODE_AVAILABLE", False)
-        monkeypatch.setattr(core, "decode_image", decode)
+        decode = mocker.patch.object(core, "decode_image")
 
         detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
 
@@ -397,7 +404,7 @@ class TestPredictUint8Conversion:
         with pytest.raises(PIL.Image.DecompressionBombError):
             _DummyRFDETR().predict(str(image_path), include_source_image=False)
 
-    def test_predict_local_file_in_the_decompression_bomb_warning_band_still_predicts(
+    def test_decompression_bomb_warning_band_still_predicts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An image between Pillow's limit and twice that limit must warn as Pillow does and still be predicted."""
@@ -493,7 +500,7 @@ class TestPredictUint8Conversion:
         ],
     )
     def test_predict_local_file_falls_back_to_pillow_when_native_decode_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+        self, tmp_path: Path, mocker: MockerFixture, error: Exception
     ) -> None:
         """A native decode failing with neither ``OSError`` nor ``RuntimeError`` must still leave the file to Pillow.
 
@@ -503,7 +510,7 @@ class TestPredictUint8Conversion:
         image_path = tmp_path / "image.png"
         expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
         PIL.Image.fromarray(expected).save(image_path)
-        monkeypatch.setattr(core, "decode_image", MagicMock(side_effect=error))
+        mocker.patch.object(core, "decode_image", side_effect=error)
 
         detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
 
@@ -511,7 +518,7 @@ class TestPredictUint8Conversion:
         np.testing.assert_array_equal(detections.metadata["source_image"], expected)
 
     @pytest.mark.filterwarnings("error:The image decoding and encoding capabilities of TorchVision:DeprecationWarning")
-    def test_predict_local_file_succeeds_when_torchvision_deprecation_is_an_error(self, tmp_path: Path) -> None:
+    def test_local_file_predicts_when_torchvision_deprecation_is_an_error(self, tmp_path: Path) -> None:
         """A suite that turns torchvision's codec deprecation warning into an error must still predict a local file.
 
         The filter matches only that warning's message, so on torchvision releases that do not emit it the native decode
@@ -560,19 +567,19 @@ class TestPredictUint8Conversion:
         assert all(np.array_equal(source, pixels) for source, pixels in zip(sources, expected, strict=True))
 
     @pytest.mark.parametrize("include_source_image", [False, True])
-    def test_predict_local_file_uses_fast_decoder(self, tmp_path: Path, include_source_image: bool) -> None:
+    def test_predict_local_file_uses_fast_decoder(
+        self, tmp_path: Path, include_source_image: bool, mocker: MockerFixture
+    ) -> None:
         """A supported local file must reach public prediction without a second Pillow decode."""
         image_path = tmp_path / "image.png"
         expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
         PIL.Image.fromarray(expected).save(image_path)
         model = _DummyRFDETR()
+        decode_spy = mocker.patch("rfdetr._prediction.core.decode_image", wraps=core.decode_image)
+        # Pillow may read the header, but must not decode the pixels the native decoder already returned.
+        mocker.patch("PIL.ImageFile.ImageFile.load", side_effect=AssertionError("Pillow decoded the pixels"))
 
-        with (
-            patch("rfdetr._prediction.core.decode_image", wraps=core.decode_image) as decode_spy,
-            # Pillow may read the header, but must not decode the pixels the native decoder already returned.
-            patch("PIL.ImageFile.ImageFile.load", side_effect=AssertionError("Pillow decoded the pixels")),
-        ):
-            detections = model.predict(str(image_path), include_source_image=include_source_image)
+        detections = model.predict(str(image_path), include_source_image=include_source_image)
 
         decode_spy.assert_called_once()
         assert isinstance(decode_spy.call_args.args[0], torch.Tensor)
@@ -637,13 +644,17 @@ class TestPredictUint8Conversion:
         ],
     )
     @pytest.mark.parametrize("include_source_image", [False, True])
-    def test_predict_uses_fused_path_for_uint8_images(self, image: object, include_source_image: bool) -> None:
+    def test_predict_uses_fused_path_for_uint8_images(
+        self, image: object, include_source_image: bool, mocker: MockerFixture
+    ) -> None:
         """PIL and valid uint8 NumPy inputs do not fall back to torchvision's allocating path."""
         model = _DummyRFDETR()
-        to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
+        to_tensor_spy = mocker.patch(
+            "rfdetr._prediction.core.F.to_tensor",
+            side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"),
+        )
 
-        with patch("rfdetr._prediction.core.F.to_tensor", to_tensor_spy):
-            model.predict(image, include_source_image=include_source_image)
+        model.predict(image, include_source_image=include_source_image)
 
         to_tensor_spy.assert_not_called()
 
@@ -654,28 +665,31 @@ class TestPredictUint8Conversion:
             pytest.param(np.full((17, 29, 1), 127, dtype=np.uint8), id="numpy_uint8_single_channel_hwc"),
         ],
     )
-    def test_predict_uses_fused_path_for_single_channel_uint8_images(self, image: np.ndarray[Any, Any]) -> None:
+    def test_predict_uses_fused_path_for_single_channel_uint8_images(
+        self, image: np.ndarray[Any, Any], mocker: MockerFixture
+    ) -> None:
         """One-channel uint8 images use the fused converter at the public ``predict()`` boundary."""
         model = _DummyRFDETR()
         model.model_config.num_channels = 1
         model.means = model.means[:1]
         model.stds = model.stds[:1]
-        to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
+        converter_spy = mocker.patch(
+            "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
+        )
+        to_tensor_spy = mocker.patch(
+            "rfdetr._prediction.core.F.to_tensor",
+            side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"),
+        )
 
-        with (
-            patch(
-                "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
-            ) as converter_spy,
-            patch("rfdetr._prediction.core.F.to_tensor", to_tensor_spy),
-        ):
-            model.predict(image)
+        model.predict(image)
 
         converter_spy.assert_called_once_with(image)
         to_tensor_spy.assert_not_called()
 
     def test_converter_matches_torchvision_for_contiguous_single_channel_hwc(self) -> None:
-        """A freshly-allocated (not sliced) ``(H, W, 1)`` array exercises ``num_channels=1`` models
-        (``ModelConfig.num_channels``, ``config.py``).
+        """A freshly allocated ``(H, W, 1)`` array converts like torchvision's ``to_tensor``.
+
+        Such arrays exercise ``num_channels=1`` models (``ModelConfig.num_channels``, ``config.py``).
 
         Unlike a channel-sliced view, this array is already C-contiguous on input, which is exactly when torchvision's
         own ``to_tensor`` leaves the size-1 leading dimension's stride un-normalized -- so equivalence is checked on
@@ -693,32 +707,33 @@ class TestPredictUint8Conversion:
         assert actual.stride()[1:] == expected.stride()[1:]
         assert actual.contiguous().view(torch.uint8).equal(expected.contiguous().view(torch.uint8))
 
-    def test_predict_reuses_pil_source_array_for_conversion(self) -> None:
+    def test_predict_reuses_pil_source_array_for_conversion(self, mocker: MockerFixture) -> None:
         """Default PIL prediction converts the same NumPy allocation retained as source metadata."""
         model = _DummyRFDETR()
         image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
-
-        with patch(
+        converter_spy = mocker.patch(
             "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
-        ) as converter_spy:
-            detections = model.predict(image)
+        )
+
+        detections = model.predict(image)
 
         converter_spy.assert_called_once()
         assert converter_spy.call_args.args[0] is detections.metadata["source_image"]
 
-    def test_predict_keeps_original_readonly_numpy_as_tensor_source(self) -> None:
-        """NumPy conversion retains the caller's storage, so it still triggers ``torch.from_numpy``'s not-writable
-        ``UserWarning`` exactly like ``F.to_tensor`` would on the same array."""
+    def test_predict_keeps_original_readonly_numpy_as_tensor_source(self, mocker: MockerFixture) -> None:
+        """A read-only NumPy input is converted from the caller's own storage, not from a copy.
+
+        That keeps ``torch.from_numpy``'s not-writable ``UserWarning`` exactly as ``F.to_tensor`` raises it on the same
+        array.
+        """
         model = _DummyRFDETR()
         image = np.full((17, 29, 3), 127, dtype=np.uint8)
         image.flags.writeable = False
+        converter_spy = mocker.patch(
+            "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
+        )
 
-        with (
-            patch(
-                "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
-            ) as converter_spy,
-            pytest.warns(UserWarning, match="not writable"),
-        ):
+        with pytest.warns(UserWarning, match="not writable"):
             detections = model.predict(image)
 
         converter_spy.assert_called_once()
@@ -774,7 +789,7 @@ class TestPredictUint8Conversion:
         assert second.equal(F.to_tensor(bright))
         assert scale.equal(torch.tensor(255, dtype=torch.get_default_dtype()))
 
-    def test_uint8_images_cross_the_device_boundary_unwidened(self) -> None:
+    def test_uint8_images_cross_the_device_boundary_unwidened(self, mocker: MockerFixture) -> None:
         """The uint8 CHW view is pinned, then that distinct buffer crosses the CUDA boundary."""
         model = _DummyRFDETR()
         model.model.device = torch.device("cuda", 0)
@@ -837,13 +852,12 @@ class TestPredictUint8Conversion:
                 kwargs["device"] = torch.device("cpu")
             return real_tensor(data, **kwargs)
 
-        with (
-            patch("rfdetr._prediction.core._uint8_image_to_chw_view", converter_spy),
-            patch.object(torch.Tensor, "pin_memory", pin_memory_spy),
-            patch.object(torch.Tensor, "to", to_spy),
-            patch.object(torch, "tensor", tensor_spy),
-        ):
-            model.predict(np.full((17, 29, 3), 127, dtype=np.uint8))
+        mocker.patch("rfdetr._prediction.core._uint8_image_to_chw_view", converter_spy)
+        mocker.patch.object(torch.Tensor, "pin_memory", pin_memory_spy)
+        mocker.patch.object(torch.Tensor, "to", to_spy)
+        mocker.patch.object(torch, "tensor", tensor_spy)
+
+        model.predict(np.full((17, 29, 3), 127, dtype=np.uint8))
 
         assert len(chw_views) == 1
         assert chw_views[0].dtype == torch.uint8
@@ -856,25 +870,23 @@ class TestPredictUint8Conversion:
         assert transfer_non_blocking == [True]
         assert transferred_dtypes == [torch.uint8]
 
-    def test_predict_keeps_torchvision_fallback_for_float_numpy(self) -> None:
+    def test_predict_keeps_torchvision_fallback_for_float_numpy(self, mocker: MockerFixture) -> None:
         """Non-uint8 NumPy inputs retain torchvision's no-scaling conversion semantics."""
         model = _DummyRFDETR()
         image = np.full((17, 29, 3), 0.5, dtype=np.float32)
 
-        with patch("rfdetr._prediction.core.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy:
-            model.predict(image)
+        to_tensor_spy = mocker.patch("rfdetr._prediction.core.F.to_tensor", wraps=F.to_tensor)
+        model.predict(image)
 
         to_tensor_spy.assert_called_once_with(image)
 
-    def test_predict_keeps_torchvision_fallback_for_invalid_uint8_numpy_rank(self) -> None:
+    def test_predict_keeps_torchvision_fallback_for_invalid_uint8_numpy_rank(self, mocker: MockerFixture) -> None:
         """A uint8 NumPy input outside the documented 2-D/3-D shape keeps torchvision's validation error."""
         model = _DummyRFDETR()
         image = np.zeros((1, 3, 17, 29), dtype=np.uint8)
+        to_tensor_spy = mocker.patch("rfdetr._prediction.core.F.to_tensor", wraps=F.to_tensor)
 
-        with (
-            patch("rfdetr._prediction.core.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
-            pytest.raises(ValueError, match="2/3 dimensional"),
-        ):
+        with pytest.raises(ValueError, match="2/3 dimensional"):
             model.predict(image)
 
         to_tensor_spy.assert_called_once_with(image)
@@ -987,7 +999,7 @@ class TestPredictNegativeStrideNumpy:
 
     def test_source_image_of_a_flipped_view_is_an_independent_contiguous_copy(self) -> None:
         """``source_image`` holds the flipped pixels in its own C-contiguous storage, not a view of the caller's
-        array."""
+        input."""
         pixels = np.random.default_rng(20261002).integers(0, 256, size=(17, 29, 3), dtype=np.uint8)
         view = pixels[:, :, ::-1]
 
@@ -998,16 +1010,18 @@ class TestPredictNegativeStrideNumpy:
         np.testing.assert_array_equal(source_image, view)
         assert not np.shares_memory(source_image, pixels)
 
-    def test_uint8_view_converts_the_retained_source_image(self) -> None:
-        """``source_image`` is already a positive-stride copy of a uint8 view, so conversion reuses it instead of
-        copying the frame a second time."""
+    def test_uint8_view_converts_the_retained_source_image(self, mocker: MockerFixture) -> None:
+        """A uint8 negative-stride view is converted from the retained ``source_image``, not copied a second time.
+
+        ``source_image`` is already a positive-stride copy of the view, so conversion reuses it.
+        """
         model = _DummyRFDETR()
         view = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)[:, :, ::-1]
-
-        with patch(
+        converter_spy = mocker.patch(
             "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
-        ) as converter_spy:
-            detections = model.predict(view)
+        )
+
+        detections = model.predict(view)
 
         converter_spy.assert_called_once()
         assert converter_spy.call_args.args[0] is detections.metadata["source_image"]
@@ -1019,26 +1033,39 @@ class TestPredictNegativeStrideNumpy:
             pytest.param(np.zeros((17, 58, 3), dtype=np.float32)[:, ::2], id="float32_positive_step"),
         ],
     )
-    def test_non_negative_stride_views_are_converted_without_a_copy(self, image: np.ndarray[Any, Any]) -> None:
+    def test_non_negative_stride_views_are_converted_without_a_copy(
+        self, image: np.ndarray[Any, Any], mocker: MockerFixture
+    ) -> None:
         """Positive-step views still hand the caller's own array to the tensor conversion."""
         model = _DummyRFDETR()
+        converter_spy = mocker.patch(
+            "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
+        )
+        to_tensor_spy = mocker.patch("rfdetr._prediction.core.F.to_tensor", wraps=F.to_tensor)
 
-        with (
-            patch(
-                "rfdetr._prediction.core._uint8_image_to_chw_view", wraps=core._uint8_image_to_chw_view
-            ) as converter_spy,
-            patch("rfdetr._prediction.core.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
-        ):
-            model.predict(image)
+        model.predict(image)
 
         converted = [call.args[0] for call in converter_spy.call_args_list + to_tensor_spy.call_args_list]
         assert len(converted) == 1, f"expected one tensor conversion, got {len(converted)}"
         assert converted[0] is image, "a view torch.from_numpy accepts must not be copied before conversion"
 
 
+@pytest.fixture
+def forbid_range_scan(mocker: MockerFixture) -> None:
+    """Make any pixel-range scan (``Tensor.any``) fail the test.
+
+    ``_normalization_tensors`` checks its std with ``Tensor.any()`` whenever its cache is cold, so it is replaced to
+    isolate the image-range scans, whatever ran before the test.
+    """
+    mocker.patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION)
+    mocker.patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan"))
+
+
 class TestPredictPixelRangeValidation:
-    """``predict()`` must still reject out-of-[0, 1]-range tensor inputs, now that the range check is deferred (see the
-    ``pending_checks`` comment in ``detr.py``) instead of raised inline, per image, inside the conversion loop."""
+    """``predict()`` rejects out-of-[0, 1] tensor inputs, although the range check is deferred past the conversion loop.
+
+    The check used to raise inline, per image (see the ``pending_checks`` comment in ``detr.py``).
+    """
 
     def test_raises_for_pixel_value_above_one(self) -> None:
         """A tensor with any pixel above 1 still raises after the range check moved off the hot path."""
@@ -1063,18 +1090,14 @@ class TestPredictPixelRangeValidation:
             pytest.param(np.full((8, 8, 3), 255, dtype=np.uint8), id="uint8_numpy"),
         ],
     )
+    @pytest.mark.usefixtures("forbid_range_scan")
     def test_known_valid_converted_image_skips_range_scans(self, image: PIL.Image.Image | np.ndarray[Any, Any]) -> None:
         """PIL conversion and uint8 NumPy scaling already guarantee values in [0, 1]."""
         model = _DummyRFDETR()
 
-        # ``torchvision.normalize`` has its own unrelated ``std.any()`` guard, so replace it to isolate the image-range
-        # scans exercised by this test.
-        with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
-            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
-        ):
-            model.predict(image, include_source_image=False)
+        model.predict(image, include_source_image=False)
 
+    @pytest.mark.usefixtures("forbid_range_scan")
     def test_known_valid_url_skips_range_scans(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A successful URL fetch becomes a PIL image and must bypass range scans."""
         model = _DummyRFDETR()
@@ -1089,11 +1112,8 @@ class TestPredictPixelRangeValidation:
             return _FakeResponse(content=_png_bytes(), status_code=200)
 
         monkeypatch.setattr(requests, "get", fake_get)
-        with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
-            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
-        ):
-            model.predict("https://example.com/image.png", include_source_image=False)
+
+        model.predict("https://example.com/image.png", include_source_image=False)
 
     def test_mixed_known_valid_and_float_numpy_images_still_check_each_image(self) -> None:
         """A known-valid first image must not suppress a later float image's range error."""
@@ -1104,17 +1124,14 @@ class TestPredictPixelRangeValidation:
         with pytest.raises(ValueError, match="pixel values above 1"):
             model.predict([known_valid, out_of_range], include_source_image=False)
 
+    @pytest.mark.usefixtures("forbid_range_scan")
     def test_known_valid_file_path_skips_range_scans(self, tmp_path: Path) -> None:
         """A local file path decodes to known-valid ``uint8`` pixels, so it skips the range scan too."""
         img_path = tmp_path / "known_valid.png"
         PIL.Image.new("RGB", (8, 8), color=(255, 255, 255)).save(str(img_path))
         model = _DummyRFDETR()
 
-        with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
-            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
-        ):
-            model.predict(str(img_path), include_source_image=False)
+        model.predict(str(img_path), include_source_image=False)
 
     def test_mixed_local_file_and_float_numpy_images_still_check_each_image(self, tmp_path: Path) -> None:
         """A natively decoded file must not suppress a later float image's range error."""
@@ -1125,16 +1142,13 @@ class TestPredictPixelRangeValidation:
         with pytest.raises(ValueError, match="pixel values above 1"):
             _DummyRFDETR().predict([str(img_path), out_of_range], include_source_image=False)
 
+    @pytest.mark.usefixtures("forbid_range_scan")
     def test_known_valid_image_skips_range_scans_with_source_image_capture(self) -> None:
         """The scan skip must still apply under ``include_source_image=True``, the public default."""
         model = _DummyRFDETR()
         image = PIL.Image.new("RGB", (8, 8), color=(255, 255, 255))
 
-        with (
-            patch("rfdetr._prediction.core.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
-            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
-        ):
-            model.predict(image)
+        model.predict(image)
 
     @pytest.mark.parametrize(
         ("value", "expected_message"),
@@ -1161,10 +1175,13 @@ class TestPredictPixelRangeValidation:
     def test_first_offending_image_in_input_order_determines_which_message_raises(
         self, first_image_violation: float, second_image_violation: float, expected_message: str
     ) -> None:
-        """Matches the original inline check's per-image precedence: image 0 is fully checked (both conditions) before
-        image 1 is considered at all, so image 0's own violation always raises first -- distinguishing this from a buggy
-        "condition-first" implementation that would scan every image's "above" violations before any "below" ones, which
-        would raise "above 1" from image 1 in the second case below instead of "below 0" from image 0."""
+        """The first offending image in input order decides which range error is raised.
+
+        Matches the original inline check's per-image precedence: image 0 is fully checked (both conditions) before
+        image 1 is considered at all. This distinguishes it from a buggy "condition-first" implementation that would
+        scan every image's "above" violations before any "below" ones and raise "above 1" from image 1 in the second
+        case below instead of "below 0" from image 0.
+        """
         first_image = torch.zeros(3, 8, 8)
         first_image[0, 0, 0] = first_image_violation
         second_image = torch.zeros(3, 8, 8)
@@ -1174,11 +1191,13 @@ class TestPredictPixelRangeValidation:
         with pytest.raises(ValueError, match=expected_message):
             model.predict([first_image, second_image])
 
-    def test_all_images_are_processed_before_a_later_raise(self) -> None:
-        """Regression pin for the deferred-check design: unlike the original per-image inline raise, which stopped
-        converting/transferring images the moment an earlier one failed, every image now has its conversion and transfer
-        queued before any range-check result is forced to a Python bool -- so a later, valid image is still fully
-        processed even though an earlier image ultimately makes the whole call raise."""
+    def test_all_images_are_processed_before_a_later_raise(self, mocker: MockerFixture) -> None:
+        """A later, valid image is still converted and transferred when an earlier image makes the call raise.
+
+        Regression pin for the deferred-check design: the original per-image inline raise stopped at the first failing
+        image, while every image now has its conversion and transfer queued before any range-check result is forced to
+        a Python bool.
+        """
         invalid_first = torch.zeros(3, 8, 8)
         invalid_first[0, 0, 0] = 1.5
         valid_second = torch.full((3, 8, 8), 0.5)
@@ -1198,16 +1217,18 @@ class TestPredictPixelRangeValidation:
                 transferred.append(True)
             return real_to(self, *args, **kwargs)
 
-        with patch.object(torch.Tensor, "to", to_spy), pytest.raises(ValueError, match="pixel values above 1"):
+        mocker.patch.object(torch.Tensor, "to", to_spy)
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
             model.predict([invalid_first, valid_second])
 
         assert transferred, "the later, valid image must still be transferred before the earlier image's error raises"
 
     @pytest.mark.gpu
     def test_mixed_cpu_and_cuda_tensor_images_are_each_checked_on_their_own_device(self) -> None:
-        """Pins the reason ``pending_checks`` keeps one check per image instead of ``torch.stack``-ing them:
+        """Pins the reason ``pending_checks`` keeps one check per image instead of ``torch.stack``-ing them.
 
-        images in a single ``predict()`` call are not guaranteed to share a device, and stacking a CPU-resident and a
+        Images in a single ``predict()`` call are not guaranteed to share a device, and stacking a CPU-resident and a
         CUDA-resident check result would raise ``RuntimeError`` instead of validating each on its own device.
         """
         model = _DummyRFDETR()
@@ -1224,8 +1245,10 @@ class TestPredictPixelRangeValidation:
         model.predict([cpu_valid, cuda_valid])
 
     def test_range_violation_raises_before_shape_violation_on_the_same_image(self) -> None:
-        """Matches the original inline check's within-image precedence: the original code raised the range error before
-        ever reaching the shape check for that same image.
+        """The range error is raised before the shape error for an image that is invalid on both.
+
+        Matches the original inline check's within-image precedence, which raised the range error before ever reaching
+        the shape check for that same image.
 
         Both checks are now deferred past the conversion loop, so this pins that the deferred range check still runs
         first in the post-loop raise order -- a tensor that is invalid on both axes at once must not surface the shape
@@ -1238,26 +1261,19 @@ class TestPredictPixelRangeValidation:
         with pytest.raises(ValueError, match="pixel values above 1"):
             model.predict(wrong_channels_and_out_of_range)
 
-    def test_non_3d_tensor_raises_shape_error_not_an_unpacking_crash(self) -> None:
-        """A 2D tensor (no channel dimension at all, not just the wrong channel count) must still raise
-        the clear "Invalid tensor image shape" ``ValueError`` -- not an internal ``ValueError: not
-        enough values to unpack`` from ``h, w = img_tensor.shape[1:]`` unconditionally unpacking a
-        shape that was never checked to have 3 dims in the first place, now that the shape-check raise
-        is deferred past that unpacking instead of happening inline before it.
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    def test_non_3d_tensor_raises_shape_error_not_an_unpacking_crash(self, include_source_image: bool) -> None:
+        """A 2D tensor must raise the clear "Invalid tensor image shape" error, with or without source-image capture.
+
+        A tensor with no channel dimension at all (not just the wrong channel count) must not crash with an internal
+        ``ValueError: not enough values to unpack`` from ``h, w = img_tensor.shape[1:]``, now that the shape-check raise
+        is deferred past that unpacking, and must validate before the default source-image conversion.
         """
         model = _DummyRFDETR()
         no_channel_dim = torch.zeros(4, 8)  # (H, W)-shaped, not (C, H, W)
 
         with pytest.raises(ValueError, match="Invalid tensor image shape"):
-            model.predict(no_channel_dim, include_source_image=False)
-
-    def test_non_3d_tensor_raises_shape_error_with_default_source_image(self) -> None:
-        """Malformed tensor ranks must validate before default source-image conversion."""
-        model = _DummyRFDETR()
-        no_channel_dim = torch.zeros(4, 8)
-
-        with pytest.raises(ValueError, match="Invalid tensor image shape"):
-            model.predict(no_channel_dim)
+            model.predict(no_channel_dim, include_source_image=include_source_image)
 
 
 class TestPredictShape:
@@ -1266,81 +1282,30 @@ class TestPredictShape:
     Regression tests for https://github.com/roboflow/rf-detr/issues/682.
     """
 
-    def test_predict_uses_resolution_when_no_shape_provided(self) -> None:
-        """Without ``shape=``, resize uses ``(resolution, resolution)``."""
-        from unittest.mock import patch
-
-        import torchvision.transforms.functional as F  # noqa: N812
-
-        model = _DummyRFDETR()
-        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
-
-        with patch("rfdetr._prediction.core.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img)
-
-        resize_size = list(mock_resize.call_args[0][1])
-        assert resize_size == [28, 28], f"Expected resize to model resolution (28, 28), got {resize_size}"
-
-    def test_predict_uses_provided_rectangular_shape(self) -> None:
-        # Regression test for #682
-        from unittest.mock import patch
-
-        import torchvision.transforms.functional as F  # noqa: N812
-
-        model = _DummyRFDETR()
-        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
-
-        with patch("rfdetr._prediction.core.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img, shape=(378, 672))
-
-        resize_size = list(mock_resize.call_args[0][1])
-        assert resize_size == [378, 672], (
-            f"Expected resize to user-provided shape (378, 672), got {resize_size}. "
-            "predict() must honour the shape parameter instead of falling back "
-            "to (resolution, resolution)."
-        )
-
-    def test_predict_shape_square_override(self) -> None:
-        # Regression test for #682 — square shape different from model resolution.
-        from unittest.mock import patch
-
-        import torchvision.transforms.functional as F  # noqa: N812
-
-        model = _DummyRFDETR()
-        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
-
-        with patch("rfdetr._prediction.core.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img, shape=(56, 56))
-
-        resize_size = list(mock_resize.call_args[0][1])
-        assert resize_size == [56, 56], (
-            f"Expected resize to user-provided shape (56, 56), got {resize_size}. "
-            "predict() must honour the shape parameter even for square sizes "
-            "that differ from the model's default resolution."
-        )
-
     @pytest.mark.parametrize(
-        "int_shape",
+        ("shape", "expected_size"),
         [
-            pytest.param((np.int64(378), np.int64(672)), id="numpy_int64"),
-            pytest.param((np.int32(378), np.int32(672)), id="numpy_int32"),
-            pytest.param((torch.tensor(378), torch.tensor(672)), id="torch_scalar"),
+            pytest.param(None, [28, 28], id="default-resolution"),
+            pytest.param((378, 672), [378, 672], id="rectangular"),
+            pytest.param((56, 56), [56, 56], id="square-differs-from-resolution"),
+            pytest.param((np.int64(378), np.int64(672)), [378, 672], id="numpy_int64"),
+            pytest.param((np.int32(378), np.int32(672)), [378, 672], id="numpy_int32"),
+            pytest.param((torch.tensor(378), torch.tensor(672)), [378, 672], id="torch_scalar"),
         ],
     )
-    def test_predict_shape_accepts_integer_like_types(self, int_shape: tuple) -> None:
-        """Predict() accepts integer-like types (numpy, torch) via the __index__ protocol."""
-        from unittest.mock import patch
+    def test_resize_target(self, shape: tuple | None, expected_size: list[int], mocker: MockerFixture) -> None:
+        """Resize targets the requested ``shape`` (integer-like types included), else ``(resolution, resolution)``.
 
-        import torchvision.transforms.functional as F  # noqa: N812
-
+        Regression test for #682: ``predict()`` must honour ``shape`` instead of falling back to the model resolution,
+        and accepts integer-like types (NumPy, torch) through the ``__index__`` protocol.
+        """
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        mock_resize = mocker.patch("rfdetr._prediction.core.F.resize", wraps=F.resize)
 
-        with patch("rfdetr._prediction.core.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img, shape=int_shape)  # type: ignore[arg-type]
+        model.predict(img, shape=shape)  # type: ignore[arg-type]
 
-        resize_size = list(mock_resize.call_args[0][1])
-        assert resize_size == [378, 672], f"predict() must accept integer-like shape types, got resize {resize_size}"
+        assert list(mock_resize.call_args[0][1]) == expected_size
 
     @pytest.mark.parametrize(
         "bad_shape",
@@ -1349,7 +1314,7 @@ class TestPredictShape:
             pytest.param((371, 672), id="height_not_div_14"),  # 371 % 14 != 0
         ],
     )
-    def test_predict_shape_not_divisible_by_14_raises(self, bad_shape: tuple[int, int]) -> None:
+    def test_shape_not_divisible_by_14_raises(self, bad_shape: tuple[int, int]) -> None:
         """Predict() must reject shapes with dimensions not divisible by 14."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -1370,7 +1335,7 @@ class TestPredictShape:
             pytest.param((56, False), id="bool_width"),
         ],
     )
-    def test_predict_shape_invalid_raises(self, bad_shape: tuple[int | float | bool, ...]) -> None:
+    def test_invalid_shape_raises(self, bad_shape: tuple[int | float | bool, ...]) -> None:
         """Predict() must raise ValueError for invalid shape values."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -1400,16 +1365,16 @@ class TestPredictResizeMatchesTrainingInterpolation:
             pytest.param({"antialias": True}, True, id="opt-in"),
         ],
     )
-    def test_predict_resize_antialias_flag(
-        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool
+    def test_resize_antialias_flag(
+        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool, mocker: MockerFixture
     ) -> None:
         """``predict()`` passes the requested ``antialias`` flag to ``F.resize``; the default is ``False``."""
         native_model = _DummyRFDETR()
         model = RFDETRInference(native_model) if use_facade else native_model
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr._prediction.core.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img, **predict_kwargs)
+        mock_resize = mocker.patch("rfdetr._prediction.core.F.resize", wraps=F.resize)
+        model.predict(img, **predict_kwargs)
 
         assert mock_resize.call_args.kwargs.get("antialias") is expected_antialias, (
             "predict() must resize with antialias=False by default (the #1203 contract: the antialias-free "
@@ -1418,7 +1383,7 @@ class TestPredictResizeMatchesTrainingInterpolation:
         )
 
     @pytest.mark.parametrize("antialias", [False, True])
-    def test_streamed_predict_resize_antialias_flag(self, antialias: bool) -> None:
+    def test_streamed_resize_antialias_flag(self, antialias: bool, mocker: MockerFixture) -> None:
         """Streamed facade prediction resizes each lazy batch with the requested ``antialias`` flag.
 
         The lazy path predicts batches after the call returns, so it must carry the flag into every batch rather than
@@ -1427,12 +1392,12 @@ class TestPredictResizeMatchesTrainingInterpolation:
         predictor = RFDETRInference(_DummyRFDETR())
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr._prediction.core.F.resize", wraps=F.resize) as mock_resize:
-            list(predictor.predict([img], stream=True, antialias=antialias))
+        mock_resize = mocker.patch("rfdetr._prediction.core.F.resize", wraps=F.resize)
+        list(predictor.predict([img], stream=True, antialias=antialias))
 
         assert mock_resize.call_args.kwargs.get("antialias") is antialias
 
-    def test_predict_antialias_changes_resize_and_matches_reference(self) -> None:
+    def test_antialias_changes_resize_and_matches_reference(self) -> None:
         """``antialias=True`` feeds the model an antialiased resize that differs from the default one."""
         model = _DummyRFDETR()
         resolution = model.model.resolution
@@ -1498,6 +1463,7 @@ class TestPredictMpsAntialiasFallback:
         mps_lacks_kernel: bool,
         expected_events: list[str],
         expected_transfer_shapes: list[tuple[int, ...]],
+        mocker: MockerFixture,
     ) -> None:
         """Only antialiasing on an MPS-kernel-less torch resizes on CPU, then moves one batch to MPS."""
         model = _DummyRFDETR()
@@ -1553,14 +1519,13 @@ class TestPredictMpsAntialiasFallback:
             resize_antialias.append(kwargs.get("antialias"))
             return real_resize(tensor, *args, **kwargs)
 
-        with (
-            patch("rfdetr.detr._move_model_context_to_device"),
-            patch("rfdetr._prediction.core._mps_lacks_antialiased_resize", return_value=mps_lacks_kernel),
-            patch.object(torch.Tensor, "to", to_spy),
-            patch.object(torch, "tensor", tensor_spy),
-            patch("rfdetr._prediction.core.F.resize", side_effect=resize_spy),
-        ):
-            model.predict(images, antialias=antialias)
+        mocker.patch("rfdetr.detr._move_model_context_to_device")
+        mocker.patch("rfdetr._prediction.core._mps_lacks_antialiased_resize", return_value=mps_lacks_kernel)
+        mocker.patch.object(torch.Tensor, "to", to_spy)
+        mocker.patch.object(torch, "tensor", tensor_spy)
+        mocker.patch("rfdetr._prediction.core.F.resize", side_effect=resize_spy)
+
+        model.predict(images, antialias=antialias)
 
         assert resize_antialias == [antialias, antialias]
         assert events == expected_events
@@ -1576,15 +1541,18 @@ class TestPredictPatchSize:
         model.model_config = SimpleNamespace(patch_size=patch_size, num_windows=num_windows, num_channels=3)
         return model
 
-    def test_predict_defaults_patch_size_from_model_config(self) -> None:
-        """Predict() reads patch_size from model_config when not provided by the caller."""
+    @pytest.mark.parametrize(
+        "patch_kwargs", [pytest.param({}, id="from-config"), pytest.param({"patch_size": 16}, id="explicit-matching")]
+    )
+    def test_patch_size_matching_config_does_not_raise(self, patch_kwargs: dict[str, int]) -> None:
+        """Predict() reads patch_size from model_config unless the caller passes the same value explicitly."""
         # patch_size=16, num_windows=2 → block_size=32; shape=(64,64) is valid
         model = self._make_model_with_config(patch_size=16, num_windows=2)
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         # Should not raise — 64 % 32 == 0
-        model.predict(img, shape=(64, 64))
+        model.predict(img, shape=(64, 64), **patch_kwargs)
 
-    def test_predict_shape_must_be_divisible_by_block_size(self) -> None:
+    def test_shape_must_be_divisible_by_block_size(self) -> None:
         """Predict() rejects shapes not divisible by patch_size * num_windows."""
         # patch_size=16, num_windows=2 → block_size=32; shape (48, 64) fails (48%32==16)
         model = self._make_model_with_config(patch_size=16, num_windows=2)
@@ -1593,14 +1561,14 @@ class TestPredictPatchSize:
             model.predict(img, shape=(48, 64))
 
     @pytest.mark.parametrize("bad_patch_size", [0, -1, True, False])
-    def test_predict_invalid_patch_size_raises(self, bad_patch_size: int) -> None:
+    def test_invalid_patch_size_raises(self, bad_patch_size: int) -> None:
         """Predict() must raise ValueError when patch_size is not a positive integer."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             model.predict(img, patch_size=bad_patch_size)  # type: ignore[arg-type]
 
-    def test_predict_patch_size_mismatch_raises(self) -> None:
+    def test_patch_size_mismatch_raises(self) -> None:
         """Predict() must raise ValueError when caller's patch_size != model_config.patch_size."""
         # model has patch_size=16; passing patch_size=14 should raise immediately
         model = self._make_model_with_config(patch_size=16, num_windows=1)
@@ -1608,16 +1576,8 @@ class TestPredictPatchSize:
         with pytest.raises(ValueError, match="does not match"):
             model.predict(img, shape=(16, 16), patch_size=14)
 
-    def test_predict_explicit_patch_size_matching_config_succeeds(self) -> None:
-        """predict(patch_size=X) must succeed when X matches model_config.patch_size."""
-        # patch_size=16, num_windows=2 → block_size=32; shape=(64,64) is valid
-        model = self._make_model_with_config(patch_size=16, num_windows=2)
-        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
-        # Should not raise — patch_size matches config, 64 % 32 == 0
-        model.predict(img, shape=(64, 64), patch_size=16)
-
     @pytest.mark.parametrize("bad_num_windows", [0, -1, True])
-    def test_predict_invalid_num_windows_raises(self, bad_num_windows: int) -> None:
+    def test_invalid_num_windows_raises(self, bad_num_windows: int) -> None:
         """Predict() must raise ValueError when model_config.num_windows is not a positive integer."""
         model = self._make_model_with_config(patch_size=14, num_windows=1)
         model.model_config.num_windows = bad_num_windows
@@ -1625,7 +1585,7 @@ class TestPredictPatchSize:
         with pytest.raises(ValueError, match="num_windows must be a positive integer"):
             model.predict(img, shape=(14, 14))
 
-    def test_predict_default_resolution_not_divisible_by_block_size_raises(self) -> None:
+    def test_default_resolution_not_divisible_by_block_size_raises(self) -> None:
         """Predict() with shape=None must raise ValueError when model.resolution % block_size != 0."""
         # patch_size=14, num_windows=1 → block_size=14; set resolution=25 (not divisible)
         model = self._make_model_with_config(patch_size=14, num_windows=1)
@@ -1638,9 +1598,8 @@ class TestPredictPatchSize:
 class TestPredictNonRGBAutoConvert:
     """Predict() must silently convert non-RGB PIL images and file paths to RGB.
 
-    Standard detector contract: callers pass images in any PIL mode (L, LA,
-    RGBA, P …) and expect detection results, not opaque tensor-shape errors.
-    Tensor inputs with wrong channel count are still the caller's error.
+    Standard detector contract: callers pass images in any PIL mode (L, LA, RGBA, P …) and expect detection results,
+    not opaque tensor-shape errors. Tensor inputs with wrong channel count are still the caller's error.
     """
 
     @pytest.mark.parametrize(
@@ -1653,19 +1612,15 @@ class TestPredictNonRGBAutoConvert:
             pytest.param("CMYK", id="cmyk"),
         ],
     )
-    def test_non_rgb_pil_image_succeeds(self, pil_mode: str) -> None:
+    def test_non_rgb_pil_image_returns_detections(self, pil_mode: str) -> None:
         """PIL images in any mode are auto-converted to RGB and return sv.Detections."""
-        import supervision as sv
-
         img = PIL.Image.new(pil_mode, (28, 28))
         model = _DummyRFDETR()
         detections = model.predict(img)
         assert isinstance(detections, sv.Detections)
 
-    def test_grayscale_file_path_succeeds(self, tmp_path) -> None:
+    def test_grayscale_file_path_returns_detections(self, tmp_path: Path) -> None:
         """Grayscale image opened from a file path is auto-converted and returns sv.Detections."""
-        import supervision as sv
-
         img_path = tmp_path / "gray.png"
         PIL.Image.new("L", (28, 28)).save(str(img_path))
         model = _DummyRFDETR()
@@ -1674,8 +1629,6 @@ class TestPredictNonRGBAutoConvert:
 
     def test_wrong_channel_tensor_still_raises(self) -> None:
         """Tensor inputs with wrong channel count must still raise ValueError with helpful message."""
-        import torch
-
         # 1-channel tensor — caller is responsible for correct shape
         tensor = torch.rand(1, 28, 28)
         model = _DummyRFDETR()

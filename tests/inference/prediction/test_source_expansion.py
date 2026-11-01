@@ -5,23 +5,40 @@
 # ------------------------------------------------------------------------
 """Prediction from manifests and optional source adapters."""
 
+import dataclasses
 import io
 import tempfile
 import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import supervision as sv
 import torch
 from PIL import Image
+from pytest_mock import MockerFixture
 
+from rfdetr._prediction import core
+from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
+from tests._markers import requires_mps
 
 from ..helpers import _DummyRFDETR, _requires_opencv
+
+
+@pytest.fixture
+def youtube_module(mocker: MockerFixture) -> MagicMock:
+    """A patched ``yt_dlp`` whose downloader resolves every page to ``https://video.example/frames.mp4``."""
+    module = mocker.MagicMock()
+    downloader = module.YoutubeDL.return_value.__enter__.return_value
+    downloader.extract_info.return_value = {"url": "https://video.example/frames.mp4"}
+    mocker.patch.dict("sys.modules", {"yt_dlp": module})
+    return module
 
 
 class TestManifestPrediction:
@@ -93,15 +110,6 @@ class TestManifestPrediction:
         assert all(handle.closed for handle in handles)
         results.close()
 
-    def test_nested_manifest_cycle_has_clear_error(self, tmp_path: Path) -> None:
-        """Recursive manifests fail with a readable error."""
-        first = tmp_path / "first.txt"
-        second = tmp_path / "second.txt"
-        first.write_text("second.txt\n")
-        second.write_text("first.txt\n")
-        with pytest.raises(ValueError, match="manifest cycle"):
-            RFDETRInference(_DummyRFDETR()).predict(first)
-
     def test_nested_manifest_can_repeat_without_a_cycle(self, tmp_path: Path) -> None:
         """Repeated manifests produce repeated predictions."""
         Image.new("RGB", (32, 24)).save(tmp_path / "image.png")
@@ -110,6 +118,7 @@ class TestManifestPrediction:
         manifest.write_text("nested.txt\nnested.txt\n")
         assert len(RFDETRInference(_DummyRFDETR()).predict(manifest)) == 2
 
+    @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize(
         "suffix,content",
         [
@@ -118,32 +127,22 @@ class TestManifestPrediction:
             pytest.param(".csv", "", id="csv-empty-file"),
         ],
     )
-    def test_empty_manifest_returns_no_predictions(self, tmp_path: Path, suffix: str, content: str) -> None:
-        """An eager call over a manifest that lists no sources returns an empty result list.
+    def test_empty_manifest_yields_no_predictions(
+        self, tmp_path: Path, suffix: str, content: str, stream: bool
+    ) -> None:
+        """A manifest that lists no sources yields no predictions, as an empty list or an ended stream, without raising.
 
         An empty collection holds no inputs, so it is not an error; this differs from an empty list literal, which keeps
-        raising because a batch with nothing to predict is a caller bug.
+        raising because a batch with nothing to predict is a caller bug. Ending the stream is the quiet half of the
+        empty-source policy, while an empty directory or ``.streams`` file is the loud half.
         """
         manifest = tmp_path / f"sources{suffix}"
         manifest.write_text(content)
-        assert RFDETRInference(_DummyRFDETR()).predict(manifest) == []
 
-    @pytest.mark.parametrize(
-        "suffix,content",
-        [
-            pytest.param(".txt", "# comment\n\n", id="txt-comments-and-blanks"),
-            pytest.param(".csv", "source\n", id="csv-header-only"),
-        ],
-    )
-    def test_empty_manifest_streams_nothing(self, tmp_path: Path, suffix: str, content: str) -> None:
-        """A streamed call over a manifest that lists no sources yields nothing instead of raising.
+        results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream)
 
-        A pipeline can feed a manifest that happens to be empty; ending the stream is the quiet half of the empty-source
-        policy, while an empty directory or ``.streams`` file is the loud half.
-        """
-        manifest = tmp_path / f"sources{suffix}"
-        manifest.write_text(content)
-        assert list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True)) == []
+        assert isinstance(results, list) is not stream
+        assert list(results) == []
 
 
 def _symlinks_supported() -> bool:
@@ -211,7 +210,9 @@ class TestManifestEdgeCases:
             pytest.param("# comment\n\n", id="comments-and-blanks"),
         ],
     )
-    def test_streams_manifest_without_sources_raises(self, tmp_path: Path, content: str, stream: bool) -> None:
+    def test_streams_manifest_without_sources_raises(
+        self, tmp_path: Path, content: str, stream: bool, mocker: MockerFixture
+    ) -> None:
         """A ``.streams`` file that lists no sources raises before any capture opens, eager or streamed.
 
         A concurrent-capture manifest exists to open cameras, so an empty one is a wrong path or a generation bug. The
@@ -220,12 +221,12 @@ class TestManifestEdgeCases:
         manifest = tmp_path / "sources.streams"
         manifest.write_text(content)
         # Guard the package capture boundary so this validation also runs without OpenCV.
-        with (
-            patch("rfdetr._prediction.sources._import_cv2") as video_import,
-            patch("rfdetr._prediction.streams._import_cv2") as live_import,
-        ):
-            with pytest.raises(ValueError, match="no sources"):
-                list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream))
+        video_import = mocker.patch("rfdetr._prediction.sources._import_cv2")
+        live_import = mocker.patch("rfdetr._prediction.streams._import_cv2")
+
+        with pytest.raises(ValueError, match="no sources"):
+            list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream))
+
         video_import.assert_not_called()
         live_import.assert_not_called()
 
@@ -249,13 +250,22 @@ class TestManifestEdgeCases:
 
         assert _source_pixels(RFDETRInference(_DummyRFDETR()).predict(manifest)) == [[10, 20, 30]]
 
-    def test_manifest_listing_itself_is_a_cycle(self, tmp_path: Path) -> None:
-        """A manifest that names itself fails with the cycle error instead of recursing."""
-        manifest = tmp_path / "sources.txt"
-        manifest.write_text("sources.txt\n")
+    @pytest.mark.parametrize(
+        ("files", "start"),
+        [
+            pytest.param({"sources.txt": "sources.txt\n"}, "sources.txt", id="self-listing"),
+            pytest.param({"first.txt": "second.txt\n", "second.txt": "first.txt\n"}, "first.txt", id="mutual"),
+        ],
+    )
+    def test_manifest_cycle_raises_instead_of_recursing(
+        self, tmp_path: Path, files: dict[str, str], start: str
+    ) -> None:
+        """A manifest that lists itself, directly or through another manifest, fails with a readable cycle error."""
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
 
         with pytest.raises(ValueError, match="manifest cycle"):
-            RFDETRInference(_DummyRFDETR()).predict(manifest)
+            RFDETRInference(_DummyRFDETR()).predict(tmp_path / start)
 
     @_skip_without_symlinks
     def test_symlink_alias_of_a_manifest_is_a_cycle_on_the_real_file(self, tmp_path: Path) -> None:
@@ -268,12 +278,17 @@ class TestManifestEdgeCases:
         manifest.write_text("alias.txt\n")
         (tmp_path / "alias.txt").symlink_to(manifest)
 
-        with pytest.raises(ValueError, match=r"manifest cycle: .*sources\.txt\."):
+        with pytest.raises(ValueError) as exc_info:
             RFDETRInference(_DummyRFDETR()).predict(manifest)
+
+        assert "manifest cycle: " in str(exc_info.value)
+        assert "sources.txt." in str(exc_info.value).split("manifest cycle: ", 1)[1]
 
     @_requires_opencv
     @pytest.mark.parametrize("stream", [False, True])
-    def test_streams_manifest_nested_in_text_manifest_opens_its_captures(self, tmp_path: Path, stream: bool) -> None:
+    def test_streams_manifest_nested_in_text_manifest_opens_its_captures(
+        self, tmp_path: Path, stream: bool, mocker: MockerFixture
+    ) -> None:
         """A ``.streams`` file listed by a ``.txt`` manifest is read relative to the outer manifest.
 
         The nested file keeps its concurrent-capture meaning: its video opens once, relative to the nested file, and
@@ -284,23 +299,17 @@ class TestManifestEdgeCases:
         (tmp_path / "cameras.streams").write_text("video.avi\n")
         manifest = tmp_path / "sources.txt"
         manifest.write_text("cameras.streams\n")
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         capture.get.return_value = 1.0
 
-        with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            predictions = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream, stream_buffer=True))
+        open_capture = mocker.patch("cv2.VideoCapture", return_value=capture)
+        predictions = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=stream, stream_buffer=True))
 
         assert len(predictions) == 1
         open_capture.assert_called_once_with(str(video))
 
-    @pytest.mark.parametrize(
-        "entry",
-        [
-            pytest.param("../a.png", id="parent-relative"),
-            pytest.param("{root}/a.png", id="absolute"),
-        ],
-    )
+    @pytest.mark.parametrize("entry", ["../a.png", "{root}/a.png"])
     def test_parent_relative_and_absolute_entries_resolve(self, tmp_path: Path, image: Path, entry: str) -> None:
         """Entries outside the manifest directory are followed as written; nothing confines them.
 
@@ -337,53 +346,59 @@ class TestManifestEdgeCases:
 class TestOptionalSources:
     """Optional adapters preserve RGB frames and close their resources."""
 
-    def test_screen_region_uses_monitor_offset_and_closes(self) -> None:
+    def test_screen_region_uses_monitor_offset_and_closes(self, mocker: MockerFixture) -> None:
         """Screen coordinates are relative to the selected monitor."""
-        module = MagicMock()
+        module = mocker.MagicMock()
         capture = module.mss.return_value.__enter__.return_value
         capture.monitors = [
             {"left": 0, "top": 0, "width": 100, "height": 100},
             {"left": 100, "top": 200, "width": 100, "height": 100},
         ]
         capture.grab.return_value = np.full((24, 32, 4), (10, 20, 30, 255), dtype=np.uint8)
-        with patch.dict("sys.modules", {"mss": module}):
-            results = RFDETRInference(_DummyRFDETR()).predict("screen 1 5 6 32 24", stream=True)
-            result = next(results)
-            results.close()
+        mocker.patch.dict("sys.modules", {"mss": module})
+
+        results = RFDETRInference(_DummyRFDETR()).predict("screen 1 5 6 32 24", stream=True)
+        result = next(results)
+        results.close()
+
         assert isinstance(result, sv.Detections)
         np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [30, 20, 10])
         capture.grab.assert_called_once_with({"left": 105, "top": 206, "width": 32, "height": 24})
         module.mss.return_value.__exit__.assert_called_once()
 
     @pytest.mark.parametrize("source", ["screen -1", "screen 0 0 0 24", "screen 1 2", "screen invalid"])
-    def test_invalid_screen_source_fails_before_capture(self, source: str) -> None:
+    def test_invalid_screen_source_fails_before_capture(self, source: str, mocker: MockerFixture) -> None:
         """Invalid screen arguments fail before the desktop is read."""
-        with patch.dict("sys.modules", {"mss": None}):
-            with pytest.raises(ValueError, match="Screen|screen"):
-                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
+        mocker.patch.dict("sys.modules", {"mss": None})
+
+        with pytest.raises(ValueError) as exc_info:
+            next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
+
+        assert "screen" in str(exc_info.value).lower()
 
     @pytest.mark.parametrize("module,source", [("mss", "screen"), ("yt_dlp", "https://youtu.be/video")])
-    def test_missing_optional_package_has_install_guidance(self, module: str, source: str) -> None:
+    def test_missing_optional_package_has_install_guidance(
+        self, module: str, source: str, mocker: MockerFixture
+    ) -> None:
         """Missing optional dependencies provide an actionable install hint."""
-        with patch.dict("sys.modules", {module: None}):
-            with pytest.raises(ImportError, match=r"rfdetr\[stream\]"):
-                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
+        mocker.patch.dict("sys.modules", {module: None})
+
+        with pytest.raises(ImportError) as exc_info:
+            next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
+
+        assert "rfdetr[stream]" in str(exc_info.value)
 
     @_requires_opencv
-    def test_youtube_resolves_page_without_downloading(self) -> None:
+    def test_youtube_resolves_page_without_downloading(self, youtube_module: MagicMock, mocker: MockerFixture) -> None:
         """YouTube inference opens the resolved stream and converts RGB."""
-        module = MagicMock()
-        downloader = module.YoutubeDL.return_value.__enter__.return_value
-        downloader.extract_info.return_value = {"url": "https://video.example/frames.mp4"}
-        capture = MagicMock()
+        downloader = youtube_module.YoutubeDL.return_value.__enter__.return_value
+        capture = mocker.MagicMock()
         capture.read.side_effect = [(True, np.full((24, 32, 3), (10, 20, 30), dtype=np.uint8)), (False, None)]
-        with (
-            patch.dict("sys.modules", {"yt_dlp": module}),
-            patch("cv2.VideoCapture", return_value=capture) as open_capture,
-        ):
-            results = RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True)
-            result = next(results)
-            assert list(results) == []
+        open_capture = mocker.patch("cv2.VideoCapture", return_value=capture)
+
+        results = RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True)
+        result = next(results)
+        assert list(results) == []
         assert isinstance(result, sv.Detections)
         np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [30, 20, 10])
         downloader.extract_info.assert_called_once_with("https://youtu.be/video", download=False)
@@ -391,7 +406,9 @@ class TestOptionalSources:
         capture.release.assert_called_once()
 
     @_requires_opencv
-    def test_stream_manifest_resolves_youtube_pages_concurrently(self, tmp_path: Path) -> None:
+    def test_stream_manifest_resolves_youtube_pages_concurrently(
+        self, tmp_path: Path, youtube_module: MagicMock, mocker: MockerFixture
+    ) -> None:
         """YouTube entries of a stream manifest resolve together instead of one after another.
 
         Each lookup blocks until the other is running, so a serial resolver would wait out the barrier timeout; results
@@ -404,115 +421,117 @@ class TestOptionalSources:
         manifest = tmp_path / "videos.streams"
         manifest.write_text("\n".join(pages))
         barrier = threading.Barrier(2, timeout=2)
-        module = MagicMock()
-        downloader = module.YoutubeDL.return_value.__enter__.return_value
+        downloader = youtube_module.YoutubeDL.return_value.__enter__.return_value
         downloader.extract_info.side_effect = lambda page, download: {"url": pages[page], "arrived": barrier.wait()}
-        captures = {url: MagicMock() for url in pages.values()}
+        captures = {url: mocker.MagicMock() for url in pages.values()}
         for value, capture in enumerate(captures.values(), start=1):
             capture.get.return_value = 0
             capture.read.side_effect = [(True, np.full((24, 32, 3), value, dtype=np.uint8)), (False, None)]
-        with (
-            patch.dict("sys.modules", {"yt_dlp": module}),
-            patch("cv2.VideoCapture", side_effect=lambda source, *args: captures[source]),
-        ):
-            results = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True))
+        mocker.patch("cv2.VideoCapture", side_effect=lambda source, *args: captures[source])
+
+        results = list(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True))
+
         assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [1, 2]
 
     @_requires_opencv
-    def test_youtube_resolution_caps_height_and_bounds_the_wait(self) -> None:
+    def test_youtube_resolution_caps_height_and_bounds_the_wait(
+        self, youtube_module: MagicMock, mocker: MockerFixture
+    ) -> None:
         """Resolution passes yt-dlp a height-capped format chain and an explicit socket timeout.
 
         Frames are resized to the model resolution, so selecting a 4K or 8K stream only costs decode memory; an
         unbounded wait on an unresponsive host would block the first ``next()`` of the prediction generator.
         """
-        module = MagicMock()
-        downloader = module.YoutubeDL.return_value.__enter__.return_value
-        downloader.extract_info.return_value = {"url": "https://video.example/frames.mp4"}
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
-        with patch.dict("sys.modules", {"yt_dlp": module}), patch("cv2.VideoCapture", return_value=capture):
-            list(RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True))
-        options = module.YoutubeDL.call_args.args[0]
+        mocker.patch("cv2.VideoCapture", return_value=capture)
+
+        list(RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True))
+
+        options = youtube_module.YoutubeDL.call_args.args[0]
         assert all("[height<=?" in selector for selector in options["format"].split("/"))
         assert 0 < options["socket_timeout"] <= 30
 
-    def test_youtube_download_error_is_a_value_error_naming_the_source(self) -> None:
+    def test_youtube_download_error_is_a_value_error_naming_the_source(self, youtube_module: MagicMock) -> None:
         """A yt-dlp resolution failure surfaces as ``ValueError`` that names the page and chains the original error.
 
         A private, region-locked or removed video makes yt-dlp raise its own ``DownloadError``. Callers handle the
         ``ValueError`` family that every other source problem uses, and the message must say which source failed.
         """
-        module = MagicMock()
-        module.utils.DownloadError = type("DownloadError", (Exception,), {})
-        downloader = module.YoutubeDL.return_value.__enter__.return_value
-        downloader.extract_info.side_effect = module.utils.DownloadError("ERROR: [youtube] video: Video unavailable")
-        with patch.dict("sys.modules", {"yt_dlp": module}):
-            with pytest.raises(ValueError, match=r"https://youtu\.be/video.*Video unavailable") as raised:
-                next(RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True))
-        assert isinstance(raised.value.__cause__, module.utils.DownloadError)
+        youtube_module.utils.DownloadError = type("DownloadError", (Exception,), {})
+        downloader = youtube_module.YoutubeDL.return_value.__enter__.return_value
+        downloader.extract_info.side_effect = youtube_module.utils.DownloadError(
+            "ERROR: [youtube] video: Video unavailable"
+        )
+
+        with pytest.raises(ValueError) as raised:
+            next(RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video", stream=True))
+
+        assert "https://youtu.be/video" in str(raised.value)
+        assert "Video unavailable" in str(raised.value)
+        assert isinstance(raised.value.__cause__, youtube_module.utils.DownloadError)
 
 
 class TestSourceRouting:
     """Source routing preserves image URLs and validates stream manifests."""
 
     @_requires_opencv
-    def test_suffixless_http_stream_manifest_opens_capture(self, tmp_path: Path) -> None:
+    def test_suffixless_http_stream_manifest_opens_capture(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A stream manifest explicitly opts an extensionless HTTP endpoint into video capture."""
         url = "https://camera.example/feed?id=42"
         manifest = tmp_path / "camera.streams"
         manifest.write_text(url)
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.read.return_value = (True, np.full((24, 32, 3), (10, 20, 30), dtype=np.uint8))
-        with (
-            patch("cv2.VideoCapture", return_value=capture) as open_capture,
-            patch("requests.get", side_effect=AssertionError("unexpected image download")),
-        ):
-            results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True)
+        open_capture = mocker.patch("cv2.VideoCapture", return_value=capture)
+        mocker.patch("requests.get", side_effect=AssertionError("unexpected image download"))
+
+        with closing(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True)) as results:
             open_capture.assert_not_called()
-            try:
-                result = next(results)
-                assert isinstance(result, sv.Detections)
-                np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [30, 20, 10])
-                assert open_capture.call_args.args[0] == url
-            finally:
-                results.close()
+            result = next(results)
+            assert isinstance(result, sv.Detections)
+            np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [30, 20, 10])
+            assert open_capture.call_args.args[0] == url
         capture.release.assert_called_once()
 
     @_requires_opencv
-    def test_suffixless_http_url_remains_an_image(self) -> None:
+    def test_suffixless_http_url_remains_an_image(self, mocker: MockerFixture) -> None:
         """An image endpoint without a suffix keeps the existing scalar result."""
         buffer = io.BytesIO()
         Image.new("RGB", (32, 24), (10, 20, 30)).save(buffer, format="PNG")
-        response = MagicMock()
+        response = mocker.MagicMock()
         response.content = buffer.getvalue()
-        with (
-            patch("requests.get", return_value=response),
-            patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")) as capture,
-        ):
-            result = RFDETRInference(_DummyRFDETR()).predict("https://images.example/render?id=42")
+        mocker.patch("requests.get", return_value=response)
+        capture = mocker.patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture"))
+
+        result = RFDETRInference(_DummyRFDETR()).predict("https://images.example/render?id=42")
+
         assert isinstance(result, sv.Detections)
         capture.assert_not_called()
 
     @_requires_opencv
     @pytest.mark.parametrize("entry", ["screen", "missing.avi", "image.png", "https://images.example/image.png"])
-    def test_invalid_stream_manifest_entries_fail_before_capture(self, tmp_path: Path, entry: str) -> None:
+    def test_invalid_stream_manifest_entries_fail_before_capture(
+        self, tmp_path: Path, entry: str, mocker: MockerFixture
+    ) -> None:
         """Stream manifests accept video captures rather than arbitrary images or screens."""
         manifest = tmp_path / "sources.streams"
         manifest.write_text(entry)
-        with patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture")) as capture:
-            with pytest.raises((ValueError, FileNotFoundError), match="[Ss]tream|[Vv]ideo"):
-                next(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True))
-            capture.assert_not_called()
+        capture = mocker.patch("cv2.VideoCapture", side_effect=AssertionError("unexpected capture"))
+        with pytest.raises((ValueError, FileNotFoundError)) as exc_info:
+            next(RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True))
+        assert any(word in str(exc_info.value).lower() for word in ("stream", "video"))
+        capture.assert_not_called()
 
     @_requires_opencv
-    def test_remote_video_uses_capture_timeouts(self) -> None:
+    def test_remote_video_uses_capture_timeouts(self, mocker: MockerFixture) -> None:
         """Remote finite video reads use bounded OpenCV open and read calls."""
         import cv2
 
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
-        with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = RFDETRInference(_DummyRFDETR()).predict("https://video.example/movie.mp4")
+        open_capture = mocker.patch("cv2.VideoCapture", return_value=capture)
+        results = RFDETRInference(_DummyRFDETR()).predict("https://video.example/movie.mp4")
         assert isinstance(results, list)
         assert len(results) == 1
         open_capture.assert_called_once_with(
@@ -522,22 +541,11 @@ class TestSourceRouting:
         )
 
     @_requires_opencv
-    def test_eager_nested_live_manifest_warns_before_capture(self, tmp_path: Path) -> None:
-        """Live sources inside nested manifests warn before capture starts."""
-        (tmp_path / "nested.txt").write_text("0")
-        manifest = tmp_path / "sources.txt"
-        manifest.write_text("nested.txt")
-        with patch("cv2.VideoCapture", side_effect=RuntimeError("capture attempted")):
-            with pytest.warns(UserWarning, match="stream=True"):
-                with pytest.raises(RuntimeError, match="capture attempted"):
-                    RFDETRInference(_DummyRFDETR()).predict(manifest)
-
-    @_requires_opencv
     @pytest.mark.parametrize("source", [0, "flat.txt", "nested.txt"])
     def test_live_memory_warning_names_the_calling_module(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: int | str
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: int | str, mocker: MockerFixture
     ) -> None:
-        """The eager live-source warning points at the user's call, however deeply the source is nested.
+        """The eager live-source warning fires before capture and points at the user's call, however deeply nested.
 
         A camera index, a manifest of cameras and a manifest of manifests reach the warning through different numbers of
         generator frames. The warning must name the module that called ``predict``, not an ``rfdetr`` internal.
@@ -545,31 +553,34 @@ class TestSourceRouting:
         (tmp_path / "flat.txt").write_text("0")
         (tmp_path / "nested.txt").write_text("flat.txt")
         monkeypatch.chdir(tmp_path)
-        with patch("cv2.VideoCapture", side_effect=RuntimeError("capture attempted")):
-            with pytest.warns(UserWarning, match="stream=True") as record:
-                with pytest.raises(RuntimeError, match="capture attempted"):
-                    RFDETRInference(_DummyRFDETR()).predict(source)
+        mocker.patch("cv2.VideoCapture", side_effect=RuntimeError("capture attempted"))
+        with pytest.warns(UserWarning, match="stream=True") as record:
+            with pytest.raises(RuntimeError, match="capture attempted"):
+                RFDETRInference(_DummyRFDETR()).predict(source)
         live = [warning for warning in record if "stream=True" in str(warning.message)]
         assert [Path(warning.filename).resolve() for warning in live] == [Path(__file__).resolve()]
 
     @_requires_opencv
-    def test_eager_youtube_video_does_not_warn_about_live_memory(self) -> None:
+    def test_eager_youtube_video_does_not_warn_about_live_memory(
+        self, youtube_module: MagicMock, mocker: MockerFixture
+    ) -> None:
         """A resolved finite YouTube video produces results without a live warning."""
-        module = MagicMock()
-        downloader = module.YoutubeDL.return_value.__enter__.return_value
+        downloader = youtube_module.YoutubeDL.return_value.__enter__.return_value
         downloader.extract_info.return_value = {"url": "https://video.example/frames.mp4", "is_live": False}
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
-        with patch.dict("sys.modules", {"yt_dlp": module}), patch("cv2.VideoCapture", return_value=capture):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                results = RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video")
+        mocker.patch("cv2.VideoCapture", return_value=capture)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = RFDETRInference(_DummyRFDETR()).predict("https://youtu.be/video")
+
         assert isinstance(results, list)
         assert len(results) == 1
         assert not any("Live results accumulate" in str(warning.message) for warning in caught)
 
     @_requires_opencv
-    def test_large_eager_video_warns_about_retained_frames(self, tmp_path: Path) -> None:
+    def test_large_eager_video_warns_about_retained_frames(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """An eager video whose frame count and size exceed the threshold warns before frames are decoded.
 
         Each eager result keeps its full source frame, so a long video can exhaust memory without ``stream=True``.
@@ -579,24 +590,25 @@ class TestSourceRouting:
         source = tmp_path / "video.mp4"
         source.touch()
         sizes = {cv2.CAP_PROP_FRAME_COUNT: 2.0, cv2.CAP_PROP_FRAME_HEIGHT: 24.0, cv2.CAP_PROP_FRAME_WIDTH: 32.0}
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.get.side_effect = sizes.__getitem__
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))] * 2 + [(False, None)]
-        with (
-            patch("cv2.VideoCapture", return_value=capture),
-            patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3),
-        ):
-            with pytest.warns(UserWarning, match="include_source_image=False"):
-                results = RFDETRInference(_DummyRFDETR()).predict(source)
+        mocker.patch("cv2.VideoCapture", return_value=capture)
+        mocker.patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3)
+
+        with pytest.warns(UserWarning, match="include_source_image=False"):
+            results = RFDETRInference(_DummyRFDETR()).predict(source)
         assert len(results) == 2
 
-    def test_large_eager_image_directory_warns_about_retained_frames(self, tmp_path: Path) -> None:
+    def test_large_eager_image_directory_warns_about_retained_frames(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """An eager directory estimates retained pixels from its image count and first image size."""
         for index in range(2):
             Image.new("RGB", (32, 24)).save(tmp_path / f"{index}.png")
-        with patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3):
-            with pytest.warns(UserWarning, match="include_source_image=False"):
-                results = RFDETRInference(_DummyRFDETR()).predict(tmp_path)
+        mocker.patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", 2 * 24 * 32 * 3)
+        with pytest.warns(UserWarning, match="include_source_image=False"):
+            results = RFDETRInference(_DummyRFDETR()).predict(tmp_path)
         assert len(results) == 2
 
     @pytest.mark.parametrize(
@@ -607,40 +619,45 @@ class TestSourceRouting:
             pytest.param({}, 2 * 24 * 32 * 3 + 1, id="below-threshold"),
         ],
     )
-    def test_retained_frame_warning_is_silent(self, tmp_path: Path, options: dict[str, bool], threshold: int) -> None:
+    def test_retained_frame_warning_is_silent(
+        self, tmp_path: Path, options: dict[str, bool], threshold: int, mocker: MockerFixture
+    ) -> None:
         """Streamed runs, runs without source images, and sources below the threshold do not warn."""
         for index in range(2):
             Image.new("RGB", (32, 24)).save(tmp_path / f"{index}.png")
-        with patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", threshold):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                results = list(RFDETRInference(_DummyRFDETR()).predict(tmp_path, **options))
+        mocker.patch("rfdetr._prediction.sources._RETAINED_FRAME_WARNING_BYTES", threshold)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = list(RFDETRInference(_DummyRFDETR()).predict(tmp_path, **options))
         assert len(results) == 2
         assert not any("include_source_image=False" in str(warning.message) for warning in caught)
 
-    def test_missing_opencv_has_install_guidance(self, tmp_path: Path) -> None:
+    def test_missing_opencv_has_install_guidance(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """Video decoding explains which optional dependency is missing."""
         source = tmp_path / "video.avi"
         source.touch()
-        with patch.dict("sys.modules", {"cv2": None}):
-            with pytest.raises(
-                ImportError, match=r'requires OpenCV\. Install it with `uv pip install "rfdetr\[stream\]"`'
-            ):
-                next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
+        mocker.patch.dict("sys.modules", {"cv2": None})
+
+        with pytest.raises(ImportError) as exc_info:
+            next(RFDETRInference(_DummyRFDETR()).predict(source, stream=True))
+
+        assert 'requires OpenCV. Install it with `uv pip install "rfdetr[stream]"`' in str(exc_info.value)
 
     @_requires_opencv
-    def test_local_video_stream_manifest_requires_existing_file(self, tmp_path: Path) -> None:
+    def test_stream_manifest_opens_local_video_relative_to_manifest(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """A stream manifest opens its local video relative to the manifest."""
         video = tmp_path / "video.avi"
         video.touch()
         manifest = tmp_path / "sources.streams"
         manifest.write_text("video.avi")
-        capture = MagicMock()
+        capture = mocker.MagicMock()
         capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
         capture.get.return_value = 1.0
-        with patch("cv2.VideoCapture", return_value=capture) as open_capture:
-            results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True)
-            predictions = list(results)
+        open_capture = mocker.patch("cv2.VideoCapture", return_value=capture)
+        results = RFDETRInference(_DummyRFDETR()).predict(manifest, stream=True, stream_buffer=True)
+        predictions = list(results)
         assert len(predictions) == 1
         open_capture.assert_called_once_with(str(video))
 
@@ -665,10 +682,6 @@ class TestDecodeAhead:
 
     def test_next_batch_is_pulled_and_submitted_before_the_current_one_is_used(self, tmp_path: Path) -> None:
         """When batch k reaches the caller, batch k+1 has already left the source and its decode was submitted."""
-        from concurrent.futures import ThreadPoolExecutor
-
-        from rfdetr._prediction import core
-
         paths = []
         for name in ("a.jpg", "b.png", "c.jpg"):
             Image.new("RGB", (8, 6), (1, 2, 3)).save(tmp_path / name)
@@ -686,10 +699,6 @@ class TestDecodeAhead:
 
     def test_non_file_items_pass_through(self) -> None:
         """In-memory images and URLs are not decoded ahead; they keep their own path through ``_predict_batch``."""
-        from concurrent.futures import ThreadPoolExecutor
-
-        from rfdetr._prediction import core
-
         image = Image.new("RGB", (4, 4))
         array = np.zeros((4, 4, 3), dtype=np.uint8)
         url = "https://example.com/image.jpg"
@@ -699,10 +708,6 @@ class TestDecodeAhead:
 
     def test_source_error_is_raised_after_the_current_batch(self) -> None:
         """A source that fails while the next batch is read still hands over the batch before it first."""
-        from concurrent.futures import ThreadPoolExecutor
-
-        from rfdetr._prediction import core
-
         array = np.zeros((4, 4, 3), dtype=np.uint8)
         with ThreadPoolExecutor(1) as pool:
             batches = core._decode_ahead(self._recording_batches([[array]], [], FileNotFoundError("gone")), pool)
@@ -711,49 +716,69 @@ class TestDecodeAhead:
                 next(batches)
 
     @staticmethod
-    def _decode_threads(root: Path, device: str) -> tuple[list[list[int]], list[str]]:
+    def _decode_threads(
+        mocker: MockerFixture, root: Path, device: str, backend: str = "pytorch"
+    ) -> tuple[list[list[int]], list[str]]:
         """Predict five PNG files from ``root`` in batches of two and return their source pixels and decode threads.
 
-        Examples:
-            >>> import tempfile
-            >>> with tempfile.TemporaryDirectory() as directory:
-            ...     pixels, threads = TestDecodeAhead._decode_threads(Path(directory), "cpu")
-            >>> pixels[0], len(threads)
-            ([0, 20, 30], 5)
-        """
-        from rfdetr._prediction import core
+        ``backend`` is the runtime the prediction context reports; any value but ``"pytorch"`` stands for an exported
+        runtime.
 
+        Examples:
+            Needs the pytest-mock ``mocker`` fixture, which a standalone doctest cannot create.
+
+            >>> TestDecodeAhead._decode_threads(mocker, tmp_path, "cpu")  # doctest: +SKIP
+            ([[0, 20, 30], [30, 20, 30], [60, 20, 30], [90, 20, 30], [120, 20, 30]], ['MainThread', ...])
+        """
         for index in range(5):
             # PNG keeps the pixel exact; JPEG would round it.
             Image.new("RGB", (32, 24), (index * 30, 20, 30)).save(root / f"{index}.png")
         threads: list[str] = []
         original = core._decode_local_image
 
-        def recording_decode(path: str):
+        def recording_decode(path: str) -> torch.Tensor:
+            """Record the decoding thread, then decode as the real function does."""
             threads.append(threading.current_thread().name)
             return original(path)
 
         model = _DummyRFDETR()
         model.model.device = torch.device(device)
-        with patch.object(core, "_decode_local_image", recording_decode):
-            results = RFDETRInference(model).predict(root, batch=2)
+        native_context = model._prediction_context
+
+        def reported_context() -> core.PredictionContext:
+            """Return the native context, reporting ``backend`` as its runtime."""
+            return dataclasses.replace(native_context(), runtime_info={"backend": backend, "device": device})
+
+        mocker.patch.object(core, "_decode_local_image", side_effect=recording_decode)
+        mocker.patch.object(model, "_prediction_context", side_effect=reported_context)
+        results = RFDETRInference(model).predict(root, batch=2)
         return _source_pixels(results), threads
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="decode-ahead runs only for accelerator models")
-    def test_accelerator_directory_predictions_match_and_decode_off_the_main_thread(self, tmp_path: Path) -> None:
+    @requires_mps
+    def test_accelerator_directory_predictions_match_and_decode_off_the_main_thread(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """On an accelerator, a directory returns the same images in the same order, decoded by worker threads."""
-        pixels, threads = self._decode_threads(tmp_path, "mps")
+        pixels, threads = self._decode_threads(mocker, tmp_path, "mps")
 
         assert pixels == [[index * 30, 20, 30] for index in range(5)]
         assert len(threads) == 5
         assert threading.main_thread().name not in threads
 
-    def test_cpu_model_decodes_on_the_main_thread(self, tmp_path: Path) -> None:
+    def test_cpu_model_decodes_on_the_main_thread(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A CPU forward pass already uses every core, so decode threads would compete with it."""
-        pixels, threads = self._decode_threads(tmp_path, "cpu")
+        pixels, threads = self._decode_threads(mocker, tmp_path, "cpu")
 
         assert pixels == [[index * 30, 20, 30] for index in range(5)]
         assert threads == [threading.main_thread().name] * 5
+
+    def test_exported_runtime_decodes_off_the_main_thread(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """An exported runtime reports a CPU context whatever hardware it runs on, and still decodes ahead."""
+        pixels, threads = self._decode_threads(mocker, tmp_path, "cpu", backend="coreml")
+
+        assert pixels == [[index * 30, 20, 30] for index in range(5)]
+        assert len(threads) == 5
+        assert threading.main_thread().name not in threads
 
     @pytest.mark.parametrize(
         "source,expected",
@@ -773,8 +798,6 @@ class TestDecodeAhead:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Any, expected: bool
     ) -> None:
         """Live, video and manifest sources keep reading one batch at a time, so a live frame is never read early."""
-        from rfdetr._prediction.sources import has_only_finite_images
-
         (tmp_path / "images").mkdir()
         Image.new("RGB", (4, 4)).save(tmp_path / "images" / "a.png")
         (tmp_path / "sources.txt").write_text("images/a.png\n")
@@ -789,33 +812,33 @@ class TestDefaultEagerBatch:
 
     @staticmethod
     def _batch_sizes(
-        source: Any, *, stream: bool = False, context_overrides: dict[str, Any] | None = None
+        mocker: MockerFixture, source: Any, *, stream: bool = False, context_overrides: dict[str, Any] | None = None
     ) -> list[int]:
         """Predict ``source`` with ``batch=None`` and return the size of every batch that reached the model.
 
         Examples:
-            >>> TestDefaultEagerBatch._batch_sizes(np.zeros((4, 4, 3), dtype=np.uint8))
+            Needs the pytest-mock ``mocker`` fixture, which a standalone doctest cannot create.
+
+            >>> TestDefaultEagerBatch._batch_sizes(mocker, np.zeros((4, 4, 3), dtype=np.uint8))  # doctest: +SKIP
             [1]
         """
-        from dataclasses import replace
-
-        from rfdetr._prediction import core
-
         model = _DummyRFDETR()
         sizes: list[int] = []
         original = core._predict_batch
 
-        def recording_predict_batch(context_factory, images, *args):
+        def recording_predict_batch(context_factory: Any, images: Any, *args: Any) -> Any:
+            """Record the batch size, then predict the batch as the real function does."""
             sizes.append(len(images) if isinstance(images, list) else 1)
             return original(context_factory, images, *args)
 
-        def context_factory():
-            return replace(model._prediction_context(), **(context_overrides or {}))
+        def context_factory() -> core.PredictionContext:
+            """Return the dummy model's context with ``context_overrides`` applied."""
+            return dataclasses.replace(model._prediction_context(), **(context_overrides or {}))
 
-        with patch.object(core, "_predict_batch", recording_predict_batch):
-            results = core.predict(context_factory, source, stream=stream)
-            if stream:
-                list(results)
+        mocker.patch.object(core, "_predict_batch", side_effect=recording_predict_batch)
+        results = core.predict(context_factory, source, stream=stream)
+        if stream:
+            list(results)
         return sizes
 
     @staticmethod
@@ -834,18 +857,18 @@ class TestDefaultEagerBatch:
             Image.new("RGB", (16, 12), (index, 0, 0)).save(images / f"{index:02d}.png")
         return images
 
-    def test_eager_directory_runs_in_batches_of_eight(self, tmp_path: Path) -> None:
+    def test_eager_directory_runs_in_batches_of_eight(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """Ten files run as one batch of eight and a final partial batch of two."""
-        assert self._batch_sizes(self._image_dir(tmp_path)) == [8, 2]
+        assert self._batch_sizes(mocker, self._image_dir(tmp_path)) == [8, 2]
 
-    def test_eager_glob_runs_in_batches_of_eight(self, tmp_path: Path) -> None:
+    def test_eager_glob_runs_in_batches_of_eight(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A glob is a finite file source like a directory."""
         self._image_dir(tmp_path)
-        assert self._batch_sizes(str(tmp_path / "images" / "*.png")) == [8, 2]
+        assert self._batch_sizes(mocker, str(tmp_path / "images" / "*.png")) == [8, 2]
 
-    def test_streamed_directory_keeps_one_image_per_batch(self, tmp_path: Path) -> None:
+    def test_streamed_directory_keeps_one_image_per_batch(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """``stream=True`` yields the first result after one image, not after a full batch."""
-        assert self._batch_sizes(self._image_dir(tmp_path), stream=True) == [1] * 10
+        assert self._batch_sizes(mocker, self._image_dir(tmp_path), stream=True) == [1] * 10
 
     @pytest.mark.parametrize(
         "overrides",
@@ -855,16 +878,18 @@ class TestDefaultEagerBatch:
             pytest.param({"fixed_shape": True, "max_batch_size": 4}, id="export-max-batch"),
         ],
     )
-    def test_fixed_batch_contexts_keep_one_image_per_batch(self, tmp_path: Path, overrides: dict[str, Any]) -> None:
+    def test_fixed_batch_contexts_keep_one_image_per_batch(
+        self, tmp_path: Path, mocker: MockerFixture, overrides: dict[str, Any]
+    ) -> None:
         """Compiled snapshots and exports keep the one-image default instead of failing a batch-size check."""
-        assert self._batch_sizes(self._image_dir(tmp_path), context_overrides=overrides) == [1] * 10
+        assert self._batch_sizes(mocker, self._image_dir(tmp_path), context_overrides=overrides) == [1] * 10
 
-    def test_manifest_keeps_one_image_per_batch(self, tmp_path: Path) -> None:
+    def test_manifest_keeps_one_image_per_batch(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A manifest may name live sources, so it keeps the one-image default."""
         self._image_dir(tmp_path, count=3)
         manifest = tmp_path / "sources.txt"
         manifest.write_text("images/00.png\nimages/01.png\nimages/02.png\n")
-        assert self._batch_sizes(manifest) == [1, 1, 1]
+        assert self._batch_sizes(mocker, manifest) == [1, 1, 1]
 
     def test_compiled_snapshot_context_reports_its_batch_size(self) -> None:
         """A snapshot compiled for a batch size reports it, so the default batch never exceeds it."""

@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for rfdetr.utilities.console — Rich console helpers for callbacks."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -318,11 +318,9 @@ class TestRenderSummaryTables:
         _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_called_once()
 
-    @patch("rfdetr.utilities.console._IS_RICH_AVAILABLE", False)
-    def test_no_op_when_rich_unavailable(
-        self,
-    ) -> None:
+    def test_no_op_when_rich_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No call made when Rich not installed."""
+        monkeypatch.setattr("rfdetr.utilities.console._IS_RICH_AVAILABLE", False)
         console = MagicMock(name="console")
         _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_not_called()

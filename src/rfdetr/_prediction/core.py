@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import functools
 import io
 import operator
 import os
@@ -242,6 +243,106 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return widened.div_(scale)
 
 
+@functools.lru_cache(maxsize=8)
+def _uint8_scale(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Return the ``255`` divisor :func:`_uint8_chw_to_float` takes, built once per device and dtype.
+
+    Creating it on an accelerator is a blocking host-to-device copy (about 0.1 ms on MPS), paid on every batch before
+    this cache. The tensor is only ever read.
+
+    Args:
+        device: Device the image tensors are on.
+        dtype: Floating-point dtype they are widened to.
+
+    Returns:
+        A 0-dim tensor holding ``255``.
+
+    Examples:
+        >>> _uint8_scale(torch.device("cpu"), torch.float32)
+        tensor(255.)
+    """
+    return torch.tensor(255, device=device, dtype=dtype)
+
+
+@functools.lru_cache(maxsize=8)
+def _normalization_tensors(
+    means: tuple[float, ...], stds: tuple[float, ...], dtype: torch.dtype, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the ``(C, 1, 1)`` mean and std tensors that normalize a batch, built once per values, dtype and device.
+
+    ``torchvision``'s ``normalize`` builds both on the device for every call and checks the std there, which on a
+    synchronous accelerator such as MPS is two blocking copies and a sync per batch. The zero check runs on the host
+    instead, after the same conversion to ``dtype``, so it rejects exactly what ``normalize`` rejects.
+
+    Args:
+        means: Per-channel means.
+        stds: Per-channel standard deviations.
+        dtype: Dtype of the batch.
+        device: Device of the batch.
+
+    Returns:
+        The mean and std tensors, shaped to broadcast over ``(B, C, H, W)``.
+
+    Raises:
+        ValueError: If a std is zero after conversion to ``dtype``.
+
+    Examples:
+        >>> mean, std = _normalization_tensors((0.5,), (0.25,), torch.float32, torch.device("cpu"))
+        >>> mean.shape, std.flatten().tolist()
+        (torch.Size([1, 1, 1]), [0.25])
+    """
+    # Explicitly on the CPU: the process default device could be an accelerator, where the check would sync and a
+    # float64 batch would ask MPS for a dtype it lacks.
+    std = torch.as_tensor(stds, dtype=dtype, device="cpu")
+    if (std == 0).any():
+        raise ValueError(f"std evaluated to zero after conversion to {dtype}, leading to division by zero.")
+    mean = torch.as_tensor(means, dtype=dtype, device="cpu")
+    return mean.to(device).view(-1, 1, 1), std.to(device).view(-1, 1, 1)
+
+
+def _copy_results_to_cpu_once(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    """Copy a batch's boxes, scores and labels to the CPU in a single transfer.
+
+    The per-image filter that follows would otherwise sync twice per image on a synchronous accelerator such as MPS:
+    once to size its ``nonzero`` index and once to copy the kept rows. After this copy it runs on the CPU, where neither
+    waits. The rows are packed in float32, or float64 when the scores or boxes are float64, so every value round-trips
+    exactly: float16 and bfloat16 values, and class ids below 2**24, fit in float32. Every tensor gets its own dtype
+    back, unlike :func:`_copy_rows_to_cpu_once`, which returns float32 boxes and scores for the keypoint and mask paths.
+
+    Args:
+        results: Per-image dictionaries holding ``boxes`` ``(N, 4)``, ``scores`` ``(N,)`` and ``labels`` ``(N,)``.
+
+    Returns:
+        The same dictionaries with contiguous CPU tensors.
+
+    Examples:
+        >>> rows = {"boxes": torch.ones(2, 4), "scores": torch.ones(2), "labels": torch.tensor([3, 90])}
+        >>> [result["labels"].tolist() for result in _copy_results_to_cpu_once([rows, rows])]
+        [[3, 90], [3, 90]]
+    """
+    # The threshold filter compares the scores after this copy, so a float32 packing of float64 scores would round a
+    # score just above the threshold onto it and drop the row.
+    dtype = torch.promote_types(
+        torch.promote_types(torch.float32, results[0]["scores"].dtype), results[0]["boxes"].dtype
+    )
+    packed = torch.cat(
+        [
+            torch.cat(
+                [r["boxes"].to(dtype), r["scores"].to(dtype).unsqueeze(1), r["labels"].to(dtype).unsqueeze(1)], dim=1
+            )
+            for r in results
+        ]
+    ).cpu()
+    return [
+        {
+            "boxes": rows[:, :4].to(r["boxes"].dtype).contiguous(),
+            "scores": rows[:, 4].to(r["scores"].dtype).contiguous(),
+            "labels": rows[:, 5].to(r["labels"].dtype),
+        }
+        for r, rows in zip(results, torch.split(packed, [len(r["scores"]) for r in results]))
+    ]
+
+
 def _copy_rows_to_cpu_once(
     boxes: torch.Tensor, scores: torch.Tensor, labels: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -249,7 +350,9 @@ def _copy_rows_to_cpu_once(
 
     Accelerators other than CUDA (MPS among them) copy to the host synchronously, so each ``.cpu()`` waits on its own;
     packing the three into one float32 tensor pays that wait once. Labels round-trip exactly through float32 because
-    class ids stay far below 2**24, the largest integer it represents without rounding.
+    class ids stay far below 2**24, the largest integer it represents without rounding. Unlike
+    :func:`_copy_results_to_cpu_once`, it runs after the threshold filter and returns float32 boxes and scores, which is
+    what the keypoint and mask paths that call it convert to NumPy.
 
     Args:
         boxes: ``(N, 4)`` boxes.
@@ -476,6 +579,9 @@ def predict(
 #: Images per batch when ``batch=None`` predicts an eager directory or glob on a model without a fixed batch size.
 _DEFAULT_EAGER_BATCH = 8
 
+#: Keys of a detection-only ``PostProcess`` result, the one :func:`_copy_results_to_cpu_once` takes.
+_ROW_KEYS = frozenset({"boxes", "scores", "labels"})
+
 
 def _default_batch(images: _PredictionInput, context: PredictionContext, *, stream: bool) -> int:
     """Choose the batch size for an expanded or streamed source when the caller passes ``batch=None``.
@@ -561,10 +667,12 @@ def _predict_stream(
         # Eager results each keep a full source image, so large finite sources warn before decoding starts.
         warn_on_retained_frames=warn_on_live and include_source_image,
     )
-    # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A model on
-    # the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
-    # slowed the forward pass by more than the overlap saved.
-    decode_ahead = num_channels == 3 and context.device.type != "cpu" and has_only_finite_images(images)
+    # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A native model
+    # on the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
+    # slowed the forward pass by more than the overlap saved. Exported runtimes report a CPU context device whatever
+    # hardware they run on, and decode ahead: Core ML gained 18% from it and ONNX Runtime on the CPU lost nothing.
+    native_on_cpu = context.device.type == "cpu" and context.runtime_info.get("backend") == "pytorch"
+    decode_ahead = num_channels == 3 and not native_on_cpu and has_only_finite_images(images)
     pool = ThreadPoolExecutor(_DECODE_WORKERS, thread_name_prefix="rfdetr-decode") if decode_ahead else None
     batches = source_batches if pool is None else _decode_ahead(source_batches, pool)
     try:
@@ -755,8 +863,6 @@ def _predict_batch(
     # original code checked range before shape for a given image, and raising it eagerly here
     # would flip that precedence for any tensor that is invalid on both axes at once.
     pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
-    # Built lazily on the first uint8 image, then shared by the rest of the batch.
-    uint8_scale: torch.Tensor | None = None
 
     # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
     # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
@@ -891,9 +997,7 @@ def _predict_batch(
         non_blocking = preprocess_device.type == "cuda"
         img_tensor = img_tensor.to(preprocess_device, non_blocking=non_blocking)
         if deferred_widen:
-            if uint8_scale is None:
-                uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
-            img_tensor = _uint8_chw_to_float(img_tensor, uint8_scale)
+            img_tensor = _uint8_chw_to_float(img_tensor, _uint8_scale(img_tensor.device, torch.get_default_dtype()))
         processed_images.append(img_tensor)
 
     # Force the range-check results to Python bools only now, after every image's conversion,
@@ -924,13 +1028,22 @@ def _predict_batch(
     batch_tensor = torch.stack([F.resize(t, resize_to, antialias=antialias) for t in processed_images])
     if resize_on_cpu:
         batch_tensor = batch_tensor.to(context.device)
-    batch_tensor = F.normalize(batch_tensor, context.means, context.stds)
+    # The same subtract-then-divide as torchvision's `normalize`, on a tensor `stack` just allocated, so in place.
+    mean, std = _normalization_tensors(
+        tuple(context.means), tuple(context.stds), batch_tensor.dtype, batch_tensor.device
+    )
+    batch_tensor = batch_tensor.sub_(mean).div_(std)
 
-    predictions = context.run(batch_tensor)
+    # Copied to the device before the forward pass is queued: on MPS, building it after the forward measured slower.
     target_sizes = torch.tensor(orig_sizes, device=context.device)
+    predictions = context.run(batch_tensor)
     # `score_floor` is the single threshold, or the lowest per-class one, the loosest bound: the pre-filter in
     # ``postprocess`` then never drops a row that the per-class filter below keeps.
     results = context.postprocess(predictions, target_sizes=target_sizes, score_threshold=score_floor)
+    # A synchronous accelerator such as MPS would wait twice per image below; detection rows are small enough to bring
+    # the whole batch to the CPU first. Masks and keypoints stay on the device until the filter has dropped rows.
+    if results[0]["scores"].device.type not in ("cuda", "cpu") and all(r.keys() == _ROW_KEYS for r in results):
+        results = _copy_results_to_cpu_once(results)
 
     _class_id_to_name = context.class_id_to_name
     num_logit_slots = context.num_classes
@@ -943,7 +1056,7 @@ def _predict_batch(
         None
         if threshold_by_class_id is None
         else threshold_by_class_id.to(results[0]["scores"].dtype).to(
-            context.device, non_blocking=context.device.type == "cuda"
+            results[0]["scores"].device, non_blocking=results[0]["scores"].device.type == "cuda"
         )
     )
     predictions_list: list[_PredictionResult] = []

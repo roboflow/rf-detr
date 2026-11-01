@@ -20,51 +20,37 @@ from rfdetr.export._naming import resolve_export_stem
 
 
 class TestResolveExportStemPrecedence:
-    """Precedence contract: ``output_name`` > ``variant_name`` > ``default``."""
-
-    def test_output_name_wins_over_variant_name(self) -> None:
-        """Documented example: both given, output_name wins."""
-        assert resolve_export_stem("rfdetr-small", "my-model") == ("my-model", True)
-
-    def test_variant_name_used_when_no_output_name(self) -> None:
-        """Documented example: only variant_name given."""
-        assert resolve_export_stem("rfdetr-small", None) == ("rfdetr-small", False)
-
-    def test_default_used_when_both_none(self) -> None:
-        """Documented example: neither given, generic default stem."""
-        assert resolve_export_stem(None, None) == ("inference_model", False)
-
-    def test_default_parameter_overrides_generic_fallback(self) -> None:
-        """``default=`` lets callers pick a non-generic fallback stem (e.g. backbone-only exports)."""
-        assert resolve_export_stem(None, None, default="backbone_model") == ("backbone_model", False)
-
-    def test_default_parameter_ignored_when_variant_name_given(self) -> None:
-        """A custom ``default=`` must not override a real ``variant_name`` — default only fires when both variant_name
-        and output_name are unset."""
-        assert resolve_export_stem("rfdetr-nano", None, default="backbone_model") == ("rfdetr-nano", False)
-
-    def test_default_parameter_ignored_when_output_name_given(self) -> None:
-        """A custom ``default=`` must not override a real ``output_name``."""
-        assert resolve_export_stem(None, "my-model", default="backbone_model") == ("my-model", True)
-
-
-class TestResolveExportStemIsCustomFlag:
-    """``is_custom`` must be ``True`` if and only if ``output_name`` was the source of the stem."""
+    """Precedence contract: ``output_name`` > ``variant_name`` > ``default``, and ``is_custom`` only for
+    ``output_name``."""
 
     @pytest.mark.parametrize(
-        ("variant_name", "output_name", "expected_is_custom"),
+        ("variant_name", "output_name", "kwargs", "expected"),
         [
-            pytest.param("rfdetr-nano", "my-model", True, id="output_name_given_with_variant"),
-            pytest.param(None, "my-model", True, id="output_name_given_alone"),
-            pytest.param("rfdetr-nano", None, False, id="variant_name_only"),
-            pytest.param(None, None, False, id="neither_given"),
+            pytest.param("rfdetr-small", "my-model", {}, ("my-model", True), id="output_name_wins_over_variant_name"),
+            pytest.param("rfdetr-nano", "my-model", {}, ("my-model", True), id="output_name_with_other_variant_name"),
+            pytest.param(None, "my-model", {}, ("my-model", True), id="output_name_alone"),
+            pytest.param("rfdetr-small", None, {}, ("rfdetr-small", False), id="variant_name_when_no_output_name"),
+            pytest.param("rfdetr-nano", None, {}, ("rfdetr-nano", False), id="variant_name_alone"),
+            pytest.param(None, None, {}, ("inference_model", False), id="generic_default_when_both_none"),
+            pytest.param(None, None, {"default": "backbone_model"}, ("backbone_model", False), id="custom_default"),
+            pytest.param(
+                "rfdetr-nano",
+                None,
+                {"default": "backbone_model"},
+                ("rfdetr-nano", False),
+                id="default_ignored_for_variant",
+            ),
+            pytest.param(
+                None, "my-model", {"default": "backbone_model"}, ("my-model", True), id="default_ignored_for_output"
+            ),
         ],
     )
-    def test_is_custom_matches_output_name_branch(
-        self, variant_name: str | None, output_name: str | None, expected_is_custom: bool
+    def test_stem_and_is_custom_follow_precedence(
+        self, variant_name: str | None, output_name: str | None, kwargs: dict[str, str], expected: tuple[str, bool]
     ) -> None:
-        _, is_custom = resolve_export_stem(variant_name, output_name)
-        assert is_custom is expected_is_custom
+        """The stem comes from ``output_name``, else ``variant_name``, else ``default``; a custom ``default`` only fires
+        when both names are unset, and ``is_custom`` is ``True`` if and only if ``output_name`` supplied the stem."""
+        assert resolve_export_stem(variant_name, output_name, **kwargs) == expected
 
 
 class TestResolveExportStemCrossPlatformPathComponents:
@@ -78,12 +64,12 @@ class TestResolveExportStemCrossPlatformPathComponents:
     @pytest.mark.parametrize(
         ("output_name", "expected"),
         [
-            pytest.param("sub/dir/rfdetr-nano.onnx", "rfdetr-nano", id="forward_slash_nested"),
-            pytest.param("../../etc/passwd", "passwd", id="forward_slash_traversal"),
-            pytest.param("/absolute/unix/path/model", "model", id="forward_slash_absolute"),
-            pytest.param(r"..\..\evil.onnx", "evil", id="backslash_traversal"),
-            pytest.param(r"C:\Users\name\model.onnx", "model", id="windows_absolute"),
-            pytest.param("mixed/dir\\model.onnx", "model", id="mixed_separators_last_component_wins"),
+            ("sub/dir/rfdetr-nano.onnx", "rfdetr-nano"),
+            ("../../etc/passwd", "passwd"),
+            ("/absolute/unix/path/model", "model"),
+            (r"..\..\evil.onnx", "evil"),
+            (r"C:\Users\name\model.onnx", "model"),
+            ("mixed/dir\\model.onnx", "model"),
         ],
     )
     def test_directory_components_are_stripped_on_every_platform(self, output_name: str, expected: str) -> None:
@@ -129,15 +115,18 @@ class TestResolveExportStemDotsInName:
 class TestResolveExportStemEmptyAndWhitespace:
     """Empty / whitespace-only / all-separator ``output_name`` values."""
 
-    def test_empty_string_falls_back_to_default(self) -> None:
-        """An empty ``output_name`` is falsy in Python, so ``resolve_export_stem`` treats it exactly like ``None`` — it
-        falls through to ``variant_name``/``default`` instead of being sanitized as a custom name."""
-        assert resolve_export_stem(None, "") == ("inference_model", False)
-
-    def test_empty_string_output_name_falls_back_even_with_variant_name_present(self) -> None:
-        """An empty ``output_name`` must not shadow a real ``variant_name`` — precedence still resolves to
-        ``variant_name`` since the empty string is falsy."""
-        assert resolve_export_stem("rfdetr-nano", "") == ("rfdetr-nano", False)
+    @pytest.mark.parametrize(
+        ("variant_name", "expected_stem"),
+        [
+            (None, "inference_model"),
+            ("rfdetr-nano", "rfdetr-nano"),
+        ],
+    )
+    def test_empty_string_falls_back_to_variant_name_or_default(
+        self, variant_name: str | None, expected_stem: str
+    ) -> None:
+        """An empty ``output_name`` is falsy, so it is treated like ``None`` and never shadows ``variant_name``."""
+        assert resolve_export_stem(variant_name, "") == (expected_stem, False)
 
     def test_whitespace_only_output_name_is_treated_as_a_custom_literal_stem(self) -> None:
         """Unlike the empty string, a whitespace-only ``output_name`` is truthy in Python — it is accepted as the custom
@@ -145,13 +134,7 @@ class TestResolveExportStemEmptyAndWhitespace:
         extension), so it is NOT rejected/rewritten to fall back to default."""
         assert resolve_export_stem(None, "   ") == ("   ", True)
 
-    @pytest.mark.parametrize(
-        "all_separator_output_name",
-        [
-            pytest.param("///", id="multiple_forward_slashes"),
-            pytest.param("/", id="single_forward_slash"),
-        ],
-    )
+    @pytest.mark.parametrize("all_separator_output_name", ["///", "/"])
     def test_all_separator_output_name_raises_value_error(self, all_separator_output_name: str) -> None:
         """A truthy ``output_name`` made entirely of path separators sanitizes to an empty stem, which
         ``resolve_export_stem`` now rejects with ``ValueError`` (PR #1250 item 4) rather than silently returning an
@@ -198,17 +181,7 @@ class TestResolveExportStemReservedNamesCharacterization:
     helper never touches the filesystem itself, so adding validation here is out of scope for this test suite).
     """
 
-    @pytest.mark.parametrize(
-        "reserved_device_name",
-        [
-            pytest.param("CON", id="con"),
-            pytest.param("PRN", id="prn"),
-            pytest.param("NUL", id="nul"),
-            pytest.param("AUX", id="aux"),
-            pytest.param("COM1", id="com1"),
-            pytest.param("LPT1", id="lpt1"),
-        ],
-    )
+    @pytest.mark.parametrize("reserved_device_name", ["CON", "PRN", "NUL", "AUX", "COM1", "LPT1"])
     def test_windows_reserved_device_names_pass_through_unchanged(self, reserved_device_name: str) -> None:
         """A Windows-reserved device name is returned verbatim as the custom stem -- no rejection or renaming."""
         assert resolve_export_stem(None, reserved_device_name) == (reserved_device_name, True)
@@ -216,10 +189,10 @@ class TestResolveExportStemReservedNamesCharacterization:
     @pytest.mark.parametrize(
         ("output_name", "expected_stem"),
         [
-            pytest.param('model<>:"|?*.onnx', 'model<>:"|?*', id="all_reserved_chars_extension_stripped"),
-            pytest.param("a<b>c", "a<b>c", id="angle_brackets_no_extension"),
-            pytest.param("model:stream", "model:stream", id="colon_ads_style"),
-            pytest.param("wild*card?name", "wild*card?name", id="glob_metacharacters"),
+            ('model<>:"|?*.onnx', 'model<>:"|?*'),
+            ("a<b>c", "a<b>c"),
+            ("model:stream", "model:stream"),
+            ("wild*card?name", "wild*card?name"),
         ],
     )
     def test_os_reserved_characters_pass_through_unchanged(self, output_name: str, expected_stem: str) -> None:

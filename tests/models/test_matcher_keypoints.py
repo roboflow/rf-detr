@@ -26,7 +26,7 @@ def _base_outputs(num_queries: int = 2) -> dict[str, torch.Tensor]:
     }
 
 
-def test_matcher_keypoint_cost_list_of_dicts_targets() -> None:
+def test_keypoint_cost_accepts_list_of_dicts_targets() -> None:
     """Keypoint matching costs should work with public list-of-dicts targets."""
     matcher = HungarianMatcher(
         cost_class=0.0,
@@ -56,7 +56,7 @@ def test_matcher_keypoint_cost_list_of_dicts_targets() -> None:
     assert matched_targets.tolist() == [0]
 
 
-def test_matcher_keypoint_cost_coefficients_off() -> None:
+def test_zero_keypoint_coefficients_match_base_matcher() -> None:
     """Zero keypoint coefficients should preserve non-keypoint matching behavior."""
     base_matcher = HungarianMatcher(cost_class=1.0, cost_bbox=1.0, cost_giou=1.0)
     keypoint_matcher = HungarianMatcher(
@@ -90,7 +90,7 @@ def test_matcher_keypoint_cost_coefficients_off() -> None:
     assert base_indices[1].tolist() == keypoint_indices[1].tolist()
 
 
-def test_matcher_keypoint_empty_targets() -> None:
+def test_empty_targets_return_empty_matches() -> None:
     """Empty keypoint targets should return valid empty match results."""
     matcher = HungarianMatcher(
         cost_class=1.0,

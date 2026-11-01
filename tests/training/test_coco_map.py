@@ -19,6 +19,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from pytest_mock import MockerFixture
 from torchmetrics.detection import MeanAveragePrecision
 from torchmetrics.detection.helpers import CocoBackend
 
@@ -72,6 +73,8 @@ _ALTERNATIVE_BACKENDS = [
 _NON_STREAMING_BACKENDS = [
     pytest.param(backend, marks=mark) for backend, mark in _BACKEND_ONLY.items() if backend != "hotcoco_streaming"
 ]
+# The backends that load box-only detections from one array instead of one dict per detection.
+_BOX_ARRAY_BACKENDS = [pytest.param(backend, marks=_BACKEND_ONLY[backend]) for backend in ("hotcoco", "ufcoco")]
 # `hotcoco_streaming` streams only when the model's class count is known; without it the metric silently evaluates in
 # one batch, and a shared test would pass without ever touching the streaming path.
 _BACKEND_KWARGS: dict[str, dict[str, Any]] = {"hotcoco_streaming": {"num_classes": 90}}
@@ -90,6 +93,35 @@ def _assert_streams_when_backend_streams(metric: OnePassCocoMeanAveragePrecision
     assert (metric._streams is not None) == metric._coco_backend.streams, (
         "a streaming backend must have opened its stream (is num_classes passed?), and a batch backend must not"
     )
+
+
+def _assert_results_close(
+    actual: dict[str, torch.Tensor], expected: dict[str, torch.Tensor], *, rtol: float = 0.0, atol: float = 0.0
+) -> None:
+    """Assert every ``actual`` metric matches ``expected`` flattened, class IDs exactly and the rest within tolerance.
+
+    Examples:
+        >>> result = {"classes": torch.tensor([3]), "map": torch.tensor([0.5])}
+        >>> _assert_results_close(result, dict(result))
+    """
+    for key in actual:
+        if key == "classes":
+            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
+        else:
+            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=rtol, atol=atol)
+
+
+def _single_box_state() -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
+    """Return one image whose single class-3 detection matches its ground-truth box exactly.
+
+    Examples:
+        >>> predictions, targets = _single_box_state()
+        >>> len(predictions), int(targets[0]["labels"][0])
+        (1, 3)
+    """
+    box = torch.tensor([[0.0, 0.0, 10.0, 10.0]])
+    predictions = [{"boxes": box, "scores": torch.tensor([0.9]), "labels": torch.tensor([3])}]
+    return predictions, [{"boxes": box, "labels": torch.tensor([3])}]
 
 
 def _warning_messages(records: list[logging.LogRecord]) -> list[str]:
@@ -141,7 +173,7 @@ def test_one_pass_metric_matches_noncontiguous_per_class_results() -> None:
     )
 
 
-def test_class_metrics_use_one_coco_evaluator() -> None:
+def test_class_metrics_use_one_coco_evaluator(mocker: MockerFixture) -> None:
     """Per-class AP and AR must come from the aggregate evaluator instead of constructing a second evaluator."""
     predictions = [
         {
@@ -162,10 +194,11 @@ def test_class_metrics_use_one_coco_evaluator() -> None:
 
     # Patched on the metric's own backend type rather than on CocoBackend: the hotcoco backend overrides the
     # property, so a patch applied to the base class would not be reached on the default path.
-    with patch.object(
+    mocker.patch.object(
         type(metric._coco_backend), "cocoeval", new_callable=PropertyMock, return_value=evaluator_factory
-    ):
-        result = metric.compute()
+    )
+
+    result = metric.compute()
 
     assert evaluator_factory.call_count == 1
     torch.testing.assert_close(result["map_per_class"], torch.ones(2), rtol=1e-4, atol=1e-6)
@@ -204,16 +237,7 @@ def test_metric_update_owns_cpu_state_and_ignores_non_metric_fields() -> None:
 def test_class_metrics_disabled_keep_compact_sentinels() -> None:
     """Disabling class metrics must retain TorchMetrics sentinels without extended evaluator tensors."""
     metric = OnePassCocoMeanAveragePrecision(class_metrics=False)
-    metric.update(
-        [
-            {
-                "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
-                "scores": torch.tensor([0.9]),
-                "labels": torch.tensor([3]),
-            }
-        ],
-        [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
-    )
+    metric.update(*_single_box_state())
 
     result = metric.compute()
 
@@ -260,11 +284,7 @@ def test_bbox_and_segmentation_results_match_torchmetrics() -> None:
     assert actual["classes"].ndim == expected["classes"].ndim
     assert actual["bbox_map_per_class"].ndim == expected["bbox_map_per_class"].ndim
     assert actual["segm_map_per_class"].ndim == expected["segm_map_per_class"].ndim
-    for key in actual:
-        if key == "classes":
-            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
-        else:
-            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=1e-4, atol=1e-6)
+    _assert_results_close(actual, expected, rtol=1e-4, atol=1e-6)
 
 
 def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data() -> None:
@@ -276,36 +296,7 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
     non-contiguous classes with a partial-overlap match, a missed detection, and a false positive, so per-class
     AP/AR values are genuinely fractional and a reduction bug has real values to disagree on.
     """
-    predictions = [
-        {
-            # Image 1: class 3 is a perfect match; class 17's IoU = 64 / (100 + 64 - 64) = 0.64 -- a
-            # partial, not perfect, match.
-            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 28.0, 28.0]]),
-            "scores": torch.tensor([0.9, 0.8]),
-            "labels": torch.tensor([3, 17]),
-        },
-        {
-            # Image 2: false positive -- class 42 has no ground truth anywhere in this fixture.
-            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
-            "scores": torch.tensor([0.95]),
-            "labels": torch.tensor([42]),
-        },
-        {
-            # Image 3: class 17's true positive plus an extra false-positive detection for the same class.
-            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [50.0, 50.0, 60.0, 60.0]]),
-            "scores": torch.tensor([0.6, 0.4]),
-            "labels": torch.tensor([17, 17]),
-        },
-    ]
-    targets = [
-        {
-            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]),
-            "labels": torch.tensor([3, 17]),
-        },
-        # Image 2: missed detection -- class 3 has ground truth here but no matching prediction.
-        {"boxes": torch.tensor([[5.0, 5.0, 15.0, 15.0]]), "labels": torch.tensor([3])},
-        {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([17])},
-    ]
+    predictions, targets = multiclass_detection_state()
     kwargs = {"class_metrics": True, "backend": "faster_coco_eval", "sync_on_compute": False}
     expected_metric = MeanAveragePrecision(**kwargs)
     actual_metric = OnePassCocoMeanAveragePrecision(**kwargs)
@@ -321,11 +312,7 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
     assert set(expected["map_per_class"].tolist()) - {-1.0, 0.0, 1.0}, (
         "fixture produced only degenerate per-class values; strengthen it before trusting this parity check"
     )
-    for key in actual:
-        if key == "classes":
-            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
-        else:
-            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=1e-4, atol=1e-6)
+    _assert_results_close(actual, expected, rtol=1e-4, atol=1e-6)
 
 
 class TestHoistedDetectionScores:
@@ -391,7 +378,7 @@ class TestHoistedDetectionScores:
         assert actual_preds.dataset == expected_preds.dataset
         assert actual_target.dataset == expected_target.dataset
 
-    def test_scores_are_converted_once_for_each_image(self) -> None:
+    def test_scores_are_converted_once_for_each_image(self, mocker: MockerFixture) -> None:
         """Prediction scores must cross the CPU conversion boundary once per image.
 
         Dataset parity cannot detect a silent regression back to TorchMetrics' per-annotation score conversion. The two
@@ -409,18 +396,17 @@ class TestHoistedDetectionScores:
                 score_conversion_shapes.append(tuple(tensor.shape))
             return original_cpu(tensor, *args, **kwargs)
 
-        with (
-            patch.object(CocoBackend, "_get_coco_format", recorded),
-            patch.object(torch.Tensor, "cpu", new=record_cpu),
-        ):
-            metric._coco_datasets(metric._observed_classes())
+        mocker.patch.object(CocoBackend, "_get_coco_format", recorded)
+        mocker.patch.object(torch.Tensor, "cpu", new=record_cpu)
+
+        metric._coco_datasets(metric._observed_classes())
 
         prediction_call = recorded.call_args_list[-1]
         assert prediction_call.kwargs["scores"] is None
         assert prediction_call.kwargs["labels"] is metric.detection_labels
         assert score_conversion_shapes == [(2,), (1,)]
 
-    def test_annotation_count_mismatch_is_rejected(self) -> None:
+    def test_annotation_count_mismatch_is_rejected(self, mocker: MockerFixture) -> None:
         """A prediction annotation count that no longer matches stored scores must fail loudly.
 
         Assigning scores positionally is only sound while upstream emits one annotation per stored detection. If its
@@ -429,15 +415,15 @@ class TestHoistedDetectionScores:
         """
         metric = self._updated_metric()
 
-        with (
-            patch.object(
-                CocoBackend, "_get_coco_format", return_value={"images": [], "annotations": [], "categories": []}
-            ),
-            pytest.raises(RuntimeError, match="prediction annotations"),
-        ):
-            metric._coco_datasets(metric._observed_classes())
+        mocker.patch.object(
+            CocoBackend, "_get_coco_format", return_value={"images": [], "annotations": [], "categories": []}
+        )
 
-    def test_mask_only_state_uses_stock_construction(self) -> None:
+        with pytest.raises(RuntimeError) as exc_info:
+            metric._coco_datasets(metric._observed_classes())
+        assert "prediction annotations" in str(exc_info.value)
+
+    def test_mask_only_state_uses_stock_construction(self, mocker: MockerFixture) -> None:
         """Segmentation-only predictions must keep using TorchMetrics' own helper.
 
         Without boxes, upstream drops an image that has no masks from the annotation list entirely
@@ -454,8 +440,9 @@ class TestHoistedDetectionScores:
         )
         recorded = MagicMock(side_effect=metric._coco_backend._get_coco_datasets)
 
-        with patch.object(CocoBackend, "_get_coco_datasets", recorded):
-            coco_preds, _, _ = metric._coco_datasets(metric._observed_classes())
+        mocker.patch.object(CocoBackend, "_get_coco_datasets", recorded)
+
+        coco_preds, _, _ = metric._coco_datasets(metric._observed_classes())
 
         assert recorded.call_count == 1
         assert [annotation["score"] for annotation in coco_preds.dataset["annotations"]] == pytest.approx([0.9])
@@ -469,8 +456,9 @@ class TestHoistedDetectionScores:
         metric = self._updated_metric()
         metric.detection_scores = [scores.long() for scores in metric.detection_scores]
 
-        with pytest.raises(ValueError, match="expected floating point"):
+        with pytest.raises(ValueError) as exc_info:
             metric._coco_datasets(metric._observed_classes())
+        assert "expected floating point" in str(exc_info.value)
 
     def test_column_vector_scores_are_rejected(self) -> None:
         """Column-vector scores must fail instead of becoming nested COCO score lists.
@@ -482,8 +470,9 @@ class TestHoistedDetectionScores:
         metric = self._updated_metric()
         metric.detection_scores = [scores.unsqueeze(1) for scores in metric.detection_scores]
 
-        with pytest.raises(ValueError, match="one-dimensional"):
+        with pytest.raises(ValueError) as exc_info:
             metric._coco_datasets(metric._observed_classes())
+        assert "one-dimensional" in str(exc_info.value)
 
 
 def test_empty_predictions_preserve_zero_recall() -> None:
@@ -555,54 +544,59 @@ def test_backend_registry_matches_the_typed_eval_backend_names() -> None:
     assert set(_BACKENDS) == set(_BACKEND_ONLY), "register a new backend in the shared test lists too"
 
 
-def test_adapter_rejects_unsupported_result_and_backend_modes() -> None:
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        pytest.param({"extended_summary": True}, "extended_summary", id="extended-summary"),
+        pytest.param({"backend": "pycocotools"}, "faster_coco_eval", id="pycocotools-backend"),
+        pytest.param({"average": "micro"}, "average='macro'", id="micro-average"),
+        pytest.param({"sync_on_compute": True}, "sync_on_compute=False", id="sync-on-compute"),
+    ],
+)
+def test_adapter_rejects_unsupported_result_and_backend_modes(kwargs: dict[str, Any], message: str) -> None:
     """Unsupported modes must fail at construction instead of bypassing the adapter's memory and backend contract."""
-    with pytest.raises(ValueError, match="extended_summary"):
-        OnePassCocoMeanAveragePrecision(extended_summary=True)
-    with pytest.raises(ValueError, match="faster_coco_eval"):
-        OnePassCocoMeanAveragePrecision(backend="pycocotools")
-    with pytest.raises(ValueError, match="average='macro'"):
-        OnePassCocoMeanAveragePrecision(average="micro")
-    with pytest.raises(ValueError, match="sync_on_compute=False"):
-        OnePassCocoMeanAveragePrecision(sync_on_compute=True)
+    with pytest.raises(ValueError) as exc_info:
+        OnePassCocoMeanAveragePrecision(**kwargs)
+    assert message in str(exc_info.value)
 
 
-def test_adapter_rejects_stale_torchmetrics_state_contract() -> None:
+def test_adapter_rejects_stale_torchmetrics_state_contract(mocker: MockerFixture) -> None:
     """Construction must fail loudly when the installed list-state schema no longer matches the adapter contract."""
-    with (
-        patch("rfdetr.training.coco_map._MAP_STATE_ATTRS", ("missing_state",)),
-        pytest.raises(RuntimeError, match="incompatible with installed torchmetrics"),
-    ):
+    mocker.patch("rfdetr.training.coco_map._MAP_STATE_ATTRS", ("missing_state",))
+
+    with pytest.raises(RuntimeError) as exc_info:
         OnePassCocoMeanAveragePrecision()
+    assert "incompatible with installed torchmetrics" in str(exc_info.value)
 
 
-def test_adapter_rejects_non_callable_coco_backend_factory() -> None:
+def test_adapter_rejects_non_callable_coco_backend_factory(mocker: MockerFixture) -> None:
     """Construction must reject a non-callable COCO dataset factory before metric computation."""
-    with (
-        patch.object(CocoBackend, "coco", new=object()),
-        pytest.raises(RuntimeError, match=r"missing backend methods: \['coco'\]"),
-    ):
+    mocker.patch.object(CocoBackend, "coco", new=object())
+
+    with pytest.raises(RuntimeError) as exc_info:
         OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
 
+    assert "missing backend methods: ['coco']" in str(exc_info.value)
 
-def test_adapter_rejects_backend_method_missing_a_relied_on_parameter() -> None:
+
+def test_adapter_rejects_backend_method_missing_a_relied_on_parameter(mocker: MockerFixture) -> None:
     """Construction must fail when a backend method drops a keyword compute() calls by name.
 
     Existence-only checks would miss an upstream rename of e.g. ``average``/``prefix`` on the installed backend helpers;
     the adapter's compute() calls those by keyword, so a silent rename would otherwise surface as a raw TypeError deep
     inside compute() instead of at construction.
     """
-    with (
-        patch(
-            "rfdetr.training.coco_map._BACKEND_METHOD_PARAMS",
-            {"_get_coco_datasets": ("not_a_real_parameter",), "_coco_stats_to_tensor_dict": ()},
-        ),
-        pytest.raises(RuntimeError, match="incompatible signature"),
-    ):
+    mocker.patch(
+        "rfdetr.training.coco_map._BACKEND_METHOD_PARAMS",
+        {"_get_coco_datasets": ("not_a_real_parameter",), "_coco_stats_to_tensor_dict": ()},
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
         OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
+    assert "incompatible signature" in str(exc_info.value)
 
 
-def test_hotcoco_contract_ignores_the_helper_it_never_calls() -> None:
+def test_hotcoco_contract_ignores_the_helper_it_never_calls(mocker: MockerFixture) -> None:
     """A rename in ``_get_coco_datasets`` must not block the backend that never calls it.
 
     hotcoco builds its index in the COCO constructor, so this adapter assembles the dataset dictionaries itself and
@@ -611,97 +605,79 @@ def test_hotcoco_contract_ignores_the_helper_it_never_calls() -> None:
     """
     stale_contract = {"_get_coco_datasets": ("not_a_real_parameter",), "_coco_stats_to_tensor_dict": ()}
 
-    with patch("rfdetr.training.coco_map._BACKEND_METHOD_PARAMS", stale_contract):
-        OnePassCocoMeanAveragePrecision(backend="hotcoco")
-        with pytest.raises(RuntimeError, match="incompatible signature"):
-            OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
+    mocker.patch("rfdetr.training.coco_map._BACKEND_METHOD_PARAMS", stale_contract)
+
+    OnePassCocoMeanAveragePrecision(backend="hotcoco")
+    with pytest.raises(RuntimeError) as exc_info:
+        OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
+    assert "incompatible signature" in str(exc_info.value)
 
 
 class TestMismatchedBackendSignatures:
     """Unit coverage for the two contract-validation static helpers in isolation."""
 
-    def test_flags_a_method_missing_a_relied_on_parameter(self) -> None:
-        """A backend method lacking one of the required parameter names is reported as mismatched."""
+    @pytest.mark.parametrize(
+        ("method_name", "method", "expected"),
+        [
+            pytest.param(
+                "_get_coco_datasets",
+                lambda self, groundtruth_labels, average: None,
+                ["_get_coco_datasets"],
+                id="missing-parameters",
+            ),
+            pytest.param(
+                "_coco_stats_to_tensor_dict",
+                lambda self, stats, prefix, max_detection_thresholds, extra=None: None,
+                [],
+                id="superset-of-required-parameters",
+            ),
+            pytest.param(
+                "_get_coco_format",
+                lambda self, labels, /, all_labels, boxes, masks, scores, crowds, area, iou_type, average: None,
+                ["_get_coco_format"],
+                id="positional-only-parameter",
+            ),
+        ],
+    )
+    def test_flags_only_signatures_that_break_keyword_calls(
+        self, method_name: str, method: Callable[..., None], expected: list[str]
+    ) -> None:
+        """A backend method missing a relied-on name or taking one positional-only is flagged; a superset is not.
 
-        class _Backend:
-            def _get_coco_datasets(self, groundtruth_labels, average) -> None:  # missing most params
-                pass
-
-        backend = _Backend()
-
-        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(backend, ["_get_coco_datasets"])
-
-        assert mismatched == ["_get_coco_datasets"]
-
-    def test_accepts_a_method_with_every_relied_on_parameter(self) -> None:
-        """A backend method whose signature is a superset of the required names is not flagged."""
-
-        class _Backend:
-            def _coco_stats_to_tensor_dict(self, stats, prefix, max_detection_thresholds, extra=None) -> None:
-                pass
-
-        backend = _Backend()
-
-        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(
-            backend, ["_coco_stats_to_tensor_dict"]
-        )
-
-        assert mismatched == []
-
-    def test_flags_keyword_call_to_a_positional_only_parameter(self) -> None:
-        """A positional-only backend parameter must fail before its keyword call reaches compute().
-
-        A parameter-name-only check accepts this signature even though ``_coco_datasets`` passes every
+        A parameter-name-only check accepts the positional-only signature even though ``_coco_datasets`` passes every
         ``_get_coco_format`` argument by keyword. Construction-time rejection turns a private API shift into the
         adapter's actionable compatibility error instead of a raw TypeError after state accumulation.
         """
+        backend = type("_Backend", (), {method_name: method})()
 
-        class _Backend:
-            def _get_coco_format(
-                self, labels, /, all_labels, boxes, masks, scores, crowds, area, iou_type, average
-            ) -> None:
-                pass
+        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(backend, [method_name])
 
-        mismatched = OnePassCocoMeanAveragePrecision._mismatched_backend_signatures(_Backend(), ["_get_coco_format"])
-
-        assert mismatched == ["_get_coco_format"]
+        assert mismatched == expected
 
 
 class TestEvaluatorMethodsNowRequiringArgs:
     """Unit coverage for the evaluator zero-arg-method regression check."""
 
-    def test_flags_a_method_that_gained_a_required_argument(self) -> None:
-        """A previously zero-arg evaluator method that now requires an argument is reported."""
+    @pytest.mark.parametrize(
+        ("method", "expected"),
+        [
+            pytest.param(lambda self, threshold: None, ["evaluate"], id="gained-required-argument"),
+            pytest.param(lambda self: None, [], id="stayed-zero-arg"),
+            pytest.param(lambda self, threshold=0.5: None, [], id="new-argument-has-default"),
+        ],
+    )
+    def test_flags_only_methods_that_gained_a_required_argument(
+        self, method: Callable[..., None], expected: list[str]
+    ) -> None:
+        """A previously zero-arg evaluator method is reported only when it now requires an argument.
 
-        class _Evaluator:
-            def evaluate(self, threshold) -> None:
-                pass
+        A new parameter with a default value does not break zero-argument calls.
+        """
+        evaluator = type("_Evaluator", (), {"evaluate": method})
 
-        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(_Evaluator, ["evaluate"])
+        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(evaluator, ["evaluate"])
 
-        assert mismatched == ["evaluate"]
-
-    def test_accepts_a_method_that_stayed_zero_arg(self) -> None:
-        """An evaluator method still callable with no arguments is not flagged."""
-
-        class _Evaluator:
-            def evaluate(self) -> None:
-                pass
-
-        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(_Evaluator, ["evaluate"])
-
-        assert mismatched == []
-
-    def test_accepts_a_method_whose_new_argument_has_a_default(self) -> None:
-        """A new parameter with a default value does not break zero-argument calls."""
-
-        class _Evaluator:
-            def evaluate(self, threshold=0.5) -> None:
-                pass
-
-        mismatched = OnePassCocoMeanAveragePrecision._evaluator_methods_now_requiring_args(_Evaluator, ["evaluate"])
-
-        assert mismatched == []
+        assert mismatched == expected
 
 
 def test_crowd_annotations_do_not_reduce_class_metrics() -> None:
@@ -730,25 +706,17 @@ def test_crowd_annotations_do_not_reduce_class_metrics() -> None:
     torch.testing.assert_close(result["mar_100_per_class"].reshape(-1), torch.ones(1), rtol=1e-4, atol=1e-6)
 
 
-@patch("rfdetr.training.coco_map.get_world_size", return_value=2)
-@patch("rfdetr.training.coco_map.is_dist_avail_and_initialized", return_value=True)
-def test_distributed_merge_concatenates_every_metric_state(_initialized: MagicMock, _world_size: MagicMock) -> None:
+def test_distributed_merge_concatenates_every_metric_state(mocker: MockerFixture) -> None:
     """The explicit DDP boundary must gather every list state once and mark empty ranks as updated."""
+    mocker.patch("rfdetr.training.coco_map.get_world_size", return_value=2)
+    mocker.patch("rfdetr.training.coco_map.is_dist_avail_and_initialized", return_value=True)
     metric = OnePassCocoMeanAveragePrecision()
-    metric.update(
-        [
-            {
-                "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
-                "scores": torch.tensor([0.9]),
-                "labels": torch.tensor([3]),
-            }
-        ],
-        [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
-    )
+    metric.update(*_single_box_state())
     metric._update_count = 0
 
-    with patch("rfdetr.training.coco_map.all_gather", side_effect=lambda local: [local, local]) as gather:
-        metric.merge_distributed_state()
+    gather = mocker.patch("rfdetr.training.coco_map.all_gather", side_effect=lambda local: [local, local])
+
+    metric.merge_distributed_state()
 
     assert gather.call_count == 9
     assert len(metric.detection_box) == 2
@@ -756,20 +724,11 @@ def test_distributed_merge_concatenates_every_metric_state(_initialized: MagicMo
     assert metric.has_updates is True
 
 
-@patch("rfdetr.training.coco_map.all_gather")
-def test_distributed_merge_is_noop_without_process_group(gather) -> None:
+def test_distributed_merge_is_noop_without_process_group(mocker: MockerFixture) -> None:
     """Single-process use must leave local state untouched and issue no object gathers."""
+    gather = mocker.patch("rfdetr.training.coco_map.all_gather")
     metric = OnePassCocoMeanAveragePrecision()
-    metric.update(
-        [
-            {
-                "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
-                "scores": torch.tensor([0.9]),
-                "labels": torch.tensor([3]),
-            }
-        ],
-        [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
-    )
+    metric.update(*_single_box_state())
 
     metric.merge_distributed_state()
 
@@ -777,14 +736,14 @@ def test_distributed_merge_is_noop_without_process_group(gather) -> None:
     assert len(metric.detection_box) == 1
 
 
-@patch("rfdetr.training.coco_map.get_world_size", return_value=1)
-@patch("rfdetr.training.coco_map.is_dist_avail_and_initialized", return_value=True)
-def test_distributed_merge_is_noop_for_world_size_one(_initialized: MagicMock, _world_size: MagicMock) -> None:
+def test_distributed_merge_is_noop_for_world_size_one(mocker: MockerFixture) -> None:
     """An initialized one-rank group must not perform redundant object gathers."""
+    mocker.patch("rfdetr.training.coco_map.get_world_size", return_value=1)
+    mocker.patch("rfdetr.training.coco_map.is_dist_avail_and_initialized", return_value=True)
+    gather = mocker.patch("rfdetr.training.coco_map.all_gather")
     metric = OnePassCocoMeanAveragePrecision()
 
-    with patch("rfdetr.training.coco_map.all_gather") as gather:
-        metric.merge_distributed_state()
+    metric.merge_distributed_state()
 
     gather.assert_not_called()
 
@@ -806,16 +765,7 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, b
     try:
         metric = OnePassCocoMeanAveragePrecision(class_metrics=True, backend=backend)
         if rank == 0:
-            metric.update(
-                [
-                    {
-                        "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
-                        "scores": torch.tensor([0.9]),
-                        "labels": torch.tensor([3]),
-                    }
-                ],
-                [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
-            )
+            metric.update(*_single_box_state())
         metric.merge_distributed_state()
         result = metric.compute()
         assert metric.has_updates is True
@@ -907,11 +857,7 @@ def test_alternative_backend_matches_faster_coco_eval(backend: str) -> None:
     assert set(expected["map_per_class"].tolist()) - {-1.0, 0.0, 1.0}, (
         "fixture produced only degenerate per-class values; strengthen it before trusting this parity check"
     )
-    for key in actual:
-        if key == "classes":
-            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
-        else:
-            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
+    _assert_results_close(actual, expected)
 
 
 @pytest.mark.parametrize("backend", _ALTERNATIVE_BACKENDS)
@@ -958,11 +904,7 @@ def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: 
     # A mask AP that silently collapses to 0.0 is the failure this fixture exists to catch, so the fixture itself
     # has to produce a non-zero one first.
     assert expected["segm_map"].item() > 0.0
-    for key in actual:
-        if key == "classes":
-            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
-        else:
-            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
+    _assert_results_close(actual, expected)
 
 
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
@@ -1103,22 +1045,24 @@ def test_ufcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> 
     assert [str(warning.message) for warning in raised] == []
 
 
-def test_missing_ufcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Selecting ufcoco without it installed must say how to install it.
+@pytest.mark.parametrize(
+    ("backend", "extra"),
+    [pytest.param("hotcoco", "rfdetr[hotcoco]", id="hotcoco"), pytest.param("ufcoco", "rfdetr[train]", id="ufcoco")],
+)
+def test_missing_backend_dependency_names_the_extra(backend: str, extra: str, mocker: MockerFixture) -> None:
+    """Selecting a backend whose package is not installed must say how to install it.
 
-    Same trap as for hotcoco: the private-contract check resolves the evaluator inside an ``except ImportError``, so an
-    import deferred until then would be reported as a torchmetrics incompatibility instead of a missing extra.
+    The private-contract check that runs right after backend construction resolves the evaluator inside an ``except
+    ImportError``, so an import deferred until then would be reported as a torchmetrics incompatibility -- the one
+    message that tells a user nothing about the missing extra.
     """
+    message = f"backend={backend!r} requires an optional package; install it with: pip install '{extra}'"
+    mocker.patch(f"rfdetr.training.coco_map._{backend}", side_effect=ImportError(message))
 
-    def missing_dependency() -> Any:
-        raise ImportError(
-            "backend='ufcoco' requires the ultrafast-pycocotools package; install it with: pip install 'rfdetr[train]'"
-        )
+    with pytest.raises(ImportError) as exc_info:
+        OnePassCocoMeanAveragePrecision(backend=backend)
 
-    monkeypatch.setattr("rfdetr.training.coco_map._ufcoco", missing_dependency)
-
-    with pytest.raises(ImportError, match=r"rfdetr\[train\]"):
-        OnePassCocoMeanAveragePrecision(backend="ufcoco")
+    assert extra in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -1129,22 +1073,27 @@ def test_missing_ufcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPat
         pytest.param(_vernier, "vernier", id="vernier"),
     ],
 )
-def test_missing_backend_package_names_the_extra(importer: Callable[[], Any], package: str) -> None:
+def test_missing_backend_package_names_the_extra(
+    importer: Callable[[], Any], package: str, mocker: MockerFixture
+) -> None:
     """A missing backend package must retain the actionable installation guidance."""
     missing_package = ModuleNotFoundError(f"No module named '{package}'", name=package)
 
-    with (
-        patch("builtins.__import__", side_effect=missing_package),
-        pytest.raises(ImportError, match=r"rfdetr\[train\]"),
-    ):
+    mocker.patch("builtins.__import__", side_effect=missing_package)
+
+    with pytest.raises(ImportError) as exc_info:
         importer()
 
+    assert "rfdetr[train]" in str(exc_info.value)
 
-def test_ufcoco_propagates_nested_import_error() -> None:
+
+def test_ufcoco_propagates_nested_import_error(mocker: MockerFixture) -> None:
     """A failure inside ufcoco must retain the missing nested dependency name."""
     nested_error = ModuleNotFoundError("No module named 'nested_dependency'", name="nested_dependency")
 
-    with patch("builtins.__import__", side_effect=nested_error), pytest.raises(ModuleNotFoundError) as raised:
+    mocker.patch("builtins.__import__", side_effect=nested_error)
+
+    with pytest.raises(ModuleNotFoundError) as raised:
         _ufcoco()
 
     assert raised.value is nested_error
@@ -1211,8 +1160,9 @@ def test_vernier_thread_budget_divides_by_local_world_size(
 @vernier_only
 def test_vernier_rejects_mask_only_evaluation() -> None:
     """Mask-only evaluation must fail at construction, before an epoch of state is accumulated and discarded."""
-    with pytest.raises(ValueError, match="requires 'bbox'"):
+    with pytest.raises(ValueError) as exc_info:
         OnePassCocoMeanAveragePrecision(backend="vernier", iou_type="segm", sync_on_compute=False)
+    assert "requires 'bbox'" in str(exc_info.value)
 
 
 @vernier_only
@@ -1228,8 +1178,9 @@ def test_vernier_rejects_fractional_ground_truth_labels() -> None:
         [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3.5])}],
     )
 
-    with pytest.raises(ValueError, match="must be integral"):
+    with pytest.raises(ValueError) as exc_info:
         metric.compute()
+    assert "must be integral" in str(exc_info.value)
 
 
 @vernier_only
@@ -1254,8 +1205,9 @@ def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> Non
         [{"boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]]), "labels": torch.tensor([3]), "masks": mask}],
     )
 
-    with pytest.raises(ValueError, match="must be integral"):
+    with pytest.raises(ValueError) as exc_info:
         metric.compute()
+    assert "must be integral" in str(exc_info.value)
 
 
 @vernier_only
@@ -1514,9 +1466,8 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
     """The columnar ground truth must be the *document* TorchMetrics' COCO format is, not merely score the same.
 
     ``coco_inputs_from_columns`` builds the document, but mapping *this* metric's state onto it is still
-    RF-DETR's, and that
-    is what this pins -- by ``dataset_hash`` against the route it replaced, ``_get_coco_format`` through vernier's
-    normalizers and JSON parser.
+    RF-DETR's, and that is what this pins -- by ``dataset_hash`` against the route it replaced, ``_get_coco_format``
+    through vernier's normalizers and JSON parser.
 
     Metrics would not catch it: most cases here differ only in ways AP cannot see, such as an image entry with no
     annotations on it or an ``area`` on an annotation that matches nothing. The cases are the rules easiest to get
@@ -1739,8 +1690,10 @@ class TestUfcocoArraysMatchPycocotools:
     @pytest.mark.parametrize("iou_type", ["bbox", "segm", pytest.param(("bbox", "segm"), id="both")])
     @pytest.mark.parametrize("max_dets", [100, 500])
     def test_evaluator_arrays_are_byte_identical(self, iou_type: Any, max_dets: int) -> None:
-        """Precision, recall and score arrays must match pycocotools byte for byte across incremental updates and
-        reuse."""
+        """Precision, recall and score arrays must match pycocotools byte for byte.
+
+        Holds across incremental updates and reuse of the metric after ``reset()``.
+        """
         from pycocotools.coco import COCO
         from pycocotools.cocoeval import COCOeval
 
@@ -1828,9 +1781,7 @@ class TestDetectionArrayLabelValidation:
     ``COCO`` constructor or ``loadRes`` instead of upstream's ``ValueError``.
     """
 
-    @pytest.mark.parametrize(
-        "backend", [pytest.param("hotcoco", marks=hotcoco_only), pytest.param("ufcoco", marks=ufcoco_only)]
-    )
+    @pytest.mark.parametrize("backend", _BOX_ARRAY_BACKENDS)
     @pytest.mark.parametrize("label", [3.5, 3.0])
     def test_rejects_floating_point_labels(self, backend: str, label: float) -> None:
         """A floating-point detection label must raise upstream's ``ValueError``, whole-valued or not.
@@ -1850,8 +1801,9 @@ class TestDetectionArrayLabelValidation:
             [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
         )
 
-        with pytest.raises(ValueError, match="Invalid input class of sample 0"):
+        with pytest.raises(ValueError) as exc_info:
             metric.compute()
+        assert "Invalid input class of sample 0" in str(exc_info.value)
 
     @ufcoco_only
     def test_accepts_empty_floating_point_labels(self) -> None:
@@ -1890,9 +1842,7 @@ class TestDetectionArrayEdgeCasesMatchFasterCocoEval:
     the array construction reshapes and the row count the evaluator, not the array, has to truncate.
     """
 
-    @pytest.mark.parametrize(
-        "backend", [pytest.param("hotcoco", marks=hotcoco_only), pytest.param("ufcoco", marks=ufcoco_only)]
-    )
+    @pytest.mark.parametrize("backend", _BOX_ARRAY_BACKENDS)
     def test_one_dimensional_empty_boxes(self, backend: str) -> None:
         """An image whose prediction boxes are a 1-D empty tensor must count as zero detections, as upstream does.
 
@@ -1911,12 +1861,9 @@ class TestDetectionArrayEdgeCasesMatchFasterCocoEval:
         actual = actual_metric.compute()
 
         assert actual.keys() == expected.keys()
-        for key in actual:
-            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
+        _assert_results_close(actual, expected)
 
-    @pytest.mark.parametrize(
-        "backend", [pytest.param("hotcoco", marks=hotcoco_only), pytest.param("ufcoco", marks=ufcoco_only)]
-    )
+    @pytest.mark.parametrize("backend", _BOX_ARRAY_BACKENDS)
     def test_detections_beyond_the_largest_detection_limit(self, backend: str) -> None:
         """Rows past ``maxDets[-1]`` must reach the evaluator and be truncated there, as upstream truncates them.
 
@@ -1952,25 +1899,7 @@ class TestDetectionArrayEdgeCasesMatchFasterCocoEval:
 
         assert float(expected["mar_3"]) == 0.5
         assert actual.keys() == expected.keys()
-        for key in actual:
-            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
-
-
-def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Selecting hotcoco without it installed must say how to install it.
-
-    The private-contract check that runs right after backend construction resolves the evaluator inside an ``except
-    ImportError``, so an import failure deferred until then is reported as a torchmetrics incompatibility — the one
-    message that tells a user nothing about the missing extra.
-    """
-
-    def missing_dependency() -> Any:
-        raise ImportError("hotcoco requires the optional dependency; install it with: pip install 'rfdetr[hotcoco]'")
-
-    monkeypatch.setattr("rfdetr.training.coco_map._hotcoco", missing_dependency)
-
-    with pytest.raises(ImportError, match=r"rfdetr\[hotcoco\]"):
-        OnePassCocoMeanAveragePrecision(backend="hotcoco")
+        _assert_results_close(actual, expected)
 
 
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
@@ -2095,7 +2024,7 @@ class TestHotcocoMultiIouTypeMatchesFasterCocoEval:
 
 
 @hotcoco_only
-def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions() -> None:
+def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions(mocker: MockerFixture) -> None:
     """A bbox+segm run on hotcoco must build its datasets once, not once per IoU type.
 
     Before ``COCO.update_anns`` the only way to switch the active ``area`` on hotcoco was to build a new prediction
@@ -2107,16 +2036,15 @@ def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions() 
     metric = OnePassCocoMeanAveragePrecision(iou_type=("bbox", "segm"), backend="hotcoco", sync_on_compute=False)
     metric.update(predictions, targets)
 
-    with (
-        patch.object(metric, "_build_coco", wraps=metric._build_coco) as build_coco,
-        patch.object(
-            metric, "_hotcoco_datasets_from_arrays", wraps=metric._hotcoco_datasets_from_arrays
-        ) as from_arrays,
-        patch.object(
-            metric, "_prediction_dataset_for_iou_type", wraps=metric._prediction_dataset_for_iou_type
-        ) as switch_area,
-    ):
-        metric.compute()
+    build_coco = mocker.patch.object(metric, "_build_coco", wraps=metric._build_coco)
+    from_arrays = mocker.patch.object(
+        metric, "_hotcoco_datasets_from_arrays", wraps=metric._hotcoco_datasets_from_arrays
+    )
+    switch_area = mocker.patch.object(
+        metric, "_prediction_dataset_for_iou_type", wraps=metric._prediction_dataset_for_iou_type
+    )
+
+    metric.compute()
 
     assert (build_coco.call_count, from_arrays.call_count, switch_area.call_count) == (0, 1, 2)
 
@@ -2354,7 +2282,7 @@ class TestHotcocoStreaming:
     """``hotcoco_streaming`` matches batches in ``update()`` and must report exactly what ``hotcoco`` reports."""
 
     @pytest.mark.parametrize("iou_type", ["bbox", ("bbox", "segm")])
-    def test_streamed_metrics_equal_batch_hotcoco(self, iou_type: str | tuple[str, ...]) -> None:
+    def test_streamed_metrics_equal_batch_hotcoco(self, mocker: MockerFixture, iou_type: str | tuple[str, ...]) -> None:
         """Per-image streaming reproduces the batch evaluation bit for bit, per-class vectors included.
 
         The bbox+segm fixture straddles the small/medium boundary, so a detection area derived from the wrong geometry
@@ -2365,13 +2293,13 @@ class TestHotcocoStreaming:
         streamed = _metric_fed_per_image("hotcoco_streaming", *records, **kwargs)
         assert streamed._streams is not None
 
-        with patch.object(streamed, "_build_coco") as build_coco:
-            actual = streamed.compute()
+        build_coco = mocker.patch.object(streamed, "_build_coco")
+        actual = streamed.compute()
 
         build_coco.assert_not_called()
         _assert_same_metrics(actual, _metric_fed_per_image("hotcoco", *records, **kwargs).compute())
 
-    @pytest.mark.parametrize("num_classes", [pytest.param(None, id="unknown"), pytest.param(10, id="too-few")])
+    @pytest.mark.parametrize("num_classes", [None, 10])
     def test_falls_back_to_batch_when_categories_do_not_cover_labels(self, num_classes: int | None) -> None:
         """Without a category list covering every label (fixture labels reach 42), the batch path runs instead.
 

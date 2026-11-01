@@ -11,8 +11,7 @@ Each model family (detection, segmentation) is covered by **two independent code
     Loads images as PIL, calls ``RFDETR.predict()`` in batches, accumulates predictions into
     ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep for macro-F1.  Exercises the
     end-to-end public inference surface — preprocessing, backbone, decoder, postprocessing — without any
-    PTL machinery.  Tests: :func:`test_inference_detection_rfdetr_predict`,
-    :func:`test_inference_segmentation_rfdetr_predict`.
+    PTL machinery.  Test: :func:`test_inference_rfdetr_predict` (detection and segmentation cases).
 
 PTL training-stack path (``RFDETR.evaluate()``)
     Calls the public :meth:`~rfdetr.detr.RFDETR.evaluate` API on a truncated on-disk COCO val subset and reads
@@ -20,10 +19,8 @@ PTL training-stack path (``RFDETR.evaluate()``)
     over :class:`~rfdetr.training.RFDETRModelModule` + :class:`~rfdetr.training.RFDETRDataModule` +
     :func:`~rfdetr.training.build_trainer` + ``Trainer.validate`` (parity asserted in
     ``tests/models/test_evaluate.py::test_evaluate_matches_manual_building_blocks_on_test_split``), so this still
-    exercises
-    ``validation_step``, ``on_after_batch_transfer``, and :class:`~rfdetr.training.COCOEvalCallback` — the same
-    code path used during training.  Tests: :func:`test_inference_detection_ptl_predict`,
-    :func:`test_inference_segmentation_ptl_predict`.
+    exercises ``validation_step``, ``on_after_batch_transfer``, and :class:`~rfdetr.training.COCOEvalCallback` — the
+    same code path used during training.  Test: :func:`test_inference_ptl_predict` (detection and segmentation cases).
 
 Both paths run on CPU (nano models) and GPU (small and larger models, ``@pytest.mark.gpu``).
 
@@ -393,21 +390,30 @@ def keypoint_preview_predictions(
     return predictions, image_ids, annotations_path
 
 
+#: (model_cls, threshold_map, threshold_f1, num_samples, batch_size) per detection/segmentation model; nano runs on CPU.
+_MODEL_THRESHOLD_CASES = [
+    pytest.param(RFDETRNano, 0.66, 0.66, 200, 6, id="det-nano"),
+    pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small", marks=pytest.mark.gpu),
+    pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium", marks=pytest.mark.gpu),
+    pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large", marks=pytest.mark.gpu),
+    pytest.param(RFDETRSegNano, 0.63, 0.64, 200, 6, id="seg-nano"),
+    pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small", marks=pytest.mark.gpu),
+    pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium", marks=pytest.mark.gpu),
+    pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large", marks=pytest.mark.gpu),
+    pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge", marks=pytest.mark.gpu),
+    pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge", marks=pytest.mark.gpu),
+]
+
+
 # ---------------------------------------------------------------------------
 # Inference — RFDETR.predict() (CPU nano) / Trainer.validate() (GPU)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
-    [
-        pytest.param(RFDETRNano, 0.66, 0.66, 200, 6, id="det-nano"),
-        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small", marks=pytest.mark.gpu),
-        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium", marks=pytest.mark.gpu),
-        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large", marks=pytest.mark.gpu),
-    ],
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"), _MODEL_THRESHOLD_CASES
 )
-def test_inference_detection_rfdetr_predict(
+def test_inference_rfdetr_predict(
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
@@ -415,15 +421,16 @@ def test_inference_detection_rfdetr_predict(
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """Asserts mAP@50 and macro-F1 thresholds on COCO val for detection models via ``RFDETR.predict()``.
+    """Pretrained detection and segmentation models meet bbox mAP@50 and macro-F1 thresholds via ``RFDETR.predict()``.
 
-    Loads a pretrained detection model, calls ``RFDETR.predict()`` in batches on *num_samples* COCO val images,
-    scores via ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep.  Runs on CPU (nano) and GPU
-    (small/medium/large) — GPU params use a smaller *num_samples* to stay within the CI timeout.
+    Calls ``RFDETR.predict()`` in batches on *num_samples* COCO val images and scores via
+    ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep.  Segmentation masks are not required — only
+    bbox IoU is used for scoring.  Nano runs on CPU; larger variants are GPU-marked and use fewer samples to stay
+    within the CI timeout.
 
     Args:
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
-        model_cls: Detection model class to instantiate with pretrained weights.
+        model_cls: Model class to instantiate with pretrained weights.
         threshold_map: Minimum bbox mAP@50 required.
         threshold_f1: Minimum macro-F1 (best across confidence sweep) required.
         num_samples: Number of COCO val images to evaluate.
@@ -439,50 +446,6 @@ def test_inference_detection_rfdetr_predict(
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
-@pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
-    [
-        pytest.param(RFDETRSegNano, 0.63, 0.64, 200, 6, id="seg-nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge", marks=pytest.mark.gpu),
-    ],
-)
-def test_inference_segmentation_rfdetr_predict(
-    download_coco_val: tuple[Path, Path],
-    model_cls: type[RFDETR],
-    threshold_map: float,
-    threshold_f1: float,
-    num_samples: int,
-    batch_size: int,
-) -> None:
-    """Asserts bbox mAP@50 and macro-F1 thresholds on COCO val for segmentation models via ``RFDETR.predict()``.
-
-    Loads a pretrained segmentation model, calls ``RFDETR.predict()`` in batches on *num_samples* COCO val images,
-    scores via ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep.  Masks are not required — only
-    bbox IoU is used for scoring.  Runs on CPU (nano) and GPU (small and larger variants).
-
-    Args:
-        download_coco_val: Fixture providing ``(images_root, annotations_path)``.
-        model_cls: Segmentation model class to instantiate with pretrained weights.
-        threshold_map: Minimum bbox mAP@50 required.
-        threshold_f1: Minimum macro-F1 (best across confidence sweep) required.
-        num_samples: Number of COCO val images to evaluate.
-        batch_size: Number of images per batch.
-    """
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    images_root, annotations_path = download_coco_val
-
-    model = model_cls(device=device_str)
-    map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
-
-    assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
-    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
-
-
-@pytest.mark.coco17
 def test_keypoint_preview_pretrained_inference_thresholded(
     keypoint_preview_predictions: tuple[list[sv.KeyPoints], list[int], Path],
 ) -> None:
@@ -515,7 +478,6 @@ def test_keypoint_preview_pretrained_inference_thresholded(
 
 
 @pytest.mark.gpu
-@pytest.mark.coco17
 @pytest.mark.parametrize(
     ("threshold_keypoint_map", "num_samples", "batch_size"),
     [
@@ -554,15 +516,9 @@ def test_inference_keypoint_preview_rfdetr_predict(
 
 
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
-    [
-        pytest.param(RFDETRNano, 0.66, 0.66, 200, 6, id="det-nano"),
-        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small", marks=pytest.mark.gpu),
-        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium", marks=pytest.mark.gpu),
-        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large", marks=pytest.mark.gpu),
-    ],
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"), _MODEL_THRESHOLD_CASES
 )
-def test_inference_detection_ptl_predict(
+def test_inference_ptl_predict(
     tmp_path: Path,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
@@ -571,76 +527,18 @@ def test_inference_detection_ptl_predict(
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """Asserts mAP@50 and macro-F1 thresholds on COCO val for detection models via ``RFDETR.evaluate()``.
+    """Pretrained detection and segmentation models meet bbox ``val/mAP_50`` and ``val/F1`` thresholds via
+    ``evaluate()``.
 
     Calls the public ``evaluate()`` API on a truncated on-disk COCO val subset. ``evaluate()`` is the documented
     convenience wrapper over ``RFDETRModelModule``/``RFDETRDataModule``/``build_trainer``/``Trainer.validate``
-    (parity asserted in ``tests/models/test_evaluate.py``), so this still exercises the PTL validation loop
+    (parity asserted in ``tests/models/test_evaluate.py``), so this exercises the PTL validation loop
     (``validation_step`` + callbacks) rather than the public ``RFDETR.predict()`` API.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
-        model_cls: Detection model class to instantiate with pretrained weights.
-        threshold_map: Minimum ``val/mAP_50`` required.
-        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
-        num_samples: Number of val samples used for evaluation.
-        batch_size: DataLoader batch size.
-    """
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    images_root, annotations_path = download_coco_val
-    num_workers = 0 if not torch.cuda.is_available() else min(os.cpu_count(), 4)
-
-    subset_dir = _build_coco_val_subset(images_root, annotations_path, num_samples, tmp_path / "coco_subset")
-    model = model_cls(device=device_str)
-    metrics = model.evaluate(
-        dataset_dir=str(subset_dir),
-        dataset_file="coco",
-        split="val",
-        device=device_str,
-        output_dir=str(tmp_path / "eval_output"),
-        batch_size=batch_size,
-        num_workers=num_workers,
-        tensorboard=False,
-        wandb=False,
-        mlflow=False,
-        clearml=False,
-        compute_val_loss=False,
-    )
-    map_val = metrics["val/mAP_50"]
-    f1_val = metrics["val/F1"]
-    assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
-    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
-
-
-@pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
-    [
-        pytest.param(RFDETRSegNano, 0.63, 0.64, 200, 6, id="seg-nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge", marks=pytest.mark.gpu),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge", marks=pytest.mark.gpu),
-    ],
-)
-def test_inference_segmentation_ptl_predict(
-    tmp_path: Path,
-    download_coco_val: tuple[Path, Path],
-    model_cls: type[RFDETR],
-    threshold_map: float,
-    threshold_f1: float,
-    num_samples: int,
-    batch_size: int,
-) -> None:
-    """Asserts bbox mAP@50 and macro-F1 thresholds on COCO val for segmentation models via ``RFDETR.evaluate()``.
-
-    Same structure as :func:`test_inference_detection_ptl_predict` but for segmentation variants.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-        download_coco_val: Fixture providing ``(images_root, annotations_path)``.
-        model_cls: Segmentation model class to instantiate with pretrained weights.
+        model_cls: Model class to instantiate with pretrained weights.
         threshold_map: Minimum ``val/mAP_50`` (bbox) required.
         threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
         num_samples: Number of val samples used for evaluation.

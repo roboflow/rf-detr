@@ -9,12 +9,13 @@ import copy
 import inspect
 import io
 from collections.abc import Callable
-from unittest.mock import Mock
+from functools import partial
 
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
+from pytest_mock import MockerFixture
 from torch import nn
 from torch.utils.hooks import RemovableHandle
 
@@ -41,7 +42,7 @@ from rfdetr.models.transformer import (
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
 from tests._markers import cuda_marks, onnx_and_onnxruntime_only, requires_cuda
-from tests.models._transformer_support import decoder_layer, record_apply_calls
+from tests.models._transformer_support import decoder_layer, record_apply_calls, single_level_two_stage_transformer
 
 # Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
 _DYNAMO_KWARG = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
@@ -55,6 +56,59 @@ def _reset_random_seeds() -> None:
 
 
 _MSDeformInputs = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]
+
+
+@pytest.fixture
+def gather_calls(mocker: MockerFixture) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Record ``(input, index)`` of every ``torch.gather`` call made while the test runs.
+
+    This is a pytest fixture (it needs ``mocker``), so its doctest cannot run standalone.
+
+    Examples:
+        >>> gather_calls  # doctest: +SKIP
+    """
+    calls: list[tuple[torch.Tensor, torch.Tensor]] = []
+    original_gather = torch.gather
+
+    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        calls.append((input, index))
+        return original_gather(input, dim, index, **kwargs)
+
+    mocker.patch.object(torch, "gather", side_effect=_tracking_gather)
+    return calls
+
+
+def _assert_gather_indices_broadcast(calls: list[tuple[torch.Tensor, torch.Tensor]]) -> None:
+    """Assert ``calls`` is non-empty and every gather index broadcasts its last dim via ``Tensor.expand``.
+
+    ``Tensor.repeat``, ``tile``, ``expand(...).contiguous()`` and ``repeat_interleave`` all re-materialise the index
+    into a nonzero-stride tensor, so one stride check catches every one of those regressions.
+
+    Examples:
+        >>> _assert_gather_indices_broadcast([(torch.zeros(2, 3, 4), torch.zeros(2, 3, 1).expand(2, 3, 4))])
+    """
+    assert calls, "expected torch.gather to be called during the two-stage top-k selection"
+    for _, index in calls:
+        assert index.stride(-1) == 0, (
+            "every two-stage top-k gather index must broadcast its last dim via Tensor.expand (Transformer.forward "
+            f"two-stage top-k gather); got a materialised index with nonzero last-dim stride {index.stride()} "
+            f"for shape {tuple(index.shape)}"
+        )
+
+
+def _keep_eager(module: MSDeformAttn) -> None:
+    """Leave ``module`` in eager mode: the no-op counterpart of ``MSDeformAttn.export`` for parametrized tests.
+
+    Examples:
+        >>> module = MSDeformAttn(d_model=32, n_levels=2, n_heads=4, n_points=1)
+        >>> _keep_eager(module)
+        >>> module._export
+        False
+    """
+
+
+_EAGER_OR_EXPORT = [pytest.param(_keep_eager, id="eager"), pytest.param(MSDeformAttn.export, id="export")]
+_PASS_HW_SHAPES = [pytest.param(False, id="tensor-only"), pytest.param(True, id="hw-pairs")]
 
 
 def test_decoder_grouping_reuses_query_tensor_as_key() -> None:
@@ -162,29 +216,16 @@ def _build_ms_deform_inputs(
     return value, spatial_shapes_tensor, sampling_locations, attention_weights, levels
 
 
-def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:
-    """`gen_encoder_output_proposals` should call `torch.meshgrid` with explicit ij indexing."""
-    original_meshgrid = torch.meshgrid
-    call_count = 0
-
-    def _meshgrid_with_indexing_assertion(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if kwargs.get("indexing") != "ij":
-            raise AssertionError("torch.meshgrid must be called with indexing='ij'")
-        return original_meshgrid(*args, **kwargs)
-
-    monkeypatch.setattr(torch, "meshgrid", _meshgrid_with_indexing_assertion)
-
+def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(mocker: MockerFixture) -> None:
+    """`gen_encoder_output_proposals` should call `torch.meshgrid` once with explicit ij indexing."""
+    meshgrid = mocker.patch.object(torch, "meshgrid", wraps=torch.meshgrid)
     memory = torch.randn(1, 4, 8)
     spatial_shapes = torch.tensor([[2, 2]], dtype=torch.long)
 
-    output_memory, output_proposals = gen_encoder_output_proposals(
-        memory,
-        spatial_shapes=spatial_shapes,
-    )
+    gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
 
-    assert call_count == 1
+    meshgrid.assert_called_once()
+    assert meshgrid.call_args.kwargs.get("indexing") == "ij"
 
 
 @pytest.mark.parametrize("position_layout", ["real", "strided"])
@@ -192,22 +233,7 @@ def test_transformer_packs_single_level_position_without_redundant_copy(position
     """Reuse real contiguous position storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
     batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        bbox_reparam=False,
-        group_detr=1,
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    transformer = single_level_two_stage_transformer(hidden_dim, num_queries)
 
     if position_layout == "real":
         # PositionEmbeddingSine produces contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
@@ -221,19 +247,16 @@ def test_transformer_packs_single_level_position_without_redundant_copy(position
     assert flattened_position.is_contiguous() is (position_layout == "real")
     seen_decoder_positions: list[torch.Tensor] = []
 
-    handle = transformer.decoder.register_forward_pre_hook(
+    transformer.decoder.register_forward_pre_hook(
         lambda _module, _args, kwargs: seen_decoder_positions.append(kwargs["pos"]), with_kwargs=True
     )
-    try:
-        transformer(
-            [torch.randn(batch_size, hidden_dim, height, width)],
-            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
-            [position],
-            torch.rand(num_queries, 4),
-            torch.randn(num_queries, hidden_dim),
-        )
-    finally:
-        handle.remove()
+    transformer(
+        [torch.randn(batch_size, hidden_dim, height, width)],
+        [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+        [position],
+        torch.rand(num_queries, 4),
+        torch.randn(num_queries, hidden_dim),
+    )
 
     assert len(seen_decoder_positions) == 1
     assert torch.equal(seen_decoder_positions[0], flattened_position)
@@ -250,22 +273,7 @@ def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout:
     """Reuse real padding-mask storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
     batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        bbox_reparam=False,
-        group_detr=1,
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    transformer = single_level_two_stage_transformer(hidden_dim, num_queries)
 
     if mask_layout == "real":
         mask = torch.zeros(batch_size, height, width, dtype=torch.bool)
@@ -276,20 +284,16 @@ def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout:
     assert flattened_mask.is_contiguous() is (mask_layout == "real")
     seen_decoder_masks: list[torch.Tensor] = []
 
-    handle = transformer.decoder.register_forward_pre_hook(
-        lambda _module, _args, kwargs: seen_decoder_masks.append(kwargs["memory_key_padding_mask"]),
-        with_kwargs=True,
+    transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_masks.append(kwargs["memory_key_padding_mask"]), with_kwargs=True
     )
-    try:
-        transformer(
-            [torch.randn(batch_size, hidden_dim, height, width)],
-            [mask],
-            [torch.randn(batch_size, hidden_dim, height, width)],
-            torch.rand(num_queries, 4),
-            torch.randn(num_queries, hidden_dim),
-        )
-    finally:
-        handle.remove()
+    transformer(
+        [torch.randn(batch_size, hidden_dim, height, width)],
+        [mask],
+        [torch.randn(batch_size, hidden_dim, height, width)],
+        torch.rand(num_queries, 4),
+        torch.randn(num_queries, hidden_dim),
+    )
 
     assert len(seen_decoder_masks) == 1
     assert torch.equal(seen_decoder_masks[0], flattened_mask)
@@ -303,22 +307,7 @@ def test_transformer_packs_single_level_memory_without_redundant_copy(memory_lay
     """Reuse real contiguous projector-feature storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
     batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        bbox_reparam=False,
-        group_detr=1,
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    transformer = single_level_two_stage_transformer(hidden_dim, num_queries)
 
     if memory_layout == "real":
         # MultiScaleProjector's final stage norm is unconditionally the permute-based LayerNorm defined in
@@ -333,19 +322,16 @@ def test_transformer_packs_single_level_memory_without_redundant_copy(memory_lay
     assert flattened_src.is_contiguous() is (memory_layout == "real")
     seen_decoder_memories: list[torch.Tensor] = []
 
-    handle = transformer.decoder.register_forward_pre_hook(
+    transformer.decoder.register_forward_pre_hook(
         lambda _module, args, _kwargs: seen_decoder_memories.append(args[1]), with_kwargs=True
     )
-    try:
-        transformer(
-            [src],
-            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
-            [torch.randn(batch_size, hidden_dim, height, width)],
-            torch.rand(num_queries, 4),
-            torch.randn(num_queries, hidden_dim),
-        )
-    finally:
-        handle.remove()
+    transformer(
+        [src],
+        [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+        [torch.randn(batch_size, hidden_dim, height, width)],
+        torch.rand(num_queries, 4),
+        torch.randn(num_queries, hidden_dim),
+    )
 
     assert len(seen_decoder_memories) == 1
     assert torch.equal(seen_decoder_memories[0], flattened_src)
@@ -362,23 +348,7 @@ def test_transformer_packs_single_level_cross_attn_memory_without_redundant_copy
     """Reuse real contiguous dual-projector storage while preserving contiguous output for custom strided input."""
     torch.manual_seed(0)
     batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        bbox_reparam=False,
-        group_detr=1,
-        dual_projector_kp_only=True,
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    transformer = single_level_two_stage_transformer(hidden_dim, num_queries, dual_projector_kp_only=True)
 
     if memory_layout == "real":
         cross_src_storage = torch.randn(batch_size, height, width, hidden_dim)
@@ -390,21 +360,17 @@ def test_transformer_packs_single_level_cross_attn_memory_without_redundant_copy
     assert flattened_cross_src.is_contiguous() is (memory_layout == "real")
     seen_cross_attn_memories: list[torch.Tensor] = []
 
-    handle = transformer.decoder.register_forward_pre_hook(
-        lambda _module, _args, kwargs: seen_cross_attn_memories.append(kwargs["kp_cross_attn_memory"]),
-        with_kwargs=True,
+    transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_cross_attn_memories.append(kwargs["kp_cross_attn_memory"]), with_kwargs=True
     )
-    try:
-        transformer(
-            [torch.randn(batch_size, hidden_dim, height, width)],
-            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
-            [torch.randn(batch_size, hidden_dim, height, width)],
-            torch.rand(num_queries, 4),
-            torch.randn(num_queries, hidden_dim),
-            cross_attn_srcs=[cross_src],
-        )
-    finally:
-        handle.remove()
+    transformer(
+        [torch.randn(batch_size, hidden_dim, height, width)],
+        [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+        [torch.randn(batch_size, hidden_dim, height, width)],
+        torch.rand(num_queries, 4),
+        torch.randn(num_queries, hidden_dim),
+        cross_attn_srcs=[cross_src],
+    )
 
     assert len(seen_cross_attn_memories) == 1
     assert torch.equal(seen_cross_attn_memories[0], flattened_cross_src)
@@ -463,7 +429,7 @@ def test_gen_sineembed_for_position_compiles_with_inductor_in_half_precision(
     torch.testing.assert_close(compiled, gen_sineembed_for_position(pos_tensor, 128), rtol=0, atol=atol)
 
 
-def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch) -> None:
+def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(mocker: MockerFixture) -> None:
     """Wrong meshgrid indexing (xy vs ij) produces different proposals for non-square spatial shapes."""
     original_meshgrid = torch.meshgrid
 
@@ -477,7 +443,7 @@ def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch
 
     correct_memory, correct_proposals = gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
 
-    monkeypatch.setattr(torch, "meshgrid", _meshgrid_wrong_indexing)
+    mocker.patch.object(torch, "meshgrid", side_effect=_meshgrid_wrong_indexing)
 
     wrong_memory, wrong_proposals = gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
 
@@ -486,14 +452,25 @@ def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch
     )
 
 
-def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None:
-    """`gen_encoder_output_proposals` must accept `spatial_shapes` as a tensor of int pairs."""
-    batch = 2
-    ht, wd = 4, 4
-    memory = torch.randn(batch, ht * wd, 8)
-    spatial_shapes = torch.tensor([[ht, wd]], dtype=torch.long)
+@pytest.mark.parametrize(
+    "spatial_shapes",
+    [pytest.param(torch.tensor([[4, 4]], dtype=torch.long), id="tensor"), pytest.param([(4, 4)], id="int-pairs")],
+)
+def test_gen_encoder_output_proposals_accepts_spatial_shapes_container(
+    spatial_shapes: torch.Tensor | list[tuple[int, int]],
+) -> None:
+    """``spatial_shapes`` may be a tensor of int pairs or the Python ``(H, W)`` int pairs ``Transformer.forward``
+    passes.
 
-    output_memory, output_proposals = gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
+    Regression: the export-driven call path derives int pairs from ``src.shape`` instead of a tensor, with no padding
+    mask.
+    """
+    batch, ht, wd = 2, 4, 4
+    memory = torch.randn(batch, ht * wd, 8)
+
+    output_memory, output_proposals = gen_encoder_output_proposals(
+        memory, memory_padding_mask=None, spatial_shapes=spatial_shapes
+    )
 
     assert output_memory.shape == memory.shape
     assert output_proposals.shape == (batch, ht * wd, 4)
@@ -537,26 +514,6 @@ def test_gen_encoder_output_proposals_centres_each_cell(height: int, width: int,
     torch.testing.assert_close(proposals[0, :, :2], expected)
 
 
-def test_gen_encoder_output_proposals_accepts_python_int_pair_spatial_shapes() -> None:
-    """`gen_encoder_output_proposals` must accept `spatial_shapes` as `list[tuple[int, int]]` with no padding mask.
-
-    Regression: `Transformer.forward` passes Python int pairs derived from `src.shape`, so the
-    export-driven call path uses `list[tuple[int, int]]` rather than a tensor.
-    """
-    batch, ht, wd, dim = 2, 4, 4, 8
-    memory = torch.randn(batch, ht * wd, dim)
-    spatial_shapes = [(ht, wd)]  # Python int pairs, as produced by Transformer.forward()
-
-    output_memory, output_proposals = gen_encoder_output_proposals(
-        memory,
-        memory_padding_mask=None,
-        spatial_shapes=spatial_shapes,
-    )
-
-    assert output_memory.shape == memory.shape
-    assert output_proposals.shape == (batch, ht * wd, 4)
-
-
 class TestMSDeformAttnCorePytorch:
     """Tests for ms_deform_attn_core_pytorch with Python int pair spatial shapes.
 
@@ -575,22 +532,12 @@ class TestMSDeformAttnCorePytorch:
         """Single-level inputs: levels=[(8, 8)]."""
         return _build_ms_deform_inputs(levels=[(8, 8)])
 
-    def test_with_tensor_spatial_shapes(self, make_inputs: _MSDeformInputs) -> None:
-        """Baseline: passing only the tensor spatial_shapes still works."""
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = make_inputs
+    @pytest.mark.parametrize("pass_hw", _PASS_HW_SHAPES)
+    def test_output_shape(self, make_inputs: _MSDeformInputs, pass_hw: bool) -> None:
+        """Output is ``(bsz, len_q, n_heads * head_dim)`` from the tensor-only and the Python int pair spatial shapes.
 
-        output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
-
-        bsz, n_heads, head_dim, _ = value.shape
-        len_q = sampling_locations.shape[1]
-        assert output.shape == (bsz, len_q, n_heads * head_dim)
-
-    def test_with_python_int_pair_spatial_shapes(self, make_inputs: _MSDeformInputs) -> None:
-        """Regression: value_spatial_shapes_hw list of Python int pairs must be accepted.
-
-        This is the torch.export.export-compatible code path: tensor scalar values (from iterating over a FakeTensor)
-        cannot be used as split/view sizes, so the caller passes explicit Python int pairs via value_spatial_shapes_hw
-        instead.
+        The int pair path (``value_spatial_shapes_hw``) is the ``torch.export.export``-compatible one: tensor scalars
+        from iterating a FakeTensor cannot be used as split/view sizes, so the caller passes explicit Python ints.
         """
         value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
 
@@ -599,7 +546,7 @@ class TestMSDeformAttnCorePytorch:
             spatial_shapes_tensor,
             sampling_locations,
             attention_weights,
-            value_spatial_shapes_hw=levels,
+            value_spatial_shapes_hw=levels if pass_hw else None,
         )
 
         bsz, n_heads, head_dim, _ = value.shape
@@ -637,33 +584,21 @@ class TestMSDeformAttnCorePytorch:
 
         assert output.shape[0] == 1
 
+    @pytest.mark.parametrize("pass_hw", _PASS_HW_SHAPES)
     def test_single_level_skips_sample_packing(
-        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+        self, mocker: MockerFixture, single_level_inputs: _MSDeformInputs, pass_hw: bool
     ) -> None:
-        """Single-level attention should reuse its sampled tensor without stacking it."""
+        """Single-level attention reuses its sampled tensor without stacking it, with or without int pair shapes."""
         value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = single_level_inputs
-        stack = Mock(wraps=torch.stack)
-        monkeypatch.setattr(torch, "stack", stack)
+        stack = mocker.patch.object(torch, "stack", wraps=torch.stack)
 
-        ms_deform_attn_core_pytorch(
+        output = ms_deform_attn_core_pytorch(
             value,
             spatial_shapes_tensor,
             sampling_locations,
             attention_weights,
-            value_spatial_shapes_hw=levels,
+            value_spatial_shapes_hw=levels if pass_hw else None,
         )
-
-        stack.assert_not_called()
-
-    def test_single_level_with_tensor_spatial_shapes_skips_sample_packing(
-        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
-    ) -> None:
-        """Single-level packing skip must also apply on the tensor-only fallback (no value_spatial_shapes_hw)."""
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = single_level_inputs
-        stack = Mock(wraps=torch.stack)
-        monkeypatch.setattr(torch, "stack", stack)
-
-        output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
 
         stack.assert_not_called()
         bsz, n_heads, head_dim, _ = value.shape
@@ -716,13 +651,10 @@ class TestMSDeformAttnCorePytorch:
 
         torch.testing.assert_close(output, expected.transpose(1, 2).contiguous())
 
-    def test_multiple_levels_keep_sample_packing(
-        self, monkeypatch: pytest.MonkeyPatch, make_inputs: _MSDeformInputs
-    ) -> None:
+    def test_multiple_levels_keep_sample_packing(self, mocker: MockerFixture, make_inputs: _MSDeformInputs) -> None:
         """Multi-level attention should still stack one sampled tensor per feature level."""
         value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
-        stack = Mock(wraps=torch.stack)
-        monkeypatch.setattr(torch, "stack", stack)
+        stack = mocker.patch.object(torch, "stack", wraps=torch.stack)
 
         ms_deform_attn_core_pytorch(
             value,
@@ -792,26 +724,13 @@ class TestMSDeformAttnModule:
         bsz, len_q, _ = query.shape
         assert output.shape == (bsz, len_q, self._d_model)
 
-    def test_forward_with_hw_param_produces_correct_shape(self) -> None:
-        """MSDeformAttn.forward with input_spatial_shapes_hw produces correct output shape."""
+    @pytest.mark.parametrize("configure", _EAGER_OR_EXPORT)
+    def test_forward_with_hw_param_keeps_query_shape(self, configure: Callable[[MSDeformAttn], None]) -> None:
+        """``MSDeformAttn.forward`` with ``input_spatial_shapes_hw`` returns ``(bsz, len_q, d_model)`` in both modes."""
         module = MSDeformAttn(
             d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
         )
-        query, ref_pts, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
-
-        output = module(
-            query, ref_pts, input_flatten, spatial_shapes, level_start_index, input_spatial_shapes_hw=hw_pairs
-        )
-
-        bsz, len_q, _ = query.shape
-        assert output.shape == (bsz, len_q, self._d_model)
-
-    def test_export_mode_forward_with_hw_param(self) -> None:
-        """MSDeformAttn.forward in export mode with hw param must not raise."""
-        module = MSDeformAttn(
-            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
-        )
-        module.export()
+        configure(module)
         query, ref_pts, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
 
         output = module(
@@ -824,9 +743,9 @@ class TestMSDeformAttnModule:
     def test_export_mode_forward_with_full_level_dim_and_last_dim_4(self) -> None:
         """Export mode forward with reference_points level dim == n_levels and last dim 4 must match eager output.
 
-        Regression: test_export_mode_forward_with_hw_param only exercises the n_ref_levels==n_levels skip-branch
-        (ms_deform_attn.py:206-210) with last dim 2. This covers the sibling last-dim-4 branch combined with a
-        level dim that is already n_levels (not the singleton-broadcast case).
+        Regression: test_forward_with_hw_param_keeps_query_shape[export] only exercises the n_ref_levels==n_levels
+        skip-branch (ms_deform_attn.py:206-210) with last dim 2. This covers the sibling last-dim-4 branch combined
+        with a level dim that is already n_levels (not the singleton-broadcast case).
         """
         module = MSDeformAttn(
             d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
@@ -956,23 +875,25 @@ class TestMSDeformAttnModule:
         torch.testing.assert_close(export_out, eager_out, rtol=1e-5, atol=1e-5)
 
     @pytest.mark.parametrize(
-        "last_dim,n_points",
+        ("configure", "last_dim", "n_points"),
         [
-            pytest.param(4, 1, id="last-dim-4-points-1"),
-            pytest.param(2, 1, id="last-dim-2-points-1"),
-            pytest.param(4, 2, id="last-dim-4-points-2"),
+            pytest.param(MSDeformAttn.export, 4, 1, id="export-last-dim-4-points-1"),
+            pytest.param(MSDeformAttn.export, 2, 1, id="export-last-dim-2-points-1"),
+            pytest.param(MSDeformAttn.export, 4, 2, id="export-last-dim-4-points-2"),
+            pytest.param(_keep_eager, 4, 1, id="eager-last-dim-4-points-1"),
         ],
     )
-    def test_export_mode_rejects_invalid_reference_level_dim(self, last_dim: int, n_points: int) -> None:
-        """Checks export mode raises when reference level dim is neither 1 nor ``n_levels``.
+    def test_forward_rejects_invalid_reference_level_dim(
+        self, configure: Callable[[MSDeformAttn], None], last_dim: int, n_points: int
+    ) -> None:
+        """Forward raises ``ValueError`` when the reference level dim is neither 1 nor ``n_levels``, in both modes.
 
-        Regression: the original case only covered last_dim=4 with n_points=1 (self._n_points). The
-        level-dim guard (ms_deform_attn.py:195-198) fires before the last-dim branch and before the
-        n_points-dependent merged axis is built, so it must also be verified with last_dim=2 and with
-        n_points>1 (which changes the size of the merged n_levels*n_points sampling axis).
+        Regression: the level-dim guard (ms_deform_attn.py:192-198) is hoisted above the export/eager split, so both
+        modes reject malformed input with the same message. It fires before the last-dim branch and before the
+        n_points-dependent merged axis is built, so the export cases cover last_dim=2 and n_points>1 as well.
         """
         module = MSDeformAttn(d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=n_points)
-        module.export()
+        configure(module)
         query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
         bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels + 1, last_dim)
 
@@ -986,69 +907,20 @@ class TestMSDeformAttnModule:
                 input_spatial_shapes_hw=hw_pairs,
             )
 
-    def test_eager_mode_rejects_invalid_reference_level_dim(self) -> None:
-        """Eager mode forward must raise ValueError when reference level dim is neither 1 nor n_levels.
+    @pytest.mark.parametrize("configure", _EAGER_OR_EXPORT)
+    @pytest.mark.parametrize("last_dim", [1, 3])
+    def test_forward_rejects_invalid_reference_last_dim(
+        self, configure: Callable[[MSDeformAttn], None], last_dim: int
+    ) -> None:
+        """Forward raises ``ValueError`` when reference_points last dim is neither 2 nor 4, in both modes.
 
-        Regression: the level-dim guard was hoisted above the export/eager split so both modes
-        reject malformed input with the same message (ms_deform_attn.py:192-198), but only the
-        export-mode path (test_export_mode_rejects_invalid_reference_level_dim) was covered.
+        The ``Raises:`` entry of ``MSDeformAttn.forward`` names this contract (ms_deform_attn.py:211-216 for export
+        mode, 233-238 for eager).
         """
         module = MSDeformAttn(
             d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
         )
-        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
-        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels + 1, 4)
-
-        with pytest.raises(ValueError, match="level dim must be 1 or n_levels"):
-            module(
-                query,
-                bad_ref,
-                input_flatten,
-                spatial_shapes,
-                level_start_index,
-                input_spatial_shapes_hw=hw_pairs,
-            )
-
-    @pytest.mark.parametrize(
-        "last_dim",
-        [pytest.param(1, id="last-dim-1"), pytest.param(3, id="last-dim-3")],
-    )
-    def test_eager_mode_rejects_invalid_reference_last_dim(self, last_dim: int) -> None:
-        """Eager mode forward must raise ValueError when reference_points last dim is neither 2 nor 4.
-
-        Regression: the ``Raises:`` docstring entry for MSDeformAttn.forward names this contract
-        explicitly (ms_deform_attn.py:233-238), but no test previously exercised it.
-        """
-        module = MSDeformAttn(
-            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
-        )
-        query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
-        bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels, last_dim)
-
-        with pytest.raises(ValueError, match="Last dim of reference_points must be 2 or 4"):
-            module(
-                query,
-                bad_ref,
-                input_flatten,
-                spatial_shapes,
-                level_start_index,
-                input_spatial_shapes_hw=hw_pairs,
-            )
-
-    @pytest.mark.parametrize(
-        "last_dim",
-        [pytest.param(1, id="last-dim-1"), pytest.param(3, id="last-dim-3")],
-    )
-    def test_export_mode_rejects_invalid_reference_last_dim(self, last_dim: int) -> None:
-        """Export mode forward must raise ValueError when reference_points last dim is neither 2 nor 4.
-
-        Regression: the ``Raises:`` docstring entry for MSDeformAttn.forward names this contract
-        explicitly (ms_deform_attn.py:211-216), but no test previously exercised it.
-        """
-        module = MSDeformAttn(
-            d_model=self._d_model, n_levels=self._n_levels, n_heads=self._n_heads, n_points=self._n_points
-        )
-        module.export()
+        configure(module)
         query, _, input_flatten, spatial_shapes, level_start_index, hw_pairs = self._make_module_inputs()
         bad_ref = torch.rand(query.shape[0], query.shape[1], self._n_levels, last_dim)
 
@@ -1178,203 +1050,106 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         assert out_proposals.shape == (batch_size, ht * wd, 4), f"wrong proposals shape for batch={batch_size}"
 
 
-def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
-    """torch.export.export must succeed on a module using ms_deform_attn_core_pytorch with hw param.
+class _ConcreteShapeDeformAttnCore(nn.Module):
+    """Run ``ms_deform_attn_core_pytorch`` with concrete Python int ``(H, W)`` pairs, as ``torch.export`` needs.
 
-    Regression test for the FakeTensor tracing failure: iterating over spatial_shapes and using the scalar elements as
-    split/view sizes fails during torch.export.export because FakeTensor data is not allocated. Passing
-    value_spatial_shapes_hw (concrete Python ints from a module attribute) bypasses the tensor iteration entirely.
+    Examples:
+        >>> _ConcreteShapeDeformAttnCore([(4, 4)]).hw
+        [(4, 4)]
     """
-    levels: list[tuple[int, int]] = [(4, 4), (2, 2)]
-    bsz, n_heads, head_dim = 1, 2, 4
-    total_hw = sum(ht * wd for ht, wd in levels)
-    len_q, nlvl, npts = 3, len(levels), 1
 
-    class _MinimalDeformAttn(torch.nn.Module):
-        """Minimal wrapper to test torch.export.export on the hw-param code path."""
+    def __init__(self, hw: list[tuple[int, int]]) -> None:
+        super().__init__()
+        self.hw = hw
 
-        def __init__(self, hw: list[tuple[int, int]]) -> None:
-            super().__init__()
-            self.hw = hw
+    def forward(
+        self,
+        value: torch.Tensor,
+        spatial_shapes: torch.Tensor,
+        sampling_locations: torch.Tensor,
+        attention_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward using concrete Python int pairs for export compatibility."""
+        return ms_deform_attn_core_pytorch(
+            value, spatial_shapes, sampling_locations, attention_weights, value_spatial_shapes_hw=self.hw
+        )
 
-        def forward(
-            self,
-            value: torch.Tensor,
-            spatial_shapes: torch.Tensor,
-            sampling_locations: torch.Tensor,
-            attention_weights: torch.Tensor,
-        ) -> torch.Tensor:
-            """Forward using concrete Python int pairs for export compatibility."""
-            return ms_deform_attn_core_pytorch(
-                value,
-                spatial_shapes,
-                sampling_locations,
-                attention_weights,
-                value_spatial_shapes_hw=self.hw,
-            )
 
-    value = torch.randn(bsz, n_heads, head_dim, total_hw)
-    spatial_shapes = torch.tensor(levels, dtype=torch.long)
-    sampling_locations = torch.rand(bsz, len_q, n_heads, nlvl, npts, 2)
-    attention_weights = torch.softmax(torch.randn(bsz, len_q, n_heads, nlvl * npts), dim=-1)
+class _ExportedMSDeformAttn(nn.Module):
+    """Export-mode ``MSDeformAttn`` with concrete spatial dimensions, one level per ``hw`` entry.
 
-    module = _MinimalDeformAttn(hw=levels)
+    Examples:
+        >>> _ExportedMSDeformAttn([(4, 4)]).attn._export
+        True
+    """
 
-    exported = torch.export.export(module, args=(value, spatial_shapes, sampling_locations, attention_weights))
+    def __init__(self, hw: list[tuple[int, int]]) -> None:
+        super().__init__()
+        self.attn = MSDeformAttn(d_model=32, n_levels=len(hw), n_heads=4, n_points=2)
+        self.attn.export()
+        self.hw = hw
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        reference_points: torch.Tensor,
+        input_flatten: torch.Tensor,
+        input_spatial_shapes: torch.Tensor,
+        input_level_start_index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward using the module's Python int pairs for export compatibility."""
+        return self.attn(
+            query,
+            reference_points,
+            input_flatten,
+            input_spatial_shapes,
+            input_level_start_index,
+            input_spatial_shapes_hw=self.hw,
+        )
+
+
+@pytest.mark.parametrize(
+    "levels", [pytest.param([(4, 4), (2, 2)], id="two-level"), pytest.param([(4, 4)], id="single-level")]
+)
+def test_ms_deform_attn_core_pytorch_export_compatible(levels: list[tuple[int, int]]) -> None:
+    """``torch.export.export`` must succeed on ``ms_deform_attn_core_pytorch`` given ``value_spatial_shapes_hw``.
+
+    Regression for the FakeTensor tracing failure: iterating ``spatial_shapes`` and using the scalar elements as
+    split/view sizes fails because FakeTensor data is not allocated. Concrete Python ints bypass the tensor iteration.
+    The single-level case traces the ``num_levels == 1`` branch, which replaces ``torch.stack(...).flatten(-2)`` with a
+    direct index and needs its own trace to stay export-compatible.
+    """
+    value, spatial_shapes, sampling_locations, attention_weights, _ = _build_ms_deform_inputs(levels=levels)
+
+    exported = torch.export.export(
+        _ConcreteShapeDeformAttnCore(levels), args=(value, spatial_shapes, sampling_locations, attention_weights)
+    )
+
     assert exported is not None
 
 
-def test_ms_deform_attn_core_pytorch_export_compatible_single_level() -> None:
-    """torch.export.export must succeed with a single feature level (num_levels == 1 packing skip).
+@pytest.mark.parametrize(
+    "hw_pairs", [pytest.param([(4, 4), (2, 2)], id="two-level"), pytest.param([(4, 4)], id="single-level")]
+)
+def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim(hw_pairs: list[tuple[int, int]]) -> None:
+    """``torch.export.export`` must succeed on ``MSDeformAttn.forward`` with decoder-style singleton-level refs.
 
-    Regression test for the singleton-packing change: the two-level case above already covers the general
-    torch.export path, but the num_levels == 1 branch replaces torch.stack(...).flatten(-2) with a direct index and
-    needs its own FakeTensor trace to confirm that substitution stays export-compatible.
+    Regression: running the module eagerly after ``module.export()`` never traces the ``reference_points.shape[2]``
+    control-flow branch (ms_deform_attn.py:192-198) under a real FakeTensor-traced export, the regime ``export()`` is
+    built for. The single-level case traces the rank-5 merged level-and-point sampling route the core consumes.
     """
-    levels: list[tuple[int, int]] = [(4, 4)]
-    bsz, n_heads, head_dim = 1, 2, 4
-    total_hw = sum(ht * wd for ht, wd in levels)
-    len_q, nlvl, npts = 3, len(levels), 1
-
-    class _MinimalDeformAttn(torch.nn.Module):
-        """Minimal wrapper to test torch.export.export on the hw-param code path."""
-
-        def __init__(self, hw: list[tuple[int, int]]) -> None:
-            super().__init__()
-            self.hw = hw
-
-        def forward(
-            self,
-            value: torch.Tensor,
-            spatial_shapes: torch.Tensor,
-            sampling_locations: torch.Tensor,
-            attention_weights: torch.Tensor,
-        ) -> torch.Tensor:
-            """Forward using concrete Python int pairs for export compatibility."""
-            return ms_deform_attn_core_pytorch(
-                value,
-                spatial_shapes,
-                sampling_locations,
-                attention_weights,
-                value_spatial_shapes_hw=self.hw,
-            )
-
-    value = torch.randn(bsz, n_heads, head_dim, total_hw)
-    spatial_shapes = torch.tensor(levels, dtype=torch.long)
-    sampling_locations = torch.rand(bsz, len_q, n_heads, nlvl, npts, 2)
-    attention_weights = torch.softmax(torch.randn(bsz, len_q, n_heads, nlvl * npts), dim=-1)
-
-    module = _MinimalDeformAttn(hw=levels)
-
-    exported = torch.export.export(module, args=(value, spatial_shapes, sampling_locations, attention_weights))
-    assert exported is not None
-
-
-def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> None:
-    """torch.export.export must succeed on MSDeformAttn.forward with decoder-style singleton-level refs.
-
-    Regression test: TestMSDeformAttnModule.test_export_mode_broadcasts_singleton_level_dim only calls
-    module.export() and then runs the module eagerly in Python — it never traces through
-    torch.export.export itself, so the reference_points.shape[2] control-flow branch
-    (ms_deform_attn.py:192-198) was never verified under a real FakeTensor-traced export, which is
-    the actual regime the export() mode is designed for.
-    """
-    hw_pairs: list[tuple[int, int]] = [(4, 4), (2, 2)]
-    d_model, n_heads, n_levels, n_points = 32, 4, 2, 2
+    d_model, batch_size, num_queries = 32, 1, 3
     total_len = sum(ht * wd for ht, wd in hw_pairs)
-    batch_size, num_queries = 1, 3
-
-    class _MSDeformAttnExportWrapper(torch.nn.Module):
-        """Thin wrapper exporting MSDeformAttn.forward via torch.export.export."""
-
-        def __init__(self, hw: list[tuple[int, int]]) -> None:
-            super().__init__()
-            self.attn = MSDeformAttn(d_model=d_model, n_levels=n_levels, n_heads=n_heads, n_points=n_points)
-            self.attn.export()
-            self.hw = hw
-
-        def forward(
-            self,
-            query: torch.Tensor,
-            reference_points: torch.Tensor,
-            input_flatten: torch.Tensor,
-            input_spatial_shapes: torch.Tensor,
-            input_level_start_index: torch.Tensor,
-        ) -> torch.Tensor:
-            """Forward using the module's Python int pairs for export compatibility."""
-            return self.attn(
-                query,
-                reference_points,
-                input_flatten,
-                input_spatial_shapes,
-                input_level_start_index,
-                input_spatial_shapes_hw=self.hw,
-            )
-
     query = torch.randn(batch_size, num_queries, d_model)
     # Decoder export shape: one shared box broadcast across feature levels (n_ref_levels == 1 branch).
     reference_points = torch.rand(batch_size, num_queries, 1, 4)
     input_flatten = torch.randn(batch_size, total_len, d_model)
     input_spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
-    starts = [sum(ht * wd for ht, wd in hw_pairs[:idx]) for idx in range(n_levels)]
+    starts = [sum(ht * wd for ht, wd in hw_pairs[:idx]) for idx in range(len(hw_pairs))]
     input_level_start_index = torch.tensor(starts, dtype=torch.long)
 
-    module = _MSDeformAttnExportWrapper(hw=hw_pairs)
-
     exported = torch.export.export(
-        module,
-        args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
-    )
-    assert exported is not None
-
-
-def test_ms_deform_attn_module_export_compatible_single_level() -> None:
-    """A one-level exported MSDeformAttn module must trace its rank-5 sampling route.
-
-    Regression: the existing single-level core trace passes rank-6 sampling locations,
-    while ``MSDeformAttn.export()`` creates the rank-5 merged level-and-point layout
-    consumed by the core during an actual module export.
-    """
-    hw_pairs: list[tuple[int, int]] = [(4, 4)]
-    d_model, n_heads, n_points = 32, 4, 2
-    batch_size, num_queries = 1, 3
-
-    class _SingleLevelMSDeformAttnExportWrapper(torch.nn.Module):
-        """Export MSDeformAttn with concrete one-level spatial dimensions."""
-
-        def __init__(self, hw: list[tuple[int, int]]) -> None:
-            super().__init__()
-            self.attn = MSDeformAttn(d_model=d_model, n_levels=1, n_heads=n_heads, n_points=n_points)
-            self.attn.export()
-            self.hw = hw
-
-        def forward(
-            self,
-            query: torch.Tensor,
-            reference_points: torch.Tensor,
-            input_flatten: torch.Tensor,
-            input_spatial_shapes: torch.Tensor,
-            input_level_start_index: torch.Tensor,
-        ) -> torch.Tensor:
-            """Run the one-level export path with concrete spatial dimensions."""
-            return self.attn(
-                query,
-                reference_points,
-                input_flatten,
-                input_spatial_shapes,
-                input_level_start_index,
-                input_spatial_shapes_hw=self.hw,
-            )
-
-    query = torch.randn(batch_size, num_queries, d_model)
-    reference_points = torch.rand(batch_size, num_queries, 1, 4)
-    input_flatten = torch.randn(batch_size, 16, d_model)
-    input_spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
-    input_level_start_index = torch.tensor([0], dtype=torch.long)
-    module = _SingleLevelMSDeformAttnExportWrapper(hw=hw_pairs)
-
-    exported = torch.export.export(
-        module,
+        _ExportedMSDeformAttn(hw_pairs),
         args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
     )
 
@@ -1397,13 +1172,23 @@ class _FixedTopkScores(nn.Module):
         return self.scores
 
 
-def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("bbox_reparam", "finalize_boxes"),
+    [pytest.param(False, torch.sigmoid, id="plain-sigmoid"), pytest.param(True, torch.clone, id="reparam-raw")],
+)
+def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(
+    gather_calls, bbox_reparam: bool, finalize_boxes: Callable[[torch.Tensor], torch.Tensor]
+) -> None:
     """The two-stage top-k gather must copy each selected proposal's exact memory row and box.
 
     ``torch.topk`` ranks proposals by score, not by position, so the selected indices are rarely in ascending position
     order. This pins that ``memory_ts``/``boxes_ts`` reproduce the source rows picked by an out-of-order, per-batch-row-
     distinct selection, and additionally asserts that every ``torch.gather`` index used by the two-stage selection is a
     broadcast view produced by ``Tensor.expand`` (its broadcast dim keeps stride 0), not a materialised copy.
+
+    ``bbox_reparam=False`` adds the box delta to the unsigmoided proposals and ``Transformer.forward`` returns the
+    sigmoid of the result; ``bbox_reparam=True`` scales a cx/cy delta by the proposal size, adds a log-space w/h delta
+    and returns the boxes as they are. Neither computation shares code with the other, so each is covered.
     """
     torch.manual_seed(0)
     batch_size, hidden_dim, num_queries = 2, 16, 3
@@ -1427,7 +1212,7 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkey
         return_intermediate_dec=True,
         lite_refpoint_refine=True,
         two_stage=True,
-        bbox_reparam=False,
+        bbox_reparam=bbox_reparam,
         group_detr=1,
     )
 
@@ -1438,53 +1223,34 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkey
     transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores)])
     transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
 
-    gather_index_calls: list[torch.Tensor] = []
-    original_gather = torch.gather
-
-    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
-        gather_index_calls.append(index)
-        return original_gather(input, dim, index, **kwargs)
-
-    monkeypatch.setattr(torch, "gather", _tracking_gather)
-
     _, _, memory_ts, boxes_ts, _ = transformer(
         srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
     )
 
-    # Every gather index used by the two-stage top-k selection (Transformer.forward two-stage top-k
-    # gather) must still be a broadcast view produced by Tensor.expand: its broadcast dim keeps
-    # stride 0. Tensor.repeat, Tensor.tile, Tensor.expand(...).contiguous(), and
-    # Tensor.repeat_interleave all re-materialise that same allocation into a nonzero-stride tensor,
-    # so checking the index's stride catches all four regression variants directly instead of only
-    # detecting the literal absence of a Tensor.repeat call.
-    assert gather_index_calls, "expected torch.gather to be called during the two-stage top-k selection"
-    for index in gather_index_calls:
-        assert index.stride(-1) == 0, (
-            "the two-stage top-k gather index must broadcast its last dim via Tensor.expand "
-            "(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
-            f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
-        )
+    _assert_gather_indices_broadcast(gather_calls)
 
     # Ground truth computed independently of the gather under test: the same flatten/proposal
     # machinery Transformer.forward uses internally, then plain (non-gather) row indexing.
     memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
     mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
     output_memory, output_proposals = gen_encoder_output_proposals(
-        memory, mask_flatten, spatial_shapes_hw, unsigmoid=True
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=not bbox_reparam
     )
     output_memory_gidx = transformer.enc_output_norm[0](transformer.enc_output[0](output_memory))
-    coord_unselected = transformer.enc_out_bbox_embed[0](output_memory_gidx) + output_proposals
+    coord_unselected = _bbox_from_delta(
+        transformer.enc_out_bbox_embed[0](output_memory_gidx), output_proposals, bbox_reparam
+    )
     chosen_idx = scores.squeeze(-1).topk(num_queries, dim=1).indices  # mirrors forward()'s torch.topk call
 
     assert torch.equal(chosen_idx, torch.tensor([[17, 2, 9], [5, 19, 0]]))  # sanity: out of position order
     expected_memory = torch.stack([output_memory_gidx[b, chosen_idx[b]] for b in range(batch_size)])
-    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False (Transformer.forward two-stage return).
-    expected_coord = torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)]).sigmoid()
+    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False and boxes_ts as-is when bbox_reparam=True.
+    expected_coord = finalize_boxes(torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)]))
     assert torch.equal(memory_ts, expected_memory)
     assert torch.equal(boxes_ts, expected_coord)
 
 
-def test_two_stage_topk_gather_reads_pre_norm_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_stage_topk_gather_reads_pre_norm_memory(gather_calls) -> None:
     """The eval-path two-stage gather must read ``enc_output``'s output, never ``enc_output_norm``'s.
 
     Regression for an Apple Neural Engine compile failure: in an fp16 CoreML export, an ``enc_output_norm``
@@ -1501,44 +1267,20 @@ def test_two_stage_topk_gather_reads_pre_norm_memory(monkeypatch: pytest.MonkeyP
     srcs = [torch.randn(1, hidden_dim, feature_size, feature_size)]
     masks = [torch.zeros(1, feature_size, feature_size, dtype=torch.bool)]
     pos_embeds = [torch.randn(1, hidden_dim, feature_size, feature_size)]
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        bbox_reparam=False,
-        group_detr=1,
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    transformer = single_level_two_stage_transformer(hidden_dim, num_queries)
 
     norm_outputs: list[torch.Tensor] = []
     transformer.enc_output_norm[0].register_forward_hook(lambda _m, _i, out: norm_outputs.append(out))
-    gather_inputs: list[torch.Tensor] = []
-    original_gather = torch.gather
-
-    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
-        gather_inputs.append(input)
-        return original_gather(input, dim, index, **kwargs)
-
-    monkeypatch.setattr(torch, "gather", _tracking_gather)
-
     transformer.eval()
     with torch.no_grad():
         transformer(srcs, masks, pos_embeds, torch.rand(num_queries, 4), torch.randn(num_queries, hidden_dim))
 
     full_length_norm_outputs = [out for out in norm_outputs if out.shape[1] == num_tokens]
     assert full_length_norm_outputs, "expected enc_output_norm to run over every encoder position"
-    assert gather_inputs, "expected torch.gather to be called during the two-stage top-k selection"
+    assert gather_calls, "expected torch.gather to be called during the two-stage top-k selection"
     norm_storages = {out.untyped_storage().data_ptr() for out in full_length_norm_outputs}
     # Compare storage, not identity, so a view of the norm output (reshape/slice/expand) is caught as well.
-    assert not any(inp.untyped_storage().data_ptr() in norm_storages for inp in gather_inputs), (
+    assert not any(inp.untyped_storage().data_ptr() in norm_storages for inp, _ in gather_calls), (
         "the two-stage gather reads enc_output_norm's output; gather the pre-norm enc_output rows and "
         "normalize the selected tokens instead (fp16 CoreML ANE compile failure)"
     )
@@ -1565,20 +1307,14 @@ def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
 
 
 @pytest.mark.parametrize("bbox_reparam", [False, True])
-def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(
-    monkeypatch, bbox_reparam: bool
-) -> None:
-    """With group_detr>1 and the module left in its default training mode, every per-group gather index
-    must still broadcast via Tensor.expand, and the concatenated memory_ts/boxes_ts must reproduce each
-    group's exact top-k rows.
+def test_two_stage_topk_gather_broadcasts_across_groups_in_training_mode(gather_calls, bbox_reparam: bool) -> None:
+    """With group_detr>1 in training mode, each group's gather index broadcasts via expand and its top-k rows match.
 
-    Regression: test_two_stage_topk_gather_selects_correct_rows_out_of_position_order only exercises
-    group_detr=1, where the ``group_detr = self.group_detr if self.training else 1`` guard in
-    Transformer.forward degenerates to a single gather per stage. This pins the group_detr>1 branch,
-    which loops the same two gathers twice more (once per extra group) and concatenates the results
-    along the query dimension. The module intentionally never calls .eval(): group_detr>1 only takes
-    effect while nn.Module.training is True (its default), and calling .eval() would silently fall back
-    to the already-covered group_detr=1 path.
+    Regression: test_two_stage_topk_gather_selects_correct_rows_out_of_position_order only exercises group_detr=1,
+    where the ``group_detr = self.group_detr if self.training else 1`` guard in Transformer.forward degenerates to a
+    single gather per stage. This pins the group_detr>1 branch, which loops the same two gathers once per extra group
+    and concatenates the results along the query dimension. The module never calls .eval(): group_detr>1 only takes
+    effect while nn.Module.training is True (its default).
     """
     torch.manual_seed(0)
     hidden_dim, num_queries, group_detr = 16, 3, 3
@@ -1615,28 +1351,13 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
         [MLP(hidden_dim, hidden_dim, 4, num_layers=3) for _ in range(group_detr)]
     )
 
-    gather_index_calls: list[torch.Tensor] = []
-    original_gather = torch.gather
-
-    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
-        gather_index_calls.append(index)
-        return original_gather(input, dim, index, **kwargs)
-
-    monkeypatch.setattr(torch, "gather", _tracking_gather)
-
     _, _, memory_ts, boxes_ts, _ = transformer(
         srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
     )
 
-    # Two gather calls (refpoint, memory) per group -- the only torch.gather call sites in
-    # Transformer.forward's two-stage top-k selection.
-    assert len(gather_index_calls) == 2 * group_detr
-    for index in gather_index_calls:
-        assert index.stride(-1) == 0, (
-            "every per-group two-stage top-k gather index must broadcast its last dim via Tensor.expand "
-            f"(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
-            f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
-        )
+    # Two gather calls (refpoint, memory) per group -- the only torch.gather call sites in the two-stage selection.
+    assert len(gather_calls) == 2 * group_detr
+    _assert_gather_indices_broadcast(gather_calls)
 
     # Ground truth computed independently of the gather under test, per group.
     memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
@@ -1764,26 +1485,16 @@ def test_two_stage_batching_eligible_true_for_real_build_model_rfdetr_nano() -> 
 
 
 def test_two_stage_group_selection_class_logits_reuse_matches_recomputed_loop() -> None:
-    """``LWDETR.forward``'s ``enc_outputs["pred_logits"]`` must match whether it comes from the batched path's gathered
-    ``class_logits_all`` (reused, no second forward) or the untouched per-group ``enc_out_class_embed`` recompute loop
-    it replaces on the eligible path.
+    """Reused batched-path class logits match the per-group recompute loop in ``enc_outputs["pred_logits"]``.
 
-    ``enc_out_class_embed`` is a plain per-position ``nn.Linear``, so gathering its output at the
-    positions ``_two_stage_group_selection`` already selected is algebraically the same computation
-    the recompute loop performs on the same gathered hidden state -- this only differs in GEMM
-    accumulation order (stacked-groups batched matmul vs. one matmul per group), so results are
-    compared within float32 tolerance rather than bit-for-bit, matching this file's own established
-    convention for the sibling batched-vs-loop comparisons above.
+    ``LWDETR.forward`` reuses the batched path's gathered ``class_logits_all`` instead of the per-group
+    ``enc_out_class_embed`` recompute loop. The head is a per-position ``nn.Linear``, so the two differ only in GEMM
+    accumulation order (stacked-groups batched matmul vs. one matmul per group) and are compared within float32
+    tolerance.
 
-    Also proves ``enc_out_class_embed``'s parameters receive real gradient through this reused value
-    directly -- unlike the memory_ts/boxes_ts-only comparisons above, whose own docstrings note
-    ``enc_out_class_embed`` structurally never received gradient through that path -- and, following
-    this file's ``test_two_stage_group_selection_matches_generic_loop_forward_and_gradient`` convention
-    of comparing fast-vs-loop gradients rather than only asserting the fast path's own gradient is
-    non-vacuous, that those gradients match the recompute loop's within the same tolerance. A gather
-    that silently detached ``class_logits_all`` (or indexed the wrong positions in a way that happened
-    to still produce finite, nonzero, but wrong values) would still pass a same-path-only non-vacuity
-    check; comparing against the loop's independently computed gradient closes that gap.
+    Unlike the ``memory_ts``/``boxes_ts`` comparisons, the class head's parameters receive real gradient through the
+    reused value. Their gradients are compared with the recompute loop's, because a same-path-only non-vacuity check
+    would pass a gather that silently detached ``class_logits_all`` or indexed the wrong positions.
     """
     torch.manual_seed(0)
     ns = _namespace_from_configs(
@@ -1819,58 +1530,38 @@ def test_two_stage_group_selection_class_logits_reuse_matches_recomputed_loop() 
         torch.testing.assert_close(fast_gradient, loop_gradient, atol=1e-4, rtol=1e-4)
 
 
-def test_two_stage_batching_eligible_false_for_linear_subclass_in_enc_output() -> None:
-    """A subclassed nn.Linear must be rejected, not accepted via a permissive isinstance check.
+class _DoublingLinear(nn.Linear):
+    """``nn.Linear`` whose overridden ``forward`` doubles the output, so a skipped call changes the result."""
 
-    The fast path only reads `.weight`/`.bias` directly and never calls the module itself, so a subclass with its own
-    overridden `forward` would have that override silently skipped if the guard let it through.
-    """
-
-    class _DoublingLinear(nn.Linear):
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return super().forward(x) * 2
-
-    transformer = _build_two_stage_transformer_with_production_shaped_heads(
-        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
-    )
-    transformer.enc_output = nn.ModuleList([_DoublingLinear(16, 16) for _ in range(2)])
-    assert not transformer._two_stage_batching_eligible()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return twice the linear output."""
+        return super().forward(x) * 2
 
 
-def test_two_stage_batching_eligible_false_for_bias_free_linear_in_enc_output() -> None:
-    """A bias=False nn.Linear must be rejected, not crash inside torch.stack over a None bias.
+@pytest.mark.parametrize(
+    ("attribute", "make_module"),
+    [
+        pytest.param("enc_output", lambda: _DoublingLinear(16, 16), id="linear-subclass"),
+        pytest.param("enc_output", lambda: nn.Linear(16, 16, bias=False), id="bias-free-linear"),
+        pytest.param("enc_output_norm", lambda: nn.LayerNorm(16, elementwise_affine=False), id="affine-free-norm"),
+        pytest.param("enc_output_norm", lambda: nn.LayerNorm((20, 16)), id="multi-axis-norm"),
+    ],
+)
+def test_two_stage_batching_eligible_false_for_unsupported_group_module(
+    attribute: str, make_module: Callable[[], nn.Module]
+) -> None:
+    """Group modules the fast path cannot stack or whose ``forward`` it would skip fall back to the generic loop.
 
-    `_stack_linear_params` unconditionally stacks every module's `.bias`; without this guard a `None` bias would raise a
-    `TypeError` instead of falling back to the generic loop, which calls the module directly and tolerates a missing
-    bias.
-    """
-    transformer = _build_two_stage_transformer_with_production_shaped_heads(
-        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
-    )
-    transformer.enc_output = nn.ModuleList([nn.Linear(16, 16, bias=False) for _ in range(2)])
-    assert not transformer._two_stage_batching_eligible()
-
-
-def test_two_stage_batching_eligible_false_for_affine_free_layer_norm() -> None:
-    """An elementwise_affine=False nn.LayerNorm must be rejected, not crash inside torch.stack over None.
-
-    `_two_stage_group_selection` unconditionally stacks every `enc_output_norm` module's `.weight` and `.bias`; both are
-    `None` when `elementwise_affine=False`, which would otherwise reach `torch.stack` instead of falling back to the
-    generic loop.
+    The fast path reads ``.weight``/``.bias`` directly and never calls the module, so a ``Linear`` subclass would lose
+    its ``forward`` override if the guard accepted it. A bias-free ``Linear`` or an affine-free ``LayerNorm`` has
+    ``None`` parameters that would raise inside ``torch.stack`` instead of falling back, and a multi-axis ``LayerNorm``
+    needs the generic path even when every group has the same shape.
     """
     transformer = _build_two_stage_transformer_with_production_shaped_heads(
         hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
     )
-    transformer.enc_output_norm = nn.ModuleList([nn.LayerNorm(16, elementwise_affine=False) for _ in range(2)])
-    assert not transformer._two_stage_batching_eligible()
+    setattr(transformer, attribute, nn.ModuleList([make_module() for _ in range(2)]))
 
-
-def test_two_stage_batching_eligible_false_for_multi_axis_layer_norm() -> None:
-    """A multi-axis LayerNorm must use the generic path even when every group has the same shape."""
-    transformer = _build_two_stage_transformer_with_production_shaped_heads(
-        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
-    )
-    transformer.enc_output_norm = nn.ModuleList([nn.LayerNorm((20, 16)) for _ in range(2)])
     assert not transformer._two_stage_batching_eligible()
 
 
@@ -1911,58 +1602,66 @@ def test_two_stage_batching_eligible_false_for_heterogeneous_group_modules(misma
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("submodule", "register"),
     [
-        "encoder-hook",
-        "norm-hook",
-        "class-hook",
-        "bbox-hook",
-        "bbox-layer-hook",
-        "instance-forward",
-        "compiled-child",
-        "global-hook",
+        pytest.param("enc_output.0", "register_forward_hook", id="encoder-hook"),
+        pytest.param("enc_output_norm.0", "register_forward_pre_hook", id="norm-hook"),
+        pytest.param("enc_out_class_embed.0", "register_full_backward_hook", id="class-hook"),
+        pytest.param("enc_out_bbox_embed.0", "register_full_backward_pre_hook", id="bbox-hook"),
+        pytest.param("enc_out_bbox_embed.0.layers.0", "register_forward_hook", id="bbox-layer-hook"),
     ],
 )
-def test_two_stage_batching_eligible_false_when_module_call_semantics_are_observable(case: str) -> None:
-    """Hooks and per-instance call overrides must keep the generic module-calling path."""
+def test_two_stage_batching_eligible_false_for_hooked_group_module(
+    submodule: str, register: str, mocker: MockerFixture
+) -> None:
+    """A hook on any module the fast path reads parameters from keeps the generic module-calling path."""
     transformer = _build_two_stage_transformer_with_production_shaped_heads(
         hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
     )
-    handle = None
-    if case == "encoder-hook":
-        transformer.enc_output[0].register_forward_hook(Mock(return_value=None))
-    elif case == "norm-hook":
-        transformer.enc_output_norm[0].register_forward_pre_hook(Mock(return_value=None))
-    elif case == "class-hook":
-        transformer.enc_out_class_embed[0].register_full_backward_hook(Mock(return_value=None))
-    elif case == "bbox-hook":
-        transformer.enc_out_bbox_embed[0].register_full_backward_pre_hook(Mock(return_value=None))
-    elif case == "bbox-layer-hook":
-        transformer.enc_out_bbox_embed[0].layers[0].register_forward_hook(Mock(return_value=None))
-    elif case == "instance-forward":
-        transformer.enc_output[0].forward = Mock(side_effect=transformer.enc_output[0].forward)
-    elif case == "compiled-child":
-        transformer.enc_output[0]._compiled_call_impl = Mock()
-    else:
-        handle = nn.modules.module.register_module_forward_hook(Mock(return_value=None))
+    getattr(transformer.get_submodule(submodule), register)(mocker.Mock(return_value=None))
 
-    try:
-        assert not transformer._two_stage_batching_eligible()
-    finally:
-        if handle is not None:
-            handle.remove()
+    assert not transformer._two_stage_batching_eligible()
 
 
-def test_two_stage_forward_preserves_hooked_child_module_call(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "attribute",
+    [pytest.param("forward", id="instance-forward"), pytest.param("_compiled_call_impl", id="compiled-child")],
+)
+def test_two_stage_batching_eligible_false_for_instance_call_override(attribute: str, mocker: MockerFixture) -> None:
+    """A per-instance ``forward`` or compiled call on a group module keeps the generic module-calling path."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    encoder = transformer.enc_output[0]
+    setattr(encoder, attribute, mocker.Mock(side_effect=encoder.forward))
+
+    assert not transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_batching_eligible_false_for_global_forward_hook(
+    mocker: MockerFixture, request: pytest.FixtureRequest
+) -> None:
+    """A global module forward hook keeps the generic module-calling path."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    handle = nn.modules.module.register_module_forward_hook(mocker.Mock(return_value=None))
+    request.addfinalizer(handle.remove)
+
+    assert not transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_forward_preserves_hooked_child_module_call(mocker: MockerFixture) -> None:
     """The public forward route must execute child hooks through the generic fallback."""
     hidden_dim, num_queries, group_detr = 16, 3, 2
     transformer = _build_two_stage_transformer_with_production_shaped_heads(
         hidden_dim, num_queries, group_detr, num_classes=5, bbox_reparam=False
     )
-    hook = Mock(return_value=None)
+    hook = mocker.Mock(return_value=None)
     transformer.enc_output[0].register_forward_hook(hook)
-    selection_mock = Mock(side_effect=transformer._two_stage_group_selection)
-    monkeypatch.setattr(transformer, "_two_stage_group_selection", selection_mock)
+    selection_mock = mocker.patch.object(
+        transformer, "_two_stage_group_selection", side_effect=transformer._two_stage_group_selection
+    )
 
     spatial_shapes_hw = [(4, 4), (2, 2)]
     srcs = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
@@ -1977,7 +1676,7 @@ def test_two_stage_forward_preserves_hooked_child_module_call(monkeypatch: pytes
     assert selection_mock.call_count == 0
 
 
-def test_two_stage_group_selection_dispatches_through_forward(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_stage_group_selection_dispatches_through_forward(mocker: MockerFixture) -> None:
     """`Transformer.forward` must invoke the batched fast path exactly once when eligible."""
     hidden_dim, num_queries, group_detr = 16, 3, 4
     transformer = _build_two_stage_transformer_with_production_shaped_heads(
@@ -1985,8 +1684,9 @@ def test_two_stage_group_selection_dispatches_through_forward(monkeypatch: pytes
     )
     assert transformer._two_stage_batching_eligible()
 
-    selection_mock = Mock(side_effect=transformer._two_stage_group_selection)
-    monkeypatch.setattr(transformer, "_two_stage_group_selection", selection_mock)
+    selection_mock = mocker.patch.object(
+        transformer, "_two_stage_group_selection", side_effect=transformer._two_stage_group_selection
+    )
 
     spatial_shapes_hw = [(4, 4), (2, 2)]
     srcs = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
@@ -2004,13 +1704,11 @@ def test_two_stage_group_selection_dispatches_through_forward(monkeypatch: pytes
 def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbox_reparam: bool) -> None:
     """The batched fast path (group_detr>1) must reproduce the generic per-group loop's fp32 outputs and gradients.
 
-    Runs the SAME transformer twice from identical inputs: once through ``Transformer.forward``'s normal
-    routing (which takes the fast path because ``_two_stage_batching_eligible()`` is True here), and once
-    with that guard monkeypatched to force the generic loop. In fp32 every op the fast path uses (batched
-    matmul, one shared-then-affine LayerNorm, batched topk/gather) is a direct algebraic restatement of
-    the loop's own ops, so forward and backward both match to float32 rounding noise from the different
-    (batched vs. looped) reduction order, not a correctness gap. The test uses a tolerance rather than
-    ``torch.equal`` because larger GEMMs may choose a different accumulation order; see
+    The same transformer runs twice from identical inputs: through the normal routing (the fast path, since
+    ``_two_stage_batching_eligible()`` is True here) and with that guard forced to False. In fp32 every fast-path op
+    (batched matmul, one shared-then-affine LayerNorm, batched topk/gather) is an algebraic restatement of the loop's,
+    so forward and backward match to float32 rounding noise from the different reduction order. A tolerance replaces
+    ``torch.equal`` because larger GEMMs may choose another accumulation order; see
     ``Transformer._two_stage_group_selection`` for the mixed-precision limitation.
     """
     torch.manual_seed(0)
@@ -2065,8 +1763,9 @@ def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbo
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gradients() -> None:
-    """Under bf16 autocast the batched fast path must still produce finite outputs with gradients that reach every
-    group's own parameters -- not necessarily bit-identical to the generic loop.
+    """Under bf16 autocast the batched fast path yields finite outputs and gradients reaching every group.
+
+    The outputs need not be bit-identical to the generic loop.
 
     ``Transformer._two_stage_group_selection`` documents that ``torch.baddbmm``'s batched-GEMM kernel can
     accumulate in a different order than the loop's separate GEMM calls, so a near-tied ``torch.topk``
@@ -2104,11 +1803,9 @@ def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gra
     # instead of recomputing -- the mechanism this benchmark's BF16 training step actually exercises.
     assert torch.isfinite(cls_ts).all()
 
-    # memory_ts/boxes_ts/cls_ts are the two-stage encoder outputs only (the decoder's own parameters
-    # correctly get no gradient from this loss), so only check the modules _two_stage_group_selection
-    # actually uses for a DIFFERENTIABLE output. Unlike the memory_ts/boxes_ts-only version of this
-    # test's loss, cls_ts is now included, so enc_out_class_embed's parameters are no longer excluded:
-    # this loss is the first one in this function to route gradient through the reused gather.
+    # Only modules _two_stage_group_selection uses for a differentiable output (the decoder gets no gradient from this
+    # loss). cls_ts is part of the loss, so enc_out_class_embed is included: the first check to route gradient through
+    # the reused gather.
     two_stage_modules = [
         *transformer.enc_output,
         *transformer.enc_output_norm,
@@ -2237,7 +1934,7 @@ def test_dynamic_compile_reuses_graph_across_resolutions() -> None:
     assert graph_counts[0] > 0 and graph_counts[1:] == [graph_counts[0]] * 2, f"graphs per resolution: {graph_counts}"
 
 
-def test_is_exporting_branch_builds_spatial_shapes_with_as_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_exporting_branch_builds_spatial_shapes_with_as_tensor(mocker: MockerFixture) -> None:
     """``Transformer.forward`` must build ``spatial_shapes`` via ``torch.as_tensor`` while ``is_exporting()`` is True.
 
     ``torch.export`` (ExecuTorch) cannot trace ``torch._shape_as_tensor`` (the eager branch's op), and the
@@ -2263,29 +1960,19 @@ def test_is_exporting_branch_builds_spatial_shapes_with_as_tensor(monkeypatch: p
     with torch.no_grad():
         eager_out = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
 
-    original_as_tensor = torch.as_tensor
-    as_tensor_calls = 0
-    scalar_tensor_calls = 0
-
-    def _spy_as_tensor(*args, **kwargs):
-        nonlocal as_tensor_calls
-        as_tensor_calls += 1
-        return original_as_tensor(*args, **kwargs)
-
-    def _spy_scalar_tensor(*args, **kwargs):
-        nonlocal scalar_tensor_calls
-        scalar_tensor_calls += 1
-        raise AssertionError("is_exporting() branch must not build spatial_shapes with torch.scalar_tensor")
-
-    monkeypatch.setattr(torch.compiler, "is_exporting", lambda: True, raising=False)
-    monkeypatch.setattr(torch, "as_tensor", _spy_as_tensor)
-    monkeypatch.setattr(torch, "scalar_tensor", _spy_scalar_tensor)
+    mocker.patch.object(torch.compiler, "is_exporting", create=True, return_value=True)
+    as_tensor = mocker.patch.object(torch, "as_tensor", wraps=torch.as_tensor)
+    scalar_tensor = mocker.patch.object(
+        torch,
+        "scalar_tensor",
+        side_effect=AssertionError("is_exporting() branch must not build spatial_shapes with torch.scalar_tensor"),
+    )
 
     with torch.no_grad():
         exporting_out = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
 
-    assert as_tensor_calls == 1, "is_exporting() branch must build spatial_shapes with exactly one torch.as_tensor call"
-    assert scalar_tensor_calls == 0
+    assert as_tensor.call_count == 1, "is_exporting() branch must build spatial_shapes with exactly one as_tensor call"
+    assert scalar_tensor.call_count == 0
     torch.testing.assert_close(eager_out, exporting_out)
 
 
@@ -2382,95 +2069,10 @@ def test_two_stage_group_selection_matches_generic_loop_for_grouppose_keypoint_c
     torch.testing.assert_close(enc_kp_fast, enc_kp_loop, atol=1e-4, rtol=1e-4)
 
 
-def test_two_stage_topk_gather_selects_correct_rows_with_bbox_reparam(monkeypatch) -> None:
-    """With bbox_reparam=True, the coordinate-delta reparameterisation path must still gather the exact selected rows
-    via a stride-0 broadcast index, and boxes_ts must be returned un-sigmoided.
-
-    Regression: test_two_stage_topk_gather_selects_correct_rows_out_of_position_order only exercises
-    bbox_reparam=False (the ``enc_out_bbox_embed(...) + output_proposals`` branch of Transformer.forward).
-    bbox_reparam=True instead builds the unselected coordinates from a cx/cy delta scaled by proposal
-    size plus a log-space w/h delta, and Transformer.forward skips the final ``.sigmoid()`` on
-    ``boxes_ts`` in that mode -- neither computation shares code with the bbox_reparam=False branch, so
-    this covers the gather correctness independently for it.
-    """
-    torch.manual_seed(0)
-    batch_size, hidden_dim, num_queries = 2, 16, 3
-    spatial_shapes_hw = [(4, 4), (2, 2)]
-    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
-
-    srcs = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
-    masks = [torch.zeros(batch_size, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
-    pos_embeds = [torch.randn(batch_size, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
-    refpoint_embed = torch.rand(num_queries, 4)
-    query_feat = torch.randn(num_queries, hidden_dim)
-
-    transformer = Transformer(
-        d_model=hidden_dim,
-        num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=len(spatial_shapes_hw),
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        bbox_reparam=True,
-        group_detr=1,
-    )
-
-    scores = torch.full((batch_size, total_hw, 1), -100.0)
-    scores[0, 17, 0], scores[0, 2, 0], scores[0, 9, 0] = 30.0, 20.0, 10.0
-    scores[1, 5, 0], scores[1, 19, 0], scores[1, 0, 0] = 25.0, 15.0, 5.0
-    transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
-
-    gather_index_calls: list[torch.Tensor] = []
-    original_gather = torch.gather
-
-    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
-        gather_index_calls.append(index)
-        return original_gather(input, dim, index, **kwargs)
-
-    monkeypatch.setattr(torch, "gather", _tracking_gather)
-
-    _, _, memory_ts, boxes_ts, _ = transformer(
-        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
-    )
-
-    assert gather_index_calls, "expected torch.gather to be called during the two-stage top-k selection"
-    for index in gather_index_calls:
-        assert index.stride(-1) == 0, (
-            "the two-stage top-k gather index must broadcast its last dim via Tensor.expand "
-            f"(Transformer.forward two-stage top-k gather); got a materialised index with nonzero "
-            f"last-dim stride {index.stride()} for shape {tuple(index.shape)}"
-        )
-
-    # Ground truth computed independently of the gather under test: the bbox_reparam=True coordinate
-    # formula (cx/cy delta scaled by proposal size, log-space w/h delta), then plain row indexing.
-    memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
-    mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
-    output_memory, output_proposals = gen_encoder_output_proposals(
-        memory, mask_flatten, spatial_shapes_hw, unsigmoid=False
-    )
-    output_memory_gidx = transformer.enc_output_norm[0](transformer.enc_output[0](output_memory))
-    coord_delta = transformer.enc_out_bbox_embed[0](output_memory_gidx)
-    coord_cxcy = coord_delta[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2]
-    coord_wh = coord_delta[..., 2:].exp() * output_proposals[..., 2:]
-    coord_unselected = torch.concat([coord_cxcy, coord_wh], dim=-1)
-    chosen_idx = scores.squeeze(-1).topk(num_queries, dim=1).indices  # mirrors forward()'s torch.topk call
-
-    assert torch.equal(chosen_idx, torch.tensor([[17, 2, 9], [5, 19, 0]]))  # sanity: out of position order
-    expected_memory = torch.stack([output_memory_gidx[b, chosen_idx[b]] for b in range(batch_size)])
-    # forward() returns boxes_ts as-is (no sigmoid) when bbox_reparam=True.
-    expected_coord = torch.stack([coord_unselected[b, chosen_idx[b]] for b in range(batch_size)])
-    assert torch.equal(memory_ts, expected_memory)
-    assert torch.equal(boxes_ts, expected_coord)
-
-
 def test_two_stage_topk_gather_backward_routes_gradient_only_to_selected_rows() -> None:
-    """The two-stage top-k gather is a plain row copy, so backward() through it must route gradient only to the
-    flattened source positions that were selected -- every unselected position must see exactly zero gradient.
+    """Backward through the two-stage top-k gather routes gradient only to the selected source positions.
+
+    The gather is a plain row copy, so every unselected position must see exactly zero gradient.
 
     Regression: the forward-value assertions in the sibling tests confirm memory_ts/boxes_ts *equal* the
     correct rows, but a broadcast-index bug that accidentally selected the wrong rows in a way that still
@@ -2532,16 +2134,12 @@ def test_two_stage_topk_gather_backward_routes_gradient_only_to_selected_rows() 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices() -> None:
-    """The two-stage top-k gather (Transformer.forward two-stage top-k gather) is an arithmetic-free row
-    copy -- torch.gather with an index broadcast via Tensor.expand -- so CUDA must reproduce the CPU
-    result bit-for-bit for the same out-of-order, per-batch-row-distinct indices used by
-    test_two_stage_topk_gather_selects_correct_rows_out_of_position_order.
+    """On CUDA the two-stage top-k gather reproduces the CPU result bit-for-bit for out-of-order indices.
 
-    Mirrors the CPU/CUDA parity twin added for the analogous arithmetic-free row-copy gather in
-    PostProcess._gather_and_scale_boxes (PR #1268,
-    test_gather_and_scale_boxes_cuda_matches_cpu_for_duplicated_indices): both isolate the bare
-    gather+expand pattern rather than running a full model forward, so the comparison is not exposed to
-    unrelated CPU/CUDA floating-point non-determinism in surrounding Linear/LayerNorm layers.
+    The gather (``torch.gather`` with an index broadcast via ``Tensor.expand``) is an arithmetic-free row copy; the
+    indices are those of ``test_two_stage_topk_gather_selects_correct_rows_out_of_position_order``. Like the parity twin
+    for ``PostProcess._gather_and_scale_boxes`` (PR #1268), it isolates the bare gather+expand pattern, so surrounding
+    Linear/LayerNorm CPU/CUDA floating-point differences cannot reach the comparison.
     """
     batch_size, hidden_dim, num_positions = 2, 16, 20
     source = torch.randn(batch_size, num_positions, hidden_dim)
@@ -2587,23 +2185,18 @@ def _bbox_from_delta(delta: torch.Tensor, proposals: torch.Tensor, bbox_reparam:
 def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp(
     bbox_reparam: bool,
 ) -> None:
-    """Gathering top-k rows before vs. after the bbox-delta MLP must match in both forward value and
-    gradient, using the real production MLP (``rfdetr.models.math.MLP(d, d, 4, num_layers=3)``,
-    matching ``LWDETR.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)`` in ``lwdetr.py``) -- not the
-    single ``nn.Linear`` stand-in ``test_two_stage_topk_gather_selects_correct_rows_out_of_position_order``
-    and the ``bbox_embed_input_shapes`` test above use, and covering gradient parity, which those
-    two only check indirectly (nonzero/zero row pattern, not old-vs-new equality).
+    """Gathering top-k rows before vs.
 
-    The bbox MLP has no cross-token mixing (no LayerNorm/attention across the token dimension), so
-    ``d(mlp(x)_i)/dx_j`` is zero for every ``j != i`` -- backward is as row-independent as forward,
-    and gathering before or after the MLP must produce identical gradients w.r.t. the shared input,
-    not just identical box values. Compared with a tolerance, not ``torch.equal``: three chained
-    matmuls (this MLP has 3 layers, unlike the single-``nn.Linear`` sibling tests) is enough for the
-    CPU BLAS backend's reduction order to differ across platforms (confirmed bit-inexact on
-    macOS/Accelerate CI, in the 1e-7-to-1e-5 range for the value; bit-exact on Linux/OpenBLAS) --
-    this is the same floating-point non-associativity documented for the full model scale in the PR
-    body, reproduced here at a much smaller size than expected because the platform's BLAS choice
-    matters more than tensor size for how many layers it takes to diverge.
+    after the bbox-delta MLP must match in forward value and gradient.     Uses the real production MLP (``MLP(d, d, 4,
+    num_layers=3)``, as ``LWDETR.bbox_embed`` in ``lwdetr.py``), not the     single ``nn.Linear`` stand-in of the
+    sibling gather tests, and covers gradient parity, which those check only     indirectly (nonzero/zero row pattern,
+    not old-vs-new equality).
+
+    The MLP has no cross-token mixing, so ``d(mlp(x)_i)/dx_j`` is zero for every ``j != i``: backward is as row-
+    independent as forward, and gathering before or after the MLP must give identical gradients w.r.t. the shared input,
+    not just identical boxes. A tolerance replaces ``torch.equal``: three chained matmuls are enough for the CPU BLAS
+    reduction order to differ across platforms (bit-inexact on macOS/Accelerate CI, 1e-7 to 1e-5 for the value; bit-
+    exact on Linux/OpenBLAS), because the platform's BLAS choice matters more than tensor size.
     """
     torch.manual_seed(0)
     bs, sum_hw, d, num_queries = 2, 20, 16, 3
@@ -2634,17 +2227,13 @@ def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_t
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.parametrize("bbox_reparam", [False, True])
 def test_two_stage_bbox_mlp_gather_order_matches_on_cuda_for_real_three_layer_mlp(bbox_reparam: bool) -> None:
-    """CUDA twin of test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp:
-    the same gather-before-vs-after-MLP comparison, but running the real bbox MLP itself on CUDA (not
-    only the bare ``torch.gather`` isolated by
-    test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices).
+    """CUDA twin of test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp.
 
-    Deliberately compares old-order-on-CUDA against new-order-on-CUDA (both on the same device), not
-    CUDA against CPU: CPU/CUDA cuBLAS reduction order already differs for this MLP's matmuls
-    independently of gather order, which would swamp the gather-order comparison this test exists to
-    make. The two paths may use different CUDA kernels and reduction orders, so this test uses a
-    small numerical tolerance without mutating process-wide deterministic-algorithm state or requiring
-    ``CUBLAS_WORKSPACE_CONFIG``.
+    Runs the real bbox MLP on CUDA, unlike the bare ``torch.gather`` isolated by
+    ``test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices``. It compares old order against
+    new order on the same device, not CUDA against CPU, whose reduction order already differs for this MLP and would
+    swamp the gather-order comparison. The two paths may use different kernels, so a small numerical tolerance applies,
+    without mutating process-wide deterministic-algorithm state or requiring ``CUBLAS_WORKSPACE_CONFIG``.
     """
     torch.manual_seed(0)
     bs, sum_hw, d, num_queries = 2, 20, 16, 3
@@ -2703,25 +2292,15 @@ def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory
 ) -> None:
     """The bbox-delta MLP must only run on the rows torch.topk selects, not on every encoder position.
 
-    ``enc_out_bbox_embed`` is a pointwise MLP with no cross-token mixing, so it only needs the
-    ``num_queries`` rows that survive ``torch.topk`` selection -- every one of the other
-    ``sum(H*W) - num_queries`` encoder positions it used to also run on was discarded by the gather
-    that immediately followed, per group.
+    ``enc_out_bbox_embed`` is pointwise, so it needs only the ``num_queries`` rows that survive ``torch.topk``.
+    Regression: Transformer.forward used to run ``enc_out_bbox_embed[g_idx]`` on the full ``output_memory_gidx``
+    (bs, sum_hw, d) for every one of ``group_detr`` groups and keep only the gathered rows. This pins the input shape
+    it is called with to the post-topk size, per group; it checks how much work the MLP does, not what it produces.
+    Row values are covered by ``test_two_stage_topk_gather_selects_correct_rows_out_of_position_order`` and
+    ``test_two_stage_topk_gather_broadcasts_across_groups_in_training_mode``.
 
-    Regression: prior to this fix, Transformer.forward ran ``enc_out_bbox_embed[g_idx]`` on the full
-    ``output_memory_gidx`` (bs, sum_hw, d) for every one of ``group_detr`` groups and only kept the
-    ``num_queries`` gathered rows -- this pins the shape ``enc_out_bbox_embed`` is actually called
-    with to the post-topk size, per group. Row *values* are covered separately by
-    test_two_stage_topk_gather_selects_correct_rows_out_of_position_order and
-    test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode, which assert
-    ``memory_ts``/``boxes_ts`` are bit-identical to gathering after running the MLP on every row --
-    this test only pins how much work the MLP itself does, not what it produces.
-
-    Parametrized over ``bbox_reparam`` because it is not merely a config toggle here: the fixed
-    (production default per ``ModelConfig.bbox_reparam``, ``config.py``) ``True`` branch runs
-    additional pointwise ops (``.exp()``, multiply, ``torch.concat``) on ``enc_out_bbox_embed``'s
-    *output* that ``False`` does not, so a test pinning only ``False`` would leave the branch that
-    is actually used in production unchecked.
+    ``bbox_reparam`` is parametrized because ``True`` (the production default per ``ModelConfig.bbox_reparam``) runs
+    extra pointwise ops (``.exp()``, multiply, ``torch.concat``) on the MLP output that ``False`` does not.
     """
     torch.manual_seed(0)
     hidden_dim = 16
@@ -2882,7 +2461,6 @@ def _reference_sineembed(pos_tensor: torch.Tensor, dim: int) -> torch.Tensor:
     return torch.cat(parts, dim=2)
 
 
-#: Marks for a case that needs CUDA: excluded from the CPU job, skipped without a GPU.
 def _cpu_addmm_activation_available(dtype: torch.dtype) -> bool:
     """Return whether ``torch._addmm_activation`` runs on CPU in ``dtype`` on the installed torch.
 
@@ -2990,6 +2568,12 @@ class _MultiheadAttentionSubclass(nn.MultiheadAttention):
     pass
 
 
+class _LinearSubclass(nn.Linear):
+    """Test double that must keep the generic linear call path."""
+
+    pass
+
+
 class TestGroupedSelfAttention:
     """Group-DETR self-attention fast path: parity, eligibility and CUDA-only routing."""
 
@@ -3009,13 +2593,14 @@ class TestGroupedSelfAttention:
     def test_is_bitwise_the_module_path(
         self, group_detr: int, batch: int, queries_per_group: int, heads: int, d_model: int
     ) -> None:
-        """Projections on the ungrouped layout plus a batch-major view must reproduce the group-major ``cat``
-        path bit for bit in the forward and in the input gradients: every kernel sees the same rows in a
-        different order. The weight gradients reduce over those rows, so their summation order changes;
-        they are checked to fp32 rounding here and bitwise on CUDA in the GPU test.
+        """Batch-major regrouping reproduces the group-major ``cat`` module path bit for bit in forward and input grads.
 
-        The group count, batch size, queries per group, head count and width each take their singleton or an
-        odd value in turn, since the regrouping views are where a boundary shape would go wrong.
+        Projections run on the ungrouped layout plus a batch-major view; every kernel sees the same rows in a different
+        order. The weight gradients reduce over those rows, so their summation order changes; they are checked to fp32
+        rounding here and bitwise on CUDA in the GPU test.
+
+        The group count, batch size, queries per group, head count and width each take their singleton or an odd value
+        in turn, since the regrouping views are where a boundary shape would go wrong.
         """
         layer = decoder_layer(group_detr=group_detr, heads=heads, d_model=d_model)
         num_queries = group_detr * queries_per_group
@@ -3047,8 +2632,10 @@ class TestGroupedSelfAttention:
             torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-6, atol=atol)
 
     def test_uses_a_view_for_the_regrouping(self) -> None:
-        """A wrong batch order (group-major view) would scramble rows across images: pin the batch-major one by checking
-        that image 1's queries only attend within image 1."""
+        """Regrouping is batch-major: image 1's queries attend only within image 1, so swapping images swaps outputs.
+
+        A group-major view would scramble rows across images.
+        """
         layer = decoder_layer()
         tgt = torch.randn(2, 12, 16)
         query_pos = torch.zeros(2, 12, 16)
@@ -3060,81 +2647,149 @@ class TestGroupedSelfAttention:
 
         assert torch.equal(out_swapped, out.flip(0))
 
+    @pytest.fixture
+    def cuda_layer(self) -> tuple[TransformerDecoderLayer, torch.Tensor]:
+        """A CUDA decoder layer and a divisible ``tgt`` for which the explicit path is eligible (positive control).
+
+        On CPU every fallback case is ineligible for its device alone, so a CPU run would pass whether or not the
+        case's own guard exists; the control is asserted before any test changes the layer.
+
+        Examples:
+            >>> cuda_layer  # doctest: +SKIP
+        """
+        layer = decoder_layer().cuda()
+        tgt = torch.randn(2, 12, 16, device="cuda")
+        assert layer._grouped_self_attention_eligible(tgt, None, None) is True
+        return layer, tgt
+
     @pytest.mark.gpu
     @requires_cuda
     @pytest.mark.parametrize(
-        "case",
+        "mutate",
         [
-            "eval",
-            "tgt_mask",
-            "key_padding_mask",
-            "subclass",
+            pytest.param(lambda layer, mocker: layer.eval(), id="eval"),
+            pytest.param(lambda layer, mocker: setattr(layer.self_attn, "dropout", 0.1), id="dropout"),
+            pytest.param(
+                lambda layer, mocker: setattr(layer.self_attn, "forward", layer.self_attn.forward),
+                id="instance_forward",
+            ),
+            pytest.param(
+                lambda layer, mocker: setattr(layer.self_attn, "_compiled_call_impl", mocker.Mock()),
+                id="compiled_call_impl",
+            ),
+        ],
+    )
+    def test_eligibility_falls_back_to_the_module_call_for_layer_state(
+        self,
+        mutate: Callable[[TransformerDecoderLayer, MockerFixture], object],
+        cuda_layer: tuple[TransformerDecoderLayer, torch.Tensor],
+        mocker: MockerFixture,
+    ) -> None:
+        """Eval mode, attention dropout and a per-instance call override keep the generic ``self_attn(...)`` call."""
+        layer, tgt = cuda_layer
+        mutate(layer, mocker)
+
+        assert layer._grouped_self_attention_eligible(tgt, None, None) is False
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize(
+        "make_self_attn",
+        [
+            pytest.param(partial(_MultiheadAttentionSubclass, 16, 4, batch_first=True), id="subclass"),
+            pytest.param(partial(nn.MultiheadAttention, 16, 4, bias=False, batch_first=True), id="no_in_proj_bias"),
+            pytest.param(partial(nn.MultiheadAttention, 16, 4, add_bias_kv=True, batch_first=True), id="add_bias_kv"),
+            pytest.param(
+                partial(nn.MultiheadAttention, 16, 4, add_zero_attn=True, batch_first=True), id="add_zero_attn"
+            ),
+            pytest.param(partial(nn.MultiheadAttention, 16, 4, batch_first=False), id="sequence_first"),
+            pytest.param(partial(nn.MultiheadAttention, 16, 4, kdim=8, vdim=8, batch_first=True), id="distinct_kdim"),
+        ],
+    )
+    def test_eligibility_falls_back_to_the_module_call_for_replaced_self_attn(
+        self,
+        make_self_attn: Callable[[], nn.MultiheadAttention],
+        cuda_layer: tuple[TransformerDecoderLayer, torch.Tensor],
+    ) -> None:
+        """A subclass or a ``MultiheadAttention`` configuration the explicit path cannot reproduce keeps the call."""
+        layer, tgt = cuda_layer
+        layer.self_attn = make_self_attn().cuda()
+
+        assert layer._grouped_self_attention_eligible(tgt, None, None) is False
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize(
+        "make_inputs",
+        [
+            pytest.param(
+                lambda: (
+                    torch.randn(2, 12, 16, device="cuda"),
+                    torch.zeros(4, 4, device="cuda", dtype=torch.bool),
+                    None,
+                ),
+                id="tgt_mask",
+            ),
+            pytest.param(
+                lambda: (
+                    torch.randn(2, 12, 16, device="cuda"),
+                    None,
+                    torch.zeros(6, 4, device="cuda", dtype=torch.bool),
+                ),
+                id="key_padding_mask",
+            ),
+            pytest.param(lambda: (torch.randn(2, 11, 16, device="cuda"), None, None), id="indivisible_queries"),
+        ],
+    )
+    def test_eligibility_falls_back_to_the_module_call_for_inputs(
+        self,
+        make_inputs: Callable[[], tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]],
+        cuda_layer: tuple[TransformerDecoderLayer, torch.Tensor],
+    ) -> None:
+        """Attention masks and a query count not divisible by ``group_detr`` keep the generic ``self_attn(...)``
+        call."""
+        layer, _ = cuda_layer
+        tgt, tgt_mask, key_padding_mask = make_inputs()
+
+        assert layer._grouped_self_attention_eligible(tgt, tgt_mask, key_padding_mask) is False
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize(
+        "hook",
+        [
             "forward_hook",
             "forward_pre_hook",
             "backward_hook",
             "backward_pre_hook",
             "global_forward_hook",
             "global_backward_hook",
-            "instance_forward",
-            "compiled_call_impl",
-            "dropout",
-            "indivisible_queries",
-            "compiling",
-            "tracing",
-            "no_in_proj_bias",
-            "add_bias_kv",
-            "add_zero_attn",
-            "sequence_first",
-            "distinct_kdim",
         ],
     )
-    def test_eligibility_falls_back_to_the_module_call(
-        self, case: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    def test_eligibility_falls_back_to_the_module_call_for_hooks(
+        self,
+        hook: str,
+        cuda_layer: tuple[TransformerDecoderLayer, torch.Tensor],
+        request: pytest.FixtureRequest,
+        mocker: MockerFixture,
     ) -> None:
-        """Everything the explicit path cannot reproduce keeps the generic ``self_attn(...)`` call.
+        """A per-module or global, forward or backward hook on ``self_attn`` keeps the generic call."""
+        layer, tgt = cuda_layer
+        request.addfinalizer(_MODULE_HOOK_REGISTRARS[hook](layer.self_attn, mocker.Mock(return_value=None)).remove)
 
-        CUDA only, with a positive control: on CPU every case is ineligible for its device alone, so a CPU run would
-        pass whether or not the case's own guard exists.
-        """
-        device = torch.device("cuda")
-        layer = decoder_layer().to(device)
-        tgt = torch.randn(2, 12, 16, device=device)
-        assert layer._grouped_self_attention_eligible(tgt, None, None) is True
-        tgt_mask = key_padding_mask = None
-        if case == "eval":
-            layer.eval()
-        elif case == "tgt_mask":
-            tgt_mask = torch.zeros(4, 4, device=device, dtype=torch.bool)
-        elif case == "key_padding_mask":
-            key_padding_mask = torch.zeros(6, 4, device=device, dtype=torch.bool)
-        elif case == "subclass":
-            layer.self_attn = _MultiheadAttentionSubclass(16, 4, batch_first=True).to(device)
-        elif case in _MODULE_HOOK_REGISTRARS:
-            request.addfinalizer(_MODULE_HOOK_REGISTRARS[case](layer.self_attn, Mock(return_value=None)).remove)
-        elif case == "instance_forward":
-            layer.self_attn.forward = layer.self_attn.forward  # type: ignore[method-assign]
-        elif case == "compiled_call_impl":
-            layer.self_attn._compiled_call_impl = Mock()
-        elif case == "dropout":
-            layer.self_attn.dropout = 0.1
-        elif case == "indivisible_queries":
-            tgt = torch.randn(2, 11, 16, device=device)
-        elif case == "compiling":
-            monkeypatch.setattr("rfdetr.models.transformer.is_compiling", lambda: True)
-        elif case == "tracing":
-            monkeypatch.setattr("rfdetr.models.transformer._is_tracing", lambda: True)
-        elif case == "no_in_proj_bias":
-            layer.self_attn = nn.MultiheadAttention(16, 4, bias=False, batch_first=True).to(device)
-        elif case == "add_bias_kv":
-            layer.self_attn = nn.MultiheadAttention(16, 4, add_bias_kv=True, batch_first=True).to(device)
-        elif case == "add_zero_attn":
-            layer.self_attn = nn.MultiheadAttention(16, 4, add_zero_attn=True, batch_first=True).to(device)
-        elif case == "sequence_first":
-            layer.self_attn = nn.MultiheadAttention(16, 4, batch_first=False).to(device)
-        elif case == "distinct_kdim":
-            layer.self_attn = nn.MultiheadAttention(16, 4, kdim=8, vdim=8, batch_first=True).to(device)
+        assert layer._grouped_self_attention_eligible(tgt, None, None) is False
 
-        assert layer._grouped_self_attention_eligible(tgt, tgt_mask, key_padding_mask) is False
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize("predicate", ["is_compiling", "_is_tracing"])
+    def test_eligibility_falls_back_to_the_module_call_while_compiling_or_tracing(
+        self, predicate: str, cuda_layer: tuple[TransformerDecoderLayer, torch.Tensor], mocker: MockerFixture
+    ) -> None:
+        """``torch.compile`` and ``torch.jit.trace`` graphs keep the generic ``self_attn(...)`` call."""
+        layer, tgt = cuda_layer
+        mocker.patch(f"rfdetr.models.transformer.{predicate}", return_value=True)
+
+        assert layer._grouped_self_attention_eligible(tgt, None, None) is False
 
     def test_is_cuda_only(self) -> None:
         """The layout savings are a CUDA measurement; CPU keeps the module call."""
@@ -3348,64 +3003,132 @@ class TestFfnHidden:
         assert actual.dtype == expected.dtype
         assert torch.equal(actual, expected)
 
-    @pytest.mark.parametrize(
-        "case",
-        [
-            pytest.param(name, marks=cuda_marks)
-            for name in (
-                "gelu",
-                "forward_hook",
-                "forward_pre_hook",
-                "backward_hook",
-                "backward_pre_hook",
-                "global_forward_hook",
-                "global_backward_hook",
-                "instance_forward",
-                "compiled_call_impl",
-                "linear_subclass",
-                "no_bias",
-                "compiling",
-                "tracing",
-            )
-        ]
-        + ["cpu"],
-    )
-    def test_falls_back_to_the_two_op_path(
-        self, case: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
-    ) -> None:
-        """Anything the fused epilogue cannot reproduce keeps ``activation(linear1(tgt))``.
+    @pytest.fixture
+    def cuda_ffn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[TransformerDecoderLayer, torch.Tensor, list[tuple[object, ...]]]:
+        """A CUDA decoder layer, its input and the fused-call spy, after a positive control proved the fused path.
 
-        Every case but ``cpu`` needs CUDA and starts from a positive control: on CPU each one would fall back for its
-        device alone and pass whether or not its own guard exists.
+        On CPU each fallback case would fall back for its device alone and pass whether or not its own guard exists.
+
+        Examples:
+            >>> cuda_ffn  # doctest: +SKIP
         """
-        device = torch.device("cpu" if case == "cpu" else "cuda")
-        layer = decoder_layer().to(device)
-        tgt = torch.randn(2, 12, 16, device=device)
+        layer = decoder_layer().cuda()
+        tgt = torch.randn(2, 12, 16, device="cuda")
         fused_calls = record_apply_calls(monkeypatch, _LinearReLU)
-        if device.type == "cuda":
-            layer._ffn_hidden(tgt)
-            assert len(fused_calls) == 1
-            fused_calls.clear()
-        if case == "gelu":
-            layer.activation = F.gelu
-        elif case in _MODULE_HOOK_REGISTRARS:
-            request.addfinalizer(_MODULE_HOOK_REGISTRARS[case](layer.linear1, Mock(return_value=None)).remove)
-        elif case == "instance_forward":
-            layer.linear1.forward = layer.linear1.forward  # type: ignore[method-assign]
-        elif case == "compiled_call_impl":
-            layer.linear1._compiled_call_impl = Mock(side_effect=layer.linear1._call_impl)
-        elif case == "linear_subclass":
+        layer._ffn_hidden(tgt)
+        assert len(fused_calls) == 1
+        fused_calls.clear()
+        return layer, tgt, fused_calls
 
-            class _Linear(nn.Linear):
-                pass
+    def test_falls_back_to_the_two_op_path_on_cpu(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CPU keeps ``activation(linear1(tgt))``: the fused epilogue is a CUDA path."""
+        layer = decoder_layer()
+        tgt = torch.randn(2, 12, 16)
+        fused_calls = record_apply_calls(monkeypatch, _LinearReLU)
 
-            layer.linear1 = _Linear(16, 32).to(device)
-        elif case == "no_bias":
-            layer.linear1 = nn.Linear(16, 32, bias=False).to(device)
-        elif case == "compiling":
-            monkeypatch.setattr("rfdetr.models.transformer.is_compiling", lambda: True)
-        elif case == "tracing":
-            monkeypatch.setattr("rfdetr.models.transformer._is_tracing", lambda: True)
+        out = layer._ffn_hidden(tgt)
+
+        assert fused_calls == []
+        assert torch.equal(out, layer.activation(layer.linear1(tgt)))
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            pytest.param(lambda layer, mocker: setattr(layer, "activation", F.gelu), id="gelu"),
+            pytest.param(
+                lambda layer, mocker: setattr(layer.linear1, "forward", layer.linear1.forward), id="instance_forward"
+            ),
+            pytest.param(
+                lambda layer, mocker: setattr(
+                    layer.linear1, "_compiled_call_impl", mocker.Mock(side_effect=layer.linear1._call_impl)
+                ),
+                id="compiled_call_impl",
+            ),
+        ],
+    )
+    def test_falls_back_to_the_two_op_path_for_layer_state(
+        self,
+        mutate: Callable[[TransformerDecoderLayer, MockerFixture], object],
+        cuda_ffn: tuple[TransformerDecoderLayer, torch.Tensor, list[tuple[object, ...]]],
+        mocker: MockerFixture,
+    ) -> None:
+        """A non-ReLU activation or a per-instance call override on ``linear1`` keeps ``activation(linear1(tgt))``."""
+        layer, tgt, fused_calls = cuda_ffn
+        mutate(layer, mocker)
+
+        out = layer._ffn_hidden(tgt)
+
+        assert fused_calls == []
+        assert torch.equal(out, layer.activation(layer.linear1(tgt)))
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize(
+        "make_linear",
+        [
+            pytest.param(partial(_LinearSubclass, 16, 32), id="linear_subclass"),
+            pytest.param(partial(nn.Linear, 16, 32, bias=False), id="no_bias"),
+        ],
+    )
+    def test_falls_back_to_the_two_op_path_for_replaced_linear(
+        self,
+        make_linear: Callable[[], nn.Linear],
+        cuda_ffn: tuple[TransformerDecoderLayer, torch.Tensor, list[tuple[object, ...]]],
+    ) -> None:
+        """A ``Linear`` subclass or a bias-free ``Linear`` as ``linear1`` keeps ``activation(linear1(tgt))``."""
+        layer, tgt, fused_calls = cuda_ffn
+        layer.linear1 = make_linear().cuda()
+
+        out = layer._ffn_hidden(tgt)
+
+        assert fused_calls == []
+        assert torch.equal(out, layer.activation(layer.linear1(tgt)))
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize(
+        "hook",
+        [
+            "forward_hook",
+            "forward_pre_hook",
+            "backward_hook",
+            "backward_pre_hook",
+            "global_forward_hook",
+            "global_backward_hook",
+        ],
+    )
+    def test_falls_back_to_the_two_op_path_for_hooks(
+        self,
+        hook: str,
+        cuda_ffn: tuple[TransformerDecoderLayer, torch.Tensor, list[tuple[object, ...]]],
+        request: pytest.FixtureRequest,
+        mocker: MockerFixture,
+    ) -> None:
+        """A per-module or global, forward or backward hook on ``linear1`` keeps ``activation(linear1(tgt))``."""
+        layer, tgt, fused_calls = cuda_ffn
+        request.addfinalizer(_MODULE_HOOK_REGISTRARS[hook](layer.linear1, mocker.Mock(return_value=None)).remove)
+
+        out = layer._ffn_hidden(tgt)
+
+        assert fused_calls == []
+        assert torch.equal(out, layer.activation(layer.linear1(tgt)))
+
+    @pytest.mark.gpu
+    @requires_cuda
+    @pytest.mark.parametrize("predicate", ["is_compiling", "_is_tracing"])
+    def test_falls_back_to_the_two_op_path_while_compiling_or_tracing(
+        self,
+        predicate: str,
+        cuda_ffn: tuple[TransformerDecoderLayer, torch.Tensor, list[tuple[object, ...]]],
+        mocker: MockerFixture,
+    ) -> None:
+        """``torch.compile`` and ``torch.jit.trace`` graphs keep ``activation(linear1(tgt))``."""
+        layer, tgt, fused_calls = cuda_ffn
+        mocker.patch(f"rfdetr.models.transformer.{predicate}", return_value=True)
 
         out = layer._ffn_hidden(tgt)
 
@@ -3421,7 +3144,7 @@ class TestObservedModulesKeepTheModuleCall:
     @pytest.mark.parametrize("target", ["ref_point_head", "first_linear"])
     @pytest.mark.parametrize("feature", ["forward_pre_hook", "instance_forward"])
     def test_ref_point_head_observers_keep_the_full_precision_embedding_input(
-        self, target: str, feature: str, monkeypatch: pytest.MonkeyPatch
+        self, target: str, feature: str, mocker: MockerFixture
     ) -> None:
         """An observer on the embedding consumer must receive the fp32 input the original module path exposed.
 
@@ -3438,10 +3161,10 @@ class TestObservedModulesKeepTheModuleCall:
         valid_ratios = torch.ones(2, 2, 2, device="cuda")
         written_dtypes: list[torch.dtype] = []
         real_apply = _InterleavedSinCos.apply
-        monkeypatch.setattr(
+        mocker.patch.object(
             _InterleavedSinCos,
             "apply",
-            lambda angle, dtype: (written_dtypes.append(dtype), real_apply(angle, dtype))[1],
+            side_effect=lambda angle, dtype: (written_dtypes.append(dtype), real_apply(angle, dtype))[1],
         )
 
         def run() -> None:
@@ -3466,7 +3189,7 @@ class TestObservedModulesKeepTheModuleCall:
         if feature == "forward_pre_hook":
             watched.register_forward_pre_hook(lambda _module, args: observed_dtypes.append(args[0].dtype))
         else:
-            forward_mock = Mock(side_effect=watched.forward)
+            forward_mock = mocker.Mock(side_effect=watched.forward)
             watched.forward = forward_mock  # type: ignore[method-assign]
         run()
         if forward_mock is not None:
@@ -3480,7 +3203,7 @@ class TestObservedModulesKeepTheModuleCall:
     @pytest.mark.parametrize("target", ["cross_attn", "sampling_offsets", "attention_weights"])
     @pytest.mark.parametrize("feature", ["forward_pre_hook", "instance_forward"])
     def test_cross_attention_observers_keep_the_full_precision_query(
-        self, target: str, feature: str, monkeypatch: pytest.MonkeyPatch
+        self, target: str, feature: str, mocker: MockerFixture
     ) -> None:
         """Cross-attention and its query-consuming linears must observe the original fp32 positional sum.
 
@@ -3497,10 +3220,8 @@ class TestObservedModulesKeepTheModuleCall:
         level_start_index = torch.tensor([0, 16], device="cuda")
         folded_adds: list[object] = []
         real_apply = _AddInDtype.apply
-        monkeypatch.setattr(
-            _AddInDtype,
-            "apply",
-            lambda *args: (folded_adds.append(args), real_apply(*args))[1],
+        mocker.patch.object(
+            _AddInDtype, "apply", side_effect=lambda *args: (folded_adds.append(args), real_apply(*args))[1]
         )
 
         def run() -> None:
@@ -3525,7 +3246,7 @@ class TestObservedModulesKeepTheModuleCall:
         if feature == "forward_pre_hook":
             watched.register_forward_pre_hook(lambda _module, args: observed_dtypes.append(args[0].dtype))
         else:
-            forward_mock = Mock(side_effect=watched.forward)
+            forward_mock = mocker.Mock(side_effect=watched.forward)
             watched.forward = forward_mock  # type: ignore[method-assign]
         run()
         if forward_mock is not None:
@@ -3621,8 +3342,8 @@ class TestPlainModuleCallGate:
     """Plain-call predicate, tracing canary and the positional-embedding add that depends on them."""
 
     @pytest.mark.parametrize("case", [*_MODULE_HOOK_REGISTRARS, "instance_forward", "compiled_call_impl"])
-    def test_module_call_is_plain_is_false_when_the_call_is_observed_or_overridden(
-        self, case: str, request: pytest.FixtureRequest
+    def test_is_false_when_the_call_is_observed_or_overridden(
+        self, case: str, request: pytest.FixtureRequest, mocker: MockerFixture
     ) -> None:
         """Everything ``Module.__call__`` can do beyond ``forward`` makes the call non-plain.
 
@@ -3633,11 +3354,11 @@ class TestPlainModuleCallGate:
         observed, bystander = nn.Linear(4, 4), nn.Linear(4, 4)
         assert _module_call_is_plain(observed, bystander) is True
         if case == "instance_forward":
-            observed.forward = Mock(side_effect=observed.forward)  # type: ignore[method-assign]
+            observed.forward = mocker.Mock(side_effect=observed.forward)  # type: ignore[method-assign]
         elif case == "compiled_call_impl":
-            observed._compiled_call_impl = Mock()
+            observed._compiled_call_impl = mocker.Mock()
         else:
-            request.addfinalizer(_MODULE_HOOK_REGISTRARS[case](observed, Mock(return_value=None)).remove)
+            request.addfinalizer(_MODULE_HOOK_REGISTRARS[case](observed, mocker.Mock(return_value=None)).remove)
 
         assert _module_call_is_plain(observed, bystander) is False
         assert _module_call_is_plain(bystander) is (not case.startswith("global_"))
@@ -3671,7 +3392,7 @@ class TestPlainModuleCallGate:
         assert in_eval.dtype == torch.float32
         assert torch.equal(in_eval, tensor + pos)
 
-    def test_is_tracing_is_true_only_while_torch_jit_trace_records(self) -> None:
+    def test_is_tracing_true_only_while_jit_trace_records(self) -> None:
         """``_is_tracing`` reports a real ``torch.jit.trace`` recording, not just the monkeypatched stand-in.
 
         The fallback tests for the eager CUDA rewrites switch tracing on by replacing ``_is_tracing`` with a constant,
@@ -3826,17 +3547,24 @@ class TestGenSineembedForPosition:
         """
         pos_tensor = torch.rand(1, 2, width)
 
-        with pytest.raises(ValueError, match=rf"Unknown pos_tensor shape\(-1\):{width}"):
+        with pytest.raises(ValueError) as exc_info:
             gen_sineembed_for_position(pos_tensor, dim=8)
+
+        assert f"Unknown pos_tensor shape(-1):{width}" in str(exc_info.value)
 
     @pytest.mark.parametrize("width", [0, 1, 3, 5])
     def test_sineembed_interleaved_rejects_a_last_dimension_other_than_2_or_4(self, width: int) -> None:
-        """The interleaved CUDA-eager kernel checks the width before reading any coordinate, so every bad width is a
-        ``ValueError`` (the function is runnable on CPU, which is what lets this guard be tested without a GPU)."""
+        """The interleaved kernel rejects every last dimension other than 2 or 4 with ``ValueError``.
+
+        It checks the width before reading any coordinate, and runs on CPU, which lets this guard be tested without a
+        GPU.
+        """
         pos_tensor = torch.rand(1, 2, width)
 
-        with pytest.raises(ValueError, match=rf"Unknown pos_tensor shape\(-1\):{width}"):
+        with pytest.raises(ValueError) as exc_info:
             _sineembed_interleaved(pos_tensor, 8, None)
+
+        assert f"Unknown pos_tensor shape(-1):{width}" in str(exc_info.value)
 
 
 class TestTwoStageGroupSelection:
@@ -3868,8 +3596,11 @@ class TestTwoStageGroupSelection:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Under bf16 autocast the batched selection's forward is bitwise the expand-then-cast path, and the encoder
-        memory's gradient matches it to fp32 rounding (it is summed over groups in fp32 either way)."""
+        """Under bf16 autocast cast-once selection is bitwise the expand-then-cast path, with gradients equal to fp32
+        rounding.
+
+        The encoder memory's gradient is summed over groups in fp32 either way.
+        """
         torch.manual_seed(0)
         ns = _namespace_from_configs(
             RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu"), TrainConfig(dataset_dir="/tmp")
@@ -3906,7 +3637,7 @@ class TestTwoStageGroupSelection:
 
     @pytest.mark.gpu
     @requires_cuda
-    def test_keeps_expand_then_cast_while_tracing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_keeps_expand_then_cast_while_tracing(self, mocker: MockerFixture) -> None:
         """TorchScript tracing must not record the custom cast-then-expand autograd function.
 
         The first call is a positive control proving bf16 CUDA autocast normally takes the rewrite. The tracing call
@@ -3920,10 +3651,8 @@ class TestTwoStageGroupSelection:
         proposals = torch.rand(2, 20, 4, device="cuda")
         cast_once_calls: list[object] = []
         real_apply = _CastThenExpand.apply
-        monkeypatch.setattr(
-            _CastThenExpand,
-            "apply",
-            lambda *args: (cast_once_calls.append(args), real_apply(*args))[1],
+        mocker.patch.object(
+            _CastThenExpand, "apply", side_effect=lambda *args: (cast_once_calls.append(args), real_apply(*args))[1]
         )
 
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
@@ -3931,19 +3660,15 @@ class TestTwoStageGroupSelection:
         assert len(cast_once_calls) == 1
         cast_once_calls.clear()
 
-        monkeypatch.setattr("rfdetr.models.transformer._is_tracing", lambda: True)
+        mocker.patch("rfdetr.models.transformer._is_tracing", return_value=True)
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             transformer._two_stage_group_selection(memory, proposals, transformer.group_detr)
 
         assert cast_once_calls == []
 
     @pytest.mark.usefixtures("forced_eager_cuda_gate")
-    def test_routes_the_shared_memory_through_cast_then_expand(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """With the eager-CUDA gate open and a bf16 autocast dtype, the fp32 memory is cast once, then expanded per
-        group.
+    def test_routes_the_shared_memory_through_cast_then_expand(self, mocker: MockerFixture) -> None:
+        """With the eager-CUDA gate open and bf16 autocast, the fp32 memory is cast once, then expanded per group.
 
         Runs on CPU by forcing the gate, so it asserts routing only: the spy hands back the fp32 expansion the plain
         path builds, because without real autocast the batched GEMM downstream needs fp32 operands.
@@ -3953,17 +3678,13 @@ class TestTwoStageGroupSelection:
         )
         memory = torch.randn(2, 20, 16)
         proposals = torch.rand(2, 20, 4)
-        routed: list[tuple[int, torch.dtype]] = []
-
-        def spy(x: torch.Tensor, groups: int, dtype: torch.dtype) -> torch.Tensor:
-            routed.append((groups, dtype))
-            return x.unsqueeze(0).expand(groups, *x.shape)
-
-        monkeypatch.setattr(_CastThenExpand, "apply", spy)
+        cast_then_expand = mocker.patch.object(
+            _CastThenExpand, "apply", side_effect=lambda x, groups, dtype: x.unsqueeze(0).expand(groups, *x.shape)
+        )
 
         transformer._two_stage_group_selection(memory, proposals, transformer.group_detr)
 
-        assert routed == [(2, torch.bfloat16)]
+        assert [call.args[1:] for call in cast_then_expand.call_args_list] == [(2, torch.bfloat16)]
 
 
 class _AutocastRewriteBlock(nn.Module):
@@ -4038,7 +3759,7 @@ class TestEagerRewritesOnTheProductionModel:
             pytest.param(True, torch.bfloat16, True, id="train-bf16-cuda-graph"),
         ],
     )
-    def test_every_eager_decoder_rewrite_is_taken_by_the_production_model_on_cuda(
+    def test_every_decoder_rewrite_is_taken_on_cuda(
         self, training: bool, autocast_dtype: torch.dtype | None, captured: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Each rewrite runs on the route ``LWDETR.forward`` takes, in exactly the modes it is meant for.
@@ -4115,27 +3836,25 @@ class TestEagerRewritesOnTheProductionModel:
         ("autocast_dtype", "grad_rtol"),
         [pytest.param(None, 1e-4, id="fp32"), pytest.param(torch.bfloat16, 1e-2, id="bf16")],
     )
-    def test_nano_loss_terms_are_bitwise_and_gradients_match_with_the_eager_rewrites_on_and_off(
+    def test_loss_terms_are_bitwise_and_gradients_match_with_rewrites_on_and_off(
         self, autocast_dtype: torch.dtype | None, grad_rtol: float, monkeypatch: pytest.MonkeyPatch, tf32_disabled: None
     ) -> None:
         """A real Nano forward plus criterion gives the same outputs and loss terms with the eager rewrites on or off.
 
-        The rewrites are bitwise the ops they replace in the forward, so the outputs and every loss term must be equal
-        bit for bit. The gradients are compared with a scale-aware norm bound instead, because the rewrites reorder
-        weight-gradient sums. The bound is ``grad_rtol`` of the reference gradient's norm (a wrong gradient is off by
-        far more); bf16 rounds each of those sums to eight bits, hence the looser constant. Autocast is a case because
-        the folded positional add and the cast-once memory only run under it.
+        The rewrites are bitwise the ops they replace in the forward, so outputs and every loss term must be equal bit
+        for bit. Gradients are compared with a scale-aware norm bound instead, because the rewrites reorder
+        weight-gradient sums: ``grad_rtol`` of the reference gradient's norm (a wrong gradient is off by far more), with
+        a looser bf16 constant because bf16 rounds each sum to eight bits. Autocast is a case because the folded
+        positional add and the cast-once memory only run under it.
 
         Every rewrite lives in the decoder, so each parameter outside the ViT trunk (``backbone.0.encoder.``) gets its
-        own bound. The trunk's backward is a function of the gradient entering it, and in bf16 a bitwise difference
-        there reshuffles the rounding of its twelve layers: CI saw differences of about ``grad_rtol`` of the norm in the
-        first layers. That puts a per-parameter bound on the edge, and the trunk's attention key biases have an
-        analytically zero gradient (softmax ignores a shift shared by all keys), so their stored value is rounding
-        residue that no relative bound fits. The trunk is therefore checked as one aggregate norm, which still catches
-        a gradient entering it that is wrong. The reference is the rewrites-off bf16 graph, not an fp32 one: the
-        two-stage ``topk`` and the Hungarian matching are discrete, so a bf16 and an fp32 forward can pair queries
-        differently and their gradients stop being comparable. ``_sineembed_interleaved`` still computes the angles on
-        the rewrites-off side; only its sin/cos kernel is replaced. This test needs a GPU and was written without one.
+        own bound. In bf16 a bitwise difference entering the trunk reshuffles the rounding of its twelve layers (CI saw
+        about ``grad_rtol`` of the norm in the first layers), and its attention key biases have an analytically zero
+        gradient (softmax ignores a shift shared by all keys), so their stored value is rounding residue. The trunk is
+        therefore checked as one aggregate norm, which still catches a wrong gradient entering it. The reference is the
+        rewrites-off bf16 graph, not fp32: the two-stage ``topk`` and Hungarian matching are discrete, so bf16 and fp32
+        forwards can pair queries differently. ``_sineembed_interleaved`` still computes the angles on the rewrites-off
+        side; only its sin/cos kernel is replaced. This test needs a GPU and was written without one.
         """
         torch.manual_seed(0)
         model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")

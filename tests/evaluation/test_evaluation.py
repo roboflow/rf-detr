@@ -30,47 +30,57 @@ from rfdetr.evaluation.matching import (
 # ---------------------------------------------------------------------------
 
 
+def _bool_mask(h: int, w: int, rows: slice, cols: slice) -> torch.Tensor:
+    """Return a [1, h, w] boolean mask with the specified region set to True.
+
+    Examples:
+        >>> _bool_mask(2, 2, slice(0, 1), slice(0, 2)).int().tolist()
+        [[[1, 1], [0, 0]]]
+    """
+    m = torch.zeros(h, w, dtype=torch.bool)
+    m[rows, cols] = True
+    return m.unsqueeze(0)
+
+
 class TestComputeMaskIou:
     """Unit tests for the private _compute_mask_iou helper."""
 
-    @staticmethod
-    def _bool_mask(h: int, w: int, rows: slice, cols: slice) -> torch.Tensor:
-        """Return a [1, h, w] boolean mask with the specified region set to True."""
-        m = torch.zeros(h, w, dtype=torch.bool)
-        m[rows, cols] = True
-        return m.unsqueeze(0)
+    @pytest.mark.parametrize(
+        ("pred", "gt", "expected_iou"),
+        [
+            pytest.param(
+                _bool_mask(4, 4, slice(0, 2), slice(0, 2)),
+                _bool_mask(4, 4, slice(0, 2), slice(0, 2)),
+                1.0,
+                id="identical",
+            ),
+            pytest.param(
+                _bool_mask(4, 4, slice(0, 2), slice(0, 2)),
+                _bool_mask(4, 4, slice(2, 4), slice(2, 4)),
+                0.0,
+                id="disjoint",
+            ),
+            # 50% row overlap: rows 0-1 vs rows 1-2 -> inter=4, union=12
+            pytest.param(
+                _bool_mask(4, 4, slice(0, 2), slice(0, 4)),
+                _bool_mask(4, 4, slice(1, 3), slice(0, 4)),
+                4.0 / 12.0,
+                id="partial-overlap",
+            ),
+            # all-zero masks: union is 0, must give 0.0 instead of dividing by zero
+            pytest.param(
+                _bool_mask(4, 4, slice(0, 0), slice(0, 0)), _bool_mask(4, 4, slice(0, 0), slice(0, 0)), 0.0, id="empty"
+            ),
+        ],
+    )
+    def test_known_iou_values(self, pred: torch.Tensor, gt: torch.Tensor, expected_iou: float) -> None:
+        """Single-pair IoU is 1.0 for identical masks, 0.0 for disjoint or empty masks, and inter/union otherwise."""
+        result = _compute_mask_iou(pred, gt)
 
-    def test_identical_masks_give_iou_one(self) -> None:
-        """Masks that are identical should produce IoU of exactly 1.0."""
-        mask = self._bool_mask(4, 4, slice(0, 2), slice(0, 2))  # [1, 4, 4]
-        result = _compute_mask_iou(mask, mask)
         assert result.shape == (1, 1)
-        assert float(result[0, 0]) == pytest.approx(1.0)
+        assert float(result[0, 0]) == pytest.approx(expected_iou)
 
-    def test_disjoint_masks_give_iou_zero(self) -> None:
-        """Non-overlapping masks should produce IoU of 0.0."""
-        pred = self._bool_mask(4, 4, slice(0, 2), slice(0, 2))
-        gt = self._bool_mask(4, 4, slice(2, 4), slice(2, 4))
-        result = _compute_mask_iou(pred, gt)
-        assert float(result[0, 0]) == pytest.approx(0.0)
-
-    def test_known_partial_overlap(self) -> None:
-        """50% row overlap on a 4x4 grid: inter=4, union=12, IoU=1/3."""
-        pred = torch.zeros(1, 4, 4, dtype=torch.bool)
-        pred[0, :2, :] = True  # rows 0-1: 8 px
-        gt = torch.zeros(1, 4, 4, dtype=torch.bool)
-        gt[0, 1:3, :] = True  # rows 1-2: 8 px — 4 px of overlap at row 1
-        result = _compute_mask_iou(pred, gt)
-        assert float(result[0, 0]) == pytest.approx(4.0 / 12.0)
-
-    def test_empty_masks_return_zero_without_error(self) -> None:
-        """All-zero masks must yield IoU 0.0 (no divide-by-zero)."""
-        pred = torch.zeros(1, 4, 4, dtype=torch.bool)
-        gt = torch.zeros(1, 4, 4, dtype=torch.bool)
-        result = _compute_mask_iou(pred, gt)
-        assert float(result[0, 0]) == pytest.approx(0.0)
-
-    def test_output_shape_is_n_by_m(self) -> None:
+    def test_output_shape_n_by_m(self) -> None:
         """Output shape must be [N, M] for N predictions and M ground truths."""
         pred = torch.zeros(3, 4, 4, dtype=torch.bool)
         gt = torch.zeros(5, 4, 4, dtype=torch.bool)
@@ -79,7 +89,7 @@ class TestComputeMaskIou:
 
     @pytest.mark.parametrize("n", [0, 1, 3, 4, 5, 8, 9])
     @pytest.mark.parametrize("m", [0, 1, 3, 4, 5, 8, 9])
-    def test_chunked_output_matches_naive_reference(self, monkeypatch: pytest.MonkeyPatch, n: int, m: int) -> None:
+    def test_chunked_output_matches_reference(self, monkeypatch: pytest.MonkeyPatch, n: int, m: int) -> None:
         """Chunking predictions AND ground truths must not change a single IoU value, including at chunk boundaries.
 
         Forces chunk size 4 on both axes so the sampled ``n``/``m`` values independently cross zero chunks (0), a
@@ -262,7 +272,7 @@ class TestMatchSortedIouMatrix:
         with pytest.raises(ValueError, match="argmax of an empty sequence"):
             _match_sorted_iou_matrix(iou_matrix_sorted, gt_crowd_np, iou_threshold=0.5)
 
-    def test_zero_pred_rows_returns_empty_arrays_without_error(self) -> None:
+    def test_zero_pred_rows_returns_empty_arrays(self) -> None:
         """An IoU matrix with no prediction rows (n=0) returns empty arrays, unlike the m=0 case.
 
         The greedy loop iterates ``range(len(iou_matrix_sorted))``, which is 0 when there are no predictions, so the
@@ -279,8 +289,8 @@ class TestMatchSortedIouMatrix:
         assert ignore.shape == (0,)
         assert total_gt == 1
 
-    @pytest.mark.parametrize("seed", [pytest.param(seed, id=f"seed-{seed}") for seed in range(20)])
-    def test_crowd_free_loop_agrees_with_the_general_loop(self, seed: int) -> None:
+    @pytest.mark.parametrize("seed", list(range(20)))
+    def test_crowd_free_loop_agrees_with_general_loop(self, seed: int) -> None:
         """``_match_rows_without_crowd`` returns exactly what ``_match_rows_with_crowd`` returns on a crowd-free class.
 
         ``_match_sorted_iou_matrix`` picks between the two loops on ``gt_crowd_np.any()``, so no other test in this
@@ -439,32 +449,22 @@ class TestMatchSingleClassSegm:
             gt_crowd = torch.zeros(len(gt_masks), dtype=torch.bool)
         return _match_single_class_segm(pred_scores, pred_masks, gt_masks, gt_crowd, iou_threshold)
 
-    def test_perfect_overlap_is_tp(self) -> None:
-        """A prediction whose mask is identical to the GT mask is a true positive."""
+    @pytest.mark.parametrize(
+        ("pred_box", "gt_box", "expected_match"),
+        [
+            pytest.param([0, 0, 10, 10], [0, 0, 10, 10], 1, id="perfect-overlap-is-tp"),
+            pytest.param([0, 0, 10, 10], [50, 50, 60, 60], 0, id="disjoint-is-fp"),
+            # adjacent boxes (area 50 vs 40) share no pixel: IoU 0 < threshold
+            pytest.param([0, 0, 5, 10], [6, 0, 10, 10], 0, id="below-threshold-is-fp"),
+        ],
+    )
+    def test_single_pair_match_outcome(self, pred_box: list[float], gt_box: list[float], expected_match: int) -> None:
+        """One prediction against one GT mask is a TP only when IoU reaches the threshold; it is never ignored."""
         scores = torch.tensor([0.9])
-        mask = self._mask(0, 0, 10, 10)
-        _, matches, ignore, total_gt = self._run(scores, mask, mask)
-        assert matches[0] == 1
+        _, matches, ignore, total_gt = self._run(scores, self._mask(*pred_box), self._mask(*gt_box))
+        assert matches[0] == expected_match
         assert not ignore[0]
         assert total_gt == 1
-
-    def test_disjoint_mask_is_fp(self) -> None:
-        """A prediction with no overlap with the GT mask is a false positive."""
-        scores = torch.tensor([0.9])
-        pred = self._mask(0, 0, 10, 10)
-        gt = self._mask(50, 50, 60, 60)
-        _, matches, ignore, total_gt = self._run(scores, pred, gt)
-        assert matches[0] == 0
-        assert not ignore[0]
-        assert total_gt == 1
-
-    def test_iou_below_threshold_is_fp(self) -> None:
-        """A detection with IoU < threshold must be marked as FP."""
-        scores = torch.tensor([0.9])
-        pred = self._mask(0, 0, 5, 10)  # area = 50
-        gt = self._mask(6, 0, 10, 10)  # area = 40 — no overlap
-        _, matches, _, _ = self._run(scores, pred, gt, iou_threshold=0.5)
-        assert matches[0] == 0
 
     def test_greedy_matching_higher_score_wins(self) -> None:
         """When two predictions compete for one GT, the higher-score pred wins."""
@@ -577,20 +577,15 @@ class TestMatchSingleClassSegm:
 # build_matching_data
 # ---------------------------------------------------------------------------
 
-# Geometry whose greedy matching outcome depends on the order the two detections are ranked in.
-# The two GTs overlap; the narrow detection can only reach the first, the wide one can reach either:
-#
-#     IoU(narrow, GT-A) = 0.700    IoU(narrow, GT-B) = 0.133
-#     IoU(wide,   GT-A) = 0.667    IoU(wide,   GT-B) = 0.538
-#
-# Ranking the narrow detection first yields two TPs (it claims GT-A, the wide one falls back to
-# GT-B); ranking the wide one first yields one (it claims GT-A, and GT-B is out of the narrow
-# detection's reach).
+# Order-sensitive geometry: two overlapping GTs; the narrow detection reaches only GT-A, the wide one reaches either.
+#     IoU(narrow, GT-A) = 0.700    IoU(narrow, GT-B) = 0.133    IoU(wide, GT-A) = 0.667    IoU(wide, GT-B) = 0.538
+# Narrow ranked first -> two TPs (narrow claims A, wide falls back to B); wide first -> one TP (it claims A, B is out of
+# the narrow detection's reach).
 _ORDER_SENSITIVE_GT_BOXES = [[0, 0, 100, 10], [50, 0, 150, 10]]
 _NARROW_PRED_BOX = [0, 0, 70, 10]
 _WIDE_PRED_BOX = [20, 0, 120, 10]
-# Padding that overlaps neither GT, so it cannot change the outcome, and pushes the detection count
-# past the ~32-element cutoff above which torch's default (unstable) sort permutes tied scores.
+# Padding overlapping neither GT; pushes the detection count past the ~32-element cutoff where torch's default
+# (unstable) sort permutes tied scores.
 _FILLER_PRED_BOX = [200, 0, 210, 10]
 _NUM_FILLER_PREDS = 38
 _ORDER_SENSITIVE_MASK_SIZE = (10, 210)
@@ -641,20 +636,19 @@ class TestBuildMatchingData:
         assert 0 in result
         assert set(result[0].keys()) == {"scores", "matches", "ignore", "total_gt"}
 
-    def test_perfect_detection_is_tp(self) -> None:
-        """A pred box identical to the GT box must be a TP."""
+    @pytest.mark.parametrize(
+        ("gt_box", "expected_match"),
+        [
+            pytest.param([0, 0, 10, 10], 1, id="identical-box-is-tp"),
+            pytest.param([50, 50, 60, 60], 0, id="disjoint-box-is-fp"),
+        ],
+    )
+    def test_single_box_match_outcome(self, gt_box: list[float], expected_match: int) -> None:
+        """A pred box identical to the GT box is a TP; one with no overlap is a FP; the GT is counted either way."""
         pred = self._make_pred([[0, 0, 10, 10]], [0.9], [0])
-        target = self._make_target([[0, 0, 10, 10]], [0])
+        target = self._make_target([gt_box], [0])
         result = build_matching_data([pred], [target])
-        assert result[0]["matches"][0] == 1
-        assert result[0]["total_gt"] == 1
-
-    def test_disjoint_box_is_fp(self) -> None:
-        """A pred box with no overlap against any GT must be a FP."""
-        pred = self._make_pred([[0, 0, 10, 10]], [0.9], [0])
-        target = self._make_target([[50, 50, 60, 60]], [0])
-        result = build_matching_data([pred], [target])
-        assert result[0]["matches"][0] == 0
+        assert result[0]["matches"][0] == expected_match
         assert result[0]["total_gt"] == 1
 
     def test_no_predictions_records_total_gt_only(self) -> None:
@@ -683,7 +677,7 @@ class TestBuildMatchingData:
         assert result[0]["total_gt"] == 1
         assert result[1]["total_gt"] == 1
 
-    def test_bbox_iou_is_computed_once_per_image(self) -> None:
+    def test_bbox_iou_is_computed_once_per_image(self, mocker) -> None:
         """BBox matching shares one image-wide IoU matrix while preserving class-local matches."""
         pred = self._make_pred(
             [[0, 0, 10, 10], [0, 0, 10, 10], [40, 40, 50, 50]],
@@ -692,8 +686,9 @@ class TestBuildMatchingData:
         )
         target = self._make_target([[0, 0, 10, 10], [20, 20, 30, 30]], [0, 1])
 
-        with patch("rfdetr.evaluation.matching.box_iou", wraps=box_iou) as box_iou_spy:
-            result = build_matching_data([pred], [target])
+        box_iou_spy = mocker.patch("rfdetr.evaluation.matching.box_iou", wraps=box_iou)
+
+        result = build_matching_data([pred], [target])
 
         box_iou_spy.assert_called_once_with(pred["boxes"], target["boxes"])
         np.testing.assert_allclose(result[0]["scores"], [0.9, 0.8], rtol=1e-6)
@@ -702,8 +697,8 @@ class TestBuildMatchingData:
         assert result[0]["total_gt"] == 1
         assert result[1]["total_gt"] == 1
 
-    @pytest.mark.parametrize("iou_type", [pytest.param("bbox", id="bbox"), pytest.param("segm", id="segm")])
-    def test_tied_scores_are_ranked_in_input_order_on_both_iou_types(self, iou_type: str) -> None:
+    @pytest.mark.parametrize("iou_type", ["bbox", "segm"])
+    def test_tied_scores_ranked_in_input_order(self, iou_type: str) -> None:
         """Detections tied on score are ranked in input order on the bbox path and the segm path alike.
 
         The two paths ran through one matcher before the per-image IoU matrix was introduced, so
@@ -734,7 +729,7 @@ class TestBuildMatchingData:
         np.testing.assert_array_equal(result[0]["matches"], [0] * _NUM_FILLER_PREDS + [1, 1])
         assert result[0]["total_gt"] == 2
 
-    def test_near_tied_float64_scores_are_ranked_at_full_precision(self) -> None:
+    def test_near_tied_float64_scores_ranked_at_full_precision(self) -> None:
         """Float64 scores that collapse onto one float32 value still rank by their full precision.
 
         ``0.50000001`` and ``0.50000002`` are distinct in float64 and the same number in float32, so
@@ -830,17 +825,26 @@ class TestBuildMatchingData:
         assert len(result[7]["scores"]) == 0
         assert result[0]["total_gt"] == 1
 
-    def test_iscrowd_length_mismatch_raises(self) -> None:
+    @pytest.mark.parametrize(
+        ("pred_args", "gt_boxes", "gt_labels", "iscrowd"),
+        [
+            pytest.param(
+                ([[0, 0, 10, 10]], [0.9], [0]),
+                [[0, 0, 10, 10], [50, 50, 60, 60]],
+                [0, 7],
+                [0],
+                id="shorter-than-labels",
+            ),
+            # no labels and no predictions: nothing to loop over, yet the mismatch must still be rejected
+            pytest.param(([], [], []), [], [], [1], id="image-without-classes"),
+        ],
+    )
+    def test_iscrowd_length_mismatch_raises(
+        self, pred_args: tuple[list, list, list], gt_boxes: list, gt_labels: list, iscrowd: list
+    ) -> None:
         """An ``iscrowd`` that does not line up with ``labels`` must be rejected, not counted."""
-        pred = self._make_pred([[0, 0, 10, 10]], [0.9], [0])
-        target = self._make_target([[0, 0, 10, 10], [50, 50, 60, 60]], [0, 7], iscrowd=[0])
-        with pytest.raises(ValueError, match="one entry per GT label"):
-            build_matching_data([pred], [target])
-
-    def test_iscrowd_length_mismatch_raises_on_image_without_classes(self) -> None:
-        """The mismatch is rejected even on an image with no labels and no predictions to loop over."""
-        pred = self._make_pred([], [], [])
-        target = self._make_target([], [], iscrowd=[1])
+        pred = self._make_pred(*pred_args)
+        target = self._make_target(gt_boxes, gt_labels, iscrowd=iscrowd)
         with pytest.raises(ValueError, match="one entry per GT label"):
             build_matching_data([pred], [target])
 
@@ -863,7 +867,7 @@ class TestBuildMatchingData:
         with pytest.raises(ValueError, match="one entry per GT label"):
             build_matching_data([pred], [target])
 
-    @pytest.mark.parametrize("num_classes", [pytest.param(40, id="40-classes"), pytest.param(80, id="80-classes")])
+    @pytest.mark.parametrize("num_classes", [40, 80])
     @pytest.mark.parametrize(
         ("with_preds", "with_gts", "expected_matches", "expected_total_gt"),
         [
@@ -1119,8 +1123,8 @@ class TestBuildMatchingDataBboxDifferential:
     with more than one populated class at a time.
     """
 
-    @pytest.mark.parametrize("seed", [pytest.param(seed, id=f"seed-{seed}") for seed in range(50)])
-    def test_matches_independent_reference_across_random_batches(self, seed: int) -> None:
+    @pytest.mark.parametrize("seed", list(range(50)))
+    def test_matches_independent_reference(self, seed: int) -> None:
         """build_matching_data(iou_type="bbox") agrees with an independent per-class oracle.
 
         Each of the 50 independently-seeded trials builds one random single-image batch with several shared classes (so
@@ -1139,7 +1143,7 @@ class TestBuildMatchingDataBboxDifferential:
         _assert_matching_equals_reference(result, reference)
 
     @pytest.mark.parametrize("crowd_flag_scale", [pytest.param(1, id="with-crowd"), pytest.param(0, id="crowd-free")])
-    @pytest.mark.parametrize("seed", [pytest.param(seed, id=f"seed-{seed}") for seed in range(10)])
+    @pytest.mark.parametrize("seed", list(range(10)))
     def test_single_class_image_matches_independent_reference(self, seed: int, crowd_flag_scale: int) -> None:
         """An image whose detections and GTs are all one class agrees with the same independent oracle.
 
@@ -1274,22 +1278,22 @@ class TestDistributedMergeMatchingData:
         np.testing.assert_allclose(result[0]["scores"], [0.9], rtol=1e-6)
         assert result[0]["total_gt"] == 1
 
-    def test_two_ranks_disjoint_classes(self) -> None:
+    def test_two_ranks_disjoint_classes(self, mocker) -> None:
         """Two ranks with disjoint classes -> merged result contains both."""
         rank0 = {0: _make_matching_entry([0.9], [1], [False], 1)}
         rank1 = {1: _make_matching_entry([0.7], [0], [False], 2)}
-        with patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]):
-            result = distributed_merge_matching_data(rank0)
+        mocker.patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1])
+        result = distributed_merge_matching_data(rank0)
         assert set(result.keys()) == {0, 1}
         assert result[0]["total_gt"] == 1
         assert result[1]["total_gt"] == 2
 
-    def test_two_ranks_overlapping_class_concatenates(self) -> None:
+    def test_two_ranks_overlapping_class_concatenates(self, mocker) -> None:
         """Two ranks sharing class 0 -> arrays concatenated, total_gt summed."""
         rank0 = {0: _make_matching_entry([0.9], [1], [False], 2)}
         rank1 = {0: _make_matching_entry([0.7, 0.5], [0, 1], [False, False], 3)}
-        with patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]):
-            result = distributed_merge_matching_data(rank0)
+        mocker.patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1])
+        result = distributed_merge_matching_data(rank0)
         np.testing.assert_allclose(result[0]["scores"], [0.9, 0.7, 0.5], rtol=1e-6)
         assert result[0]["total_gt"] == 5
 

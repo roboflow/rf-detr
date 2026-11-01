@@ -17,32 +17,37 @@ from PIL import Image
 from rfdetr.datasets.webdataset.index import read_shard_index
 
 
+def _run_webdataset(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run `python -m rfdetr.cli.webdataset` with the given args and return the completed process.
+
+    >>> _run_webdataset("--help").returncode
+    0
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "rfdetr.cli.webdataset", *args], capture_output=True, text=True, timeout=60, check=False
+    )
+
+
 class TestWebDatasetCLI:
     """The WebDataset command preserves packing and argument validation."""
 
     def test_help(self) -> None:
         """Help succeeds without required packing arguments."""
-        result = subprocess.run(
-            [sys.executable, "-m", "rfdetr.cli.webdataset", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
+        result = _run_webdataset("--help")
+
         assert result.returncode == 0, result.stderr
         assert "--image-dir" in result.stdout
         assert "--category-ids {remap,raw}" in result.stdout
 
     def test_missing_arguments(self) -> None:
         """Missing required paths produce argparse's usage error."""
-        result = subprocess.run(
-            [sys.executable, "-m", "rfdetr.cli.webdataset"], capture_output=True, text=True, timeout=60, check=False
-        )
+        result = _run_webdataset()
+
         assert result.returncode == 2
         assert "the following arguments are required" in result.stderr
         assert "--annotations" in result.stderr
 
-    def test_help_without_training_extra(self) -> None:
+    def test_help_without_lightning(self) -> None:
         """Packing must not import the optional Lightning training dependency."""
         result = subprocess.run(
             [
@@ -58,6 +63,7 @@ class TestWebDatasetCLI:
             timeout=60,
             check=False,
         )
+
         assert result.returncode == 0, result.stderr
         assert "--image-dir" in result.stdout
 
@@ -81,29 +87,12 @@ class TestWebDatasetCLI:
             )
         )
         output = tmp_path / "shards"
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "rfdetr.cli.webdataset",
-                "--image-dir",
-                str(image_dir),
-                "--annotations",
-                str(annotations),
-                "--output-dir",
-                str(output),
-                "--split",
-                "val",
-                "--max-shard-mb",
-                "1",
-                "--category-ids",
-                category_ids,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
+
+        result = _run_webdataset(
+            *("--image-dir", str(image_dir), "--annotations", str(annotations), "--output-dir", str(output)),
+            *("--split", "val", "--max-shard-mb", "1", "--category-ids", category_ids),
         )
+
         assert result.returncode == 0, result.stderr
         index = read_shard_index(output, "val")
         assert index.num_samples == 1

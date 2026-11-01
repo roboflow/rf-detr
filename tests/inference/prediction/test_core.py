@@ -3,25 +3,31 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Tests for the shared ``predict()`` pipeline: return types, source metadata and class-name mapping."""
+
 import math
 import warnings
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import numpy as np
 import PIL.Image
 import pytest
 import supervision as sv
 import torch
+from pytest_mock import MockerFixture
+from torchvision.transforms.functional import normalize
 
 from rfdetr import RFDETRInference, RFDETRNano, RFDETRSegNano
 from rfdetr._prediction import core
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.detr import RFDETR
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.utilities.logger import get_logger
+from tests._markers import requires_mps
 
 from ..helpers import _DummyModel, _DummyRFDETR
 
@@ -34,8 +40,10 @@ class TestPredictEmptyInputs:
         """Native prediction rejects empty containers before stacking tensors."""
         model = _DummyRFDETR()
 
-        with pytest.raises(ValueError, match="^At least one image is required\\.$"):
+        with pytest.raises(ValueError) as exc_info:
             model.predict(images)
+
+        assert str(exc_info.value) == "At least one image is required."
 
     @pytest.mark.parametrize("images", [pytest.param([], id="list"), pytest.param((), id="tuple")])
     def test_dynamic_batch_rejects_empty_images(self, images: list[Any] | tuple[Any, ...]) -> None:
@@ -43,9 +51,10 @@ class TestPredictEmptyInputs:
         model = _DummyRFDETR()
         context = replace(model._prediction_context(), fixed_shape=True, batch_size=None)
 
-        with pytest.raises(ValueError, match="^At least one image is required\\.$") as exc_info:
+        with pytest.raises(ValueError) as exc_info:
             core.predict(lambda: context, images)
 
+        assert str(exc_info.value) == "At least one image is required."
         assert "None" not in str(exc_info.value)
 
 
@@ -119,8 +128,11 @@ class TestPredictReturnTypes:
         """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
 
-        with pytest.raises(TypeError, match=rf"does not accept {option}: .*RFDETRInference\(model\)"):
+        with pytest.raises(TypeError) as exc_info:
             _DummyRFDETR().predict(img, **{option: 1})
+
+        assert f"does not accept {option}: " in str(exc_info.value)
+        assert "RFDETRInference(model)" in str(exc_info.value)
 
     @pytest.mark.parametrize("input_kind", ["pil", "path"])
     def test_native_single_channel_images_use_pillow_luminance(self, tmp_path: Path, input_kind: str) -> None:
@@ -263,7 +275,7 @@ class TestPredictOptimizedInferenceKeypoints:
         assert "pred_keypoints" in stub.captured_predictions
         assert "pred_masks" not in stub.captured_predictions
 
-    def test_optimized_keypoint_model_predict_returns_sv_keypoints(self) -> None:
+    def test_returns_sv_keypoints(self) -> None:
         """Predict() must return sv.KeyPoints, not sv.Detections, for an optimized keypoint model."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model, _stub = _make_optimized_keypoint_model()
@@ -274,7 +286,7 @@ class TestPredictOptimizedInferenceKeypoints:
             f"expected sv.KeyPoints for optimized keypoint model, got {type(result)}"
         )
 
-    def test_predict_forwards_threshold_to_postprocess(self) -> None:
+    def test_forwards_threshold_to_postprocess(self) -> None:
         """Predict must pass its public threshold to post-processing before mask work begins."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model, stub = _make_optimized_keypoint_model()
@@ -293,7 +305,9 @@ class TestPredictOptimizedInferenceKeypoints:
         ],
     )
     @pytest.mark.parametrize("num_detections", [1, 2])
-    def test_low_findability_retains_finite_keypoint_detection(self, dtype: torch.dtype, num_detections: int) -> None:
+    def test_low_findability_retains_finite_keypoint_detection(
+        self, dtype: torch.dtype, num_detections: int, mocker: MockerFixture
+    ) -> None:
         """Finite tuple predictions must survive trace fusion and public score filtering."""
         model, stub = _make_optimized_keypoint_model()
         model._optimized_dtype = dtype
@@ -302,7 +316,7 @@ class TestPredictOptimizedInferenceKeypoints:
         keypoints = torch.zeros(1, num_detections, 2, 8, dtype=dtype)
         keypoints[..., :2] = 0.5
         keypoints[..., 2] = -20.0
-        stub.inference_model = MagicMock(
+        stub.inference_model = mocker.MagicMock(
             return_value=(
                 torch.full((1, num_detections, 4), 0.5, dtype=dtype),
                 torch.full((1, num_detections, 1), 4.0, dtype=dtype),
@@ -325,21 +339,34 @@ class TestPredictOptimizedInferenceKeypoints:
 class TestPredictSourceData:
     """Verify ``predict()`` source metadata behavior."""
 
-    def test_source_image_included_by_default(self) -> None:
-        """source_image remains included by default for API compatibility."""
+    @pytest.mark.parametrize(
+        "kwargs", [pytest.param({}, id="default"), pytest.param({"include_source_image": True}, id="explicit")]
+    )
+    def test_source_image_from_pil(self, kwargs: dict[str, bool]) -> None:
+        """PIL input stores the original image as a numpy array, by default and when requested.
+
+        ``source_image`` stays included by default for API compatibility.
+        """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
-        detections = model.predict(img)
+
+        detections = model.predict(img, **kwargs)
+
         assert "source_image" in detections.metadata
         assert isinstance(detections.metadata["source_image"], np.ndarray)
         assert detections.metadata["source_image"].shape == (48, 64, 3)
         assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
-    def test_source_image_included_by_default_tensor(self) -> None:
-        """Tensor input keeps source_image by default for API compatibility."""
+    @pytest.mark.parametrize(
+        "kwargs", [pytest.param({}, id="default"), pytest.param({"include_source_image": True}, id="explicit")]
+    )
+    def test_source_image_from_tensor(self, kwargs: dict[str, bool]) -> None:
+        """Tensor input stores the original image as a uint8 numpy array, by default and when requested."""
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
-        detections = model.predict(tensor)
+
+        detections = model.predict(tensor, **kwargs)
+
         assert "source_image" in detections.metadata
         assert isinstance(detections.metadata["source_image"], np.ndarray)
         assert detections.metadata["source_image"].dtype == np.uint8
@@ -354,15 +381,6 @@ class TestPredictSourceData:
         assert "source_image" not in detections.metadata
         assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
-    def test_source_image_from_pil(self) -> None:
-        """PIL input stores the original image as a numpy array."""
-        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
-        model = _DummyRFDETR()
-        detections = model.predict(img, include_source_image=True)
-        assert "source_image" in detections.metadata
-        assert isinstance(detections.metadata["source_image"], np.ndarray)
-        assert detections.metadata["source_image"].shape == (48, 64, 3)
-
     def test_source_shape_from_pil(self) -> None:
         """PIL input stores source_shape as a per-detection numpy array."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
@@ -373,16 +391,6 @@ class TestPredictSourceData:
         assert detections.data["source_shape"].dtype == np.int64
         assert detections.data["source_shape"].shape == (len(detections), 2)
         assert np.array_equal(detections.data["source_shape"][0], [48, 64])
-
-    def test_source_image_from_tensor(self) -> None:
-        """Tensor input stores the original image as a uint8 numpy array."""
-        tensor = torch.rand(3, 48, 64)
-        model = _DummyRFDETR()
-        detections = model.predict(tensor, include_source_image=True)
-        assert "source_image" in detections.metadata
-        assert isinstance(detections.metadata["source_image"], np.ndarray)
-        assert detections.metadata["source_image"].dtype == np.uint8
-        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     @pytest.mark.gpu
     @pytest.mark.parametrize(
@@ -556,7 +564,7 @@ class TestPredictSourceData:
         assert "source_image" in single.metadata
         assert single.metadata["source_image"].shape == (48, 64, 3)
 
-    def test_predict_keypoints_return_supervision_keypoints(self) -> None:
+    def test_keypoints_return_supervision_keypoints(self) -> None:
         """Keypoint predictions return ``sv.KeyPoints`` after threshold filtering."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -587,7 +595,7 @@ class TestPredictSourceData:
             atol=1e-6,
         )
 
-    def test_predict_keypoints_empty_threshold_return_supervision_keypoints(self) -> None:
+    def test_keypoints_stay_supervision_keypoints_when_all_filtered(self) -> None:
         """Keypoint predictions remain ``sv.KeyPoints`` when all detections are filtered."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -604,7 +612,7 @@ class TestPredictSourceData:
         np.testing.assert_allclose(key_points.data["xyxy"], np.empty((0, 4), dtype=np.float32))
         assert key_points.as_detections().is_empty()
 
-    def test_predict_non_keypoint_no_keypoints_key_in_data(self) -> None:
+    def test_non_keypoint_prediction_has_no_keypoints_key(self) -> None:
         """Non-keypoint predictions do not attach keypoint fields."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -665,6 +673,18 @@ class TestPredictSourceData:
         assert np.all(detections.data["source_shape"] == np.array([48, 64]))
 
 
+@pytest.fixture
+def warned_once() -> Any:
+    """The logger's warn-once record, emptied first so earlier tests cannot mask or fake a warning.
+
+    The RF-DETR logger has ``propagate=False``, which keeps ``caplog`` from seeing its records; the warn-once record is
+    the observable instead.
+    """
+    record = get_logger()._warned_once
+    record.clear()
+    return record
+
+
 class TestPredictClassNameData:
     """Verify that ``predict()`` populates ``data["class_name"]`` in the returned Detections.
 
@@ -672,20 +692,27 @@ class TestPredictClassNameData:
     ``data`` lets callers read the class directly without a separate lookup into ``model.class_names``.
     """
 
-    def _make_model_with_class_names(self, class_names: list[str], labels: list[int]) -> _DummyRFDETR:
-        """Return a _DummyRFDETR whose inner model carries custom class_names and returns given labels."""
+    def _make_model_with_class_names(
+        self, class_names: list[str], labels: list[int], **model_args: Any
+    ) -> _DummyRFDETR:
+        """Return a _DummyRFDETR whose inner model carries custom class_names and returns given labels.
+
+        Keyword arguments become ``model.model.args`` (for example ``num_classes=90``) and are omitted when empty.
+        """
         model = _DummyRFDETR()
         model.model = _DummyModel(class_names=class_names, labels=labels)
+        if model_args:
+            model.model.args = SimpleNamespace(**model_args)
         return model
 
-    def test_class_name_key_present_in_detections_data(self) -> None:
+    def test_key_present_in_detections_data(self) -> None:
         """Predict() must include 'class_name' in detections.data when class_names is set."""
         model = self._make_model_with_class_names(["cat", "dog"], labels=[0])
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
         assert "class_name" in detections.data, "data['class_name'] must be present"
 
-    def test_class_name_values_match_class_id(self) -> None:
+    def test_values_match_class_id(self) -> None:
         """class_name at each position must equal class_names[class_id]."""
         model = self._make_model_with_class_names(["cat", "dog", "bird"], labels=[0, 1, 2])
         img = PIL.Image.new("RGB", (28, 28))
@@ -696,7 +723,7 @@ class TestPredictClassNameData:
             err_msg="class_name must match class_names[class_id] for each detection",
         )
 
-    def test_class_name_with_remapped_coco_dataset(self) -> None:
+    def test_remapped_coco_dataset(self) -> None:
         """Simulates a single-class COCO dataset where category_id=1 is remapped to label=0.
 
         After training with remap_category_ids=True, the model outputs class_id=0 for the first class.  class_name must
@@ -711,10 +738,8 @@ class TestPredictClassNameData:
             "class_name must be 'myclass' even though the original COCO category_id was 1"
         )
 
-    def test_class_name_falls_back_to_coco_when_no_custom_names(self) -> None:
+    def test_falls_back_to_coco_without_custom_names(self) -> None:
         """Without custom class_names, class_name maps class_id via COCO_CLASS_NAMES."""
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-
         # _DummyModel with no custom class_names; labels=[1] → COCO_CLASS_NAMES[1]
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (28, 28))
@@ -724,7 +749,7 @@ class TestPredictClassNameData:
             "class_name must fall back to COCO_CLASS_NAMES[class_id]"
         )
 
-    def test_class_name_empty_array_when_no_detections(self) -> None:
+    def test_empty_array_when_no_detections(self) -> None:
         """When threshold filters all detections, data['class_name'] must be an empty array."""
         model = self._make_model_with_class_names(["cat"], labels=[0])
         img = PIL.Image.new("RGB", (28, 28))
@@ -736,22 +761,15 @@ class TestPredictClassNameData:
             "class_name dtype must be object even when the array is empty (not float64)"
         )
 
-    def test_class_name_out_of_bounds_class_id_returns_empty_string(self) -> None:
-        """A class_id >= len(class_names) must map to an empty string (no IndexError)."""
-        # class_names has 2 entries but labels includes out-of-bounds id=5
-        model = self._make_model_with_class_names(["cat", "dog"], labels=[5])
+    @pytest.mark.parametrize("label", [5, -1])
+    def test_class_id_outside_class_names_returns_empty_string(self, label: int) -> None:
+        """A class_id above ``len(class_names)`` or below zero maps to an empty string instead of raising IndexError."""
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[label])
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
-        assert detections.data["class_name"][0] == "", "Out-of-bounds class_id must produce empty string"
+        assert detections.data["class_name"][0] == "", f"class_id {label} must produce empty string"
 
-    def test_class_name_negative_class_id_returns_empty_string(self) -> None:
-        """A negative class_id must map to an empty string (bounds check: 0 <= cid)."""
-        model = self._make_model_with_class_names(["cat", "dog"], labels=[-1])
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
-        assert detections.data["class_name"][0] == "", "Negative class_id must produce empty string"
-
-    def test_class_name_populated_for_each_image_in_batch(self) -> None:
+    def test_populated_for_each_image_in_batch(self) -> None:
         """class_name must be correctly populated for every Detections in a batch prediction."""
         model = self._make_model_with_class_names(["cat", "dog"], labels=[0, 1])
         img1 = PIL.Image.new("RGB", (28, 28))
@@ -783,52 +801,33 @@ class TestPredictClassNameData:
             "Background class (class_id == num_classes) must map to '__background__', not empty string"
         )
 
-    def test_background_class_id_does_not_emit_oob_warning(self) -> None:
+    def test_background_class_id_does_not_emit_oob_warning(self, warned_once: Any) -> None:
         """Predicting the background class must not emit an out-of-range warning.
 
         The background class (class_id == num_classes) is expected DETR behaviour, not a model error. Warning on it
         misleads users into thinking something is wrong.
 
-        Uses _warned_once state (not caplog) because the RF-DETR logger has propagate=False, which prevents caplog from
-        capturing records via the root-logger handler.
-
         Regression / contract test for https://github.com/roboflow/rf-detr/pull/966 post-merge issue reported by
         @Alarmod.
         """
-        from rfdetr.utilities.logger import get_logger
-
-        # Reset warning_once state so this test is not affected by earlier tests that may
-        # have already triggered the same message template, masking a reintroduced warning.
-        logger = get_logger()
-        logger._warned_once.clear()
-
         model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
         img = PIL.Image.new("RGB", (28, 28))
         model.predict(img)
-        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        unmapped_warnings = [msg for msg in warned_once if "unmapped class_id" in msg]
         assert not unmapped_warnings, "Background class must not trigger unmapped-class-id warning"
 
-    def test_truly_oob_class_id_still_maps_to_empty_string_and_warns(self) -> None:
+    def test_truly_oob_class_id_still_maps_to_empty_string_and_warns(self, warned_once: Any) -> None:
         """A class_id strictly above num_classes still maps to empty string AND emits a warning.
 
         class_id == n is background (no warning); class_id > n is truly unexpected — must produce '' AND trigger the
         out-of-range warning so the caller knows something is wrong.
-
-        Uses _warned_once state (not caplog) because the RF-DETR logger has propagate=False, which prevents caplog from
-        capturing records via the root-logger handler.
         """
-        from rfdetr.utilities.logger import get_logger
-
-        # Reset warning_once state so this test is not affected by deduplication from earlier tests.
-        logger = get_logger()
-        logger._warned_once.clear()
-
         # n=2, background is class_id=2; class_id=5 is truly OOB (> n)
         model = self._make_model_with_class_names(["cat", "dog"], labels=[5])
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
-        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        unmapped_warnings = [msg for msg in warned_once if "unmapped class_id" in msg]
         assert unmapped_warnings, "Truly OOB class_id (> num_classes) must trigger an unmapped-class-id warning"
 
     @pytest.mark.parametrize(
@@ -848,15 +847,9 @@ class TestPredictClassNameData:
         Regression test for
         https://github.com/roboflow/rf-detr/issues/988.
         """
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        model = self._make_model_with_class_names(list(COCO_CLASS_NAMES), labels=[class_id], num_classes=90)
 
-        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[class_id])
-        coco_model.args = SimpleNamespace(num_classes=90)
-        model = _DummyRFDETR()
-        model.model = coco_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == expected_name, (
             f"class_id={class_id} must map to '{expected_name}', got '{detections.data['class_name'][0]}'"
@@ -872,15 +865,11 @@ class TestPredictClassNameData:
         https://github.com/roboflow/rf-detr/issues/988
         (post-revert follow-up).
         """
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        model = self._make_model_with_class_names(
+            list(COCO_CLASS_NAMES), labels=[18], num_classes=90, dataset_file="roboflow"
+        )
 
-        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
-        coco_model.args = SimpleNamespace(num_classes=90, dataset_file="roboflow")
-        model = _DummyRFDETR()
-        model.model = coco_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == "dog", (
             f"dataset_file='roboflow' COCO pretrained: class_id=18 must map to 'dog', "
@@ -892,15 +881,11 @@ class TestPredictClassNameData:
 
         When num_classes == len(COCO_CLASS_NAMES) (not strictly greater), the COCO sparse-ID branch must NOT activate.
         """
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        model = self._make_model_with_class_names(
+            list(COCO_CLASS_NAMES), labels=[18], num_classes=80, dataset_file="coco"
+        )
 
-        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
-        coco_model.args = SimpleNamespace(num_classes=80, dataset_file="coco")
-        model = _DummyRFDETR()
-        model.model = coco_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == COCO_CLASS_NAMES[18], (
             f"Fine-tuned 80-class model must use direct indexing; got '{detections.data['class_name'][0]}'"
@@ -913,110 +898,76 @@ class TestPredictClassNameData:
         direct 0-indexed mapping (class_names != COCO_CLASS_NAMES fails the guard).
         """
         custom_names = [f"custom_{i}" for i in range(80)]
-        coco_model = _DummyModel(class_names=custom_names, labels=[18])
-        coco_model.args = SimpleNamespace(num_classes=90)
-        model = _DummyRFDETR()
-        model.model = coco_model
+        model = self._make_model_with_class_names(custom_names, labels=[18], num_classes=90)
 
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == "custom_18", (
             f"Custom class names must use direct indexing; got '{detections.data['class_name'][0]}'"
         )
 
-    def test_coco_names_without_model_args_fires_warning(self) -> None:
+    def test_coco_names_without_model_args_fires_warning(self, warned_once: Any) -> None:
         """Predict() must warn when COCO class_names present but model has no 'args' attribute.
 
         Without args, num_logit_slots falls back to n so _is_coco_pretrained stays False. The warning is the caller's
         only signal that sparse COCO-ID mapping cannot activate, which may cause wrong class names for pretrained COCO
         checkpoints loaded without args.
         """
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-        from rfdetr.utilities.logger import get_logger
+        # No model args: that is the scenario under test.
+        model = self._make_model_with_class_names(list(COCO_CLASS_NAMES), labels=[0])
 
-        logger = get_logger()
-        logger._warned_once.clear()
+        model.predict(PIL.Image.new("RGB", (28, 28)))
 
-        no_args_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[0])
-        # Do NOT set no_args_model.args — this is the scenario under test.
-        model = _DummyRFDETR()
-        model.model = no_args_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        model.predict(img)
-
-        coco_warnings = [msg for msg in logger._warned_once if "COCO sparse-ID mapping cannot activate" in msg]
+        coco_warnings = [msg for msg in warned_once if "COCO sparse-ID mapping cannot activate" in msg]
         assert coco_warnings, (
             "predict() must emit a warning when class_names matches COCO_CLASS_NAMES "
             "but model has no 'args' attribute (sparse-ID mapping cannot activate)"
         )
 
-    def test_non_coco_names_without_model_args_no_warning_uses_direct_index(self) -> None:
+    def test_non_coco_names_without_model_args_no_warning_uses_direct_index(self, warned_once: Any) -> None:
         """No warning and direct indexing for non-COCO class_names when model has no 'args'.
 
         When model has no 'args' AND class_names != COCO_CLASS_NAMES, neither the COCO warning nor sparse-ID mapping
         activates. class_id maps directly to class_names[class_id].
         """
-        from rfdetr.utilities.logger import get_logger
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[0])
 
-        logger = get_logger()
-        logger._warned_once.clear()
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
-        no_args_model = _DummyModel(class_names=["cat", "dog"], labels=[0])
-        # Do NOT set no_args_model.args.
-        model = _DummyRFDETR()
-        model.model = no_args_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
-
-        coco_warnings = [msg for msg in logger._warned_once if "COCO" in msg]
+        coco_warnings = [msg for msg in warned_once if "COCO" in msg]
         assert not coco_warnings, "Non-COCO class_names with no args must not emit a COCO warning"
         assert detections.data["class_name"][0] == "cat", (
             f"Direct-index mapping: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
         )
 
-    def test_coco_pretrained_oob_gap_class_id_maps_to_empty_string_and_warns(self) -> None:
+    def test_coco_pretrained_oob_gap_class_id_maps_to_empty_string_and_warns(self, warned_once: Any) -> None:
         """COCO category gap ID 12 must produce empty string and OOB warning in pretrained branch.
 
         COCO skips category ID 12 (gap between fire hydrant=11 and stop sign=13). A pretrained model emitting cid=12 has
         no mapping in _class_id_to_name and must trigger the out-of-range warning even in the COCO-pretrained branch.
         """
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-        from rfdetr.utilities.logger import get_logger
+        model = self._make_model_with_class_names(list(COCO_CLASS_NAMES), labels=[12], num_classes=90)
 
-        logger = get_logger()
-        logger._warned_once.clear()
-
-        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[12])
-        coco_model.args = SimpleNamespace(num_classes=90)
-        model = _DummyRFDETR()
-        model.model = coco_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == "", "COCO gap ID 12 (no such category) must produce empty string"
-        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        unmapped_warnings = [msg for msg in warned_once if "unmapped class_id" in msg]
         assert unmapped_warnings, "COCO gap ID 12 must trigger an unmapped-class-id warning"
 
     def test_sparse_localized_mapping_overrides_background_sentinel(self) -> None:
         """An explicit foreground name wins over the background sentinel in a sparse localized layout."""
-        model = self._make_model_with_class_names(["chat", "brosse à dents"], labels=[90])
-        model.model.args = SimpleNamespace(num_classes=90)
+        model = self._make_model_with_class_names(["chat", "brosse à dents"], labels=[90], num_classes=90)
         context = model._prediction_context()
         context.class_id_to_name.clear()
         context.class_id_to_name.update({1: "chat", 90: "brosse à dents"})
 
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = core.predict(lambda: context, img)
+        detections = core.predict(lambda: context, PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == "brosse à dents", (
             "An explicit class_id_to_name entry must override the background sentinel"
         )
 
-    def test_coco_pretrained_class_id_90_maps_to_toothbrush_not_background(self) -> None:
+    def test_coco_pretrained_class_id_90_maps_to_toothbrush_not_background(self, warned_once: Any) -> None:
         """COCO class ID 90 ('toothbrush') must not be mislabelled '__background__' in pretrained branch.
 
         For COCO-pretrained models num_logit_slots==90, which is also a valid COCO category (toothbrush). Background is
@@ -1025,24 +976,14 @@ class TestPredictClassNameData:
 
         Regression test for HIGH-1 finding in /review of PR #1051.
         """
-        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-        from rfdetr.utilities.logger import get_logger
+        model = self._make_model_with_class_names(list(COCO_CLASS_NAMES), labels=[90], num_classes=90)
 
-        logger = get_logger()
-        logger._warned_once.clear()
-
-        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[90])
-        coco_model.args = SimpleNamespace(num_classes=90)
-        model = _DummyRFDETR()
-        model.model = coco_model
-
-        img = PIL.Image.new("RGB", (28, 28))
-        detections = model.predict(img)
+        detections = model.predict(PIL.Image.new("RGB", (28, 28)))
 
         assert detections.data["class_name"][0] == "toothbrush", (
             f"COCO pretrained: class_id=90 must map to 'toothbrush', got '{detections.data['class_name'][0]}'"
         )
-        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        unmapped_warnings = [msg for msg in warned_once if "unmapped class_id" in msg]
         assert not unmapped_warnings, "class_id=90 (valid COCO category) must not trigger unmapped-class-id warning"
 
 
@@ -1113,11 +1054,6 @@ class TestPredictKeypointClassNameMapping:
         )
 
 
-# ---------------------------------------------------------------------------
-# Fix F — non-RGB PIL / file-path inputs are auto-converted to RGB
-# ---------------------------------------------------------------------------
-
-
 class TestPredictInputTypeReturnShape:
     """``predict()`` return shape is governed by input type, not runtime batch length."""
 
@@ -1157,7 +1093,7 @@ class TestCopyRowsToCpuOnce:
             assert got.is_contiguous()
             assert got.device.type == "cpu"
 
-    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs an MPS device")
+    @requires_mps
     def test_mps_rows_match_cpu_rows(self) -> None:
         """Rows produced on MPS match the same rows copied separately."""
         boxes = torch.rand(5, 4, device="mps")
@@ -1167,3 +1103,81 @@ class TestCopyRowsToCpuOnce:
         packed = core._copy_rows_to_cpu_once(boxes, scores, labels)
 
         assert all(torch.equal(got, want.cpu()) for got, want in zip(packed, (boxes, scores, labels)))
+
+
+class TestCopyResultsToCpuOnce:
+    """A batch's detection rows cross to the host in one copy and keep each tensor's own dtype."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16, torch.float64])
+    def test_matches_separate_copies(self, dtype: torch.dtype) -> None:
+        """Values, dtypes and contiguity equal separate ``.cpu()`` copies, for images with and without rows.
+
+        float64 is the case a float32 packing would round: a score just above the threshold would land on it and be
+        dropped by the strict ``>`` filter that follows.
+        """
+        generator = torch.Generator().manual_seed(0)
+        results = [
+            {
+                # Drawn in float64 so the float64 case carries bits that float32 cannot hold.
+                "boxes": (torch.rand(num_rows, 4, generator=generator, dtype=torch.float64) * 640).to(dtype),
+                "scores": torch.rand(num_rows, generator=generator, dtype=torch.float64).to(dtype),
+                # The largest id stays exact: float32 represents every integer up to 2**24.
+                "labels": torch.randint(0, 2**24, (num_rows,), generator=generator),
+            }
+            for num_rows in (3, 0, 5)
+        ]
+
+        copied = core._copy_results_to_cpu_once(results)
+
+        for got, want in zip(copied, results):
+            assert got.keys() == want.keys()
+            for key in want:
+                assert got[key].dtype == want[key].dtype
+                assert torch.equal(got[key], want[key])
+                assert got[key].is_contiguous()
+
+    @requires_mps
+    def test_mps_results_match_cpu_copies(self) -> None:
+        """Rows produced on MPS come back equal to their own ``.cpu()`` copies."""
+        results = [
+            {
+                "boxes": torch.rand(4, 4, device="mps"),
+                "scores": torch.rand(4, device="mps"),
+                "labels": torch.arange(4, device="mps"),
+            }
+            for _ in range(2)
+        ]
+
+        copied = core._copy_results_to_cpu_once(results)
+
+        assert all(torch.equal(got[key], want[key].cpu()) for got, want in zip(copied, results) for key in want)
+
+
+class TestNormalizationTensors:
+    """The cached mean and std normalize a batch exactly as torchvision's ``normalize`` does."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_matches_torchvision_normalize(self, dtype: torch.dtype) -> None:
+        """Subtracting the cached mean and dividing by the cached std reproduces ``normalize`` bit for bit."""
+        means, stds = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+        batch = torch.rand(2, 3, 8, 8, generator=torch.Generator().manual_seed(0)).to(dtype)
+        mean, std = core._normalization_tensors(means, stds, dtype, torch.device("cpu"))
+
+        assert torch.equal(batch.clone().sub_(mean).div_(std), normalize(batch, list(means), list(stds)))
+
+    def test_builds_on_the_host_under_another_default_device(self) -> None:
+        """The tensors are built and checked on the CPU whatever the process default device is.
+
+        ``torch.set_default_device("mps")`` would otherwise put the float64 tensors of a float64 CPU batch on MPS, which
+        has no float64. The meta device stands in for it on any host; the uncached function is called so a cached entry
+        cannot hide the device the tensors are built on.
+        """
+        with torch.device("meta"):
+            mean, std = core._normalization_tensors.__wrapped__((0.5,), (0.25,), torch.float64, torch.device("cpu"))
+
+        assert (mean.device.type, std.device.type) == ("cpu", "cpu")
+
+    def test_std_that_rounds_to_zero_raises(self) -> None:
+        """A std that underflows to zero in the batch dtype is refused, as ``normalize`` refuses it."""
+        with pytest.raises(ValueError, match="std evaluated to zero after conversion to torch.float16"):
+            core._normalization_tensors((0.5,), (1e-8,), torch.float16, torch.device("cpu"))

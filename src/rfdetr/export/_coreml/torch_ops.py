@@ -32,7 +32,7 @@ Process-global, permanent, opt-in only:
     registry; the module-level ``_PATCHED`` flag itself is validated against actual registry
     contents, not trusted blindly, so a failed prior patch attempt always retries cleanly. Tests
     that need isolation use ``_restore_coreml_torch_op_registry`` in
-    ``tests/export/test_coreml_op_coverage.py`` (snapshot/restore fixture) — that pattern is not
+    ``tests/export/coreml/test_coreml_op_coverage.py`` (snapshot/restore fixture) — that pattern is not
     applied in production because it would mean every export pays snapshot/restore overhead and
     briefly de-patches the registry, racing any concurrent coremltools user in the same process.
 """
