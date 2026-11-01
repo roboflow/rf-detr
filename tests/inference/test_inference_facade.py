@@ -30,7 +30,7 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
-from tests._markers import _requires_mps
+from tests._markers import _cuda_marks, _requires_mps
 
 from .helpers import _DummyModel, _DummyRFDETR
 
@@ -206,10 +206,15 @@ class TestLiveModelDevicePolicy:
 class TestLiveModelSource:
     """Exercise live model behavior through the inference API."""
 
-    def test_stream_reads_current_native_state_between_batches(self) -> None:
-        """A borrowed stream refreshes live model state per batch without leaking inference mode to the caller."""
+    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=_cuda_marks)])
+    def test_stream_reads_current_native_state_between_batches(self, device: str) -> None:
+        """A borrowed stream refreshes live model state per batch without leaking inference mode to the caller.
+
+        On CUDA an owned predictor builds the next batch while the current one runs, reading the model's state before
+        the caller sees the current results; a borrowed model must not, so a change between batches reaches the next.
+        """
         native = _DummyRFDETR()
-        native.model = _DummyModel(class_names=["cat"], labels=[0])
+        native.model = _DummyModel(class_names=["cat"], labels=[0], device=device)
         predictor = RFDETRInference(native)
         images = np.zeros((24, 32, 3), dtype=np.uint8)
         results = predictor.predict([images, images], stream=True)
@@ -218,7 +223,7 @@ class TestLiveModelSource:
             first = next(results)
             assert list(first.data["class_name"]) == ["dog"]
             assert not torch.is_inference_mode_enabled()
-            native.model = _DummyModel(class_names=["owl"], labels=[0])
+            native.model = _DummyModel(class_names=["owl"], labels=[0], device=device)
             second = next(results)
             assert list(second.data["class_name"]) == ["owl"]
             assert not torch.is_inference_mode_enabled()
@@ -289,6 +294,49 @@ class TestLiveModelSource:
 
         assert facade.runtime_info["device"] == "cpu"
         assert nano_model.model.device == torch.device("cpu")
+
+
+class TestPrepareAheadOwnership:
+    """Only a predictor that owns its model or runtime lets a CUDA prediction build the next batch ahead.
+
+    Building ahead reads the next batch's model state before the caller sees the current results, so a borrowed live
+    model, which the caller may change between batches, keeps its batches serial.
+    """
+
+    def test_borrowed_live_model_does_not_prepare_ahead(self, nano_model: RFDETRNano, mocker: MockerFixture) -> None:
+        """A live model passed to the constructor stays the caller's, who may change it between batches."""
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        RFDETRInference(nano_model).predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is False
+
+    def test_inference_snapshot_prepares_ahead(self, nano_model: RFDETRNano, mocker: MockerFixture) -> None:
+        """The snapshot ``inference()`` copies from the source model belongs to its predictor alone."""
+        predictor = nano_model.inference(compile=False)
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        predictor.predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is True
+
+    def test_checkpoint_prepares_ahead(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A model loaded from a checkpoint path belongs to its predictor alone."""
+        mocker.patch.object(RFDETR, "from_checkpoint", classmethod(lambda cls, path, **kwargs: _DummyRFDETR()))
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        RFDETRInference(tmp_path / "model.ckpt").predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is True
+
+    def test_exported_artifact_prepares_ahead(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A runtime loaded from an exported artifact belongs to its predictor alone."""
+        mocker.patch("rfdetr.export._runtime.context.load_exported_context", return_value=mocker.Mock())
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        RFDETRInference(tmp_path / "model.onnx").predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is True
 
 
 class TestCheckpointSource:

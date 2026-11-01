@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 from collections.abc import Callable
 from itertools import chain, repeat
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -260,3 +261,40 @@ class _FakeResponse:
         """Raise ``requests.HTTPError`` for 4xx/5xx status codes, mirroring requests."""
         if self.status_code >= 400:
             raise requests.HTTPError(f"{self.status_code} Client Error")
+
+
+def _source_pixels(results: object) -> list[list[int]]:
+    """Return the first source-image pixel of every prediction, in result order.
+
+    Args:
+        results: The list a non-streamed ``predict`` call returns for an expanded source.
+
+    Returns:
+        One ``[r, g, b]`` triple per prediction.
+
+    Examples:
+        >>> import numpy as np
+        >>> import supervision as sv
+        >>> detections = sv.Detections.empty()
+        >>> detections.metadata["source_image"] = np.full((2, 2, 3), (1, 2, 3), dtype=np.uint8)
+        >>> _source_pixels([detections])
+        [[1, 2, 3]]
+    """
+    assert isinstance(results, list)
+    return [result.metadata["source_image"][0, 0].tolist() for result in results]
+
+
+def _image_dir(root: Path, count: int = 10) -> Path:
+    """Write ``count`` small PNG files into ``root / "images"`` and return that directory.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     len(list(_image_dir(Path(directory), 2).iterdir()))
+        2
+    """
+    images = root / "images"
+    images.mkdir()
+    for index in range(count):
+        PIL.Image.new("RGB", (16, 12), (index, 0, 0)).save(images / f"{index:02d}.png")
+    return images
