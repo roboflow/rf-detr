@@ -30,8 +30,7 @@ tests = [{ include-group = "base-test" }]
 
 @pytest.fixture
 def repo_copy(tmp_path: Path, repo_root: Path, install_flags: ModuleType) -> Path:
-    """A minimal copy of the repository holding ``pyproject.toml`` and the probe modules.
-    """
+    """A minimal copy of the repository holding ``pyproject.toml`` and the probe modules."""
     for relative in ("pyproject.toml", *install_flags.PROBE_MODULES):
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -41,8 +40,7 @@ def repo_copy(tmp_path: Path, repo_root: Path, install_flags: ModuleType) -> Pat
 
 @pytest.fixture
 def synthetic_repo(repo_copy: Path) -> Path:
-    """The repository copy with ``pyproject.toml`` replaced by ``_PYPROJECT``.
-    """
+    """The repository copy with ``pyproject.toml`` replaced by ``_PYPROJECT``."""
     (repo_copy / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
     return repo_copy
 
