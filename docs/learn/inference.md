@@ -30,7 +30,7 @@ predictor = model.inference(compile=False)
 results = predictor.predict("image.jpg")
 ```
 
-The native factory defaults to inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
+The native factory defaults to a captured CUDA graph (`compile_backend="cudagraph"`) on CUDA, inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
 
 ### Choose a fast route
 

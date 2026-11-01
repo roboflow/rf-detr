@@ -286,10 +286,12 @@ def _rewrite_for_mps_prediction(model: torch.nn.Module, *, fold_layer_scales: bo
         _fold_layer_scales(model)
 
 
-def _default_compile_backend(device: torch.device) -> Literal["torchscript", "inductor"]:
+def _default_compile_backend(device: torch.device) -> Literal["torchscript", "cudagraph", "inductor"]:
     """Pick the compile backend :meth:`RFDETR.inference` uses when the caller names none.
 
-    Inductor on MPS, when the installed PyTorch has an MPS code generator for it; TorchScript everywhere else. On the
+    A captured CUDA graph on CUDA: the snapshot already has a fixed batch size and resolution, and replaying the graph
+    removes the per-kernel launch cost that bounds a batch-1 TorchScript forward, without inductor's compile time.
+    Inductor on MPS, when the installed PyTorch has an MPS code generator for it. TorchScript everywhere else: on the
     CPU, inductor compiled for about 18 s and ran slower than TorchScript.
 
     Args:
@@ -302,6 +304,8 @@ def _default_compile_backend(device: torch.device) -> Literal["torchscript", "in
         >>> _default_compile_backend(torch.device("cpu"))
         'torchscript'
     """
+    if device.type == "cuda":
+        return "cudagraph"
     if device.type == "mps" and is_installed("torch._inductor.codegen.mps"):
         return "inductor"
     return "torchscript"
@@ -1751,8 +1755,9 @@ class RFDETR:
                 export-mode forward, with a fixed resolution and flexible batch size.
             batch_size: Positive batch size for compilation. Ignored when ``compile=False``.
             dtype: Floating-point dtype for the snapshot, as a ``torch.dtype`` or its string name.
-            compile_backend: ``None`` picks ``"inductor"`` on MPS, when the installed PyTorch can compile for it, and
-                ``"torchscript"`` everywhere else. ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally
+            compile_backend: ``None`` picks ``"cudagraph"`` on CUDA, ``"inductor"`` on MPS, when the installed
+                PyTorch can compile for it, and ``"torchscript"`` everywhere else; ``compile=False`` ignores it.
+                ``"torchscript"`` traces the snapshot. ``"cudagraph"`` additionally
                 freezes the trace and captures its fixed-shape CUDA work for replay, cloning graph-owned outputs before
                 returning them. It is CUDA-only and retains a graph-private memory pool. ``"inductor"`` uses
                 ``torch.compile``, with ``mode="reduce-overhead"`` on CUDA and the default mode elsewhere, and warms up
