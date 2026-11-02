@@ -217,12 +217,17 @@ class TestWriteExportMetadata:
     """Verify public metadata publication for artifacts exported earlier."""
 
     @_requires_openvino
-    def test_openvino_positional_sidecar(self, tmp_path: Path, metadata_source: RFDETR) -> None:
-        """Apply the real exporter mapping and bind metadata to XML and weights."""
+    def test_openvino_positional_sidecar(self, tmp_path: Path, metadata_source: RFDETR, mocker: MockerFixture) -> None:
+        """Apply the real exporter mapping and bind metadata to XML and weights.
+
+        The placeholder XML is no model OpenVINO can read, so the exporter's batch-axis probe is patched to report the
+        fixed batch of a static IR instead of reading it.
+        """
         artifact = tmp_path / "model.xml"
         artifact.write_bytes(b"<model/>")
         weights = artifact.with_suffix(".bin")
         weights.write_bytes(b"weights")
+        mocker.patch("rfdetr.export._openvino.exporter._has_dynamic_batch", return_value=False)
 
         sidecar = metadata_source.write_export_metadata(artifact, format="openvino", batch_size=2)
 
