@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T19:57:56">
+  <meta property="article:modified_time" content="2026-11-02T13:14:33">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T19:57:56",
+    "dateModified": "2026-11-02T13:14:33",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4468,7 +4468,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
     <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-        <span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">)</span>
+        <span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"torchscript"</span><span class="p">)</span>
         <span class="n">_</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">)</span>
     <span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">pytorch_fp16_jit_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
@@ -4540,7 +4540,7 @@ pytorch_fp16_jit_memory_mb: dict[int, float] = {}
 for batch in BATCH_SIZES:
     images_batch = [image] * batch
     with measure_memory(device="cuda") as mem:
-        predictor = model.inference(dtype=torch.float16, batch_size=batch)
+        predictor = model.inference(dtype=torch.float16, batch_size=batch, compile_backend="torchscript")
         _ = predictor.predict(images_batch)
     pytorch_fp16_jit_memory_mb[batch] = mem.delta_mb
     pytorch_fp16_jit_results[batch] = measure_latency(
@@ -5443,10 +5443,10 @@ the latency row, and the next cell scores it through <code>predict()</code>.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"torchscript"</span><span class="p">)</span>
 <span class="n">pytorch_predict_run</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-20">predictor = model.inference(dtype=torch.float16, batch_size=1)
+<div class="clipboard-copy-txt" id="cell-20">predictor = model.inference(dtype=torch.float16, batch_size=1, compile_backend="torchscript")
 pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 </div>
 </div>
@@ -7371,7 +7371,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 2, 2026 13:14:33 UTC">2026-11-02 13:14:33</span>
   </span>
 
     
