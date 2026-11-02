@@ -62,6 +62,41 @@ class _TupleModule(torch.nn.Module):
         """
 
 
+class _DeterministicModeProbe(torch.nn.Module):
+    """Module that records whether deterministic algorithms are on each time its forward pass runs."""
+
+    def __init__(self) -> None:
+        """Start with no recorded calls."""
+        super().__init__()
+        self.seen: list[bool] = []
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        """Record the mode and return ``value`` unchanged.
+
+        Examples:
+            >>> probe = _DeterministicModeProbe()
+            >>> probe(torch.zeros(1)).tolist(), len(probe.seen)
+            ([0.0], 1)
+        """
+        self.seen.append(torch.are_deterministic_algorithms_enabled())
+        return value
+
+
+class _FailingModule(torch.nn.Module):
+    """Module whose forward pass always raises, as a model that cannot be traced does."""
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        """Raise ``RuntimeError``.
+
+        Examples:
+            >>> _FailingModule()(torch.zeros(1))
+            Traceback (most recent call last):
+            ...
+            RuntimeError: cannot trace
+        """
+        raise RuntimeError("cannot trace")
+
+
 def _tensor_leaves(value: Any) -> list[torch.Tensor]:
     """Collect the tensors nested in tuples, lists and dict values, in traversal order.
 
@@ -219,6 +254,54 @@ class TestModelInferenceCudaDeviceContext:
         assert snapshot.model.device == expected_device
 
 
+class TestTraceForPrediction:
+    """``inference()`` traces its snapshot with deterministic algorithms off and leaves the caller's mode as it was."""
+
+    def test_records_with_deterministic_algorithms_off(self) -> None:
+        """The forward pass the trace records runs with deterministic algorithms off, even when the caller enabled them.
+
+        With the mode on, CUDA ``F.interpolate`` takes a decomposition that fails under ``torch.jit.trace``, which
+        crashed ``inference()`` for a segmentation model after ``seed_all()``.
+        """
+        torch.use_deterministic_algorithms(True)
+        probe = _DeterministicModeProbe()
+
+        detr_module._trace_for_prediction(probe, torch.zeros(1))
+
+        assert set(probe.seen) == {False}
+
+    @pytest.mark.parametrize(
+        ("enabled", "warn_only"),
+        [
+            pytest.param(True, True, id="warn-only"),
+            pytest.param(True, False, id="strict"),
+            pytest.param(False, False, id="off"),
+        ],
+    )
+    def test_restores_the_callers_mode(self, enabled: bool, warn_only: bool) -> None:
+        """After the trace, deterministic algorithms are back in the mode the caller had, warn-only flag included."""
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+
+        detr_module._trace_for_prediction(_DeterministicModeProbe(), torch.zeros(1))
+
+        assert (
+            torch.are_deterministic_algorithms_enabled(),
+            torch.is_deterministic_algorithms_warn_only_enabled(),
+        ) == (
+            enabled,
+            warn_only,
+        )
+
+    def test_restores_the_callers_mode_when_tracing_fails(self) -> None:
+        """A model that cannot be traced still leaves deterministic algorithms on for the caller."""
+        torch.use_deterministic_algorithms(True)
+
+        with pytest.raises(RuntimeError, match="cannot trace"):
+            detr_module._trace_for_prediction(_FailingModule(), torch.zeros(1))
+
+        assert torch.are_deterministic_algorithms_enabled()
+
+
 class TestModelInferenceCompile:
     """Tests for the compile=True paths."""
 
@@ -277,7 +360,6 @@ class TestModelInferenceCompile:
         assert torch.equal(second[1], second_input * 2)
 
     @pytest.mark.gpu
-    @pytest.mark.usefixtures("nondeterministic_algorithms")
     @pytest.mark.parametrize(
         "model_class",
         [pytest.param(RFDETRNano, id="detection"), pytest.param(RFDETRSegNano, id="segmentation")],

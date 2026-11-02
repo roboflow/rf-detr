@@ -311,6 +311,37 @@ def _default_compile_backend(device: torch.device) -> Literal["torchscript", "cu
     return "torchscript"
 
 
+def _trace_for_prediction(module: torch.nn.Module, example_input: torch.Tensor) -> torch.jit.ScriptModule:
+    """Trace a prediction model with deterministic algorithms off while the trace records.
+
+    With ``torch.use_deterministic_algorithms(True)``, ``F.interpolate`` on CUDA runs a Python decomposition whose only
+    purpose is a deterministic backward pass. ``torch.jit.trace`` records the sizes it computes as CPU tensors, and the
+    decomposition then fails (a ``clamp`` with a ``max`` on the CPU) in the segmentation head. Recorded with the mode
+    off, the trace keeps the native upsampling kernel, whose forward pass is deterministic; a predictor never runs
+    backward. Every kernel still checks the mode when it runs. The mode is process-wide, so it is off for every thread
+    while the trace records, and the previous mode is restored afterwards.
+
+    Args:
+        module: The model to trace.
+        example_input: An input of the shape the predictor runs.
+
+    Returns:
+        The traced module.
+
+    Examples:
+        >>> traced = _trace_for_prediction(torch.nn.Identity(), torch.zeros(1, 3, 2, 2))
+        >>> traced(torch.ones(1, 3, 2, 2)).shape
+        torch.Size([1, 3, 2, 2])
+    """
+    enabled = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    torch.use_deterministic_algorithms(False)
+    try:
+        return cast("torch.jit.ScriptModule", torch.jit.trace(module, example_input))  # type: ignore[no-untyped-call]
+    finally:
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+
+
 def _device_move_lock(module: Any) -> threading.Lock:
     """Return the device-move lock for *module*, creating it on first use.
 
@@ -1845,7 +1876,7 @@ class RFDETR:
                     dtype=dtype,
                 )
                 if compile_backend in ("torchscript", "cudagraph"):
-                    inference_model = torch.jit.trace(inference_model, dummy_input)  # type: ignore[no-untyped-call]
+                    inference_model = _trace_for_prediction(inference_model, dummy_input)
                     if compile_backend == "cudagraph":
                         # The existing CUDA parity/latency measurements use a frozen trace; retain that capture path.
                         inference_model = torch.jit.freeze(inference_model)
