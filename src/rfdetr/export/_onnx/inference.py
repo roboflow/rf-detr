@@ -85,7 +85,8 @@ def _run_onnx_bound(session: Any, input_name: str, batch: torch.Tensor, outputs:
     device = batch.device
     device_id = 0 if device.index is None else device.index
     binding = session.io_binding()
-    input_dtype = torch.empty(0, dtype=batch.dtype).numpy().dtype
+    # Allocate on the CPU: a process-wide default device such as CUDA would make ``.numpy()`` raise.
+    input_dtype = torch.empty(0, dtype=batch.dtype, device="cpu").numpy().dtype
     binding.bind_input(input_name, device.type, device_id, input_dtype, tuple(batch.shape), batch.data_ptr())
     results = []
     for output in outputs:
@@ -133,9 +134,7 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
     if device != "auto" and provider == "CUDAExecutionProvider" and hasattr(session, "disable_fallback"):
         session.disable_fallback()
     input_info = _single_input("ONNX", session.get_inputs())
-    # ONNX names element types "tensor(<type>)"; only "float" differs from the NumPy name, where it means float64.
-    element_type = input_info.type.removeprefix("tensor(").removesuffix(")")
-    dtype = "float32" if element_type == "float" else element_type
+    dtype = _onnx_dtype(input_info.type)
     # A symbolic or unnamed ONNX dimension is a str or None; only an int fixes the axis.
     shape = [size if isinstance(size, int) else None for size in input_info.shape]
     _check_input_interface("ONNX", metadata, input_info.name, shape, dtype)
@@ -144,11 +143,20 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
     _check_output_interface("ONNX", metadata, output_names)
 
     # On the CUDA provider, the batch is prepared on the GPU and bound in place, so it never goes through host memory.
-    # That needs torch to see the GPU and every output axis but the batch to be static, so its buffer can be allocated.
+    # That needs torch to see the GPU, every output to lead with the input's batch axis (the same symbol or size, so a
+    # scalar or fixed-size auxiliary output stays on the host path) and every other axis to be static, so its buffer can
+    # be allocated.
+    batch_axis = input_info.shape[0] if input_info.shape else None
     on_device = (
         provider == "CUDAExecutionProvider"
         and torch.cuda.is_available()
-        and all(isinstance(size, int) for item in outputs for size in item.shape[1:])
+        and batch_axis is not None
+        and all(
+            len(item.shape) >= 1
+            and item.shape[0] == batch_axis
+            and all(isinstance(size, int) for size in item.shape[1:])
+            for item in outputs
+        )
     )
 
     def execute(batch: Any) -> dict[str, Any]:

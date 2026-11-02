@@ -132,11 +132,11 @@ class _CUDAGraphInferenceModel:
             ) from exc
         except Exception as exc:
             # On torch 2.9.1 a rejected capture leaves CUDA random ops raising "Offset increment outside graph capture"
-            # for the rest of the process, so even the default backend cannot be set up again after it.
+            # for the rest of the process, so no other backend can be set up again after it either.
             raise RuntimeError(
-                "CUDA Graph capture failed for compile_backend='cudagraph'. A failed capture can leave CUDA "
-                "random-number state unusable for the rest of the process. Restart the process and use another "
-                "compile_backend."
+                "CUDA Graph capture failed for compile_backend='cudagraph', the default on CUDA. A failed capture can "
+                "leave CUDA random-number state unusable for the rest of the process. Restart the process and call "
+                "inference(compile_backend='torchscript') to avoid CUDA graph capture."
             ) from exc
 
         self._completed = torch.cuda.Event()  # type: ignore[no-untyped-call]
