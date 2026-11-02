@@ -748,8 +748,10 @@ def _default_batch(images: _PredictionInput, context: PredictionContext, *, stre
 
     A BCHW tensor already is one batch. An eager directory or glob runs in batches of :data:`_DEFAULT_EAGER_BATCH` on a
     model or export without a fixed batch size, or of the export's ``max_batch_size`` when that is smaller; its results
-    are collected anyway, so batching costs no latency. Streamed sources keep one image per batch, so the first result
-    arrives after one image, and a compiled snapshot or fixed-batch export keeps it too.
+    are collected anyway, so batching costs no latency. Batching raises peak memory (about 35% more resident memory for
+    a Nano ONNX export on the ONNX Runtime CPU provider, with no measured gain in throughput there), so a memory-bound
+    host passes ``batch=1``. Streamed sources keep one image per batch, so the first result arrives after one image,
+    and a compiled snapshot or fixed-batch export keeps it too.
 
     Args:
         images: The prediction source.
