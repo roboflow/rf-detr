@@ -161,6 +161,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A model built from a checkpoint with fewer classes than its config (`RFDETRSegXLarge(pretrain_weights="own.pth")`) recorded the checkpoint's class count as if the user had set it, so `train()` on a dataset with more classes kept the old count with a warning; the head and the loss were then too small for the new labels and the first step failed with a CUDA index-out-of-bounds assert (on Windows a display-driver reset with no traceback). `load_pretrain_weights` now clears the checkpoint-derived `num_classes` from `model_fields_set`, as `from_checkpoint` does, so the dataset count raises it and the head is expanded.
+
 - In segmentation data pipelines, Albumentations geometric transforms (rotation, non-rigid warps, translation) now recompute tight target bounding boxes directly from the transformed masks and drop instances whose masks become empty, eliminating ground-truth mask/box misalignment and ghost boxes during segmentation training. ([#1658](https://github.com/roboflow/rf-detr/issues/1658))
 
 - The class-count warning claimed the checkpoint's class count was used when a set `num_classes` larger than the checkpoint was kept. `load_pretrain_weights` keeps the set count and resizes the loaded classification head to it; the warning now says so instead of "Using checkpoint class count". ([#1654](https://github.com/roboflow/rf-detr/pull/1654))
