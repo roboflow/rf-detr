@@ -8,6 +8,7 @@
 import struct
 import zlib
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,8 +23,9 @@ import torchvision.transforms.functional as F  # noqa: N812
 from pytest_mock import MockerFixture
 
 from rfdetr import RFDETRInference
-from rfdetr._prediction import core
+from rfdetr._prediction import core, pipelines
 from rfdetr.detr import RFDETR
+from tests._markers import _requires_cuda
 
 from ..helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
 
@@ -1704,3 +1706,256 @@ class TestPredictNonRGBAutoConvert:
         model = _DummyRFDETR()
         with pytest.raises(ValueError, match="PIL Image or a file path"):
             model.predict(tensor)
+
+
+def _jpeg_file(path: Path, mode: str = "RGB", size: tuple[int, int] = (29, 17), **save_options: Any) -> Path:
+    """Write a textured JPEG file in ``mode`` and return its path; ``save_options`` go to Pillow's JPEG writer.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     PIL.Image.open(_jpeg_file(Path(directory) / "a.jpg", subsampling=0)).size
+        (29, 17)
+    """
+    width, height = size
+    rgb = ((np.arange(height * width * 3).reshape(height, width, 3) * 37 + 13) % 256).astype(np.uint8)
+    PIL.Image.fromarray(rgb).convert(mode).save(path, "JPEG", **save_options)
+    return path
+
+
+#: A CUDA device as the read-ahead workers receive it; the CPU tests below never run anything on it.
+_CUDA = torch.device("cuda", 0)
+
+#: JPEG files the GPU decodes: chroma subsampling, odd sizes, restart markers and a high quality.
+_GPU_JPEGS = [
+    pytest.param({"subsampling": 0}, id="4:4:4"),
+    pytest.param({"subsampling": 1}, id="4:2:2"),
+    pytest.param({"subsampling": 2}, id="4:2:0"),
+    pytest.param({"subsampling": 2, "size": (641, 479)}, id="4:2:0-odd-size"),
+    pytest.param({"subsampling": 1, "size": (333, 1)}, id="4:2:2-one-row"),
+    pytest.param({"subsampling": 2, "restart_marker_blocks": 3}, id="4:2:0-restart-markers"),
+    pytest.param({"subsampling": 0, "quality": 100}, id="4:4:4-quality-100"),
+]
+
+
+class TestGpuJpegDecode:
+    """On CUDA, read-ahead workers leave suitable JPEG files encoded and the batch decodes them on the GPU.
+
+    The GPU path must give the CPU decoder's exact pixels or not run: a header gate keeps grayscale, CMYK, RGB-coded and
+    progressive files on the CPU, and the first file of each kind is compared against the CPU decode.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_comparisons(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Start every test with no recorded GPU-versus-CPU comparison."""
+        monkeypatch.setattr(core, "_GPU_JPEG_MATCHES", {})
+
+    @pytest.mark.parametrize("options", _GPU_JPEGS)
+    def test_baseline_colour_jpeg_stays_encoded(self, tmp_path: Path, options: dict[str, Any]) -> None:
+        """A baseline YCbCr JPEG is only read and checked by the worker, keeping its chroma subsampling.
+
+        These are the files the batch decodes with nvjpeg; decoding them on the worker would defeat the point.
+        """
+        path = _jpeg_file(tmp_path / "image.jpg", **options)
+
+        decoded = core._decode_local_image(str(path), _CUDA)
+
+        assert (type(decoded), getattr(decoded, "sampling", None)) == (core._EncodedJpeg, options["subsampling"])
+
+    @pytest.mark.parametrize(
+        ("mode", "options"),
+        [
+            pytest.param("RGB", {"progressive": True}, id="progressive"),
+            pytest.param("L", {}, id="grayscale"),
+            pytest.param("CMYK", {}, id="cmyk"),
+        ],
+    )
+    def test_other_jpeg_decodes_on_the_worker(self, tmp_path: Path, mode: str, options: dict[str, Any]) -> None:
+        """Progressive, grayscale and CMYK files decode on the CPU even when a GPU device is given.
+
+        nvjpeg need not convert their colour the way libjpeg does, so they keep today's pixels.
+        """
+        path = _jpeg_file(tmp_path / "image.jpg", mode, **options)
+
+        decoded = core._decode_local_image(str(path), _CUDA)
+
+        assert isinstance(decoded, torch.Tensor)
+
+    def test_png_decodes_on_the_worker(self, tmp_path: Path) -> None:
+        """A PNG file decodes on the CPU even when a GPU device is given: nvjpeg reads JPEG only."""
+        path = tmp_path / "image.png"
+        PIL.Image.new("RGB", (8, 6), (1, 2, 3)).save(path)
+
+        decoded = core._decode_local_image(str(path), _CUDA)
+
+        assert isinstance(decoded, torch.Tensor)
+
+    def test_kind_recorded_as_differing_decodes_on_the_worker(self, tmp_path: Path) -> None:
+        """Once the GPU gave different pixels for a subsampling on a device, files of that kind decode on the CPU."""
+        path = _jpeg_file(tmp_path / "image.jpg", subsampling=2)
+        core._GPU_JPEG_MATCHES[(0, 2)] = False
+
+        decoded = core._decode_local_image(str(path), _CUDA)
+
+        assert isinstance(decoded, torch.Tensor)
+
+    def test_read_ahead_hands_the_gpu_device_to_its_workers(self, tmp_path: Path) -> None:
+        """``_decode_ahead`` with a GPU device yields entries whose pending result is the encoded file."""
+        path = _jpeg_file(tmp_path / "image.jpg")
+
+        with ThreadPoolExecutor(1) as pool:
+            (batch,) = pipelines._decode_ahead(iter([[str(path)]]), pool, _CUDA)
+            result = batch[0].decoded.result()
+
+        assert isinstance(result, core._EncodedJpeg)
+
+    def test_matching_gpu_pixels_are_kept(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """When the first GPU decode of a kind equals the CPU decode, the GPU tensor is used and the match recorded."""
+        encoded = core._decode_local_image(str(_jpeg_file(tmp_path / "image.jpg")), _CUDA)
+        on_gpu = core._decode_on_cpu(encoded.data)
+        mocker.patch.object(core, "decode_jpeg", return_value=[on_gpu])
+
+        images = core._decode_jpegs_on_gpu([encoded], _CUDA)
+
+        assert (images[0] is on_gpu, core._GPU_JPEG_MATCHES) == (True, {(0, 2): True})
+
+    def test_differing_gpu_pixels_fall_back_to_the_cpu_decode(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """When the first GPU decode of a kind differs, the CPU pixels are returned and the kind recorded as differing.
+
+        This is the guard for a GPU whose nvjpeg backend rounds differently: predictions keep today's pixels.
+        """
+        encoded = core._decode_local_image(str(_jpeg_file(tmp_path / "image.jpg")), _CUDA)
+        on_cpu = core._decode_on_cpu(encoded.data)
+        mocker.patch.object(core, "decode_jpeg", return_value=[on_cpu ^ 1])
+
+        images = core._decode_jpegs_on_gpu([encoded], _CUDA)
+
+        assert (torch.equal(images[0], on_cpu), core._GPU_JPEG_MATCHES) == (True, {(0, 2): False})
+
+    def test_nvjpeg_error_decodes_the_batch_on_the_cpu(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """An nvjpeg error decodes every file of the batch on the CPU and keeps later files of those kinds there.
+
+        nvjpeg refuses some corrupt files the CPU decoder tolerates, and a torchvision without nvjpeg refuses all.
+        """
+        first = core._decode_local_image(str(_jpeg_file(tmp_path / "0.jpg", subsampling=0)), _CUDA)
+        second = core._decode_local_image(str(_jpeg_file(tmp_path / "2.jpg", subsampling=2)), _CUDA)
+        mocker.patch.object(core, "decode_jpeg", side_effect=RuntimeError("Not compiled with GPU support"))
+
+        images = core._decode_jpegs_on_gpu([first, second], _CUDA)
+
+        assert ([image.dtype for image in images], core._GPU_JPEG_MATCHES) == (
+            [torch.uint8, torch.uint8],
+            {(0, 0): False, (0, 2): False},
+        )
+
+    def test_one_refused_file_falls_back_alone(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """A file nvjpeg refuses decodes on the CPU alone; the rest of its batch stays on the GPU path.
+
+        A truncated JPEG makes nvjpeg fail the whole batched call while libjpeg still decodes it, and one such file in a
+        large directory must not turn the GPU path off for every later batch.
+        """
+        good = core._decode_local_image(str(_jpeg_file(tmp_path / "good.jpg", subsampling=0)), _CUDA)
+        bad = core._decode_local_image(str(_jpeg_file(tmp_path / "bad.jpg", subsampling=2)), _CUDA)
+
+        def nvjpeg(data: Any, mode: Any, device: torch.device) -> torch.Tensor:
+            """Refuse a batched call and the bad file, decode anything else as the CPU decoder does."""
+            if isinstance(data, list) or data is bad.data:
+                raise RuntimeError("Failed to decode batch")
+            return core._decode_on_cpu(data)
+
+        mocker.patch.object(core, "decode_jpeg", side_effect=nvjpeg)
+
+        images = core._decode_jpegs_on_gpu([good, bad], _CUDA)
+
+        assert ([image.dtype for image in images], core._GPU_JPEG_MATCHES) == (
+            [torch.uint8, torch.uint8],
+            {(0, 0): True},
+        )
+
+    def test_non_cuda_batch_does_not_wait_for_its_decodes(self) -> None:
+        """Off CUDA, the batch never waits for every decode up front, so each image is prepared as soon as it decodes.
+
+        A pending future that never completes would block this call if it waited.
+        """
+        pending: Future[torch.Tensor | None] = Future()
+
+        decoded = core._decode_prefetched_jpegs([core._PrefetchedImage("a.jpg", pending)], torch.device("mps"))
+
+        assert decoded == {}
+
+    def test_cuda_batch_decodes_only_its_encoded_files(self, mocker: MockerFixture) -> None:
+        """On CUDA, only entries left encoded go to the GPU decoder, keyed by their place in the batch."""
+        encoded = core._EncodedJpeg(torch.zeros(4, dtype=torch.uint8), 2)
+        done_encoded: Future[Any] = Future()
+        done_encoded.set_result(encoded)
+        done_decoded: Future[Any] = Future()
+        done_decoded.set_result(torch.zeros(3, 2, 2, dtype=torch.uint8))
+        on_gpu = torch.ones(3, 2, 2, dtype=torch.uint8)
+        gpu_decode = mocker.patch.object(core, "_decode_jpegs_on_gpu", return_value=[on_gpu])
+        images = [
+            core._PrefetchedImage("a.png", done_decoded),
+            np.zeros((2, 2, 3), np.uint8),
+            core._PrefetchedImage("b.jpg", done_encoded),
+        ]
+
+        decoded = core._decode_prefetched_jpegs(images, _CUDA)
+
+        assert (decoded, gpu_decode.call_args.args) == ({2: on_gpu}, ([encoded], _CUDA))
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize("options", _GPU_JPEGS)
+    def test_gpu_decode_equals_the_cpu_decode(self, tmp_path: Path, options: dict[str, Any]) -> None:
+        """Nvjpeg gives libjpeg's exact pixels for every kind of JPEG file the gate sends to the GPU.
+
+        This is the premise of the GPU path; the per-process comparison only checks one file of each kind.
+        """
+        encoded = core._decode_local_image(str(_jpeg_file(tmp_path / "image.jpg", **options)), _CUDA)
+
+        on_gpu = core.decode_jpeg([encoded.data], mode=core.ImageReadMode.RGB, device=_CUDA)[0]
+
+        torch.testing.assert_close(on_gpu.cpu(), core._decode_on_cpu(encoded.data), rtol=0, atol=0)
+
+    def _directory_inputs(
+        self, root: Path, mocker: MockerFixture, samplings: frozenset[int]
+    ) -> tuple[list[torch.Tensor], int]:
+        """Predict a directory of JPEG files on CUDA and return the model's input batches and the nvjpeg call count.
+
+        The example is skipped: it needs a CUDA device.
+
+        Examples:
+            >>> TestGpuJpegDecode()._directory_inputs(root, mocker, frozenset())  # doctest: +SKIP
+            ([tensor(...)], 0)
+        """
+        mocker.patch.object(core, "_GPU_JPEG_SAMPLINGS", samplings)
+        nvjpeg = mocker.spy(core, "decode_jpeg")
+        model = _DummyRFDETR()
+        model.model.device = _CUDA
+        batches: list[torch.Tensor] = []
+        model.model.model.register_forward_pre_hook(_record_model_inputs(batches))
+        RFDETRInference(model).predict(root, batch=2, include_source_image=False)
+        return [batch.cpu() for batch in batches], nvjpeg.call_count
+
+    @pytest.fixture
+    def jpeg_dir(self, tmp_path: Path) -> Path:
+        """Five JPEG files of slightly different sizes, one 4:4:4, one 4:2:2 and three 4:2:0, in sorted order."""
+        _jpeg_file(tmp_path / "0.jpg", size=(64, 48), subsampling=0)
+        _jpeg_file(tmp_path / "1.jpg", size=(65, 48), subsampling=1)
+        _jpeg_file(tmp_path / "2.jpg", size=(66, 48), subsampling=2)
+        _jpeg_file(tmp_path / "3.jpg", size=(67, 48), subsampling=2)
+        _jpeg_file(tmp_path / "4.jpg", size=(68, 48), subsampling=2)
+        return tmp_path
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    def test_directory_model_inputs_match_the_cpu_decode(self, jpeg_dir: Path, mocker: MockerFixture) -> None:
+        """A directory of JPEG files reaches the model with the same input whether nvjpeg or libjpeg decoded it.
+
+        Batches of two make three nvjpeg calls when every kind matches its CPU decode.
+        """
+        on_cpu, _ = self._directory_inputs(jpeg_dir, mocker, frozenset())
+
+        on_gpu, nvjpeg_calls = self._directory_inputs(jpeg_dir, mocker, frozenset({0, 1, 2}))
+
+        assert nvjpeg_calls == 3
+        torch.testing.assert_close(on_gpu, on_cpu, rtol=0, atol=0)

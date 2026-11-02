@@ -20,7 +20,7 @@ from PIL import Image
 from pytest_mock import MockerFixture
 from supervision import Detections, KeyPoints
 
-from rfdetr.detr import RFDETR, _default_compile_backend
+from rfdetr.detr import RFDETR, _CUDAGraphInferenceModel, _default_compile_backend
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -30,7 +30,7 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
-from tests._markers import _cuda_marks, _requires_mps
+from tests._markers import _cuda_marks, _requires_cuda, _requires_mps
 
 from .helpers import _DummyModel, _DummyRFDETR
 
@@ -863,7 +863,8 @@ class TestMpsCheckpointRewrites:
 
 
 class TestDefaultCompileBackend:
-    """``inference()`` without ``compile_backend`` compiles with inductor on MPS and TorchScript elsewhere."""
+    """``inference()`` without ``compile_backend`` captures a CUDA graph on CUDA, uses inductor on MPS, else
+    TorchScript."""
 
     @pytest.mark.parametrize(
         ("device", "codegen_installed", "expected"),
@@ -871,13 +872,14 @@ class TestDefaultCompileBackend:
             ("mps", True, "inductor"),
             ("mps", False, "torchscript"),
             ("cpu", True, "torchscript"),
-            ("cuda", True, "torchscript"),
+            ("cuda", True, "cudagraph"),
+            ("cuda", False, "cudagraph"),
         ],
     )
     def test_backend_per_device(
         self, mocker: MockerFixture, device: str, codegen_installed: bool, expected: str
     ) -> None:
-        """Inductor only on MPS, and only when the installed PyTorch has its MPS code generator."""
+        """CUDA graphs on CUDA; inductor only on MPS with its code generator installed; TorchScript otherwise."""
         mocker.patch("rfdetr.detr.is_installed", return_value=codegen_installed)
 
         assert _default_compile_backend(torch.device(device)) == expected
@@ -898,6 +900,33 @@ class TestDefaultCompileBackend:
         mps_nano_model.inference()
 
         compile_mock.assert_called_once()
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        "model_type,result_type",
+        [
+            pytest.param(RFDETRNano, Detections, id="detection"),
+            pytest.param(RFDETRSegNano, Detections, id="segmentation"),
+            pytest.param(RFDETRKeypointPreview, KeyPoints, id="keypoints"),
+        ],
+    )
+    def test_cuda_default_captures_a_graph_that_predicts(
+        self, model_type: type[RFDETR], result_type: type[Detections | KeyPoints]
+    ) -> None:
+        """The CUDA default replays a captured graph, and a prediction through it returns the task's result type.
+
+        The capture runs a real model on the device, so a module that cannot be captured fails here rather than in a
+        user's first ``inference()`` call. A failed capture is fatal for the process, so every task head that can reach
+        this default is captured.
+        """
+        model = model_type(pretrain_weights=None, device="cuda", resolution=96, num_queries=4, num_select=4)
+
+        predictor = model.inference()
+
+        assert predictor._native_model is not None
+        assert isinstance(predictor._native_model.model.inference_model, _CUDAGraphInferenceModel)
+        assert isinstance(predictor.predict(np.zeros((96, 96, 3), dtype=np.uint8), threshold=0.0), result_type)
 
     def test_inductor_off_cuda_compiles_without_cuda_graphs(
         self, nano_model: RFDETRNano, mocker: MockerFixture

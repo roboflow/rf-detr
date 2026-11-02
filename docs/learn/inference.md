@@ -30,7 +30,7 @@ predictor = model.inference(compile=False)
 results = predictor.predict("image.jpg")
 ```
 
-The native factory defaults to inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
+The native factory defaults to a captured CUDA graph (`compile_backend="cudagraph"`) on CUDA, inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
 
 ### Choose a fast route
 
@@ -53,6 +53,12 @@ results = predictor.predict(images, batch=8)
 ```
 
 On MPS, the predictor also samples the decoder's deformable attention with PyTorch's fused `grid_sample` and, for TorchScript and eager predictors, folds the backbone's LayerScale weights into the Linear layers before them. Only the predictor's copy of the model changes; at float32 its predictions match the source model's to float rounding, and in half precision they can differ by more.
+
+On CUDA, `inference()` captures the predictor's forward pass into a CUDA graph by default and replays it on every call, which removes most of the kernel-launch cost that bounds small batches. The capture runs before `inference()` returns. It synchronizes the device and empties the process-wide CUDA caches, so build predictors before any serving threads start. If a capture fails, restart the process before trying another backend; `compile_backend="torchscript"` skips the capture.
+
+For more CUDA throughput, export a TensorRT engine and load it with `RFDETRInference`. An engine exported with `dynamic_batch=True` and a `max_batch_size` runs a directory or glob in batches of up to eight without a `batch` argument, and so does any other export with a dynamic batch axis. ONNX Runtime with the CUDA execution provider (`onnxruntime-gpu`) also prepares its batches on the GPU and keeps them there.
+
+With `include_source_image=False`, a directory, glob, manifest or batched list predicted on a CUDA device decodes its baseline color JPEG files on the GPU, one nvjpeg call per batch, instead of on CPU threads. The first file of each kind is checked against the CPU decoder, and a GPU that gives different pixels sends those files back to the CPU, so the model sees the same input either way. Grayscale, CMYK, progressive and PNG files always decode on the CPU.
 
 For the borrowed live-model behavior, construct `RFDETRInference(model)` directly. That facade reads the model's current state on every prediction, so it observes later training or optimization changes; configure the model's device and omit `device`, `metadata`, and `runtime_options` for this source. This mode does not promise safety when training mutates the model concurrently with prediction.
 

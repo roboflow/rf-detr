@@ -305,7 +305,7 @@ class TestModelInferenceCompile:
     def test_cudagraph_predict_matches_torchscript_backend(
         self, model_class: type[RFDETR], dtype: torch.dtype, tolerance: float
     ) -> None:
-        """The cudagraph backend gives predict() the same raw predictions as the default TorchScript backend.
+        """The cudagraph backend gives predict() the same raw predictions as the TorchScript backend.
 
         Elsewhere only the parameter-free ``_TupleModule`` is captured; this runs a real detector through ``predict()``,
         including its tuple-to-dict mapping of the cloned graph outputs. Raw predictions are compared because a top-k
@@ -315,7 +315,7 @@ class TestModelInferenceCompile:
         """
         model = model_class(pretrain_weights=None, device="cuda")
         image = torch.rand(3, 480, 640)
-        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype)
+        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype, compile_backend="torchscript")
         with patch.object(
             torchscript._native_model.model, "postprocess", wraps=torchscript._native_model.model.postprocess
         ) as torchscript_postprocess:

@@ -18,9 +18,10 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 from PIL import Image as PILImage
 
-from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
+from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference, _run_onnx_bound
 from tests._markers import _requires_onnx_and_onnxruntime
 
 _INPUT_SHAPE = [1, 3, 224, 224]
@@ -198,6 +199,107 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
     onnx_path = tmp_path / "identity.onnx"
     onnx.save(model, str(onnx_path))
     return onnx_path
+
+
+@pytest.fixture()
+def dynamic_batch_onnx_model(tmp_path: Path) -> Path:
+    """Write an ONNX model with a symbolic batch axis and two outputs, per-channel sums and the doubled input.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> dynamic_batch_onnx_model(Path("."))  # doctest: +SKIP
+    """
+    import onnx
+
+    tensor_proto, helper = onnx.TensorProto, onnx.helper
+
+    inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT, ["batch", 3, 8, 8])
+    sums = helper.make_tensor_value_info("sums", tensor_proto.FLOAT, ["batch", 3])
+    doubled = helper.make_tensor_value_info("doubled", tensor_proto.FLOAT, ["batch", 3, 8, 8])
+    axes = helper.make_tensor("axes", tensor_proto.INT64, [2], [2, 3])
+    two = helper.make_tensor("two", tensor_proto.FLOAT, [], [2.0])
+    nodes = [
+        helper.make_node("ReduceSum", inputs=["input", "axes"], outputs=["sums"], keepdims=0),
+        helper.make_node("Mul", inputs=["input", "two"], outputs=["doubled"]),
+    ]
+    graph = helper.make_graph(nodes, "test", [inp], [sums, doubled], initializer=[axes, two])
+    # Pin IR 10: onnx >=1.20 defaults to IR 13, which onnxruntime 1.23.2 (last cp310 release) refuses at load time.
+    model = helper.make_model(graph, ir_version=10, opset_imports=[helper.make_opsetid("", 13)])
+    onnx_path = tmp_path / "dynamic.onnx"
+    onnx.save(model, str(onnx_path))
+    return onnx_path
+
+
+@pytest.fixture()
+def mixed_dtype_onnx_model(tmp_path: Path) -> Path:
+    """Write an ONNX model with a float16 input and two outputs, the input cast to int64 and the input unchanged.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> mixed_dtype_onnx_model(Path("."))  # doctest: +SKIP
+    """
+    import onnx
+
+    tensor_proto, helper = onnx.TensorProto, onnx.helper
+
+    inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT16, ["batch", 3, 8, 8])
+    counts = helper.make_tensor_value_info("counts", tensor_proto.INT64, ["batch", 3, 8, 8])
+    same = helper.make_tensor_value_info("same", tensor_proto.FLOAT16, ["batch", 3, 8, 8])
+    nodes = [
+        helper.make_node("Cast", inputs=["input"], outputs=["counts"], to=tensor_proto.INT64),
+        helper.make_node("Identity", inputs=["input"], outputs=["same"]),
+    ]
+    graph = helper.make_graph(nodes, "test", [inp], [counts, same])
+    # Pin IR 10: onnx >=1.20 defaults to IR 13, which onnxruntime 1.23.2 (last cp310 release) refuses at load time.
+    model = helper.make_model(graph, ir_version=10, opset_imports=[helper.make_opsetid("", 13)])
+    onnx_path = tmp_path / "mixed.onnx"
+    onnx.save(model, str(onnx_path))
+    return onnx_path
+
+
+@_requires_onnx_and_onnxruntime
+@pytest.mark.integration
+@pytest.mark.e2e_onnx
+class TestRunOnnxBound:
+    """``_run_onnx_bound`` feeds ONNX Runtime the batch's own memory and writes each output into a new tensor.
+
+    The CUDA provider uses it to keep a batch on the GPU. Its binding code does not depend on the device, so the CPU
+    provider checks it here against the plain ``session.run`` path.
+    """
+
+    @pytest.mark.parametrize("batch_size", [1, 3])
+    def test_matches_session_run_bitwise(self, dynamic_batch_onnx_model: Path, batch_size: int) -> None:
+        """Every output equals the ``session.run`` result."""
+        session = _create_onnx_session(dynamic_batch_onnx_model, providers=["CPUExecutionProvider"])
+        batch = torch.arange(batch_size * 3 * 8 * 8, dtype=torch.float32).reshape(batch_size, 3, 8, 8)
+
+        actual = _run_onnx_bound(session, "input", batch, session.get_outputs())
+
+        expected = session.run(None, {"input": batch.numpy()})
+        assert all(torch.equal(tensor, torch.from_numpy(array)) for tensor, array in zip(actual, expected))
+
+    @pytest.mark.parametrize("batch_size", [1, 3])
+    def test_outputs_take_the_batch_size_for_their_first_axis(
+        self, dynamic_batch_onnx_model: Path, batch_size: int
+    ) -> None:
+        """Each output tensor leads with the batch size and keeps the graph's static axes."""
+        session = _create_onnx_session(dynamic_batch_onnx_model, providers=["CPUExecutionProvider"])
+        batch = torch.zeros(batch_size, 3, 8, 8)
+
+        actual = _run_onnx_bound(session, "input", batch, session.get_outputs())
+
+        assert [tuple(tensor.shape) for tensor in actual] == [(batch_size, 3), (batch_size, 3, 8, 8)]
+
+    def test_keeps_the_dtype_of_each_output(self, mixed_dtype_onnx_model: Path) -> None:
+        """A float16 input and int64 and float16 outputs bind with their own dtypes and match ``session.run``."""
+        session = _create_onnx_session(mixed_dtype_onnx_model, providers=["CPUExecutionProvider"])
+        batch = torch.arange(2 * 3 * 8 * 8, dtype=torch.float16).reshape(2, 3, 8, 8)
+
+        actual = _run_onnx_bound(session, "input", batch, session.get_outputs())
+
+        expected = session.run(None, {"input": batch.numpy()})
+        assert [tensor.dtype for tensor in actual] == [torch.int64, torch.float16]
+        assert all(torch.equal(tensor, torch.from_numpy(array)) for tensor, array in zip(actual, expected))
 
 
 @_requires_onnx_and_onnxruntime
