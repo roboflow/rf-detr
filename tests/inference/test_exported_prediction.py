@@ -293,7 +293,6 @@ class TestExportedPrediction:
         )
 
     @pytest.mark.gpu
-    @pytest.mark.e2e_tensorrt
     @_requires_onnxruntime_cuda
     def test_cuda_provider_predicts_a_directory_as_the_cpu_provider_does(
         self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path

@@ -1905,36 +1905,35 @@ class TestGpuJpegDecode:
     @pytest.mark.gpu
     @_requires_cuda
     @pytest.mark.parametrize("options", _GPU_JPEGS)
-    def test_gpu_decode_equals_the_cpu_decode(self, tmp_path: Path, options: dict[str, Any]) -> None:
-        """Nvjpeg gives libjpeg's exact pixels for every kind of JPEG file the gate sends to the GPU.
+    def test_gpu_path_gives_the_cpu_pixels(self, tmp_path: Path, options: dict[str, Any]) -> None:
+        """The GPU decode path returns the CPU decoder's exact pixels for every kind of JPEG file the gate sends to it.
 
-        This is the premise of the GPU path; the per-process comparison only checks one file of each kind.
+        nvjpeg itself need not match libjpeg: on a Tesla T4, which has no hardware JPEG decoder, it differed for every
+        chroma subsampling. The first-file comparison then sends that kind back to the CPU, so either way the pixels
+        reaching preprocessing are the CPU decoder's.
         """
         encoded = core._decode_local_image(str(_jpeg_file(tmp_path / "image.jpg", **options)), _CUDA)
 
-        on_gpu = core.decode_jpeg([encoded.data], mode=core.ImageReadMode.RGB, device=_CUDA)[0]
+        (decoded,) = core._decode_jpegs_on_gpu([encoded], _CUDA)
 
-        torch.testing.assert_close(on_gpu.cpu(), core._decode_on_cpu(encoded.data), rtol=0, atol=0)
+        torch.testing.assert_close(decoded.cpu(), core._decode_on_cpu(encoded.data), rtol=0, atol=0)
 
-    def _directory_inputs(
-        self, root: Path, mocker: MockerFixture, samplings: frozenset[int]
-    ) -> tuple[list[torch.Tensor], int]:
-        """Predict a directory of JPEG files on CUDA and return the model's input batches and the nvjpeg call count.
+    def _directory_inputs(self, root: Path, mocker: MockerFixture, samplings: frozenset[int]) -> list[torch.Tensor]:
+        """Predict a directory of JPEG files on CUDA and return the model's input batches.
 
         The example is skipped: it needs a CUDA device.
 
         Examples:
             >>> TestGpuJpegDecode()._directory_inputs(root, mocker, frozenset())  # doctest: +SKIP
-            ([tensor(...)], 0)
+            [tensor(...), ...]
         """
         mocker.patch.object(core, "_GPU_JPEG_SAMPLINGS", samplings)
-        nvjpeg = mocker.spy(core, "decode_jpeg")
         model = _DummyRFDETR()
         model.model.device = _CUDA
         batches: list[torch.Tensor] = []
         model.model.model.register_forward_pre_hook(_record_model_inputs(batches))
         RFDETRInference(model).predict(root, batch=2, include_source_image=False)
-        return [batch.cpu() for batch in batches], nvjpeg.call_count
+        return [batch.cpu() for batch in batches]
 
     @pytest.fixture
     def jpeg_dir(self, tmp_path: Path) -> Path:
@@ -1949,13 +1948,13 @@ class TestGpuJpegDecode:
     @pytest.mark.gpu
     @_requires_cuda
     def test_directory_model_inputs_match_the_cpu_decode(self, jpeg_dir: Path, mocker: MockerFixture) -> None:
-        """A directory of JPEG files reaches the model with the same input whether nvjpeg or libjpeg decoded it.
+        """A directory of JPEG files reaches the model with the same input with the GPU decode path on or off.
 
-        Batches of two make three nvjpeg calls when every kind matches its CPU decode.
+        Whether nvjpeg keeps a kind depends on the GPU (a Tesla T4 sends every kind back to the CPU), so only the model
+        input is asserted, not how many files nvjpeg decoded.
         """
-        on_cpu, _ = self._directory_inputs(jpeg_dir, mocker, frozenset())
+        on_cpu = self._directory_inputs(jpeg_dir, mocker, frozenset())
 
-        on_gpu, nvjpeg_calls = self._directory_inputs(jpeg_dir, mocker, frozenset({0, 1, 2}))
+        on_gpu = self._directory_inputs(jpeg_dir, mocker, frozenset({0, 1, 2}))
 
-        assert nvjpeg_calls == 3
         torch.testing.assert_close(on_gpu, on_cpu, rtol=0, atol=0)

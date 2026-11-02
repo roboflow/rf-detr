@@ -7,7 +7,6 @@
 
 import threading
 import weakref
-from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -276,21 +275,6 @@ class TestModelInferenceCompile:
         assert torch.equal(first[1], first_input * 2)
         assert torch.equal(second[0], second_input + 1)
         assert torch.equal(second[1], second_input * 2)
-
-    @pytest.fixture
-    def nondeterministic_algorithms(self) -> Generator[None, None, None]:
-        """Turn deterministic algorithms off for one test, restoring the previous mode afterwards.
-
-        The autouse ``reset_random_seeds`` fixture enables them, which routes CUDA ``F.interpolate`` through a
-        decomposition that fails under ``torch.jit.trace`` (its sizes become CPU tensors).
-        """
-        enabled = torch.are_deterministic_algorithms_enabled()
-        warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-        torch.use_deterministic_algorithms(False)
-        try:
-            yield
-        finally:
-            torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
 
     @pytest.mark.gpu
     @pytest.mark.usefixtures("nondeterministic_algorithms")

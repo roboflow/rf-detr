@@ -28,8 +28,9 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    # Real CPU training tests take longer on macOS; the 3.10 row reached 98% before the 25-minute cap.
-    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 30 || 25 }}
+    # Real CPU training tests take longer on macOS; the 3.10 row reached 98% before the 25-minute cap, and later 89%
+    # before the 30-minute one on a runner about 30% slower than usual.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix:

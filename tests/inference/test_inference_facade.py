@@ -903,6 +903,7 @@ class TestDefaultCompileBackend:
 
     @pytest.mark.gpu
     @_requires_cuda
+    @pytest.mark.usefixtures("nondeterministic_algorithms")
     @pytest.mark.parametrize(
         "model_type,result_type",
         [
