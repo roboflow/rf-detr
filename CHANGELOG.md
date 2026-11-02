@@ -161,7 +161,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- `inference()` on a CUDA segmentation model no longer fails with "Expected all tensors to be on the same device, but got max is on cpu" after `torch.use_deterministic_algorithms(True)`, for example through `seed_all()`. In that mode CUDA `F.interpolate` takes a decomposition that `torch.jit.trace` cannot record, so the trace now records with the mode off and restores it afterwards; the predictor keeps the native upsampling kernel, whose forward pass is deterministic.
+- `inference()` on a CUDA segmentation model no longer fails with "Expected all tensors to be on the same device, but got max is on cpu" after `torch.use_deterministic_algorithms(True)`, for example through `seed_all()`. In that mode CUDA `F.interpolate` takes a backward-determinism decomposition that `torch.jit.trace` cannot record, so the prediction snapshot uses native upsampling without changing process-wide deterministic settings.
 
 - In segmentation data pipelines, Albumentations geometric transforms (rotation, non-rigid warps, translation) now recompute tight target bounding boxes directly from the transformed masks and drop instances whose masks become empty, eliminating ground-truth mask/box misalignment and ghost boxes during segmentation training. ([#1658](https://github.com/roboflow/rf-detr/issues/1658))
 

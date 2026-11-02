@@ -22,6 +22,7 @@ from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr import detr as detr_module
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
+from rfdetr.models.heads.segmentation import SegmentationHead
 from tests._markers import _requires_two_cuda_devices
 
 from .helpers import _DummyRFDETR
@@ -101,8 +102,7 @@ class _FailingModule(torch.nn.Module):
 class _BlockingModule(torch.nn.Module):
     """Module whose forward pass signals that it runs, then waits a short while for another event.
 
-    Two of them hold two traces open at once in the order a test chooses. The wait has a timeout, so a trace that the
-    code under test serializes does not deadlock: it waits out the timeout and finishes.
+    The timeout keeps a failed synchronization from leaving the tracing thread blocked indefinitely.
     """
 
     def __init__(self, running: threading.Event, wait_for: threading.Event) -> None:
@@ -112,7 +112,7 @@ class _BlockingModule(torch.nn.Module):
         self.wait_for = wait_for
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        """Set ``running``, wait up to half a second for ``wait_for`` and return ``value`` unchanged.
+        """Set ``running``, wait for ``wait_for`` and return ``value`` unchanged.
 
         Examples:
             >>> done = threading.Event()
@@ -122,7 +122,7 @@ class _BlockingModule(torch.nn.Module):
             ([0.0], True)
         """
         self.running.set()
-        self.wait_for.wait(timeout=0.5)
+        assert self.wait_for.wait(timeout=10), "trace was not released"
         return value
 
 
@@ -284,7 +284,7 @@ class TestModelInferenceCudaDeviceContext:
 
 
 class TestTraceForPrediction:
-    """``inference()`` traces its snapshot with deterministic algorithms off and leaves the caller's mode as it was."""
+    """Tracing preserves process-wide deterministic settings."""
 
     @pytest.fixture(autouse=True)
     def _restore_deterministic_mode(self) -> Iterator[None]:
@@ -293,23 +293,32 @@ class TestTraceForPrediction:
 
         enabled = torch.are_deterministic_algorithms_enabled()
         warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-        inductor_deterministic = inductor_config.deterministic
+        inductor_deterministic = getattr(inductor_config, "deterministic", None)
         yield
         torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
-        inductor_config.deterministic = inductor_deterministic
+        if inductor_deterministic is not None:
+            inductor_config.deterministic = inductor_deterministic
 
-    def test_records_with_deterministic_algorithms_off(self) -> None:
-        """The forward pass the trace records runs with deterministic algorithms off, even when the caller enabled them.
-
-        With the mode on, CUDA ``F.interpolate`` takes a decomposition that fails under ``torch.jit.trace``, which
-        crashed ``inference()`` for a segmentation model after ``seed_all()``.
-        """
+    def test_trace_preserves_deterministic_mode_during_forward(self) -> None:
+        """Tracing must not disable deterministic enforcement for other process threads."""
         torch.use_deterministic_algorithms(True)
         probe = _DeterministicModeProbe()
 
         detr_module._trace_for_prediction(probe, torch.zeros(1))
 
-        assert set(probe.seen) == {False}
+        assert set(probe.seen) == {True}
+
+    def test_trace_does_not_require_inductor_deterministic_option(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Tracing works on supported PyTorch versions without Inductor's private option."""
+        import torch._inductor.config as inductor_config
+
+        torch.use_deterministic_algorithms(True)
+        monkeypatch.delattr(inductor_config, "deterministic", raising=False)
+
+        traced = detr_module._trace_for_prediction(torch.nn.Identity(), torch.zeros(1))
+
+        assert torch.equal(traced(torch.ones(1)), torch.ones(1))
+        assert not hasattr(inductor_config, "deterministic")
 
     @pytest.mark.parametrize(
         ("enabled", "warn_only"),
@@ -342,43 +351,49 @@ class TestTraceForPrediction:
 
         assert torch.are_deterministic_algorithms_enabled()
 
-    @pytest.mark.parametrize("enabled", [True, False])
-    def test_keeps_inductors_own_deterministic_setting(self, enabled: bool) -> None:
-        """Inductor's ``deterministic`` setting, which ``TORCHINDUCTOR_DETERMINISTIC=1`` turns on by itself, survives.
-
-        Turning deterministic algorithms off also clears it, so restoring only the global mode lost it.
-        """
+    def test_keeps_inductors_own_deterministic_setting(self) -> None:
+        """Tracing leaves Inductor's optional deterministic setting unchanged."""
         import torch._inductor.config as inductor_config
 
-        torch.use_deterministic_algorithms(enabled)
-        inductor_config.deterministic = not enabled
+        torch.use_deterministic_algorithms(True)
+        before = getattr(inductor_config, "deterministic", None)
 
         detr_module._trace_for_prediction(_DeterministicModeProbe(), torch.zeros(1))
 
-        assert inductor_config.deterministic is (not enabled)
+        assert getattr(inductor_config, "deterministic", None) == before
 
-    def test_overlapping_traces_leave_the_callers_mode_on(self) -> None:
-        """A trace that starts while another records still restores the mode the caller set, not the other's "off".
-
-        Without serialization, the second trace saved "off", the first restored "on", and the second then restored "off"
-        for the rest of the process.
-        """
+    def test_external_mode_change_during_trace_is_not_overwritten(self) -> None:
+        """A concurrent caller's mode change survives the trace."""
         torch.use_deterministic_algorithms(True)
-        first_recording = threading.Event()
-        second_recording = threading.Event()
-        first_done = threading.Event()
+        recording = threading.Event()
+        release = threading.Event()
 
-        def trace_first() -> None:
-            detr_module._trace_for_prediction(_BlockingModule(first_recording, second_recording), torch.zeros(1))
-            first_done.set()
+        def trace() -> None:
+            detr_module._trace_for_prediction(_BlockingModule(recording, release), torch.zeros(1))
 
-        first = threading.Thread(target=trace_first)
-        first.start()
-        first_recording.wait(timeout=10)
-        detr_module._trace_for_prediction(_BlockingModule(second_recording, first_done), torch.zeros(1))
-        first.join(timeout=10)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker = executor.submit(trace)
+            try:
+                assert recording.wait(timeout=10)
+                assert torch.are_deterministic_algorithms_enabled()
+                torch.use_deterministic_algorithms(False)
+            finally:
+                release.set()
+            worker.result(timeout=10)
 
-        assert torch.are_deterministic_algorithms_enabled()
+        assert not torch.are_deterministic_algorithms_enabled()
+
+    def test_native_prediction_upsample_matches_export_head(self) -> None:
+        """The snapshot's native resize preserves the exported segmentation head's output."""
+        head = SegmentationHead(in_dim=4, num_blocks=1).eval()
+        spatial = torch.randn(1, 4, 3, 3)
+        queries = [torch.randn(1, 2, 4)]
+        expected = head.forward_export(spatial, queries, (24, 24))
+        head._native_prediction_upsample = True
+
+        actual = head.forward_export(spatial, queries, (24, 24))
+
+        torch.testing.assert_close(actual[0], expected[0], rtol=0, atol=0)
 
 
 class TestModelInferenceCompile:

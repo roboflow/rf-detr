@@ -243,7 +243,6 @@ _CHECKPOINT_PLUS_STEM_ENTRIES: tuple[tuple[str, str], ...] = (
 #: Guards :data:`_MODULE_MOVE_LOCKS` itself, never a move. Held only long enough to hand out one module's lock, so
 #: that two threads reaching a never-moved module together cannot create two different locks over its storage.
 _LOCK_REGISTRY_LOCK = threading.Lock()
-_TRACE_DETERMINISM_LOCK = threading.Lock()
 
 #: One move lock per module, keyed by the module object. Overlapping in-place ``nn.Module.to()`` calls on one module
 #: race on its parameter storage and can leave corrupted weights behind without raising — and that storage is what
@@ -313,16 +312,7 @@ def _default_compile_backend(device: torch.device) -> Literal["torchscript", "cu
 
 
 def _trace_for_prediction(module: torch.nn.Module, example_input: torch.Tensor) -> torch.jit.ScriptModule:
-    """Trace a prediction model with deterministic algorithms off while the trace records.
-
-    With ``torch.use_deterministic_algorithms(True)``, ``F.interpolate`` on CUDA runs a Python decomposition whose only
-    purpose is a deterministic backward pass. ``torch.jit.trace`` records the sizes it computes as CPU tensors, and the
-    decomposition then fails (a ``clamp`` with a ``max`` on the CPU) in the segmentation head. Recorded with the mode
-    off, the trace keeps the native upsampling kernel, whose forward pass is deterministic; a predictor never runs
-    backward. Every kernel still checks the mode when it runs. The mode is process-wide, so it is off for every thread
-    while the trace records, and the previous mode is restored afterwards. A lock keeps two traces from restoring out
-    of order, and Inductor's own ``deterministic`` setting, which turning the mode off also clears, is restored too.
-    With the mode already off nothing global changes.
+    """Trace a prediction model without changing the caller's deterministic settings.
 
     Args:
         module: The model to trace.
@@ -336,20 +326,7 @@ def _trace_for_prediction(module: torch.nn.Module, example_input: torch.Tensor) 
         >>> traced(torch.ones(1, 3, 2, 2)).shape
         torch.Size([1, 3, 2, 2])
     """
-    # torch.use_deterministic_algorithms imports this config itself; importing it here adds no startup cost.
-    import torch._inductor.config as inductor_config
-
-    with _TRACE_DETERMINISM_LOCK:
-        if not torch.are_deterministic_algorithms_enabled():
-            return cast("torch.jit.ScriptModule", torch.jit.trace(module, example_input))  # type: ignore[no-untyped-call]
-        warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-        inductor_deterministic = inductor_config.deterministic
-        torch.use_deterministic_algorithms(False)
-        try:
-            return cast("torch.jit.ScriptModule", torch.jit.trace(module, example_input))  # type: ignore[no-untyped-call]
-        finally:
-            torch.use_deterministic_algorithms(True, warn_only=warn_only)
-            inductor_config.deterministic = inductor_deterministic
+    return cast("torch.jit.ScriptModule", torch.jit.trace(module, example_input))  # type: ignore[no-untyped-call]
 
 
 def _device_move_lock(module: Any) -> threading.Lock:
@@ -1886,6 +1863,10 @@ class RFDETR:
                     dtype=dtype,
                 )
                 if compile_backend in ("torchscript", "cudagraph"):
+                    if device.type != "cpu" and getattr(inference_model, "segmentation_head", None) is not None:
+                        # The owned prediction snapshot never runs backward. Its native upsample avoids the
+                        # deterministic-backward decomposition that TorchScript cannot trace on accelerators.
+                        inference_model.segmentation_head._native_prediction_upsample = True
                     inference_model = _trace_for_prediction(inference_model, dummy_input)
                     if compile_backend == "cudagraph":
                         # The existing CUDA parity/latency measurements use a frozen trace; retain that capture path.
