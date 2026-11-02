@@ -162,6 +162,9 @@ _GPU_JPEG_SAMPLINGS = frozenset({0, 1, 2})
 #: both run the first comparison; both then record the same result.
 _GPU_JPEG_MATCHES: dict[tuple[int | None, int], bool] = {}
 
+#: The stream each CUDA device index decodes JPEG files on, used for nothing else; see :func:`_decode_on_own_stream`.
+_GPU_JPEG_STREAMS: dict[int | None, torch.cuda.Stream] = {}
+
 
 @dataclass(frozen=True)
 class _EncodedJpeg:
@@ -250,6 +253,55 @@ def _decode_one_on_gpu(item: _EncodedJpeg, device: torch.device) -> torch.Tensor
         return None
 
 
+def _decode_with_nvjpeg(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
+    """Decode files with nvjpeg in one call, or one at a time when that call fails.
+
+    Args:
+        encoded: Files :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        For each file, in order, its RGB ``uint8`` CHW image on ``device``, or ``None`` when nvjpeg refused it.
+    """
+    try:
+        return list(decode_jpeg([item.data for item in encoded], mode=ImageReadMode.RGB, device=device))
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        # nvjpeg returns nothing when one file fails, so decode them one at a time: a corrupt file then falls back
+        # alone.
+        return [_decode_one_on_gpu(item, device) for item in encoded]
+
+
+def _decode_on_own_stream(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
+    """Run :func:`_decode_with_nvjpeg` on a stream of its own and hand its images to the caller's current stream.
+
+    torchvision allocates nvjpeg's outputs on the caller's current stream but writes them from a stream of its own
+    that does not wait for the caller's. The allocator can then hand it memory the current stream has freed but still
+    reads, such as the input of a forward pass still running, and the decode overwrites it. Allocated on a stream that
+    runs nothing else, the outputs share no memory with work queued on the current stream; that stream then waits for
+    the decode, and each output stays allocated until the current stream's work queued before its release is done.
+    Only torchvision allocates on that stream, and it waits for its own earlier writes before writing again, so writes
+    an nvjpeg error leaves queued land in memory nothing else reads.
+
+    Args:
+        encoded: Files :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        For each file, in order, its RGB ``uint8`` CHW image on ``device``, or ``None`` when nvjpeg refused it.
+    """
+    consumer = torch.cuda.current_stream(device)
+    decode_stream = _GPU_JPEG_STREAMS.get(device.index)
+    if decode_stream is None:
+        decode_stream = _GPU_JPEG_STREAMS.setdefault(device.index, torch.cuda.Stream(device))  # type: ignore[no-untyped-call]
+    with torch.cuda.stream(decode_stream):
+        decoded = _decode_with_nvjpeg(encoded, device)
+    consumer.wait_stream(decode_stream)
+    for image in decoded:
+        if image is not None:
+            image.record_stream(consumer)
+    return decoded
+
+
 def _decode_jpegs_on_gpu(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
     """Decode a batch's encoded JPEG files on the GPU in one nvjpeg call, keeping the CPU decoder's pixels.
 
@@ -266,18 +318,12 @@ def _decode_jpegs_on_gpu(encoded: list[_EncodedJpeg], device: torch.device) -> l
         For each file, in order, its RGB ``uint8`` CHW image on ``device``, or on the CPU when it decoded there, or
         ``None`` when the caller should open it with Pillow.
     """
-    try:
-        decoded: list[torch.Tensor | None] = list(
-            decode_jpeg([item.data for item in encoded], mode=ImageReadMode.RGB, device=device)
-        )
-    except (RuntimeError, DeprecationWarning, AttributeError):
-        # nvjpeg returns nothing when one file fails, so decode them one at a time: a corrupt file then falls back
-        # alone, while an error from every file (a torchvision without nvjpeg) turns the GPU path off for these kinds.
-        decoded = [_decode_one_on_gpu(item, device) for item in encoded]
-        if all(image is None for image in decoded):
-            for item in encoded:
-                _GPU_JPEG_MATCHES[(device.index, item.sampling)] = False
-            logger.info("Decoding JPEG files on the CPU: the GPU decoder failed on every file of a batch.")
+    decoded = _decode_on_own_stream(encoded, device)
+    if all(image is None for image in decoded):
+        # An error from every file (a torchvision without nvjpeg) turns the GPU path off for these kinds.
+        for item in encoded:
+            _GPU_JPEG_MATCHES[(device.index, item.sampling)] = False
+        logger.info("Decoding JPEG files on the CPU: the GPU decoder failed on every file of a batch.")
     images: list[torch.Tensor | None] = []
     for item, on_gpu in zip(encoded, decoded):
         key = (device.index, item.sampling)

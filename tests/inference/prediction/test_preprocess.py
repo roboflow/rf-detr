@@ -1750,6 +1750,11 @@ class TestGpuJpegDecode:
         """Start every test with no recorded GPU-versus-CPU comparison."""
         monkeypatch.setattr(core, "_GPU_JPEG_MATCHES", {})
 
+    @pytest.fixture
+    def _decode_on_the_current_stream(self, mocker: MockerFixture) -> None:
+        """Skip the hop to the decode stream, which needs CUDA, so the CPU tests reach the nvjpeg calls they mock."""
+        mocker.patch.object(core, "_decode_on_own_stream", side_effect=core._decode_with_nvjpeg)
+
     @pytest.mark.parametrize("options", _GPU_JPEGS)
     def test_baseline_colour_jpeg_stays_encoded(self, tmp_path: Path, options: dict[str, Any]) -> None:
         """A baseline YCbCr JPEG is only read and checked by the worker, keeping its chroma subsampling.
@@ -1809,6 +1814,7 @@ class TestGpuJpegDecode:
 
         assert isinstance(result, core._EncodedJpeg)
 
+    @pytest.mark.usefixtures("_decode_on_the_current_stream")
     def test_matching_gpu_pixels_are_kept(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """When the first GPU decode of a kind equals the CPU decode, the GPU tensor is used and the match recorded."""
         encoded = core._decode_local_image(str(_jpeg_file(tmp_path / "image.jpg")), _CUDA)
@@ -1819,6 +1825,7 @@ class TestGpuJpegDecode:
 
         assert (images[0] is on_gpu, core._GPU_JPEG_MATCHES) == (True, {(0, 2): True})
 
+    @pytest.mark.usefixtures("_decode_on_the_current_stream")
     def test_differing_gpu_pixels_fall_back_to_the_cpu_decode(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """When the first GPU decode of a kind differs, the CPU pixels are returned and the kind recorded as differing.
 
@@ -1832,6 +1839,7 @@ class TestGpuJpegDecode:
 
         assert (torch.equal(images[0], on_cpu), core._GPU_JPEG_MATCHES) == (True, {(0, 2): False})
 
+    @pytest.mark.usefixtures("_decode_on_the_current_stream")
     def test_nvjpeg_error_decodes_the_batch_on_the_cpu(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """An nvjpeg error decodes every file of the batch on the CPU and keeps later files of those kinds there.
 
@@ -1848,6 +1856,7 @@ class TestGpuJpegDecode:
             {(0, 0): False, (0, 2): False},
         )
 
+    @pytest.mark.usefixtures("_decode_on_the_current_stream")
     def test_one_refused_file_falls_back_alone(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A file nvjpeg refuses decodes on the CPU alone; the rest of its batch stays on the GPU path.
 
@@ -1917,6 +1926,26 @@ class TestGpuJpegDecode:
         (decoded,) = core._decode_jpegs_on_gpu([encoded], _CUDA)
 
         torch.testing.assert_close(decoded.cpu(), core._decode_on_cpu(encoded.data), rtol=0, atol=0)
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    def test_decode_leaves_memory_the_current_stream_still_reads(self, tmp_path: Path) -> None:
+        """The GPU decode does not write into memory the current stream freed while work queued on it still reads it.
+
+        torchvision allocates nvjpeg's output on the caller's stream and writes it from its own stream, which does not
+        wait. A tensor of the decoded image's size is freed while a copy of it waits behind a busy stream, as a batch's
+        input is freed while its forward pass is still queued; allocated there, the decode overwrote it before the copy
+        ran (garbage and NaN in the model input of a CI run).
+        """
+        encoded = core._decode_local_image(str(_jpeg_file(tmp_path / "image.jpg", size=(64, 48))), _CUDA)
+        freed = torch.full((3, 48, 64), 7, dtype=torch.uint8, device=_CUDA)
+        torch.cuda._sleep(2_000_000_000)
+        copy = freed.clone()
+        del freed
+
+        core._decode_jpegs_on_gpu([encoded], _CUDA)
+
+        torch.testing.assert_close(copy.cpu(), torch.full((3, 48, 64), 7, dtype=torch.uint8), rtol=0, atol=0)
 
     def _directory_inputs(self, root: Path, mocker: MockerFixture, samplings: frozenset[int]) -> list[torch.Tensor]:
         """Predict a directory of JPEG files on CUDA and return the model's input batches.
