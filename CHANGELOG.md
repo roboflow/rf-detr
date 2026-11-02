@@ -72,6 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - With ONNX Runtime's CUDA execution provider, `RFDETRInference` preprocesses each batch on the GPU and hands it, and freshly allocated outputs, to ONNX Runtime through IO binding instead of copying both through host memory. It keeps the host path when PyTorch cannot see the GPU or an output has a dynamic axis other than the batch. The CPU provider is unchanged.
 
+- On a CUDA device and with `include_source_image=False`, `RFDETRInference.predict()` decodes the baseline color JPEG files of a directory, glob, manifest or batched list on the GPU with nvjpeg, one call per batch, instead of on CPU worker threads. The first file of each chroma subsampling is compared with the CPU decode, and a difference or an nvjpeg error sends that kind of file back to the CPU decoder for the rest of the process, so the model input stays byte-identical. Grayscale, CMYK, progressive and PNG files, and every other device, decode on the CPU as before.
+
 - On MPS, `RFDETRInference("weights.pth")` (or a `.pt` or `.ckpt` path) applies the same model rewrites as `RFDETR.inference()` to the model it loads: fused deformable sampling and LayerScale folded into the Linear before it. Predictions match the unmodified checkpoint to float rounding, not bit for bit. A live model passed to `RFDETRInference` is never rewritten.
 
 - Exported runtimes, such as Core ML or ONNX Runtime, now decode the next batch of image files on worker threads while the current batch runs, like native models on an accelerator; a native model on the CPU still decodes inline. Results are unchanged.

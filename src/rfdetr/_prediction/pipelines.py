@@ -117,7 +117,9 @@ def _predict_stream(
     finite = may_run_ahead and has_only_finite_images(images)
     decode_ahead = num_channels == 3 and not native_on_cpu and finite
     pool = ThreadPoolExecutor(_DECODE_WORKERS, thread_name_prefix="rfdetr-decode") if decode_ahead else None
-    batches = source_batches if pool is None else _decode_ahead(source_batches, pool)
+    # On CUDA, suitable JPEG files decode on the GPU with their batch; a kept source image needs host pixels anyway.
+    gpu_device = context.device if on_cuda and not include_source_image else None
+    batches = source_batches if pool is None else _decode_ahead(source_batches, pool, gpu_device)
     try:
         if prepare_ahead and on_cuda and finite:
             prepare = functools.partial(
@@ -149,7 +151,7 @@ _DECODE_WORKERS = 4
 
 
 def _decode_ahead(
-    source_batches: Iterator[list[_ImageInput]], pool: ThreadPoolExecutor
+    source_batches: Iterator[list[_ImageInput]], pool: ThreadPoolExecutor, gpu_device: torch.device | None = None
 ) -> Generator[list[_ImageInput | _PrefetchedImage], None, None]:
     """Yield each batch after reading ahead from the source and submitting the file decodes of what it read.
 
@@ -162,6 +164,8 @@ def _decode_ahead(
     Args:
         source_batches: Batches from :func:`~rfdetr._prediction.sources.iter_source_batches`.
         pool: Executor running :func:`_decode_local_image`.
+        gpu_device: The CUDA device the batches decode suitable JPEG files on; their workers then only read and
+            check those files (see :func:`_decode_local_image`).
 
     Yields:
         The source's batches, in order, with their local image files decoding in ``pool``.
@@ -178,7 +182,7 @@ def _decode_ahead(
         for item in image_batch:
             if isinstance(item, (str, os.PathLike)) and urlparse(os.fspath(item)).scheme not in ("http", "https"):
                 path = os.fspath(item)
-                scheduled.append(_PrefetchedImage(path, pool.submit(_decode_local_image, path)))
+                scheduled.append(_PrefetchedImage(path, pool.submit(_decode_local_image, path, gpu_device)))
             else:
                 scheduled.append(item)
         return scheduled

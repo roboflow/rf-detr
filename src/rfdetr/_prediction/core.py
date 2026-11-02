@@ -12,7 +12,7 @@ import io
 import operator
 import os
 import re
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,12 +23,12 @@ import numpy as np
 import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
-from PIL import Image
+from PIL import Image, JpegImagePlugin
 
 try:
     # torchvision 0.29 deprecated these codecs for removal in favour of TorchCodec. Once they are gone, local files
     # passed to predict() decode through Pillow instead of ``import rfdetr`` failing.
-    from torchvision.io import ImageReadMode, decode_image
+    from torchvision.io import ImageReadMode, decode_image, decode_jpeg
 
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = True
 except ImportError:
@@ -153,8 +153,130 @@ def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
 #: height (4 bytes each).
 _PNG_BIT_DEPTH_OFFSET = 24
 
+#: Pillow's chroma subsampling codes for the JPEG files the GPU may decode: 4:4:4, 4:2:2 and 4:2:0.
+_GPU_JPEG_SAMPLINGS = frozenset({0, 1, 2})
 
-def _decode_local_image(path: str) -> torch.Tensor | None:
+#: Whether the GPU decode gave the CPU decoder's exact pixels for this process's first JPEG of each (CUDA device index,
+#: chroma subsampling). nvjpeg picks a hardware or a CUDA decoder by GPU, so the comparison runs once per process and
+#: device, not once per release. ``False`` sends every later JPEG of that kind back to the CPU decoder. Two threads may
+#: both run the first comparison; both then record the same result.
+_GPU_JPEG_MATCHES: dict[tuple[int | None, int], bool] = {}
+
+
+@dataclass(frozen=True)
+class _EncodedJpeg:
+    """A JPEG file read and header-checked ahead of its batch, left for the GPU to decode with the rest of the batch.
+
+    Attributes:
+        data: The file's bytes, as the one-dimensional ``uint8`` CPU tensor :func:`~torchvision.io.decode_jpeg` reads.
+        sampling: Its chroma subsampling, as Pillow reports it; one of :data:`_GPU_JPEG_SAMPLINGS`.
+    """
+
+    data: torch.Tensor
+    sampling: int
+
+
+def _decodes_on_gpu(header: Image.Image, device: torch.device) -> bool:
+    """Tell whether a JPEG file's header lets the GPU decode it to the pixels the CPU decoder gives.
+
+    Only baseline colour JPEGs with 4:4:4, 4:2:2 or 4:2:0 chroma qualify. Grayscale, CMYK and RGB-coded Adobe files
+    convert colour in steps nvjpeg need not share with libjpeg, and progressive files take nvjpeg's slower
+    host-assisted decoder. A kind that :data:`_GPU_JPEG_MATCHES` records as differing on ``device`` stays on the CPU.
+
+    Args:
+        header: The file, opened by Pillow; only its header has been read.
+        device: The CUDA device that would decode it.
+
+    Returns:
+        Whether to leave the file encoded for :func:`_decode_jpegs_on_gpu`.
+
+    Examples:
+        >>> buffer = io.BytesIO()
+        >>> Image.new("RGB", (16, 16)).save(buffer, "JPEG")
+        >>> _decodes_on_gpu(Image.open(buffer), torch.device("cuda", 0))
+        True
+        >>> Image.new("RGB", (16, 16)).save(buffer := io.BytesIO(), "JPEG", progressive=True)
+        >>> _decodes_on_gpu(Image.open(buffer), torch.device("cuda", 0))
+        False
+    """
+    if header.format != "JPEG" or header.mode != "RGB" or header.info.get("progressive"):
+        return False
+    # An Adobe marker with transform 0 means the components are R, G and B, not Y, Cb and Cr.
+    if header.info.get("adobe_transform") == 0:
+        return False
+    sampling = JpegImagePlugin.get_sampling(header)
+    return sampling in _GPU_JPEG_SAMPLINGS and _GPU_JPEG_MATCHES.get((device.index, sampling), True)
+
+
+def _decode_on_cpu(data: torch.Tensor) -> torch.Tensor | None:
+    """Decode a JPEG or PNG file's bytes into RGB ``uint8`` CHW storage on the CPU.
+
+    Args:
+        data: The file's bytes, as a one-dimensional ``uint8`` CPU tensor.
+
+    Returns:
+        The decoded image, or ``None`` when the caller should open the file with Pillow.
+
+    Examples:
+        >>> buffer = io.BytesIO()
+        >>> Image.new("RGB", (5, 3), (10, 20, 30)).save(buffer, "PNG")
+        >>> _decode_on_cpu(torch.frombuffer(buffer.getbuffer(), dtype=torch.uint8)).shape
+        torch.Size([3, 3, 5])
+    """
+    try:
+        decoded = decode_image(data, mode=ImageReadMode.RGB)
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        # torchvision raises RuntimeError for bytes it cannot decode, and torch raises AttributeError when the image
+        # operators were not loaded. torchvision 0.29+ also warns on every call that its codecs are deprecated, which
+        # ``-W error`` turns into a raised DeprecationWarning.
+        return None
+    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
+    return decoded if decoded.dtype == torch.uint8 else None
+
+
+def _decode_jpegs_on_gpu(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
+    """Decode a batch's encoded JPEG files on the GPU in one nvjpeg call, keeping the CPU decoder's pixels.
+
+    The first file of each chroma subsampling on ``device`` is also decoded on the CPU and compared, and the result is
+    recorded in :data:`_GPU_JPEG_MATCHES`. A file whose kind differs, or a batch nvjpeg refuses (a corrupt file the CPU
+    decoder tolerates, a torchvision without nvjpeg), decodes on the CPU, and later files of those kinds decode on the
+    CPU ahead of their batch, as without this path.
+
+    Args:
+        encoded: Files :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        For each file, in order, its RGB ``uint8`` CHW image on ``device``, or on the CPU when it decoded there, or
+        ``None`` when the caller should open it with Pillow.
+    """
+    try:
+        decoded = decode_jpeg([item.data for item in encoded], mode=ImageReadMode.RGB, device=device)
+    except (RuntimeError, DeprecationWarning, AttributeError) as error:
+        for item in encoded:
+            _GPU_JPEG_MATCHES[(device.index, item.sampling)] = False
+        logger.info(f"Decoding JPEG files on the CPU: the GPU decoder failed ({error}).")
+        return [_decode_on_cpu(item.data) for item in encoded]
+    images: list[torch.Tensor | None] = []
+    for item, on_gpu in zip(encoded, decoded):
+        key = (device.index, item.sampling)
+        if key not in _GPU_JPEG_MATCHES:
+            on_cpu = _decode_on_cpu(item.data)
+            _GPU_JPEG_MATCHES[key] = on_cpu is not None and torch.equal(on_gpu.cpu(), on_cpu)
+            if not _GPU_JPEG_MATCHES[key]:
+                logger.info(
+                    f"Decoding JPEG files with chroma subsampling {item.sampling} on the CPU: the GPU decoder "
+                    "gave different pixels on this device."
+                )
+            images.append(on_gpu if _GPU_JPEG_MATCHES[key] else on_cpu)
+        elif _GPU_JPEG_MATCHES[key]:
+            images.append(on_gpu)
+        else:
+            images.append(_decode_on_cpu(item.data))
+    return images
+
+
+def _decode_local_image(path: str, gpu_device: torch.device | None = None) -> torch.Tensor | _EncodedJpeg | None:
     """Decode a local JPEG or PNG directly into RGB ``uint8`` CHW storage.
 
     Pillow remains the compatibility path for every other format and for files that torchvision
@@ -177,11 +299,18 @@ def _decode_local_image(path: str) -> torch.Tensor | None:
     route them through ``logging``, and redirecting file descriptor 2 would affect the whole process,
     so they are left as is.
 
+    With ``gpu_device``, a JPEG file whose header passes :func:`_decodes_on_gpu` is only read and checked here: the
+    batch decodes it on that device with the rest of its JPEG files (:func:`_decode_jpegs_on_gpu`), which takes the
+    CPU decode off the worker threads and the copy of the decoded pixels off the bus.
+
     Args:
         path: Local image path.
+        gpu_device: The CUDA device the batch will decode suitable JPEG files on, or ``None`` to decode every file
+            here.
 
     Returns:
-        An RGB ``uint8`` CHW tensor, or ``None`` when the caller should use Pillow.
+        An RGB ``uint8`` CHW tensor, the file's bytes as an :class:`_EncodedJpeg` for the GPU, or ``None`` when the
+        caller should use Pillow.
 
     Raises:
         Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
@@ -199,18 +328,16 @@ def _decode_local_image(path: str) -> torch.Tensor | None:
             # rejected below, so read the bit depth first rather than pay for a full decode.
             if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
                 return None
-        # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
-        # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
-        decoded = decode_image(torch.frombuffer(stream.getbuffer(), dtype=torch.uint8), mode=ImageReadMode.RGB)
-    except (OSError, RuntimeError, DeprecationWarning, AttributeError):
-        # A missing or unreadable path and bytes Pillow cannot identify raise OSError, torchvision raises RuntimeError
-        # for bytes it cannot decode, and torch raises AttributeError when the image operators were not loaded.
-        # torchvision 0.29+ also warns on every call that its codecs are deprecated, which ``-W error`` turns into a
-        # raised DeprecationWarning. The caller then opens the path with Pillow, which reports each of those cases
-        # with its usual error.
+            on_gpu = gpu_device is not None and _decodes_on_gpu(header, gpu_device)
+            sampling = JpegImagePlugin.get_sampling(header) if on_gpu else -1
+    except OSError:
+        # A missing or unreadable path and bytes Pillow cannot identify raise OSError. The caller then opens the path
+        # with Pillow, which reports it with its usual error.
         return None
-    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
-    return decoded if decoded.dtype == torch.uint8 else None
+    # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
+    # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
+    data = torch.frombuffer(stream.getbuffer(), dtype=torch.uint8)
+    return _EncodedJpeg(data, sampling) if on_gpu else _decode_on_cpu(data)
 
 
 def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
@@ -634,7 +761,37 @@ class _PrefetchedImage:
     """
 
     path: str
-    decoded: Future[torch.Tensor | None]
+    decoded: Future[torch.Tensor | _EncodedJpeg | None]
+
+
+def _decode_prefetched_jpegs(images: Sequence[Any], device: torch.device) -> dict[int, torch.Tensor | None]:
+    """Decode on ``device`` the batch's JPEG files that the read-ahead left encoded for the GPU.
+
+    On a CUDA device, waits for every prefetched entry of the batch, then decodes the encoded ones in one
+    :func:`_decode_jpegs_on_gpu` call. Other devices return at once, so their batch keeps preparing each image as soon
+    as its own decode is done.
+
+    Args:
+        images: The batch's entries.
+        device: The context device; entries are only left encoded when it is a CUDA device.
+
+    Returns:
+        The decoded image (``None`` for Pillow) of each entry that was left encoded, keyed by its index in ``images``.
+
+    Examples:
+        >>> _decode_prefetched_jpegs(["a.jpg", np.zeros((2, 2, 3), np.uint8)], torch.device("cpu"))
+        {}
+    """
+    if device.type != "cuda":
+        return {}
+    encoded = {
+        index: result
+        for index, item in enumerate(images)
+        if isinstance(item, _PrefetchedImage) and isinstance(result := item.decoded.result(), _EncodedJpeg)
+    }
+    if not encoded:
+        return {}
+    return dict(zip(encoded, _decode_jpegs_on_gpu(list(encoded.values()), device)))
 
 
 @torch.inference_mode()
@@ -782,6 +939,8 @@ def _prepare_batch(
     if not isinstance(images, (list, tuple)):
         # ``_as_collection`` already read every other iterable into a list, so this is one image.
         images = [cast("_ImageInput", images)]
+    # The batch's JPEG files left encoded for the GPU decode in one nvjpeg call rather than one call per image.
+    gpu_decoded = _decode_prefetched_jpegs(images, context.device)
 
     orig_sizes: list[Any] = []
     processed_images: list[Any] = []
@@ -812,10 +971,10 @@ def _prepare_batch(
     resize_on_cpu = antialias and context.device.type == "mps" and _mps_lacks_antialiased_resize()
     preprocess_device = torch.device("cpu") if resize_on_cpu else context.device
 
-    for img_input in images:
+    for index, img_input in enumerate(images):
         img: Any = img_input
         decoded_local_file = False
-        prefetched: Future[torch.Tensor | None] | None = None
+        prefetched: Future[torch.Tensor | _EncodedJpeg | None] | None = None
         if isinstance(img, _PrefetchedImage):
             img, prefetched = img.path, img.decoded
         if isinstance(img, os.PathLike):
@@ -828,7 +987,14 @@ def _prepare_batch(
             elif context.config.num_channels == 3:
                 # The fast decoder is RGB-only. Keep grayscale on Pillow so files and PIL inputs use the same
                 # luminance conversion; a grayscale codec path needs pixel-parity and latency evidence first.
-                decoded = prefetched.result() if prefetched is not None else _decode_local_image(img)
+                if index in gpu_decoded:
+                    decoded = gpu_decoded[index]
+                else:
+                    # Without a GPU device the decode never leaves a file encoded.
+                    decoded = cast(
+                        "torch.Tensor | None",
+                        prefetched.result() if prefetched is not None else _decode_local_image(img),
+                    )
                 if decoded is not None:
                     img = decoded
                     decoded_local_file = True
