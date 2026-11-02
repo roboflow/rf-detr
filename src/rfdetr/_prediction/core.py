@@ -234,13 +234,29 @@ def _decode_on_cpu(data: torch.Tensor) -> torch.Tensor | None:
     return decoded if decoded.dtype == torch.uint8 else None
 
 
+def _decode_one_on_gpu(item: _EncodedJpeg, device: torch.device) -> torch.Tensor | None:
+    """Decode one encoded JPEG file on the GPU, or return ``None`` when nvjpeg refuses it.
+
+    Args:
+        item: A file :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        Its RGB ``uint8`` CHW image on ``device``, or ``None``.
+    """
+    try:
+        return cast("torch.Tensor", decode_jpeg(item.data, mode=ImageReadMode.RGB, device=device))
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        return None
+
+
 def _decode_jpegs_on_gpu(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
     """Decode a batch's encoded JPEG files on the GPU in one nvjpeg call, keeping the CPU decoder's pixels.
 
     The first file of each chroma subsampling on ``device`` is also decoded on the CPU and compared, and the result is
-    recorded in :data:`_GPU_JPEG_MATCHES`. A file whose kind differs, or a batch nvjpeg refuses (a corrupt file the CPU
-    decoder tolerates, a torchvision without nvjpeg), decodes on the CPU, and later files of those kinds decode on the
-    CPU ahead of their batch, as without this path.
+    recorded in :data:`_GPU_JPEG_MATCHES`; files of a kind that differs decode on the CPU, now and ahead of later
+    batches. A file nvjpeg refuses (a corrupt file the CPU decoder tolerates) decodes on the CPU alone. When nvjpeg
+    refuses every file of a batch (a torchvision without nvjpeg), their kinds go back to the CPU as well.
 
     Args:
         encoded: Files :func:`_decode_local_image` left encoded.
@@ -251,16 +267,23 @@ def _decode_jpegs_on_gpu(encoded: list[_EncodedJpeg], device: torch.device) -> l
         ``None`` when the caller should open it with Pillow.
     """
     try:
-        decoded = decode_jpeg([item.data for item in encoded], mode=ImageReadMode.RGB, device=device)
-    except (RuntimeError, DeprecationWarning, AttributeError) as error:
-        for item in encoded:
-            _GPU_JPEG_MATCHES[(device.index, item.sampling)] = False
-        logger.info(f"Decoding JPEG files on the CPU: the GPU decoder failed ({error}).")
-        return [_decode_on_cpu(item.data) for item in encoded]
+        decoded: list[torch.Tensor | None] = list(
+            decode_jpeg([item.data for item in encoded], mode=ImageReadMode.RGB, device=device)
+        )
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        # nvjpeg returns nothing when one file fails, so decode them one at a time: a corrupt file then falls back
+        # alone, while an error from every file (a torchvision without nvjpeg) turns the GPU path off for these kinds.
+        decoded = [_decode_one_on_gpu(item, device) for item in encoded]
+        if all(image is None for image in decoded):
+            for item in encoded:
+                _GPU_JPEG_MATCHES[(device.index, item.sampling)] = False
+            logger.info("Decoding JPEG files on the CPU: the GPU decoder failed on every file of a batch.")
     images: list[torch.Tensor | None] = []
     for item, on_gpu in zip(encoded, decoded):
         key = (device.index, item.sampling)
-        if key not in _GPU_JPEG_MATCHES:
+        if on_gpu is None:
+            images.append(_decode_on_cpu(item.data))
+        elif key not in _GPU_JPEG_MATCHES:
             on_cpu = _decode_on_cpu(item.data)
             _GPU_JPEG_MATCHES[key] = on_cpu is not None and torch.equal(on_gpu.cpu(), on_cpu)
             if not _GPU_JPEG_MATCHES[key]:

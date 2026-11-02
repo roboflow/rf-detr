@@ -1848,6 +1848,30 @@ class TestGpuJpegDecode:
             {(0, 0): False, (0, 2): False},
         )
 
+    def test_one_refused_file_falls_back_alone(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """A file nvjpeg refuses decodes on the CPU alone; the rest of its batch stays on the GPU path.
+
+        A truncated JPEG makes nvjpeg fail the whole batched call while libjpeg still decodes it, and one such file in a
+        large directory must not turn the GPU path off for every later batch.
+        """
+        good = core._decode_local_image(str(_jpeg_file(tmp_path / "good.jpg", subsampling=0)), _CUDA)
+        bad = core._decode_local_image(str(_jpeg_file(tmp_path / "bad.jpg", subsampling=2)), _CUDA)
+
+        def nvjpeg(data: Any, mode: Any, device: torch.device) -> torch.Tensor:
+            """Refuse a batched call and the bad file, decode anything else as the CPU decoder does."""
+            if isinstance(data, list) or data is bad.data:
+                raise RuntimeError("Failed to decode batch")
+            return core._decode_on_cpu(data)
+
+        mocker.patch.object(core, "decode_jpeg", side_effect=nvjpeg)
+
+        images = core._decode_jpegs_on_gpu([good, bad], _CUDA)
+
+        assert ([image.dtype for image in images], core._GPU_JPEG_MATCHES) == (
+            [torch.uint8, torch.uint8],
+            {(0, 0): True},
+        )
+
     def test_non_cuda_batch_does_not_wait_for_its_decodes(self) -> None:
         """Off CUDA, the batch never waits for every decode up front, so each image is prepared as soon as it decodes.
 
