@@ -697,6 +697,9 @@ class TestDefaultEagerBatch:
             pytest.param({"fixed_shape": True}, [8, 2], id="unbounded"),
             pytest.param({"fixed_shape": True, "max_batch_size": 4}, [4, 4, 2], id="max-batch-below-eight"),
             pytest.param({"fixed_shape": True, "max_batch_size": 16}, [8, 2], id="max-batch-above-eight"),
+            pytest.param({"max_batch_size": 1}, [1] * 10, id="max-batch-one"),
+            pytest.param({"max_batch_size": 8}, [8, 2], id="max-batch-equals-eight"),
+            pytest.param({"max_batch_size": 9}, [8, 2], id="max-batch-just-above-eight"),
         ],
     )
     def test_dynamic_batch_export_takes_the_eager_default(
@@ -704,6 +707,14 @@ class TestDefaultEagerBatch:
     ) -> None:
         """An export's fixed input resolution does not fix its batch axis, so it batches up to its own maximum."""
         assert self._batch_sizes(mocker, _image_dir(tmp_path), context_overrides=overrides) == expected
+
+    def test_streamed_dynamic_batch_export_keeps_one_image_per_batch(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """A streamed directory stays at one image per batch even when the export allows larger batches."""
+        overrides = {"max_batch_size": 4}
+        batch_sizes = self._batch_sizes(mocker, _image_dir(tmp_path), stream=True, context_overrides=overrides)
+        assert batch_sizes == [1] * 10
 
     def test_manifest_keeps_one_image_per_batch(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A manifest may name live sources, so it keeps the one-image default."""

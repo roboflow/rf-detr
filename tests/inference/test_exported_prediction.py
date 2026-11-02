@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+from pytest_mock import MockerFixture
 from supervision import Detections, KeyPoints
 
 from rfdetr import ClassThresholds, RFDETRInference
@@ -36,7 +37,8 @@ def _onnxruntime_has_cuda() -> bool:
     return "CUDAExecutionProvider" in onnxruntime.get_available_providers()
 
 
-# GPU CI installs the CPU onnxruntime, so this runs only where onnxruntime-gpu is installed.
+# The GPU job installs the CPU onnxruntime, so the test that needs this is marked ``e2e_tensorrt`` and runs in the
+# TensorRT job, which installs onnxruntime-gpu and fails on a skip.
 _requires_onnxruntime_cuda = pytest.mark.skipif(
     not _onnxruntime_has_cuda(), reason="requires onnxruntime-gpu with the CUDA execution provider and a CUDA device"
 )
@@ -291,6 +293,7 @@ class TestExportedPrediction:
         )
 
     @pytest.mark.gpu
+    @pytest.mark.e2e_tensorrt
     @_requires_onnxruntime_cuda
     def test_cuda_provider_predicts_a_directory_as_the_cpu_provider_does(
         self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path
@@ -776,7 +779,7 @@ class TestExportedStreaming:
         self,
         exported_detection: tuple[Path, dict[str, object]],
         prediction_video: Path,
-        mocker,
+        mocker: MockerFixture,
         ending: str,
     ) -> None:
         """Real video captures close on completion, early close, and a rejected batch."""
@@ -819,7 +822,7 @@ class TestExportedStreaming:
             next(results)
 
     def test_dynamic_batch_flushes_final_image(
-        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, mocker
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """A dynamic export executes batches of two, two, then one without losing images."""
         import onnxruntime as ort
@@ -844,7 +847,7 @@ class TestExportedStreaming:
             np.testing.assert_allclose(result.xyxy, [expected_box], rtol=0, atol=1e-3)
 
     def test_dynamic_batch_default_for_a_directory(
-        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, mocker
+        self, exported_detection: tuple[Path, dict[str, object]], tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """Without ``batch``, a dynamic-batch export runs an eager directory in batches of its ``max_batch_size``.
 
@@ -869,7 +872,7 @@ class TestExportedStreaming:
 
     @_requires_opencv
     def test_two_camera_streams_fill_a_batch_two_export(
-        self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path, mocker
+        self, exported_batch_two: tuple[Path, dict[str, object]], tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """A `.streams` manifest of two cameras feeds one batch-two export frame by frame, in source order."""
         path, metadata = exported_batch_two
@@ -896,7 +899,7 @@ class TestExportedStreaming:
 
     @_requires_opencv
     def test_eager_live_source_warns_about_memory(
-        self, exported_detection: tuple[Path, dict[str, object]], mocker
+        self, exported_detection: tuple[Path, dict[str, object]], mocker: MockerFixture
     ) -> None:
         """Eager prediction on a live camera warns that results accumulate in memory before opening the device."""
         path, metadata = exported_detection

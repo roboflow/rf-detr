@@ -903,19 +903,30 @@ class TestDefaultCompileBackend:
 
     @pytest.mark.gpu
     @_requires_cuda
-    def test_cuda_default_captures_a_graph_that_predicts(self) -> None:
-        """The CUDA default replays a captured graph, and a prediction through it returns detections.
+    @pytest.mark.parametrize(
+        "model_type,result_type",
+        [
+            pytest.param(RFDETRNano, Detections, id="detection"),
+            pytest.param(RFDETRSegNano, Detections, id="segmentation"),
+            pytest.param(RFDETRKeypointPreview, KeyPoints, id="keypoints"),
+        ],
+    )
+    def test_cuda_default_captures_a_graph_that_predicts(
+        self, model_type: type[RFDETR], result_type: type[Detections | KeyPoints]
+    ) -> None:
+        """The CUDA default replays a captured graph, and a prediction through it returns the task's result type.
 
         The capture runs a real model on the device, so a module that cannot be captured fails here rather than in a
-        user's first ``inference()`` call.
+        user's first ``inference()`` call. A failed capture is fatal for the process, so every task head that can reach
+        this default is captured.
         """
-        model = RFDETRNano(pretrain_weights=None, device="cuda", resolution=64, num_queries=4, num_select=4)
+        model = model_type(pretrain_weights=None, device="cuda", resolution=96, num_queries=4, num_select=4)
 
         predictor = model.inference()
 
         assert predictor._native_model is not None
         assert isinstance(predictor._native_model.model.inference_model, _CUDAGraphInferenceModel)
-        assert isinstance(predictor.predict(np.zeros((64, 64, 3), dtype=np.uint8), threshold=0.0), Detections)
+        assert isinstance(predictor.predict(np.zeros((96, 96, 3), dtype=np.uint8), threshold=0.0), result_type)
 
     def test_inductor_off_cuda_compiles_without_cuda_graphs(
         self, nano_model: RFDETRNano, mocker: MockerFixture
