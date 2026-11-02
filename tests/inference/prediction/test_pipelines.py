@@ -126,10 +126,12 @@ class TestDecodeAhead:
         threads: list[str] = []
         original = core._decode_local_image
 
-        def recording_decode(path: str) -> torch.Tensor:
+        def recording_decode(
+            path: str, gpu_device: torch.device | None = None
+        ) -> torch.Tensor | core._EncodedJpeg | None:
             """Record the decoding thread, then decode as the real function does."""
             threads.append(threading.current_thread().name)
-            return original(path)
+            return original(path, gpu_device)
 
         model = _DummyRFDETR()
         model.model.device = torch.device(device)

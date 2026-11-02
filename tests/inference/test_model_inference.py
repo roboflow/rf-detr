@@ -7,7 +7,6 @@
 
 import threading
 import weakref
-from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -277,21 +276,6 @@ class TestModelInferenceCompile:
         assert torch.equal(second[0], second_input + 1)
         assert torch.equal(second[1], second_input * 2)
 
-    @pytest.fixture
-    def nondeterministic_algorithms(self) -> Generator[None, None, None]:
-        """Turn deterministic algorithms off for one test, restoring the previous mode afterwards.
-
-        The autouse ``reset_random_seeds`` fixture enables them, which routes CUDA ``F.interpolate`` through a
-        decomposition that fails under ``torch.jit.trace`` (its sizes become CPU tensors).
-        """
-        enabled = torch.are_deterministic_algorithms_enabled()
-        warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-        torch.use_deterministic_algorithms(False)
-        try:
-            yield
-        finally:
-            torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
-
     @pytest.mark.gpu
     @pytest.mark.usefixtures("nondeterministic_algorithms")
     @pytest.mark.parametrize(
@@ -305,7 +289,7 @@ class TestModelInferenceCompile:
     def test_cudagraph_predict_matches_torchscript_backend(
         self, model_class: type[RFDETR], dtype: torch.dtype, tolerance: float
     ) -> None:
-        """The cudagraph backend gives predict() the same raw predictions as the default TorchScript backend.
+        """The cudagraph backend gives predict() the same raw predictions as the TorchScript backend.
 
         Elsewhere only the parameter-free ``_TupleModule`` is captured; this runs a real detector through ``predict()``,
         including its tuple-to-dict mapping of the cloned graph outputs. Raw predictions are compared because a top-k
@@ -315,7 +299,7 @@ class TestModelInferenceCompile:
         """
         model = model_class(pretrain_weights=None, device="cuda")
         image = torch.rand(3, 480, 640)
-        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype)
+        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype, compile_backend="torchscript")
         with patch.object(
             torchscript._native_model.model, "postprocess", wraps=torchscript._native_model.model.postprocess
         ) as torchscript_postprocess:
