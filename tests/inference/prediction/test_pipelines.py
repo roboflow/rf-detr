@@ -25,8 +25,7 @@ from pytest_mock import MockerFixture
 from rfdetr._prediction import core, pipelines
 from rfdetr.inference import RFDETRInference
 from tests._markers import _requires_cuda, _requires_mps
-
-from ..helpers import _DummyRFDETR, _image_dir, _source_pixels
+from tests.inference.helpers import _DummyRFDETR, _image_dir, _source_pixels
 
 
 class TestDecodeAhead:

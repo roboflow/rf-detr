@@ -28,8 +28,7 @@ from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 from tests._markers import _requires_mps
-
-from ..helpers import _DummyModel, _DummyRFDETR
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 
 class TestPredictEmptyInputs:

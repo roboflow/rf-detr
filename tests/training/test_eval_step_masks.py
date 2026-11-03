@@ -17,8 +17,7 @@ from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
 from tests.models.test_lwdetr_segmentation_eval import _BATCH, _CLASSES, _IMAGE, _QUERIES, _build_seg_lwdetr
-
-from .test_module_model import _base_model_config, _base_train_config, _build_module
+from tests.training.test_module_model import _base_model_config, _base_train_config, _build_module
 
 _MASK_LOSS_WEIGHTS = {"loss_mask_ce": 1.0, "loss_mask_dice": 1.0}
 

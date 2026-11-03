@@ -24,8 +24,7 @@ from rfdetr.training.callbacks.gpu_memory_progress_bar import (
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from tests._markers import _requires_cuda
-
-from ..helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from tests.training.helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 # ---------------------------------------------------------------------------
 # Helpers

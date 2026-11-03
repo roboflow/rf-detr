@@ -26,8 +26,7 @@ from rfdetr import RFDETRInference
 from rfdetr._prediction import core, pipelines
 from rfdetr.detr import RFDETR
 from tests._markers import _requires_cuda
-
-from ..helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
+from tests.inference.helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
 
 #: Zero mean and unit std for three channels, what a patched ``_normalization_tensors`` returns.
 _UNIT_NORMALIZATION = (torch.zeros(3, 1, 1), torch.ones(3, 1, 1))

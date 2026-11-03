@@ -24,8 +24,7 @@ from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.models.heads.segmentation import SegmentationHead
 from tests._markers import _requires_two_cuda_devices
-
-from .helpers import _DummyRFDETR
+from tests.inference.helpers import _DummyRFDETR
 
 
 class _FakeModel(torch.nn.Module):

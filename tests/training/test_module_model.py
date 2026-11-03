@@ -35,9 +35,8 @@ from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.imports import _IS_PYTORCH_OPTIMIZER_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
-
-from .helpers import _fake_postprocess as _helpers_fake_postprocess
-from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from tests.training.helpers import _fake_postprocess as _helpers_fake_postprocess
+from tests.training.helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 _requires_pytorch_optimizer = pytest.mark.skipif(
     not _IS_PYTORCH_OPTIMIZER_INSTALLED, reason="pytorch_optimizer not installed"

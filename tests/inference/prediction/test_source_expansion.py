@@ -23,8 +23,7 @@ from pytest_mock import MockerFixture
 
 from rfdetr._prediction import core, pipelines
 from rfdetr.inference import RFDETRInference
-
-from ..helpers import _DummyRFDETR, _image_dir, _requires_opencv, _source_pixels
+from tests.inference.helpers import _DummyRFDETR, _image_dir, _requires_opencv, _source_pixels
 
 
 @pytest.fixture

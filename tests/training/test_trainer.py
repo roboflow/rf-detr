@@ -21,8 +21,7 @@ from rfdetr.training.callbacks import GPUMemoryRichProgressBar, GPUMemoryTQDMPro
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.logger import get_logger
-
-from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from tests.training.helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 # ---------------------------------------------------------------------------
 # TestProgressBarCallbacks — verifies the correct callback is installed

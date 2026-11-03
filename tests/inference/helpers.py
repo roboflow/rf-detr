@@ -6,9 +6,9 @@
 """Shared test helpers for the inference test suite.
 
 Plain classes and functions (not pytest fixtures) shared across multiple test modules to avoid verbatim duplication.
-Import with a relative import::
+Import with an absolute import::
 
-    from .helpers import _BaseFakeRFDETR, _DummyModel, _DummyRFDETR
+    from tests.inference.helpers import _BaseFakeRFDETR, _DummyModel, _DummyRFDETR
 """
 
 from __future__ import annotations

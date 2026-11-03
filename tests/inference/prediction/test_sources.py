@@ -20,8 +20,14 @@ from pytest_mock import MockerFixture
 from rfdetr._prediction.sources import has_only_finite_images
 from rfdetr.inference import RFDETRInference
 from tests._online import is_online
-
-from ..helpers import _DummyModel, _DummyRFDETR, _FakeResponse, _png_bytes, _requires_opencv, _scripted_capture
+from tests.inference.helpers import (
+    _DummyModel,
+    _DummyRFDETR,
+    _FakeResponse,
+    _png_bytes,
+    _requires_opencv,
+    _scripted_capture,
+)
 
 if TYPE_CHECKING:
     from rfdetr.inference import ModelContext
