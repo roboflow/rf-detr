@@ -3211,6 +3211,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>inference()</code> on a CUDA segmentation model no longer fails with "Expected all tensors to be on the same device, but got max is on cpu" after <code>torch.use_deterministic_algorithms(True)</code>, for example through <code>seed_all()</code>. In that mode CUDA <code>F.interpolate</code> takes a backward-determinism decomposition that <code>torch.jit.trace</code> cannot record, so the prediction snapshot uses native upsampling without changing process-wide deterministic settings.</p>
+</li>
+<li>
 <p>In segmentation data pipelines, Albumentations geometric transforms (rotation, non-rigid warps, translation) now recompute tight target bounding boxes directly from the transformed masks and drop instances whose masks become empty, eliminating ground-truth mask/box misalignment and ghost boxes during segmentation training. (<a href="https://github.com/roboflow/rf-detr/issues/1658">#1658</a>)</p>
 </li>
 <li>
