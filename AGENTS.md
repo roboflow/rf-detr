@@ -292,6 +292,7 @@ uv run twine check --strict dist/*
 
 **Imports:**
 
+- Use absolute imports in tests, including imports from other test modules and helpers (for example, `from tests.training.helpers import ...`).
 - Keep imports at module scope by default. Use a local import only for a verified circular-import boundary, optional dependency boundary, import-behavior test, or material startup/side-effect constraint; the reason must be evident from the surrounding code or documented where it is not obvious.
 
 ```python

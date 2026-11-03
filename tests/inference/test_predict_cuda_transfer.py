@@ -22,8 +22,7 @@ from pytest_mock import MockerFixture
 
 from rfdetr import ClassThresholds
 from tests._markers import _requires_cuda, _requires_two_cuda_devices
-
-from .helpers import _BaseFakeRFDETR, _DummyModel
+from tests.inference.helpers import _BaseFakeRFDETR, _DummyModel
 
 pytestmark = pytest.mark.gpu
 

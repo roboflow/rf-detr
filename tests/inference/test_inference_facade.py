@@ -31,8 +31,7 @@ from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from tests._markers import _cuda_marks, _requires_cuda, _requires_mps
-
-from .helpers import _DummyModel, _DummyRFDETR
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 _requires_mps_inductor = pytest.mark.skipif(
     not torch.backends.mps.is_available() or _default_compile_backend(torch.device("mps")) != "inductor",

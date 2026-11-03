@@ -20,8 +20,7 @@ from pytest_mock import MockerFixture
 
 from rfdetr import ClassThresholds, RFDETRInference, RFDETRSegNano
 from rfdetr._prediction import core, pipelines
-
-from ..helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
+from tests.inference.helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
 
 
 class TestClassThresholds:

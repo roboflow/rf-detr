@@ -27,8 +27,7 @@ from pytorch_lightning import Callback, Trainer
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
-
-from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from tests.training.helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 
 class _CaptureGradient(Callback):

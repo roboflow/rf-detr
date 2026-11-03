@@ -21,8 +21,7 @@ import supervision as sv
 from pytest_mock import MockerFixture
 
 from rfdetr.inference import RFDETRInference
-
-from ..helpers import _DummyRFDETR, _requires_opencv, _scripted_capture
+from tests.inference.helpers import _DummyRFDETR, _requires_opencv, _scripted_capture
 
 #: Name every background capture thread carries, so tests can tell leaked workers apart.
 _WORKER_NAME = "rfdetr-live-capture"

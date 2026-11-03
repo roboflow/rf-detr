@@ -24,8 +24,7 @@ from torch import nn
 from rfdetr.training import module_model
 from rfdetr.training.fused_adamw_ema import LIBDEVICE_FUNCTIONS, UNSUPPORTED_ADAMW_OPTIONS, FusedAdamWEMA
 from rfdetr.training.module_model import RFDETRModelModule
-
-from .test_module_model import _base_train_config, _build_module
+from tests.training.test_module_model import _base_train_config, _build_module
 
 
 def _setup_module(tmp_path: Path | None, **train_overrides: Any) -> tuple[RFDETRModelModule, list[dict[str, Any]]]:

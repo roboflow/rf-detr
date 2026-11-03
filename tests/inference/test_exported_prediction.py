@@ -19,8 +19,7 @@ from rfdetr import ClassThresholds, RFDETRInference
 from rfdetr.detr import RFDETR
 from rfdetr.export.imports import _IS_ONNXRUNTIME_INSTALLED
 from tests._markers import _requires_onnx_and_onnxruntime
-
-from .helpers import _requires_opencv
+from tests.inference.helpers import _requires_opencv
 
 
 def _onnxruntime_has_cuda() -> bool:

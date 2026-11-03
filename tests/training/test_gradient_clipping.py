@@ -36,8 +36,7 @@ from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from tests._markers import _requires_torch_xla
-
-from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from tests.training.helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 _CLIP_MAX_NORM = 0.1
 _INIT_SCALE = 2.0**16

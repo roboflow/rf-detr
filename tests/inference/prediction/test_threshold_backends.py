@@ -16,9 +16,8 @@ from PIL import Image
 from pytest_mock import MockerFixture
 
 from rfdetr import ClassThresholds
-
-from ..._markers import _requires_mps
-from ..helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
+from tests._markers import _requires_mps
+from tests.inference.helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
 
 
 def _row_result(

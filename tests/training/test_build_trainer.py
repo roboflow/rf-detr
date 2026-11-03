@@ -1094,8 +1094,7 @@ class TestBuildTrainerFP8Smoke:
         """
         from rfdetr.training.module_data import RFDETRDataModule
         from rfdetr.training.module_model import RFDETRModelModule
-
-        from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts
+        from tests.training.helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts
 
         class _LinearModel(torch.nn.Module):
             """Minimal real model with an ``nn.Linear`` layer for Transformer Engine to convert."""
@@ -1860,8 +1859,13 @@ class TestEvalIntervalValidationGating:
         """
         from rfdetr.training.module_data import RFDETRDataModule
         from rfdetr.training.module_model import RFDETRModelModule
-
-        from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+        from tests.training.helpers import (
+            _fake_postprocess,
+            _FakeCriterion,
+            _FakeDataset,
+            _make_param_dicts,
+            _TinyModel,
+        )
 
         mc = base_model_config()
         tc = base_train_config(epochs=4, eval_interval=3, use_ema=False, run_test=False)
