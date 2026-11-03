@@ -21,6 +21,60 @@ from ..._markers import _requires_mps
 from ..helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
 
 
+def _row_result(
+    labels: list[int], image_index: int, device: str, score_dtype: torch.dtype, keypoints: bool
+) -> dict[str, torch.Tensor]:
+    """Build distinct postprocessing rows for one image on the requested device."""
+    rows = torch.arange(4, device=device, dtype=torch.float32) + image_index * 10
+    result = {
+        "scores": torch.tensor([0.65, 0.75, 0.85, 0.9], device=device, dtype=score_dtype),
+        "labels": torch.tensor(labels, device=device),
+        "boxes": rows[:, None] + torch.arange(4, device=device),
+    }
+    if keypoints:
+        result["keypoints"] = rows[:, None, None].repeat(1, 2, 3)
+        result["keypoints"][:, :, 2] = torch.tensor([[0.0, 0.25], [0.5, 0.0], [0.75, 1.0], [0.0, 1.0]], device=device)
+        result["keypoint_precision_cholesky"] = (rows + 1)[:, None, None].repeat(1, 2, 3)
+    else:
+        pixels = torch.arange(16, device=device).reshape(1, 1, 4, 4)
+        result["masks"] = pixels == (rows % 16)[:, None, None, None]
+    assert all(tensor.device.type == device for tensor in result.values())
+    return result
+
+
+def _assert_selected_rows(
+    prediction: sv.Detections | sv.KeyPoints,
+    source: dict[str, torch.Tensor],
+    selected: list[int],
+    expected_ids: list[int],
+    expected_names: list[str],
+    keypoints: bool,
+) -> None:
+    """Check that all prediction fields retain the selected rows of one image."""
+    assert prediction.class_id.tolist() == expected_ids
+    assert prediction.data["class_name"].tolist() == expected_names
+    np.testing.assert_array_equal(
+        prediction.data["xyxy"] if keypoints else prediction.xyxy, source["boxes"].cpu().numpy()[selected]
+    )
+    np.testing.assert_array_equal(
+        prediction.detection_confidence if keypoints else prediction.confidence,
+        source["scores"].float().cpu().numpy()[selected],
+    )
+    if keypoints:
+        assert isinstance(prediction, sv.KeyPoints)
+        expected = source["keypoints"].cpu().numpy()[selected]
+        np.testing.assert_array_equal(prediction.xy, expected[:, :, :2])
+        np.testing.assert_array_equal(prediction.keypoint_confidence, expected[:, :, 2])
+        np.testing.assert_array_equal(prediction.visible, expected[:, :, 2] > 0)
+        np.testing.assert_array_equal(
+            prediction.data["keypoint_precision_cholesky"],
+            source["keypoint_precision_cholesky"].cpu().numpy()[selected],
+        )
+    else:
+        assert isinstance(prediction, sv.Detections)
+        np.testing.assert_array_equal(prediction.mask, source["masks"].cpu().numpy()[selected, 0])
+
+
 @pytest.mark.parametrize("device", ["cpu", pytest.param("mps", marks=_requires_mps)])
 @pytest.mark.parametrize(
     "score_dtype", [pytest.param(torch.float16, id="float16"), pytest.param(torch.float32, id="float32")]
@@ -42,26 +96,10 @@ class TestClassThresholdRowAlignment:
             num_keypoints_per_class=[0, 2, 2, 2] if schema == "legacy-keypoint" else ([2, 2, 2] if keypoints else []),
         )
         threshold = ClassThresholds({"dog" if schema == "coco" else "b": 0.95}, default=0.5)
-        per_image = []
-        for image_index, image_labels in enumerate((labels, list(reversed(labels)))):
-            rows = torch.arange(4, device=device, dtype=torch.float32) + image_index * 10
-            result = {
-                "scores": torch.tensor([0.65, 0.75, 0.85, 0.9], device=device, dtype=score_dtype),
-                "labels": torch.tensor(image_labels, device=device),
-                "boxes": rows[:, None] + torch.arange(4, device=device),
-            }
-            if keypoints:
-                result["keypoints"] = rows[:, None, None].repeat(1, 2, 3)
-                result["keypoints"][:, :, 2] = torch.tensor(
-                    [[0.0, 0.25], [0.5, 0.0], [0.75, 1.0], [0.0, 1.0]], device=device
-                )
-                result["keypoint_precision_cholesky"] = (rows + 1)[:, None, None].repeat(1, 2, 3)
-            else:
-                pixels = torch.arange(16, device=device).reshape(1, 1, 4, 4)
-                result["masks"] = pixels == (rows % 16)[:, None, None, None]
-            assert all(tensor.device.type == device for tensor in result.values())
-            per_image.append(result)
-
+        per_image = [
+            _row_result(labels, 0, device, score_dtype, keypoints),
+            _row_result(list(reversed(labels)), 1, device, score_dtype, keypoints),
+        ]
         image = Image.new("RGB", (28, 28))
         batches: list[torch.Tensor] = []
         mocker.patch.object(model.model, "postprocess", return_value=per_image)
@@ -72,33 +110,8 @@ class TestClassThresholdRowAlignment:
         assert len(output) == 2
         expected_ids = [1, 3] if schema in ("coco", "legacy-keypoint") else [0, 2]
         expected_names = ["person", "car"] if schema == "coco" else ["a", "c"]
-        for image_index, (prediction, selected) in enumerate(zip(output, ([0, 2], [1, 3]), strict=True)):
-            source = per_image[image_index]
-            assert prediction.class_id.tolist() == (expected_ids if image_index == 0 else expected_ids[::-1])
-            assert prediction.data["class_name"].tolist() == (
-                expected_names if image_index == 0 else expected_names[::-1]
-            )
-            np.testing.assert_array_equal(
-                prediction.data["xyxy"] if keypoints else prediction.xyxy,
-                source["boxes"].cpu().numpy()[selected],
-            )
-            np.testing.assert_array_equal(
-                prediction.detection_confidence if keypoints else prediction.confidence,
-                source["scores"].float().cpu().numpy()[selected],
-            )
-            if keypoints:
-                assert isinstance(prediction, sv.KeyPoints)
-                expected = source["keypoints"].cpu().numpy()[selected]
-                np.testing.assert_array_equal(prediction.xy, expected[:, :, :2])
-                np.testing.assert_array_equal(prediction.keypoint_confidence, expected[:, :, 2])
-                np.testing.assert_array_equal(prediction.visible, expected[:, :, 2] > 0)
-                np.testing.assert_array_equal(
-                    prediction.data["keypoint_precision_cholesky"],
-                    source["keypoint_precision_cholesky"].cpu().numpy()[selected],
-                )
-            else:
-                assert isinstance(prediction, sv.Detections)
-                np.testing.assert_array_equal(prediction.mask, source["masks"].cpu().numpy()[selected, 0])
+        _assert_selected_rows(output[0], per_image[0], [0, 2], expected_ids, expected_names, keypoints)
+        _assert_selected_rows(output[1], per_image[1], [1, 3], expected_ids[::-1], expected_names[::-1], keypoints)
 
     def test_empty_keypoint_result_keeps_per_object_field_shapes(self, device: str, score_dtype: torch.dtype) -> None:
         """Dropping every class empties all keypoint fields, including metadata, along the detection axis."""
