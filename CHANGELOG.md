@@ -161,6 +161,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `inference()` on a CUDA segmentation model no longer fails with "Expected all tensors to be on the same device, but got max is on cpu" after `torch.use_deterministic_algorithms(True)`, for example through `seed_all()`. In that mode CUDA `F.interpolate` takes a backward-determinism decomposition that `torch.jit.trace` cannot record, so the prediction snapshot uses native upsampling without changing process-wide deterministic settings.
+
 - In segmentation data pipelines, Albumentations geometric transforms (rotation, non-rigid warps, translation) now recompute tight target bounding boxes directly from the transformed masks and drop instances whose masks become empty, eliminating ground-truth mask/box misalignment and ghost boxes during segmentation training. ([#1658](https://github.com/roboflow/rf-detr/issues/1658))
 
 - The class-count warning claimed the checkpoint's class count was used when a set `num_classes` larger than the checkpoint was kept. `load_pretrain_weights` keeps the set count and resizes the loaded classification head to it; the warning now says so instead of "Using checkpoint class count". ([#1654](https://github.com/roboflow/rf-detr/pull/1654))
