@@ -457,6 +457,19 @@ def load_pretrain_weights(
                 num_classes = checkpoint_num_classes - 1
                 configured_num_classes_plus_bg = checkpoint_num_classes
                 mc.num_classes = num_classes
+                # The assignment above records ``num_classes`` in Pydantic's ``model_fields_set``
+                # as if the user had set it. ``RFDETR._align_num_classes_from_dataset`` reads that
+                # set to decide whether the training dataset may change the class count, so a
+                # checkpoint-derived count left there is kept even when the dataset has MORE
+                # classes: the head and the criterion stay at the checkpoint's size and the new
+                # labels index past them at the first training step (a CUDA device-side assert;
+                # on Windows WDDM a display-driver reset). Clear the flag, as ``from_checkpoint``
+                # does for every checkpoint-derived field, so the dataset count can still raise it.
+                fields_set = getattr(mc, "model_fields_set", None)
+                if fields_set is None:
+                    fields_set = getattr(mc, "__pydantic_fields_set__", None)
+                if fields_set is not None:
+                    fields_set.discard("num_classes")
         # In all mismatch cases we need the head to match the checkpoint's
         # class count so load_state_dict succeeds without size mismatches.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
