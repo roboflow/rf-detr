@@ -3211,6 +3211,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>A model built with an implicit class count from a checkpoint with fewer classes than its config (<code>RFDETRSegXLarge(pretrain_weights="own.pth")</code>) recorded the checkpoint's class count as if the user had set it, so <code>train()</code> on a dataset with more classes kept the old count with a warning. The head and loss were then too small for the new labels, and training could fail when it encountered an out-of-range label with a CUDA index-out-of-bounds assert (on Windows a display-driver reset with no traceback). <code>load_pretrain_weights</code> now clears the checkpoint-derived <code>num_classes</code> from <code>model_fields_set</code>, as <code>from_checkpoint</code> does, so the dataset count raises it and the head is expanded.</p>
+</li>
+<li>
 <p><code>inference()</code> on a CUDA segmentation model no longer fails with "Expected all tensors to be on the same device, but got max is on cpu" after <code>torch.use_deterministic_algorithms(True)</code>, for example through <code>seed_all()</code>. In that mode CUDA <code>F.interpolate</code> takes a backward-determinism decomposition that <code>torch.jit.trace</code> cannot record, so the prediction snapshot uses native upsampling without changing process-wide deterministic settings.</p>
 </li>
 <li>
