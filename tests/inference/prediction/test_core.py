@@ -611,6 +611,16 @@ class TestPredictSourceData:
         np.testing.assert_allclose(key_points.data["xyxy"], np.empty((0, 4), dtype=np.float32))
         assert key_points.as_detections().is_empty()
 
+    def test_keypoint_covariance_is_present_when_all_filtered(self) -> None:
+        """The documented covariance key stays in the result when no detections remain."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
+
+        key_points = model.predict(img, threshold=1.1)
+
+        assert key_points.data["covariance"].shape == (0, 17, 2, 2)
+
     def test_non_keypoint_prediction_has_no_keypoints_key(self) -> None:
         """Non-keypoint predictions do not attach keypoint fields."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
