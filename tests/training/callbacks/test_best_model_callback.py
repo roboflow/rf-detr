@@ -528,14 +528,37 @@ class TestCheckpointLifecycle:
         trainer.strategy.barrier.assert_not_called()
         trainer.strategy.broadcast.assert_not_called()
 
-    @pytest.mark.parametrize("operation", ["fast_dev_run", "validate", "fit"])
-    @pytest.mark.parametrize("evaluates_base_model", [True, False])
+    @pytest.mark.parametrize(
+        ("operation", "fast_dev_run", "evaluates_base_model", "expected"),
+        [
+            pytest.param("fit", True, True, set(), id="fast-dev-base"),
+            pytest.param("fit", True, False, set(), id="fast-dev-ema"),
+            pytest.param("validate", False, True, set(), id="validate-base"),
+            pytest.param("validate", False, False, set(), id="validate-ema"),
+            pytest.param(
+                "fit",
+                False,
+                True,
+                {"checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth", "checkpoint_best_regular.pth"},
+                id="fit-base",
+            ),
+            pytest.param(
+                "fit",
+                False,
+                False,
+                {"checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth"},
+                id="fit-ema",
+            ),
+        ],
+    )
     def test_real_trainer_checkpoint_lifecycle(
         self,
         tmp_path: Path,
         loaders: tuple[DataLoader, DataLoader],
         operation: str,
+        fast_dev_run: bool,
         evaluates_base_model: bool,
+        expected: set[str],
     ) -> None:
         """Real Lightning hooks suppress dry-run/standalone writes while retaining both fit policies."""
         train_loader, val_loader = loaders
@@ -548,7 +571,7 @@ class TestCheckpointLifecycle:
         trainer = Trainer(
             accelerator="cpu",
             max_epochs=1,
-            fast_dev_run=operation == "fast_dev_run",
+            fast_dev_run=fast_dev_run,
             logger=False,
             enable_model_summary=False,
             enable_progress_bar=False,
@@ -560,16 +583,12 @@ class TestCheckpointLifecycle:
         )
         module = _EmaMetricModule(regular_value=0.2, ema_value=0.8)
 
-        if operation == "validate":
-            trainer.validate(module, dataloaders=val_loader, verbose=False)
-        else:
-            trainer.fit(module, train_dataloaders=train_loader, val_dataloaders=val_loader)
+        loader_args = {
+            "fit": {"train_dataloaders": train_loader, "val_dataloaders": val_loader},
+            "validate": {"dataloaders": val_loader, "verbose": False},
+        }
+        getattr(trainer, operation)(module, **loader_args[operation])
 
-        expected = set()
-        if operation == "fit":
-            expected = {"checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth"}
-            if evaluates_base_model:
-                expected.add("checkpoint_best_regular.pth")
         assert {p.name for p in tmp_path.glob("*.pth")} == expected
 
 
@@ -580,8 +599,8 @@ class TestEvaluatesBaseModel:
         """No base-weights checkpoint may be saved while the primary key carries the EMA score.
 
         Under the default eval policy COCOEvalCallback mirrors the EMA score onto ``val/mAP_50_95``, so the key is
-        present and the parent ModelCheckpoint would happily save the base weights against it — checkpointing one
-        model on the other model's score. Only the EMA track is entitled to write this epoch.
+        present and the parent ModelCheckpoint would happily save the base weights against it — checkpointing one model
+        on the other model's score. Only the EMA track is entitled to write this epoch.
         """
         cb = BestModelCallback(output_dir=str(tmp_path), evaluates_base_model=False)
         trainer = _make_trainer({"val/mAP_50_95": 0.9})
@@ -1430,9 +1449,9 @@ class TestBestModelCallback:
     ) -> None:
         """``best_model_score`` and the on-disk checkpoint must survive a real ``trainer.fit(ckpt_path=...)`` resume.
 
-        Regression test for the "callbacks" key being absent from ``_build_checkpoint_payload``'s output — the bug
-        this PR fixes. Every existing regression test for callback-state persistence (``TestBestEmaStatePersistence``)
-        calls ``state_dict()``/``load_state_dict()`` directly in Python, never through PTL's own
+        Regression test for the "callbacks" key being absent from ``_build_checkpoint_payload``'s output — the bug this
+        PR fixes. Every existing regression test for callback-state persistence (``TestBestEmaStatePersistence``) calls
+        ``state_dict()``/``load_state_dict()`` directly in Python, never through PTL's own
         ``_call_callbacks_load_state_dict``, so none of them would catch the payload missing the "callbacks" key.
         Parametrized over ``checkpoint_best_regular.pth`` (built directly by ``_build_checkpoint_payload``) and
         ``checkpoint_best_total.pth`` (built via ``shutil.copy2`` + ``strip_checkpoint``, a separate code path that
