@@ -203,6 +203,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `export(output_name=...)` keeps dots that are part of the name: `output_name="detector-v1.2"` writes `detector-v1.2.onnx` instead of `detector-v1.onnx`, so two versions of one name no longer overwrite each other, and a `backbone_only=True` TensorRT engine keeps its `-backbone` marker. Only an export file extension (`.onnx`, `.trt`, `.engine`, `.tflite`, `.mlpackage`, `.pte`, ...) is still stripped. ([#1641](https://github.com/roboflow/rf-detr/pull/1641))
 
+- `RFDETR.from_checkpoint("run.pth")` and `RFDETRInference("run.pth")` now load the weights from the file they were given. A bare filename used to read its metadata from the working directory and then reload from the model cache: the call raised `FileNotFoundError` when the cache had no such file, downloaded the published weights and loaded those when the name was a published one such as `rf-detr-nano.pth`, and otherwise returned the cached file's weights and class names with no error. A bare filename now means the file in the working directory and never downloads, and a bare published name with an architecture override no longer emits `PretrainWeightsCompatibilityWarning`, matching `./rf-detr-nano.pth`. Bare names passed directly to a model constructor still resolve to the cache. ([#1683](https://github.com/roboflow/rf-detr/pull/1683))
+
 ## [1.11.2] — 2026-10-03
 
 ### Added
