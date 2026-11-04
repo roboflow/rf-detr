@@ -1265,6 +1265,107 @@ class TestFromCheckpointStrippedBestTotal:
 
 
 # ---------------------------------------------------------------------------
+# Bare filenames resolve against the working directory, not the model cache
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointBareFilename:
+    """``from_checkpoint`` must load its weights from the same file it read the metadata from."""
+
+    @pytest.fixture
+    def cache_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Enter an empty working directory and point the model cache at another empty directory.
+
+        Examples:
+            The pytest runner must create this fixture before a test can use it.
+
+            >>> cache_dir()  # doctest: +SKIP
+        """
+        working_dir = tmp_path / "cwd"
+        cache = tmp_path / "cache"
+        working_dir.mkdir()
+        cache.mkdir()
+        monkeypatch.chdir(working_dir)
+        monkeypatch.setenv("RF_HOME", str(cache))
+        return cache
+
+    @staticmethod
+    def _checkpoint(class_names: list[str]) -> dict:
+        """Build a real Nano checkpoint with random weights.
+
+        Examples:
+            >>> TestFromCheckpointBareFilename._checkpoint(["a"])["args"]["class_names"]
+            ['a']
+        """
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=len(class_names))
+        return {
+            "model": model.model.model.state_dict(),
+            "args": {"class_names": class_names},
+            "model_name": "RFDETRNano",
+            "model_config": model.model_config.model_dump(),
+        }
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["run.pth", pytest.param(Path("run.pth"), id="bare-path"), "./run.pth"],
+    )
+    def test_loads_file_from_working_directory(self, cache_dir: Path, spelling: str | Path) -> None:
+        """A checkpoint in the working directory loads, however its relative path is spelled."""
+        checkpoint = self._checkpoint(["a", "b", "c"])
+        torch.save(checkpoint, "run.pth")
+
+        loaded = RFDETR.from_checkpoint(spelling, device="cpu")
+
+        assert loaded.class_names == ["a", "b", "c"]
+        assert Path(loaded.model_config.pretrain_weights).parent.resolve() == Path.cwd().resolve()
+        assert list(cache_dir.iterdir()) == [], "nothing must be read from or written to the model cache"
+
+    @pytest.mark.parametrize("name", ["run.pth", "rf-detr-nano.pth"])
+    def test_same_named_file_in_cache_is_not_loaded(self, cache_dir: Path, name: str) -> None:
+        """A different file of the same name in the model cache must not replace the requested weights."""
+        local = self._checkpoint(["a", "b", "c"])
+        cached = {
+            **local,
+            "model": {**local["model"], "class_embed.weight": local["model"]["class_embed.weight"] + 1.0},
+            "args": {"class_names": ["x", "y", "z"]},
+        }
+        torch.save(local, name)
+        torch.save(cached, cache_dir / name)
+
+        loaded = RFDETR.from_checkpoint(name, device="cpu")
+
+        weight = loaded.model.model.state_dict()["class_embed.weight"]
+        assert torch.equal(weight, local["model"]["class_embed.weight"]), "weights must come from the working directory"
+        assert loaded.class_names == ["a", "b", "c"]
+
+    def test_published_name_in_working_directory_is_not_downloaded(
+        self, cache_dir: Path, mocker: MockerFixture
+    ) -> None:
+        """A published filename found only in the working directory must load that file, with no download."""
+        local = self._checkpoint(["a", "b", "c"])
+        torch.save(local, "rf-detr-nano.pth")
+        download = mocker.patch(
+            "rfdetr.assets.model_weights._download_file",
+            side_effect=AssertionError("must not download a file that is in the working directory"),
+        )
+
+        loaded = RFDETR.from_checkpoint("rf-detr-nano.pth", device="cpu")
+
+        download.assert_not_called()
+        weight = loaded.model.model.state_dict()["class_embed.weight"]
+        assert torch.equal(weight, local["model"]["class_embed.weight"]), "weights must come from the working directory"
+        assert loaded.class_names == ["a", "b", "c"]
+        assert list(cache_dir.iterdir()) == [], "nothing must be read from or written to the model cache"
+
+    def test_file_only_in_cache_raises(self, cache_dir: Path) -> None:
+        """``from_checkpoint`` takes a path, so a name missing from the working directory is an error."""
+        torch.save(self._checkpoint(["x", "y", "z"]), cache_dir / "run.pth")
+
+        with pytest.raises(FileNotFoundError, match=r"run\.pth"):
+            RFDETR.from_checkpoint("run.pth", device="cpu")
+
+
+# ---------------------------------------------------------------------------
 # PE-Core-T plus models (RFDETRAtto / RFDETRFemto / RFDETRPico)
 # ---------------------------------------------------------------------------
 
