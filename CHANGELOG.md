@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - A custom `Affine(translate_px=...)` config on the Kornia augmentation backend behaves differently from 1.11.2. That release ignored `translate_px`: the config built, never shifted the image and, when `rotate` was omitted, rotated it by a random ±15°. The shift is now applied, the implicit rotation is gone, and combinations Kornia cannot reproduce, such as rotation, scale, shear, a nonzero fill or reflected borders, raise `ValueError` when the pipeline is built. Pass `augmentation_backend="cpu"` (Albumentations, `rfdetr[augment]`) to keep them; `augmentation_backend="auto"` resolves to Kornia on a CUDA machine with Kornia installed. The fix itself is listed under Fixed. ([#1607](https://github.com/roboflow/rf-detr/pull/1607))
 
+- A custom `Affine` config on the Kornia augmentation backend that does not set `rotate` no longer rotates images. It used to sample a random ±15° rotation, which the Albumentations backend does not do, so an unset `rotate` now means no rotation on both. Set `rotate=(-15, 15)` to keep the old behavior. The built-in presets are unaffected.
+
 - In eval mode, a segmentation `LWDETR` no longer returns `pred_masks` in `aux_outputs` or `enc_outputs` unless it is called with `all_layer_masks=True`; the final `pred_masks` are unchanged. Code that runs `SetCriterion` on eval-mode outputs, such as an evaluation loop that computes a segmentation loss, got every layer's masks before and must now pass that keyword. Without it the criterion raises a `ValueError` that names it. See the matching entry under Changed. ([#1628](https://github.com/roboflow/rf-detr/pull/1628))
 
 ### Added
