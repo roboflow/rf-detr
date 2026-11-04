@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 import torch
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.trainer.states import TrainerFn
 from torch import Tensor
 
 # _MultiProcessingLauncher is a private PTL API (leading underscore) that may change in minor PTL releases within the
@@ -598,20 +599,17 @@ class BestModelCallback(ModelCheckpoint):
 
         Delegates regular-model checkpoint management to the :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         parent (handles improvement detection, fast_dev_run/sanity guards, ``best_model_path`` and ``best_model_score``
-        bookkeeping).  EMA is tracked independently, so the pre-training sanity-check guard below applies to both:
-        neither should treat the sanity-check validation pass as a real epoch's result.
+        bookkeeping). EMA tracking and metric smoothing also skip fast-dev runs, standalone evaluation and the
+        pre-training sanity check, so those passes cannot overwrite checkpoints or seed training state.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        # PTL's pre-training sanity check runs this hook before any real epoch. The
-        # regular-checkpoint path below already no-ops during it via ModelCheckpoint's own
-        # trainer.sanity_checking guard (_should_skip_saving_checkpoint), but the EMA
-        # tracking and the smoothing accumulator are custom bookkeeping that don't inherit
-        # that guard, so a positive sanity-check score would otherwise get treated as a real
-        # improvement — see #1348.
-        if trainer.sanity_checking:
+        # Custom EMA/smoothing paths must honor the same lifecycle exclusions as ModelCheckpoint.
+        # Keep its duplicate-step guard local to the regular track: EMA tracking is independent,
+        # and _last_global_step_saved is only updated by regular saves on the main process.
+        if getattr(trainer, "fast_dev_run") or trainer.state.fn != TrainerFn.FITTING or trainer.sanity_checking:
             return
         # Stash before the skip guard — eligible epochs still need this reference
         # inside _save_checkpoint (which receives no pl_module param).
@@ -687,6 +685,10 @@ class BestModelCallback(ModelCheckpoint):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
+        # A dry run must not backfill/promote checkpoints or reload/test an earlier run's files.
+        # Return on every rank before any of the collective test-evaluation operations below.
+        if getattr(trainer, "fast_dev_run"):
+            return
         total_path = self._output_dir / "checkpoint_best_total.pth"
         chose_ema = self._promote_best_total(trainer, pl_module, total_path) if trainer.is_global_zero else False
 
