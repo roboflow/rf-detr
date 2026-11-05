@@ -124,6 +124,10 @@ With `trt_metadata=True`, `format="tensorrt"` also writes a JSON description nex
 
 ## Predict with RFDETRInference
 
+> [!NOTE]
+>
+> `RFDETRInference` is available from `rfdetr` 1.12.0. With 1.11.x, `from rfdetr import RFDETRInference` raises `ImportError`; upgrade, or install the development version, to follow this page.
+
 For a native model, use its `inference()` factory to get an independent predictor snapshot. `RFDETRInference` also loads checkpoints and supported full exports, and can explicitly borrow a live model. All paths use the same image inputs and Supervision results as `RFDETR.predict()`.
 
 ```python

@@ -515,6 +515,10 @@ What the tables support:
 
 ## Predict with RFDETRInference
 
+> [!NOTE]
+>
+> `RFDETRInference` is available from `rfdetr` 1.12.0. With 1.11.x, `from rfdetr import RFDETRInference` raises `ImportError`; upgrade, or install the development version, to follow this page.
+
 ```python
 from rfdetr import RFDETRInference
 
