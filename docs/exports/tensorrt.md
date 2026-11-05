@@ -456,7 +456,62 @@ Three practical points follow from the measurements:
 
 A quick INT8 check on the same L4 (`RFDETRSmall`, static batch-1 engines, 128 calibration images held out of the scored images, end-to-end `predict()`) gave 56.0 mAP@50:95 for INT8 against 56.6 for FP16, 4.90 against 5.04 ms (1.03 times), and a 39.6 MB engine against 61.8 MB. Those two end-to-end times come from a run that passed a PIL image, so they include the PIL-to-array copy and are pending a rerun with array input; the engine-only figures below are unaffected. Timed on the engine alone with a CUDA graph, as in the tables above, INT8 was 1.14 times faster at batch 1 and 1.28 times at batch 8 (1.848 against 2.110 ms per image at batch 1) for 0.08 box AP. This is the quick default of Section 8.1 (one model, 500 images, `val2017` calibration), not the full benchmark behind the RTX 5070 and Tesla T4 tables, so it is not added to them.
 
-## Predict with RFDETRInference
+## Measured Latency Across NVIDIA GPUs
+
+The same end-to-end measurement as the L4 section, repeated for the four detection sizes on four GPUs: Tesla T4, NVIDIA L4, A100 SXM4 80 GB and RTX PRO 6000 Blackwell Server Edition. All four ran `rfdetr` 1.12.0.dev0, `inference-models` 0.39.8, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and the `rfdetr` rows pass `include_source_image=False`. The bold value is the fastest route in its row.
+
+- **Latency only.** No accuracy was scored here. The INT8 engines were built for Nano, Small and Medium; Large has no INT8 column (`n/a`).
+- **The managed engine needs a published package for the GPU.** On the A100 and the RTX PRO 6000 `inference-models` raised `NoModelPackagesAvailableError` for every size, so those columns are `n/a`. This is a registry gap for those two GPUs, not a measured slowdown.
+- **`inference()` CUDA graph** is the PyTorch route with a captured graph; `.trt` is a static-batch engine exported with `RFDETR.export(format="tensorrt")` and loaded by `RFDETRInference`.
+
+### Batch 1 latency [ms]
+
+| GPU          | Size   | `inference()` CUDA graph FP16 | `.trt` FP16 | `.trt` INT8 | `inference-models` managed |
+| ------------ | ------ | ----------------------------: | ----------: | ----------: | -------------------------: |
+| T4           | Nano   |                          5.36 |        5.12 |    **4.90** |                       5.20 |
+| T4           | Small  |                          7.66 |        6.21 |        6.10 |                   **5.89** |
+| T4           | Medium |                          9.47 |        7.20 |    **7.02** |                       7.35 |
+| T4           | Large  |                         13.15 |       10.86 |         n/a |                  **10.22** |
+| L4           | Nano   |                      **2.78** |        3.25 |        2.92 |                       3.22 |
+| L4           | Small  |                          3.60 |        3.57 |    **3.45** |                       3.70 |
+| L4           | Medium |                          4.52 |        4.13 |    **4.10** |                       4.23 |
+| L4           | Large  |                          5.64 |    **5.14** |         n/a |                       5.18 |
+| A100         | Nano   |                      **3.16** |        3.29 |        3.40 |                        n/a |
+| A100         | Small  |                          3.62 |    **3.44** |        3.69 |                        n/a |
+| A100         | Medium |                      **3.80** |        4.22 |        4.06 |                        n/a |
+| A100         | Large  |                      **4.27** |        4.35 |         n/a |                        n/a |
+| RTX PRO 6000 | Nano   |                          1.54 |        1.47 |    **1.37** |                        n/a |
+| RTX PRO 6000 | Small  |                          1.83 |        1.62 |    **1.57** |                        n/a |
+| RTX PRO 6000 | Medium |                          1.95 |        1.76 |    **1.73** |                        n/a |
+| RTX PRO 6000 | Large  |                          2.20 |    **2.08** |         n/a |                        n/a |
+
+### Batch 8 throughput [img/s]
+
+| GPU          | Size   | `inference()` CUDA graph FP16 | `.trt` FP16 | `.trt` INT8 | `inference-models` managed |
+| ------------ | ------ | ----------------------------: | ----------: | ----------: | -------------------------: |
+| T4           | Nano   |                           276 |         334 |     **386** |                        271 |
+| T4           | Small  |                           160 |         197 |     **223** |                        191 |
+| T4           | Medium |                           119 |         149 |     **165** |                        153 |
+| T4           | Large  |                            82 |          98 |         n/a |                     **99** |
+| L4           | Nano   |                           596 |         724 |     **809** |                        466 |
+| L4           | Small  |                           324 |         432 |     **516** |                        355 |
+| L4           | Medium |                           256 |         349 |     **406** |                        286 |
+| L4           | Large  |                           170 |     **227** |         n/a |                        216 |
+| A100         | Nano   |                           877 |     **967** |         924 |                        n/a |
+| A100         | Small  |                           688 |     **783** |         760 |                        n/a |
+| A100         | Medium |                           590 |     **676** |         674 |                        n/a |
+| A100         | Large  |                           457 |     **558** |         n/a |                        n/a |
+| RTX PRO 6000 | Nano   |                          1976 |        2271 |    **2563** |                        n/a |
+| RTX PRO 6000 | Small  |                          1381 |        1782 |    **1916** |                        n/a |
+| RTX PRO 6000 | Medium |                          1262 |        1608 |    **1694** |                        n/a |
+| RTX PRO 6000 | Large  |                           984 |    **1249** |         n/a |                        n/a |
+
+What the tables support:
+
+- **At batch 8 a `.trt` engine is the fastest route on every GPU except T4 Large**, where the managed engine is level (99 against 98 img/s). INT8 wins on T4, L4 and RTX PRO 6000 for Nano to Medium. On the A100 FP16 is ahead of INT8 by 0.3% to 5% at batch 8, and at batch 1 INT8 is never the fastest route there.
+- **At batch 1 the routes are close on most rows**, so the choice matters little for single-image latency. The CUDA-graph route is fastest on L4 Nano, and on A100 Nano, Medium and Large; it is 1.2× to 1.3× slower than a `.trt` engine on T4 Small to Large.
+- **The managed engine is competitive on the T4 and the L4**: fastest at batch 1 on T4 Small and Large, within 0.5 ms of the best on the L4 at batch 1, but 30% to 42% behind the INT8 `.trt` engine at batch 8 on L4 Nano to Medium.
+- **The RTX PRO 6000 is about 2× faster than the L4 at batch 1** (INT8 Nano: 1.37 against 2.92 ms), while the A100 is slower than the L4 for Nano (3.16 against 2.78 ms). Batch 1 does not scale with GPU size; the likely cause is the host-side share of the call, which was not measured here.
 
 ```python
 from rfdetr import RFDETRInference

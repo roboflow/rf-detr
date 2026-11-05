@@ -51,6 +51,17 @@ Which format is fastest depends entirely on the hardware you deploy to. The four
 
 All numbers are batch 1, `RFDETRSmall`, rfdetr `develop`. Warmup and timed-run counts differ per cookbook (GPU 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30). Compare *within* a row, never across rows. The rows come from three machines: a Colab L4 GPU host, a Colab x86 host, and one Apple M4 Max. On the L4 both rows time the same decoded NumPy array, with `include_source_image=False` for `rfdetr`, and they are level at batch 1 (3.6 ms); [the TensorRT page](tensorrt.md#why-the-managed-engine-is-faster-end-to-end) explains why the earlier gap between them was an input-type artifact. The `inference()` CUDA graph row (3.5 ms) is not scored; the same weights score 56.5 mAP@50:95 through `inference()` with TorchScript. On the x86 host the run-to-run standard deviation is 10 to 17% of the mean for most rows, so on a CPU batch-1 gaps under about 100 ms are noise, not a ranking: the OpenVINO fp32 row is listed as the best full-accuracy route, but eager PyTorch, TorchScript and `inference-models` ONNX are level with it on this run. The Apple row was measured on macOS 26.7.1. The arm64 CPU row stands in for a phone or edge CPU only approximately: it is a laptop chip, and a phone's own delegate (NNAPI, QNN, Core ML) is not exercised.
 
+### Fastest route across NVIDIA GPUs
+
+The fastest measured route per GPU and size, end to end on one decoded RGB array, `rfdetr` 1.12.0.dev0, TensorRT 10.16.1.11, CUDA 13.2. Cells show `ms` at batch 1 and `img/s` at batch 8, with the winning route: C = `inference()` CUDA graph FP16, F = `.trt` FP16, I = `.trt` INT8, M = `inference-models` managed engine. Latency only; INT8 was built for Nano to Medium and no accuracy was scored. All routes and the `n/a` cases are in [TensorRT](tensorrt.md#measured-latency-across-nvidia-gpus).
+
+| GPU          | Nano                         | Small                        | Medium                       | Large                        |
+| ------------ | ---------------------------- | ---------------------------- | ---------------------------- | ---------------------------- |
+| T4           | 4.90 ms (I) / 386 img/s (I)  | 5.89 ms (M) / 223 img/s (I)  | 7.02 ms (I) / 165 img/s (I)  | 10.22 ms (M) / 99 img/s (M)  |
+| L4           | 2.78 ms (C) / 809 img/s (I)  | 3.45 ms (I) / 516 img/s (I)  | 4.10 ms (I) / 406 img/s (I)  | 5.14 ms (F) / 227 img/s (F)  |
+| A100         | 3.16 ms (C) / 967 img/s (F)  | 3.44 ms (F) / 783 img/s (F)  | 3.80 ms (C) / 676 img/s (F)  | 4.27 ms (C) / 558 img/s (F)  |
+| RTX PRO 6000 | 1.37 ms (I) / 2563 img/s (I) | 1.57 ms (I) / 1916 img/s (I) | 1.73 ms (I) / 1694 img/s (I) | 2.08 ms (F) / 1249 img/s (F) |
+
 ### PyTorch Baseline
 
 Each format page holds only that format's rows. The native PyTorch rows every cookbook measures alongside them are collected here, per machine: `predict()` is the eager model, `inference()` the snapshot it returns (TorchScript, plus a CUDA graph on the L4 and inductor on the Mac GPU, which is the MPS default). Latency is batch 1, end to end; `FPS` is images per second at each batch size, `—` where the cookbook did not run that batch. `mAP@50:95` is the same seeded 500-image val2017 subset as the format pages.
