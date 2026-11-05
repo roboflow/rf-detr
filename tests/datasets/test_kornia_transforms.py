@@ -2139,6 +2139,22 @@ class TestAffineScalarParameters:
         assert boxes_out.shape == boxes.shape
         assert not torch.allclose(boxes_out, boxes)
 
+    def test_unset_rotate_samples_no_rotation(self) -> None:
+        """An unset ``rotate`` means no rotation, as in Albumentations' ``Affine``."""
+        ranges = _affine_ranges(_make_affine({"translate_percent": (-0.1, 0.1), "scale": (0.8, 1.2), "p": 1.0}))
+
+        assert ranges["degrees"] == pytest.approx((0.0, 0.0), abs=1e-6)
+
+    def test_scale_only_config_leaves_the_image_unrotated(self) -> None:
+        """A scale-only config with a unit scale changes nothing, so it cannot have rotated."""
+        torch.manual_seed(0)
+        transform = _make_affine({"scale": (1.0, 1.0), "p": 1.0})
+        image = torch.rand(1, 3, 32, 32)
+
+        result = transform(image)
+
+        assert torch.allclose(result, image, atol=1e-5)
+
     def test_existing_pairs_keep_their_ranges(self) -> None:
         """The scalar fix must not change existing ordered-pair behaviour."""
         ranges = _affine_ranges(_make_affine({"translate_percent": (-0.05, 0.2), "scale": (0.8, 1.2), "p": 1.0}))

@@ -457,6 +457,141 @@ class _SanityCheckEndProbe(Callback):
 # ---------------------------------------------------------------------------
 
 
+class TestCheckpointLifecycle:
+    """Checkpoint files and tracking state belong only to ordinary fit validation."""
+
+    @pytest.mark.parametrize(
+        ("fast_dev_run", "trainer_fn", "sanity_checking"),
+        [
+            pytest.param(True, TrainerFn.FITTING, False, id="fast-dev-run"),
+            pytest.param(False, TrainerFn.VALIDATING, False, id="standalone-validate"),
+            pytest.param(False, TrainerFn.TESTING, False, id="standalone-test"),
+            pytest.param(False, TrainerFn.PREDICTING, False, id="standalone-predict"),
+            pytest.param(False, TrainerFn.FITTING, True, id="sanity-check"),
+        ],
+    )
+    def test_suppressed_validation_preserves_tracking_state(
+        self, tmp_path: Path, fast_dev_run: bool, trainer_fn: TrainerFn, sanity_checking: bool
+    ) -> None:
+        """Suppressed hooks must neither write files nor seed resumed metric bookkeeping."""
+        callback = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", smooth_alpha=0.5)
+        previous_module = _make_pl_module()
+        callback._current_pl_module = previous_module
+        callback._best_ema = 0.2
+        callback._smoothed_regular = 0.1
+        before = callback.state_dict()
+        trainer = _make_trainer({"val/mAP_50_95": 0.8, "val/ema_mAP_50_95": 0.9})
+        trainer.fast_dev_run = fast_dev_run
+        trainer.state.fn = trainer_fn
+        trainer.sanity_checking = sanity_checking
+
+        callback.on_validation_end(trainer, _make_pl_module())
+
+        assert callback.state_dict() == before
+        assert callback._current_pl_module is previous_module
+        assert not list(tmp_path.glob("*.pth"))
+
+    @pytest.mark.parametrize("evaluates_base_model", [True, False])
+    def test_ema_tracking_is_independent_of_regular_save_step(self, tmp_path: Path, evaluates_base_model: bool) -> None:
+        """Validation before the first optimizer step can still update the independent EMA track."""
+        callback = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            evaluates_base_model=evaluates_base_model,
+        )
+        trainer = _make_trainer({"val/mAP_50_95": 0.2, "val/ema_mAP_50_95": 0.8})
+        trainer.global_step = 0
+
+        callback.on_validation_end(trainer, _make_pl_module())
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert callback._best_ema == pytest.approx(0.8)
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    @pytest.mark.parametrize("is_global_zero", [True, False])
+    def test_fast_dev_fit_end_preserves_existing_checkpoint(self, tmp_path: Path, is_global_zero: bool) -> None:
+        """A dry run must not promote, reload or test an earlier run's checkpoints on any rank."""
+        module = _make_test_step_module()
+        callback = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        trainer = _make_trainer({}, is_global_zero=is_global_zero)
+        trainer.fast_dev_run = True
+        checkpoint = tmp_path / "checkpoint_best_total.pth"
+        torch.save({"model": {"w": torch.ones(1)}, "args": {}}, checkpoint)
+        before = checkpoint.read_bytes()
+
+        callback.on_fit_end(trainer, module)
+
+        assert checkpoint.read_bytes() == before
+        assert {p.name for p in tmp_path.glob("*.pth")} == {checkpoint.name}
+        module.model.load_state_dict.assert_not_called()
+        trainer.test.assert_not_called()
+        trainer.strategy.barrier.assert_not_called()
+        trainer.strategy.broadcast.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("operation", "fast_dev_run", "evaluates_base_model", "expected"),
+        [
+            pytest.param("fit", True, True, set(), id="fast-dev-base"),
+            pytest.param("fit", True, False, set(), id="fast-dev-ema"),
+            pytest.param("validate", False, True, set(), id="validate-base"),
+            pytest.param("validate", False, False, set(), id="validate-ema"),
+            pytest.param(
+                "fit",
+                False,
+                True,
+                {"checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth", "checkpoint_best_regular.pth"},
+                id="fit-base",
+            ),
+            pytest.param(
+                "fit",
+                False,
+                False,
+                {"checkpoint_best_ema.pth", "checkpoint_best_total.pth", "last_ema.pth"},
+                id="fit-ema",
+            ),
+        ],
+    )
+    def test_real_trainer_checkpoint_lifecycle(
+        self,
+        tmp_path: Path,
+        loaders: tuple[DataLoader, DataLoader],
+        operation: str,
+        fast_dev_run: bool,
+        evaluates_base_model: bool,
+        expected: set[str],
+    ) -> None:
+        """Real Lightning hooks suppress dry-run/standalone writes while retaining both fit policies."""
+        train_loader, val_loader = loaders
+        callback = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            evaluates_base_model=evaluates_base_model,
+            run_test=False,
+        )
+        trainer = Trainer(
+            accelerator="cpu",
+            max_epochs=1,
+            fast_dev_run=fast_dev_run,
+            logger=False,
+            enable_model_summary=False,
+            enable_progress_bar=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            callbacks=[callback, RFDETREMACallback()],
+            default_root_dir=str(tmp_path),
+        )
+        module = _EmaMetricModule(regular_value=0.2, ema_value=0.8)
+
+        loader_args = {
+            "fit": {"train_dataloaders": train_loader, "val_dataloaders": val_loader},
+            "validate": {"dataloaders": val_loader, "verbose": False},
+        }
+        getattr(trainer, operation)(module, **loader_args[operation])
+
+        assert {p.name for p in tmp_path.glob("*.pth")} == expected
+
+
 class TestEvaluatesBaseModel:
     """Regular-track behaviour when validation does not evaluate the base model (``TrainConfig.eval_base_model``)."""
 
