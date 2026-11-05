@@ -1,3 +1,4 @@
+# External fork probe submitted by TechPatton. Synthetic canaries only.
 name: Temporary INF-1769 isolation canary
 
 on:
