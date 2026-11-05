@@ -2983,6 +2983,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Detection and segmentation training with any <code>augmentation_backend</code> that resolves to Kornia now raises <code>ValueError</code> during setup with <code>square_resize_div_64=False</code> or <code>multi_scale="per-sample"</code>, as keypoint training already did. Those settings collate images of different sizes into a padded canvas, and the Kornia path normalizes boxes by that canvas, so smaller images trained on shrunken targets, and segmentation failed later with a tensor shape error. Use <code>square_resize_div_64=True</code> with <code>multi_scale="per-batch"</code> or <code>"off"</code>, or <code>augmentation_backend="torchvision"</code> or <code>"albumentations"</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1680">#1680</a>)</p>
+</li>
+<li>
 <p><code>RFDETR.inference()</code> now returns an independent <code>RFDETRInference</code> predictor. Capture the return value and call <code>predictor.predict(images)</code>; the source model is unchanged and later source mutations do not affect the predictor. The removed <code>inplace</code> keyword is rejected. Each predictor owns one copy of the current base weights; delete it when its runtime is no longer needed. The default TorchScript compilation, batch size 1 and float32 settings are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1563">#1563</a>)</p>
 </li>
 <li>
