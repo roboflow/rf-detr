@@ -1275,11 +1275,6 @@ class TestFromCheckpointBareFilename:
     @pytest.fixture
     def cache_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         """Enter an empty working directory and point the model cache at another empty directory.
-
-        Examples:
-            The pytest runner must create this fixture before a test can use it.
-
-            >>> cache_dir()  # doctest: +SKIP
         """
         working_dir = tmp_path / "cwd"
         cache = tmp_path / "cache"
