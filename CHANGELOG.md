@@ -165,6 +165,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `predict()` on a keypoint model now includes `key_points.data["covariance"]`, with shape `(0, num_keypoints, 2, 2)`, on a frame with no detections. The key was omitted there, so code reading it raised `KeyError` only on empty frames. ([#1681](https://github.com/roboflow/rf-detr/pull/1681))
+
 - A model built with an implicit class count from a checkpoint with fewer classes than its config (`RFDETRSegXLarge(pretrain_weights="own.pth")`) recorded the checkpoint's class count as if the user had set it, so `train()` on a dataset with more classes kept the old count with a warning. The head and loss were then too small for the new labels, and training could fail when it encountered an out-of-range label with a CUDA index-out-of-bounds assert (on Windows a display-driver reset with no traceback). `load_pretrain_weights` now clears the checkpoint-derived `num_classes` from `model_fields_set`, as `from_checkpoint` does, so the dataset count raises it and the head is expanded.
 
 - `inference()` on a CUDA segmentation model no longer fails with "Expected all tensors to be on the same device, but got max is on cpu" after `torch.use_deterministic_algorithms(True)`, for example through `seed_all()`. In that mode CUDA `F.interpolate` takes a backward-determinism decomposition that `torch.jit.trace` cannot record, so the prediction snapshot uses native upsampling without changing process-wide deterministic settings.
