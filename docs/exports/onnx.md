@@ -140,11 +140,11 @@ Colab NVIDIA L4, `rfdetr` 1.12.0.dev0, CUDA execution provider, 20 warmup + 100 
 
 | Runtime | Precision | Batch | end2end [ms] | FPS [img/s] | mAP@50:95 [%] | Size [MB] |
 | ------- | --------- | ----- | ------------ | ----------- | ------------- | --------- |
-| CUDA EP | fp32      | 1     | 10.19        | 98.1        | 56.5          | 127.5     |
-| CUDA EP | fp32      | 4     | 34.35        | 116.4       | —             | 127.5     |
-| CUDA EP | fp32      | 8     | 75.17        | 106.4       | —             | 127.5     |
+| CUDA EP | fp32      | 1     | 8.4          | 119.2       | 56.5          | 127.5     |
+| CUDA EP | fp32      | 4     | 30.1         | 132.9       | —             | 127.5     |
+| CUDA EP | fp32      | 8     | 66.4         | 120.5       | —             | 127.5     |
 
-ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than batch 4 (106.4 against 116.4 img/s). The same model through `inference-models` on the same provider ran at 11.3 ms and 88.2 img/s at batch 1 with 56.4 mAP@50:95 (see the [side-by-side table](index.md#side-by-side-with-inference-models)). On this GPU a [TensorRT engine](tensorrt.md#measured-latency-on-an-nvidia-l4) is the faster route.
+ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than batch 4 (120.5 against 132.9 img/s). The batch 4 and 8 latencies are batch size divided by the measured img/s, rounded to one decimal. The same model through `inference-models` on the same provider ran at 9.4 ms and 106.0 img/s at batch 1 with 56.4 mAP@50:95 (see the [side-by-side table](index.md#side-by-side-with-inference-models)). On this GPU a [TensorRT engine](tensorrt.md#measured-latency-on-an-nvidia-l4) is the faster route.
 
 ### On an x86 CPU
 
