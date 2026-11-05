@@ -144,16 +144,8 @@ Colab NVIDIA L4, `rfdetr` 1.12.0.dev0, CUDA execution provider, 20 warmup + 100 
 | CUDA EP | fp32      | 4     | 30.1         | 132.9       | —             | 127.5     |
 | CUDA EP | fp32      | 8     | 66.4         | 120.5       | —             | 127.5     |
 
-ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than batch 4 (120.5 against 132.9 img/s). The batch 4 and 8 latencies are batch size divided by the measured img/s, rounded to one decimal. The same model through `inference-models` on the same provider ran at 9.4 ms and 106.0 img/s at batch 1 with 56.4 mAP@50:95 (see the [side-by-side table](index.md#side-by-side-with-inference-models)). On this GPU a [TensorRT engine](tensorrt.md#measured-latency-on-an-nvidia-l4) is the faster route.
+ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than batch 4 (120.5 against 132.9 img/s). The batch 4 and 8 latencies are batch size divided by the measured img/s, rounded to one decimal. On this GPU a [TensorRT engine](tensorrt.md#latency-across-nvidia-gpus) is the faster route.
 
 ### On an x86 CPU
 
-Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, `rfdetr` 1.12.0.dev0, ONNX Runtime 1.22.1, CPU execution provider at its default intra-op pool (one thread per physical core), 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). The INT8 model was calibrated on 100 val2017 images held out of the scored subset and is batch 1 only. `Memory [MB]` is host resident-memory growth, a rough per-row indication. ONNX Runtime 1.22.1 is the version the `inference-models` ONNX extra installs, so both packages ran on it in this notebook; the previous run used 1.31.1 and its ONNX numbers are not comparable with these.
-
-| Runtime | Precision | Quantization | Batch | end2end [ms]     | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
-| ------- | --------- | ------------ | ----- | ---------------- | ----------- | ------------- | --------- | ----------- |
-| CPU EP  | fp32      | —            | 1     | 546.87 ± 11.78   | 1.8         | 56.5          | 127.5     | 66.2        |
-| CPU EP  | INT8      | static QDQ   | 1     | 411.08 ± 45.86   | 2.4         | 54.7          | 39.1      | 0.7         |
-| CPU EP  | fp32      | —            | 4     | 1594.08 ± 324.89 | 2.5         | —             | 127.5     | 234.7       |
-
-Static INT8 is 1.3 times faster than fp32 and 3.3 times smaller, for 1.8 mAP. fp32 ONNX Runtime (546.9 ms) is the slowest fp32 row of the CPU cookbook on this host, behind eager PyTorch (401.6 ms) and [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) (373.7 ms), which is the faster full-accuracy route on an Intel CPU. The same ONNX model through `inference-models` on the same ONNX Runtime ran at 393.8 ms (56.4 mAP@50:95), in 72% of the time `rfdetr`'s own loader needed in this run; the cause was not investigated (see the [side-by-side table](index.md#side-by-side-with-inference-models)).
+No x86 CPU table is published yet: the earlier run had `RFDETRInference`'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows are removed pending a rerun of the [CPU cookbook](../../cookbooks/export-cpu/). On Intel CPUs, [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is the measured route.
