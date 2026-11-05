@@ -64,6 +64,7 @@ The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-
 
 - **AP** is scored at batch 1 on all 5000 `val2017` images, decoded the way `predict()` decodes. Detection uses box AP, segmentation mask AP, Keypoint Preview keypoint AP. Δ is INT8 minus FP16 in AP points.
 - **Latency** is GPU time per image at batch 1 with a CUDA graph (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved). It is engine-only time, not the end-to-end time of the [latency section](#latency-across-nvidia-gpus) below. Speedup is FP16 ÷ INT8.
+- **API:** these tables do **not** go through `RFDETRInference`. Latency calls the raw TensorRT engine (`execute_async_v3`, replayed as a CUDA graph) from Section 8.1 of the cookbook, so it excludes preprocessing, postprocessing and `RFDETRInference` overhead. The RTX 5070 and Tesla T4 runs predate the current `RFDETRInference` and were not repeated through it. Treat the speedup ratios and AP deltas as the finding, and the absolute milliseconds as engine-only figures for those two machines. The end-to-end `RFDETRInference` figures are in [Latency Across NVIDIA GPUs](#latency-across-nvidia-gpus), which has no INT8 row.
 - **Size** is the engine file at batch 1. INT8 engines are calibrated on the first 128 `train2017` images by file name.
 
 === "RTX 5070"
