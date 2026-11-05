@@ -429,6 +429,40 @@ class TestCheckpointSource:
         assert facade.runtime_info["input_shape"] == (None, 3, 64, 64)
         assert facade.runtime_info["batch_size"] is None
 
+    def test_bare_checkpoint_name_loads_from_working_directory(
+        self,
+        nano_model: RFDETRNano,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A bare checkpoint name means the working directory's file, even with a same-named file in the model cache."""
+        local = {
+            "model": nano_model.model.model.state_dict(),
+            "model_config": nano_model.model_config.model_dump(),
+            "model_name": "RFDETRNano",
+            "args": {"class_names": ["cat", "dog"]},
+        }
+        cached = {
+            **local,
+            "model": {**local["model"], "class_embed.weight": local["model"]["class_embed.weight"] + 1.0},
+            "args": {"class_names": ["x", "y"]},
+        }
+        working_dir = tmp_path / "cwd"
+        cache_dir = tmp_path / "cache"
+        working_dir.mkdir()
+        cache_dir.mkdir()
+        torch.save(local, working_dir / "model.pth")
+        torch.save(cached, cache_dir / "model.pth")
+        monkeypatch.chdir(working_dir)
+        monkeypatch.setenv("RF_HOME", str(cache_dir))
+
+        predictor = RFDETRInference("model.pth", device="cpu")
+
+        assert predictor.class_names == ["cat", "dog"]
+        assert predictor._native_model is not None
+        weight = predictor._native_model.model.model.state_dict()["class_embed.weight"]
+        assert torch.equal(weight, local["model"]["class_embed.weight"]), "weights must come from the working directory"
+
 
 @pytest.fixture
 def stopped_runtime_load(mocker) -> tuple[ExportMetadata, Mock]:

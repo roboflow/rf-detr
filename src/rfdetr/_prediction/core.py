@@ -95,7 +95,8 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
     For a CUDA tensor in ``float16``/``float32``/``float64`` with every dimension greater than one, the
     multiply-then-truncate cast runs on-device before the (now ``uint8``) transfer; every other input,
     including CPU tensors and CUDA tensors of another dtype such as ``bfloat16``, keeps the previous
-    NumPy-side conversion. NaN pixels convert successfully on both paths, but only the NumPy-side path
+    NumPy-side conversion, with ``bfloat16`` widened to ``float32`` first because NumPy has no such type.
+    NaN pixels convert successfully on both paths, but only the NumPy-side path
     emits an incidental invalid-cast ``RuntimeWarning`` for them; the on-device path does not.
 
     Args:
@@ -121,7 +122,11 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
         # NumPy types ``ndarray.copy`` as ``Any``, so ``asarray`` restores the element type; it returns the very
         # same object for an ndarray, keeping the copy's ownership, writability, and strides untouched.
         return np.asarray(source_view.mul(255).to(torch.uint8).cpu().numpy().copy(order="K"))
-    return (source_view.cpu().numpy() * 255).astype(np.uint8)
+    source_view = source_view.cpu()
+    if source_view.dtype == torch.bfloat16:
+        # NumPy has no bfloat16 type, so widen on the host before the conversion below.
+        source_view = source_view.float()
+    return (source_view.numpy() * 255).astype(np.uint8)
 
 
 def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
@@ -1406,7 +1411,7 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
                 keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
             raw_precision = keypoint_data.get("keypoint_precision_cholesky")
             raw_source_shape = keypoint_data.get("source_shape")
-            if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
+            if raw_precision is not None and raw_source_shape is not None:
                 precision = np.asarray(raw_precision, dtype=np.float32)
                 source_shape = np.asarray(raw_source_shape, dtype=np.float32)
                 if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):

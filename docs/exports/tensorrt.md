@@ -416,32 +416,50 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 ## Measured Latency on an NVIDIA L4
 
-Batch 1, 4 and 8 on a Colab NVIDIA L4, `RFDETRSmall`, `rfdetr` 1.12.0.dev0, TensorRT 10.16.1.11, 20 warmup + 100 timed runs per row, from the [CUDA cookbook](../../cookbooks/export-cuda/). Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`, except the two rows from the separate `inference-models` package, which selects and loads its own prebuilt TensorRT engine and runs its own call path, not the `.trt` file this page exports. The `Package` column says which package ran each row: `rfdetr` rows are this package (`model.export()` plus `RFDETRInference`), `inference-models` rows are not. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed; the `inference-models` rows are not scored. `Memory [MB]` is device-memory growth; the batch-4 and batch-8 rows can read `0.0` because the engine sizes its output buffers for the batch-8 profile maximum when it is loaded. The ONNX Runtime rows from the same run are on the [ONNX page](onnx.md#measured-latency), the PyTorch baseline on the [export overview](index.md#pytorch-baseline).
+Batch 1, 4 and 8 on a Colab NVIDIA L4, `RFDETRSmall`, `rfdetr` 1.12.0.dev0, TensorRT 10.16.1.11, 20 warmup + 100 timed runs per row, from the [CUDA cookbook](../../cookbooks/export-cuda/). The `rfdetr` rows time the end-to-end `predict()` call (preprocessing, forward, postprocessing); the historical managed-engine rows have the conversion limitation noted below. The `Package` column says which package ran each row: `rfdetr` rows are this package (`model.export()` plus `RFDETRInference`, loading the `.trt` file this page exports), `inference-models` rows are the separate [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) package, which selects and loads its own prebuilt TensorRT engine and runs its own call path. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed, for every row. The ONNX Runtime rows from the same run are on the [ONNX page](onnx.md#measured-latency), the PyTorch baseline and the other `inference-models` backends on the [export overview](index.md#pytorch-baseline).
 
-| Package            | Runtime        | Precision | Batch | end2end [ms] | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
-| ------------------ | -------------- | --------- | ----- | ------------ | ----------- | ------------- | --------- | ----------- |
-| `inference-models` | managed engine | auto      | 1     | 3.45 ± 0.15  | 289.8       | —             | —         | 119.5       |
-| `inference-models` | managed engine | fp32      | 1     | 6.67 ± 0.10  | 149.9       | —             | —         | 228.6       |
-| `rfdetr`           | .trt engine    | fp16      | 1     | 5.88 ± 0.34  | 169.9       | 56.5          | 63.0      | 182.5       |
-| `inference-models` | managed engine | auto      | 4     | 11.15 ± 0.35 | 358.7       | —             | —         | 0.0         |
-| `inference-models` | managed engine | fp32      | 4     | 25.31 ± 0.52 | 158.1       | —             | —         | 0.0         |
-| `rfdetr`           | .trt engine    | fp16      | 4     | 17.58 ± 0.48 | 227.5       | —             | 63.0      | 0.0         |
-| `inference-models` | managed engine | auto      | 8     | 20.49 ± 0.75 | 390.4       | —             | —         | 25.2        |
-| `inference-models` | managed engine | fp32      | 8     | 49.86 ± 0.65 | 160.5       | —             | —         | 0.0         |
-| `rfdetr`           | .trt engine    | fp16      | 8     | 33.46 ± 0.64 | 239.1       | —             | 63.0      | 25.2        |
+!!! warning "Managed-engine timing needs a rerun"
+
+    The recorded managed-engine rows below excluded PIL-to-NumPy input conversion and conversion to `sv.Detections`, which the comparison rows include. The cookbook now times all `inference-models` backends through the same wrapper. These historical numbers have not been regenerated; use them only with that timing-scope limitation, not to rank end-to-end package performance.
+
+| Package            | Runtime        | Precision | Batch | end2end [ms] | FPS [img/s] | mAP@50:95 [%] | Size [MB] |
+| ------------------ | -------------- | --------- | ----- | ------------ | ----------- | ------------- | --------- |
+| `inference-models` | managed engine | auto      | 1     | 3.50         | 285.7       | 56.3          | —         |
+| `inference-models` | managed engine | fp32      | 1     | 6.76         | 148.0       | 56.4          | —         |
+| `rfdetr`           | .trt engine    | fp16      | 1     | 5.36         | 186.7       | 56.5          | 63.0      |
+| `inference-models` | managed engine | auto      | 4     | 11.14        | 359.2       | —             | —         |
+| `inference-models` | managed engine | fp32      | 4     | 26.11        | 153.2       | —             | —         |
+| `rfdetr`           | .trt engine    | fp16      | 4     | 17.10        | 233.9       | —             | 63.0      |
+| `inference-models` | managed engine | auto      | 8     | 21.42        | 373.5       | —             | —         |
+| `inference-models` | managed engine | fp32      | 8     | 51.78        | 154.5       | —             | —         |
+| `rfdetr`           | .trt engine    | fp16      | 8     | 31.72        | 252.2       | —             | 63.0      |
 
 What the table supports:
 
-- The `.trt` engine through `RFDETRInference` takes 5.88 ms end to end at batch 1, 4.0 times faster than eager PyTorch (23.46 ms) and 2.6 times faster than ONNX Runtime on CUDA (15.45 ms), at the same mAP (56.5).
-- The managed `inference-models` engine is faster still (3.45 ms, 289.8 FPS at batch 1, 390.4 FPS at batch 8) and scales best with batch; forcing it to fp32 doubles the time (6.67 ms).
-- The `.trt` engine scales with batch: 169.9, 227.5 and 239.1 FPS at batch 1, 4 and 8.
+- The `.trt` engine through `RFDETRInference` takes 5.36 ms end to end at batch 1, 4.0 times faster than eager PyTorch (21.17 ms) and 1.9 times faster than ONNX Runtime on CUDA (10.19 ms), at the same mAP (56.5).
+- The historical managed-engine calls took 3.50 ms with auto precision and 6.76 ms with fp32 at batch 1. Their differing timing scope prevents an end-to-end package ranking. The auto engine scores 56.3 mAP@50:95, 0.2 below the `.trt` engine.
+- The `.trt` engine scales with batch: 186.7, 233.9 and 252.2 FPS at batch 1, 4 and 8.
 - The fp16 `.trt` engine scores the same mAP as eager PyTorch fp32 (56.5), so fp16 costs no accuracy on the subset.
 
 !!! note "Not comparable with other L4 figures"
 
     These times include preprocessing and postprocessing on the host. They are not the engine-only times of the INT8 benchmark above, and not the 8.3 ms TensorRT and 12.9 ms ONNX figures on Roboflow's model page, whose timing scope is not stated.
 
-A quick INT8 check on the same L4 (`RFDETRSmall`, static batch-1 engines, 128 calibration images held out of the scored images, end-to-end `predict()`) gave 56.0 mAP@50:95 for INT8 against 56.5 for FP16, 5.19 against 5.33 ms (1.03 times), and a 39.6 MB engine against 61.8 MB. End to end the gain is small because preprocessing and postprocessing dominate a call this short. Timed on the engine alone with a CUDA graph, as in the tables above, INT8 was 1.12 times faster at batch 1 and 1.32 times at batch 8 (1.748 against 1.953 ms per image at batch 1) for 0.09 box AP. This is the quick default of Section 8.1 (one model, 500 images, `val2017` calibration), not the full benchmark behind the RTX 5070 and Tesla T4 tables, so it is not added to them.
+### Comparing engine and host overhead {#why-the-managed-engine-is-faster-end-to-end}
+
+The recorded end-to-end timings differ, but the managed engine’s execution time was not measured, so the measurements do not separate engine and host contributions. Timed on the engine alone, with the input already on the GPU and CUDA events around `execute_async_v3`, the static batch-1 FP16 `RFDETRSmall` engine takes 2.24 ms per call, or 2.11 ms replayed as a CUDA graph (Section 8.1 of the cookbook). The same kind of engine through `RFDETRInference.predict()` takes 5.04 ms, and 4.98 ms with `runtime_options={"cuda_graph": True}` (Section 8). These measurements show overhead outside the measured `rfdetr` engine, but do not determine the managed engine’s speed or explain the difference between packages. The managed engine time and matching conversion-inclusive end-to-end time must both be measured before separating host and engine contributions.
+
+What the `rfdetr` call does outside the engine, from `src/rfdetr/_prediction/core.py`: it copies each image to the GPU through a pinned buffer, resizes it and normalizes it with separate PyTorch operations, runs the engine, then selects the top detections, filters them with a data-dependent `nonzero`, copies boxes, scores and labels back and builds `sv.Detections`. A profile of the same path on an L4 (an earlier build of `RFDETRNano`, batch 1, engine in a CUDA graph) counted five stream synchronizations, four device-to-host copies and about forty small kernel launches per image, with the GPU busy for under a third of the call. Each synchronization stops the host from queuing the next stage.
+
+The `inference-models` source (version 0.39.8, read for this analysis) contains a different route for the same stages: a fused Triton kernel that does the resize and the normalization in one pass over a uint8 image already on the GPU, a fused Triton postprocessor, a preprocessing stage on its own CUDA stream, and an engine launch through a cache of captured CUDA graphs. Triton was loaded in the cookbook run, but which implementation its selector picked for each stage was not recorded. Fewer launches and fewer host round trips are possible explanations to test; neither their contribution nor equal engine execution times was established.
+
+Three practical points follow from the measurements:
+
+- On this GPU, `model.inference()` with fp16 and a CUDA graph (4.69 ms at batch 1, see the [export overview](index.md#pytorch-baseline)) is faster than the `.trt` engine through `RFDETRInference` at batch 1 and 4 and level with it at batch 8, in the recorded run. The CUDA graph captures the model forward pass; preprocessing and postprocessing run outside it. If the end-to-end call matters more than the last millisecond of the engine, it is the `rfdetr` route to start from.
+- A folder of 256 images ran at 413.1 img/s through the dynamic-batch `.trt` engine with `include_source_image=False` (404.6 img/s with the source image kept). Comparing this with the managed-engine throughput requires rerunning that engine with the corrected conversion-inclusive wrapper.
+- `cuda_graph` is worth turning on only for the fixed-shape engine it supports, and it moved the end-to-end time by 1% here.
+
+A quick INT8 check on the same L4 (`RFDETRSmall`, static batch-1 engines, 128 calibration images held out of the scored images, end-to-end `predict()`) gave 56.0 mAP@50:95 for INT8 against 56.6 for FP16, 4.90 against 5.04 ms (1.03 times), and a 39.6 MB engine against 61.8 MB. End to end the gain is small because preprocessing and postprocessing dominate a call this short. Timed on the engine alone with a CUDA graph, as in the tables above, INT8 was 1.14 times faster at batch 1 and 1.28 times at batch 8 (1.848 against 2.110 ms per image at batch 1) for 0.08 box AP. This is the quick default of Section 8.1 (one model, 500 images, `val2017` calibration), not the full benchmark behind the RTX 5070 and Tesla T4 tables, so it is not added to them.
 
 ## Predict with RFDETRInference
 
@@ -456,7 +474,7 @@ The engine must be compatible with the target GPU and TensorRT version. See [Pre
 
 `RFDETRInference` launches the engine with `execute_v2` by default, which needs no [`pycuda`](https://pypi.org/project/pycuda/). `runtime_options` takes three settings, each a `bool` that defaults to `False`:
 
-- `cuda_graph`: capture the engine's launch into a CUDA graph on the first call and replay it on later calls. Only an engine whose optimization profile fixes every input shape qualifies; an engine exported with `dynamic_batch=True` is refused when it is loaded. We have not measured the speed-up through `RFDETRInference`.
+- `cuda_graph`: capture the engine's launch into a CUDA graph on the first call and replay it on later calls. Only an engine whose optimization profile fixes every input shape qualifies; an engine exported with `dynamic_batch=True` is refused when it is loaded. Through `RFDETRInference` on an L4 it cut the end-to-end batch-1 time of a static FP16 `RFDETRSmall` engine from 5.04 to 4.98 ms, because the launch is a small part of a call dominated by preprocessing and postprocessing.
 - `engine_host_code_allowed`: load an engine that carries host code; see [Portable Engines](#portable-engines).
 - `verbose`: log TensorRT at VERBOSE rather than INFO.
 

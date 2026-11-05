@@ -181,23 +181,24 @@ On the Colab x86 host of the [measured table below](#measured-latency-on-an-x86-
 
 ## Measured Latency on an x86 CPU
 
-Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, `RFDETRSmall`, `rfdetr` 1.12.0.dev0, ONNX Runtime 1.31.1, OpenVINO 2026.4.1, NNCF 3.4.0, 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`; OpenVINO is pinned to the physical-core count. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed; the INT8 artifacts were calibrated on 100 other val2017 images held out of that subset. The INT8 artifacts are batch 1 only.
+Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, `RFDETRSmall`, `rfdetr` 1.12.0.dev0, ONNX Runtime 1.22.1, OpenVINO 2026.4.1, NNCF 3.4.0, 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`; OpenVINO is pinned to the physical-core count. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed; the INT8 artifacts were calibrated on 100 other val2017 images held out of that subset. The INT8 artifacts are batch 1 only.
 
-| Runtime | Precision | Quantization | Batch | end2end [ms]    | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
-| ------- | --------- | ------------ | ----- | --------------- | ----------- | ------------- | --------- | ----------- |
-| CPU     | fp32      | —            | 1     | 274.63 ± 23.23  | 3.6         | 56.5          | 115.0     | 317.7       |
-| CPU     | fp16      | —            | 1     | 291.75 ± 25.47  | 3.4         | 56.5          | 58.2      | 212.9       |
-| CPU     | INT8      | static NNCF  | 1     | 274.17 ± 28.65  | 3.6         | 56.1          | 32.3      | 131.2       |
-| CPU     | fp32      | —            | 4     | 1045.49 ± 65.74 | 3.8         | —             | 115.0     | 637.5       |
-| CPU     | fp16      | —            | 4     | 1037.53 ± 81.16 | 3.9         | —             | 58.2      | 552.4       |
+| Runtime | Precision | Quantization | Batch | end2end [ms]     | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
+| ------- | --------- | ------------ | ----- | ---------------- | ----------- | ------------- | --------- | ----------- |
+| CPU     | fp32      | —            | 1     | 373.65 ± 61.10   | 2.7         | 56.5          | 115.0     | 319.7       |
+| CPU     | fp16      | —            | 1     | 452.30 ± 45.50   | 2.2         | 56.5          | 58.2      | 209.6       |
+| CPU     | INT8      | static NNCF  | 1     | 542.10 ± 74.40   | 1.8         | 56.1          | 32.3      | 138.1       |
+| CPU     | fp32      | —            | 4     | 1451.96 ± 223.26 | 2.8         | —             | 115.0     | 639.9       |
+| CPU     | fp16      | —            | 4     | 1619.20 ± 249.61 | 2.5         | —             | 58.2      | 523.8       |
 
 What the table supports:
 
-- The fp32 IR is 1.26 times faster than eager PyTorch on the same host (274.6 against 345.4 ms at batch 1, a gap of about three standard deviations; see the [PyTorch baseline](index.md#pytorch-baseline)) and 1.38 times faster than [ONNX Runtime fp32](onnx.md#on-an-x86-cpu) (377.9 ms).
-- The fp16 IR (291.8 ms) is no faster than the fp32 IR (274.6 ms), within one standard deviation, and half the size. It saves disk and bandwidth, not arithmetic.
-- The INT8 IR runs at the same speed as the fp32 IR, costs 0.4 mAP, and is 3.6 times smaller.
-- Batching helps little on this CPU: 3.6 FPS at batch 1, 3.8 at batch 4 for fp32.
-- Standard deviations are 4 to 10% of the mean, so gaps under about 25 ms at batch 1 are noise, not a ranking.
+- On this host the fp32 IR (373.7 ms) is level with eager PyTorch (401.6 ms) and its TorchScript `inference()` snapshot (377.9 ms): the standard deviations are 15 to 16% of the mean, so none of the three can be ranked at batch 1 (see the [PyTorch baseline](index.md#pytorch-baseline)). It is faster than [ONNX Runtime fp32](onnx.md#on-an-x86-cpu) (546.9 ms) by a gap well outside the noise.
+- The fp16 IR (452.3 ms) is no faster than the fp32 IR, within about one standard deviation of it, and half the size. It saves disk and bandwidth, not arithmetic.
+- The INT8 IR (542.1 ms) is slower than the fp32 IR on this host, though 3.6 times smaller and within 0.4 mAP. An earlier run on a different Colab host measured it at the speed of the fp32 IR, so INT8 speed on a CPU depends on the host's vector instructions and is worth measuring on the machine you deploy to.
+- Batching helps little on this CPU: 2.7 FPS at batch 1, 2.8 at batch 4 for fp32.
+- Predicting a folder of 64 images gave no more than batch 1: 2.8 img/s for the fp32 IR, 2.7 for fp16 and 2.0 for INT8. The model, not the input side, is the limit on a CPU.
+- This run was slower and noisier than an earlier one on another Colab host (eager PyTorch 401.6 against 345.4 ms), so compare rows within this table, never against numbers from another run.
 
 !!! note "Memory column"
 

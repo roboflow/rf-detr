@@ -422,18 +422,19 @@ class RFDETRDataModule(LightningDataModule):
                     f"augmentation_backend='{resolved}' does not support pad_targets_to. "
                     "Set pad_targets_to=None or augmentation_backend='cpu'/'albumentations'."
                 )
-            if self.model_config.use_grouppose_keypoints and is_gpu_postprocess(resolved):
+            if is_gpu_postprocess(resolved):
                 multi_scale = MultiScale.from_value(self.train_config.multi_scale)
                 if not self.train_config.square_resize_div_64 or multi_scale is MultiScale.PER_SAMPLE:
-                    # on_after_batch_transfer normalizes Kornia-augmented keypoints by the padded batch canvas, not by
-                    # each image's own size. Aspect-ratio resize (square_resize_div_64=False) and per-sample random
-                    # resize both collate images of different sizes into that canvas, so every smaller image would get
-                    # its joints shrunk toward the origin. Reject the combination instead of training on wrong targets.
+                    # on_after_batch_transfer normalizes Kornia-augmented boxes and keypoints by the padded batch
+                    # canvas, not by each image's own size. Aspect-ratio resize (square_resize_div_64=False) and
+                    # per-sample random resize both collate images of different sizes into that canvas, so every
+                    # smaller image would get its targets shrunk toward the origin, and collate_masks cannot stack the
+                    # masks of such a batch. Reject the combination instead of training on wrong targets.
                     raise ValueError(
-                        f"augmentation_backend='{resolved}' does not support keypoint training with padded batches "
+                        f"augmentation_backend='{resolved.value}' does not support training with padded batches "
                         f"(square_resize_div_64={self.train_config.square_resize_div_64}, "
                         f"multi_scale='{multi_scale.value}'). Set square_resize_div_64=True and "
-                        "multi_scale='per-batch' or 'off', or use augmentation_backend='cpu'/'albumentations'."
+                        "multi_scale='per-batch' or 'off', or use augmentation_backend='torchvision'/'albumentations'."
                     )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
