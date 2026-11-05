@@ -354,7 +354,7 @@ def load_pretrain_weights(
         ``model_config.pretrain_weights`` is ``None``.
 
     Raises:
-        Exception: If the checkpoint file cannot be loaded even after a re-download.
+        Exception: If the checkpoint file cannot be loaded.
         ImportError: If the checkpoint was saved by a ``backbone_lora=True`` run and ``peft`` is not installed.
     """
     mc = model_config
@@ -377,12 +377,8 @@ def load_pretrain_weights(
         download_pretrain_weights(pretrain_weights, redownload=True)
     validate_pretrain_weights(pretrain_weights, strict=False)
 
-    try:
-        checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
-    except Exception:
-        logger.info("Failed to load pretrain weights, re-downloading")
-        download_pretrain_weights(pretrain_weights, redownload=True)
-        checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
+    # A failed read does not prove the file is a disposable published weight: it may be a user's checkpoint.
+    checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
 
     # Normalize PyTorch Lightning native .ckpt format to the expected {"model": {...}}
     # structure.  PTL stores model weights in "state_dict" with keys prefixed by

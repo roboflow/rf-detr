@@ -1195,7 +1195,8 @@ class RFDETR:
         constructor_kwargs.update(kwargs)
         # pretrain_weights is placed after **kwargs so it always wins even if
         # a caller accidentally passes pretrain_weights inside kwargs.
-        constructor_kwargs["pretrain_weights"] = str(path)
+        # Fully resolved, because the config sends a bare filename to the model cache, which is not the file read above.
+        constructor_kwargs["pretrain_weights"] = os.path.realpath(path)
         # Model construction reloads this same file via load_pretrain_weights(); without this,
         # trust_checkpoint=True would bypass the safe-load only for the metadata read above and
         # then fail identically when the constructor re-reads pretrain_weights.
