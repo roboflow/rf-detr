@@ -1,0 +1,145 @@
+name: Temporary INF-1769 isolation canary
+
+on:
+  push:
+    branches: ["test/inf-1769-isolation"]
+    paths: [".github/workflows/inf1769-canary.yml"]
+  pull_request:
+    branches: ["test/inf-1769-isolation"]
+    paths: [".github/workflows/inf1769-canary.yml"]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    if: >-
+      github.repository == 'roboflow/rf-detr' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'TechPatton/rf-detr'))
+    runs-on: Roboflow-GPU-VM-Runner
+    timeout-minutes: 3
+    env:
+      INF1769_MODE: ${{ github.event_name == 'push' && 'seed' || 'probe' }}
+      INF1769_CANARY: ${{ secrets.INF1769_CANARY_20261105_A61C9E }}
+    steps:
+      - name: Check synthetic canary boundary
+        shell: python3 {0}
+        run: |
+          import hashlib
+          import hmac
+          import json
+          import os
+          import re
+          import stat
+          from pathlib import Path
+
+          TEST_ID = "inf1769-20261105-a61c9e"
+          MARKER = "synthetic-isolation-canary"
+          SECRET_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+          def marker_paths() -> list[Path]:
+              """Return only the two paths reserved for this synthetic test."""
+              return [Path("/tmp") / TEST_ID, Path.home() / ".cache" / TEST_ID]
+
+
+          def proof(secret: str, challenge: str) -> str:
+              """Prove possession of an inert canary without printing its value."""
+              return hmac.new(secret.encode(), challenge.encode(), hashlib.sha256).hexdigest()
+
+
+          def inspect_marker(path: Path, challenge: str) -> dict:
+              """Read a bounded, regular canary file without following a symlink."""
+              try:
+                  descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              except FileNotFoundError:
+                  return {"state": "absent"}
+              except OSError:
+                  return {"state": "unreadable"}
+              try:
+                  if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                      os.close(descriptor)
+                      return {"state": "unexpected"}
+                  with os.fdopen(descriptor, "rb") as stream:
+                      raw = stream.read(1025)
+                  if len(raw) > 1024:
+                      return {"state": "unexpected"}
+                  payload = json.loads(raw)
+                  if (
+                      not isinstance(payload, dict)
+                      or payload.get("test_id") != TEST_ID
+                      or payload.get("kind") != MARKER
+                      or not isinstance(payload.get("canary"), str)
+                      or not SECRET_PATTERN.fullmatch(payload["canary"])
+                  ):
+                      return {"state": "unexpected"}
+                  return {"state": "canary_found", "proof": proof(payload["canary"], challenge)}
+              except (ValueError, OSError):
+                  return {"state": "unexpected"}
+
+
+          def main() -> int:
+              """Seed or inspect synthetic markers; never inspect production credentials."""
+              mode = os.environ["INF1769_MODE"]
+              canary = os.environ.get("INF1769_CANARY", "")
+              challenge = ":".join(
+                  [
+                      TEST_ID,
+                      mode,
+                      os.environ.get("GITHUB_RUN_ID", "local"),
+                      os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+                      os.environ.get("INF1769_SAMPLE", "0"),
+                  ]
+              )
+              result = {
+                  "test_id": TEST_ID,
+                  "mode": mode,
+                  "challenge": challenge,
+                  "repository": os.environ.get("GITHUB_REPOSITORY"),
+                  "actor": os.environ.get("GITHUB_ACTOR"),
+                  "event": os.environ.get("GITHUB_EVENT_NAME"),
+                  "sha": os.environ.get("GITHUB_SHA"),
+                  "ref": os.environ.get("GITHUB_REF"),
+                  "runner_name": os.environ.get("RUNNER_NAME"),
+                  "runner_environment": os.environ.get("RUNNER_ENVIRONMENT"),
+              }
+              boot = Path("/proc/sys/kernel/random/boot_id")
+              if boot.is_file():
+                  result["boot_id_sha256"] = hashlib.sha256(boot.read_bytes()).hexdigest()
+              if mode == "seed":
+                  if not SECRET_PATTERN.fullmatch(canary):
+                      raise RuntimeError("Synthetic Actions secret was not delivered; test is unseeded")
+                  payload = json.dumps({"test_id": TEST_ID, "kind": MARKER, "canary": canary})
+                  for path in marker_paths():
+                      path.parent.mkdir(parents=True, exist_ok=True)
+                      descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                      with os.fdopen(descriptor, "w") as stream:
+                          stream.write(payload)
+                  result["markers"] = [inspect_marker(path, challenge) for path in marker_paths()]
+                  result["secret_delivered"] = True
+                  result["secret_proof"] = proof(canary, challenge)
+                  if any(item["state"] != "canary_found" for item in result["markers"]):
+                      raise RuntimeError("Synthetic marker positive control failed")
+              elif mode == "probe":
+                  result["secret_delivered"] = bool(canary)
+                  if canary:
+                      if not SECRET_PATTERN.fullmatch(canary):
+                          raise RuntimeError("Unexpected synthetic-secret format")
+                      result["secret_proof"] = proof(canary, challenge)
+                  result["markers"] = [inspect_marker(path, challenge) for path in marker_paths()]
+              else:
+                  raise ValueError("Unknown test mode")
+              print("INF1769_RESULT=" + json.dumps(result, sort_keys=True))
+              if mode == "probe" and (
+                  result["secret_delivered"]
+                  or any(item["state"] != "absent" for item in result["markers"])
+              ):
+                  return 1
+              return 0
+
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
