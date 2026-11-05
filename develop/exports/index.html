@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-05T16:07:06">
+  <meta property="article:modified_time" content="2026-11-05T22:26:53">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-05T16:07:06",
+    "dateModified": "2026-11-05T22:26:53",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1396,6 +1396,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fastest-route-across-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest route across NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#pytorch-baseline" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1648,6 +1659,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
     <nav class="md-nav" aria-label="Measured Performance by Hardware">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fastest-route-across-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest route across NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#pytorch-baseline" class="md-nav__link">
@@ -3180,6 +3202,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fastest-route-across-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest route across NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#pytorch-baseline" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3304,25 +3337,25 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td>NVIDIA L4</td>
 <td>TensorRT</td>
-<td><code>inference-models</code></td>
-<td>managed engine</td>
-<td>auto</td>
-<td>3.50</td>
-<td>285.7</td>
-<td>56.3</td>
-<td>21.17 ms / 47.2 FPS</td>
+<td><code>rfdetr</code></td>
+<td>.trt engine</td>
+<td>fp16</td>
+<td>3.6</td>
+<td>278.7</td>
+<td>56.5</td>
+<td>19.5 ms / 51.2 FPS</td>
 <td><a href="tensorrt/#measured-latency-on-an-nvidia-l4">TensorRT</a></td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
-<td>PyTorch</td>
-<td><code>rfdetr</code></td>
-<td>inference() CUDA Graph</td>
-<td>fp16</td>
-<td>4.69</td>
-<td>213.3</td>
-<td>—</td>
-<td>21.17 ms / 47.2 FPS</td>
+<td>TensorRT</td>
+<td><code>inference-models</code></td>
+<td>managed engine</td>
+<td>auto</td>
+<td>3.6</td>
+<td>277.7</td>
+<td>56.3</td>
+<td>19.5 ms / 51.2 FPS</td>
 <td><a href="tensorrt/#why-the-managed-engine-is-faster-end-to-end">TensorRT</a></td>
 </tr>
 <tr>
@@ -3363,7 +3396,50 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr <code>develop</code>. Warmup and timed-run counts differ per cookbook (GPU 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30). Compare <em>within</em> a row, never across rows. The rows come from three machines: a Colab L4 GPU host, a Colab x86 host, and one Apple M4 Max. On the L4 the managed-engine row excludes input and output conversions and awaits a comparable rerun; the second row is the fastest recorded <code>rfdetr</code> route (the CUDA graph row is not scored; the same weights score 56.5 mAP@50:95 through <code>inference()</code> with TorchScript); the <code>.trt</code> engine through <code>RFDETRInference</code> runs at 5.36 ms with 56.5 mAP@50:95, and <a href="tensorrt/#why-the-managed-engine-is-faster-end-to-end">the TensorRT page</a> describes the limits of comparing it with the managed engine. On the x86 host the run-to-run standard deviation is 10 to 17% of the mean for most rows, so on a CPU batch-1 gaps under about 100 ms are noise, not a ranking: the OpenVINO fp32 row is listed as the best full-accuracy route, but eager PyTorch, TorchScript and <code>inference-models</code> ONNX are level with it on this run. The Apple row was measured on macOS 26.7.1. The arm64 CPU row stands in for a phone or edge CPU only approximately: it is a laptop chip, and a phone's own delegate (NNAPI, QNN, Core ML) is not exercised.</p>
+<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr <code>develop</code>. Warmup and timed-run counts differ per cookbook (GPU 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30). Compare <em>within</em> a row, never across rows. The rows come from three machines: a Colab L4 GPU host, a Colab x86 host, and one Apple M4 Max. On the L4 both rows time the same decoded NumPy array, with <code>include_source_image=False</code> for <code>rfdetr</code>, and they are level at batch 1 (3.6 ms); <a href="tensorrt/#why-the-managed-engine-is-faster-end-to-end">the TensorRT page</a> describes how the earlier gap between them closed once both were timed on the same decoded array with no source copy; the rerun changed several things at once, so the gap is not assigned to the input type alone. The <code>inference()</code> CUDA graph row (3.5 ms) is not scored; the same weights score 56.5 mAP@50:95 through <code>inference()</code> with TorchScript. On the x86 host the run-to-run standard deviation is 10 to 17% of the mean for most rows, so on a CPU batch-1 gaps under about 100 ms are noise, not a ranking: the OpenVINO fp32 row is listed as the best full-accuracy route, but eager PyTorch, TorchScript and <code>inference-models</code> ONNX are level with it on this run. The Apple row was measured on macOS 26.7.1. The arm64 CPU row stands in for a phone or edge CPU only approximately: it is a laptop chip, and a phone's own delegate (NNAPI, QNN, Core ML) is not exercised.</p>
+<h3 id="fastest-route-across-nvidia-gpus">Fastest route across NVIDIA GPUs<a class="headerlink" href="#fastest-route-across-nvidia-gpus" title="Permanent link">&para;</a></h3>
+<p>The fastest measured route per GPU and size, end to end on one decoded RGB array, <code>rfdetr</code> 1.12.0.dev0, TensorRT 10.16.1.11, CUDA 13.2. Cells show <code>ms</code> at batch 1 and <code>img/s</code> at batch 8, with the winning route: C = <code>inference()</code> CUDA graph FP16, F = <code>.trt</code> FP16, M = <code>inference-models</code> managed engine. Latency only; no accuracy was scored, and INT8 engines are left out because no harness in the repository reproduces their end-to-end figures yet. All routes and the <code>n/a</code> cases are in <a href="tensorrt/#measured-latency-across-nvidia-gpus">TensorRT</a>.</p>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>T4</td>
+<td>5.12 ms (F) / 334 img/s (F)</td>
+<td>5.89 ms (M) / 197 img/s (F)</td>
+<td>7.20 ms (F) / 153 img/s (M)</td>
+<td>10.22 ms (M) / 99 img/s (M)</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>2.78 ms (C) / 724 img/s (F)</td>
+<td>3.57 ms (F) / 432 img/s (F)</td>
+<td>4.13 ms (F) / 349 img/s (F)</td>
+<td>5.14 ms (F) / 227 img/s (F)</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>3.16 ms (C) / 967 img/s (F)</td>
+<td>3.44 ms (F) / 783 img/s (F)</td>
+<td>3.80 ms (C) / 676 img/s (F)</td>
+<td>4.27 ms (C) / 558 img/s (F)</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>1.47 ms (F) / 2271 img/s (F)</td>
+<td>1.62 ms (F) / 1782 img/s (F)</td>
+<td>1.76 ms (F) / 1608 img/s (F)</td>
+<td>2.08 ms (F) / 1249 img/s (F)</td>
+</tr>
+</tbody>
+</table>
 <h3 id="pytorch-baseline">PyTorch Baseline<a class="headerlink" href="#pytorch-baseline" title="Permanent link">&para;</a></h3>
 <p>Each format page holds only that format's rows. The native PyTorch rows every cookbook measures alongside them are collected here, per machine: <code>predict()</code> is the eager model, <code>inference()</code> the snapshot it returns (TorchScript, plus a CUDA graph on the L4 and inductor on the Mac GPU, which is the MPS default). Latency is batch 1, end to end; <code>FPS</code> is images per second at each batch size, <code>—</code> where the cookbook did not run that batch. <code>mAP@50:95</code> is the same seeded 500-image val2017 subset as the format pages.</p>
 <table>
@@ -3384,31 +3460,31 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>NVIDIA L4</td>
 <td>predict() eager</td>
 <td>fp32</td>
-<td>21.17 ± 0.65</td>
+<td>19.5</td>
 <td>56.5</td>
-<td>47.2</td>
-<td>115.9</td>
-<td>115.6</td>
+<td>51.2</td>
+<td>139.8</td>
+<td>149.2</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
 <td>inference() JIT</td>
 <td>fp16</td>
-<td>11.28 ± 0.33</td>
+<td>9.9</td>
 <td>56.5</td>
-<td>88.7</td>
-<td>223.7</td>
-<td>204.8</td>
+<td>101.1</td>
+<td>340.8</td>
+<td>329.2</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
 <td>inference() CUDA Graph</td>
 <td>fp16</td>
-<td>4.69 ± 0.06</td>
+<td>3.5</td>
 <td>—</td>
-<td>213.3</td>
-<td>262.7</td>
-<td>249.9</td>
+<td>283.9</td>
+<td>362.4</td>
+<td>337.7</td>
 </tr>
 <tr>
 <td>Apple M4 Max (40-core GPU)</td>
@@ -3492,9 +3568,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>On the L4, <code>inference()</code> with fp16 and a CUDA graph (4.69 ms) is faster than the <code>.trt</code> engine loaded through <code>RFDETRInference</code> at batch 1 (5.36 ms) and batch 4, level with it at batch 8 (249.9 against 252.2 img/s), and keeps the native <code>predict()</code> API. The Apple CPU rows are pending the same rerun as the mobile format pages.</p>
+<p>On the L4, <code>inference()</code> with fp16 and a CUDA graph (3.5 ms) is level with the <code>.trt</code> engine loaded through <code>RFDETRInference</code> at batch 1 (3.6 ms) and slower at batch 4 and 8 (362.4 and 337.7 against 402.4 and 401.9 img/s), and keeps the native <code>predict()</code> API. The Apple CPU rows are pending the same rerun as the mobile format pages.</p>
 <h3 id="side-by-side-with-inference-models">Side by side with <code>inference-models</code><a class="headerlink" href="#side-by-side-with-inference-models" title="Permanent link">&para;</a></h3>
-<p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is Roboflow's separate deployment package. It serves RF-DETR through PyTorch, ONNX Runtime and TensorRT, so only those formats can be set against <code>rfdetr</code>; OpenVINO, TFLite, LiteRT, ExecuTorch, Core AI and CoreML have no <code>inference-models</code> backend (it lists a CoreML backend, but publishes no CoreML model for <code>rfdetr-small</code>). Both packages ran in the same cookbook on the same machine, with the same image, threshold (0.5; 0.001 for mAP), batch sizes. The recorded managed TensorRT rows omit input and output conversions included in the other rows; the cookbook now includes them, but the published managed-engine numbers await a rerun. Each cookbook passes <code>input_color_format="rgb"</code> to <code>inference-models</code>: a NumPy array is BGR to it unless declared, and without that the scores drop with no error.</p>
+<p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is Roboflow's separate deployment package. It serves RF-DETR through PyTorch, ONNX Runtime and TensorRT, so only those formats can be set against <code>rfdetr</code>; OpenVINO, TFLite, LiteRT, ExecuTorch, Core AI and CoreML have no <code>inference-models</code> backend (it lists a CoreML backend, but publishes no CoreML model for <code>rfdetr-small</code>). Both packages ran in the same cookbook on the same machine, with the same image, threshold (0.5; 0.001 for mAP), batch sizes. The CUDA cookbook times every row on the same decoded RGB array, conversion to <code>sv.Detections</code> included. Each cookbook passes <code>input_color_format="rgb"</code> to <code>inference-models</code>: a NumPy array is BGR to it unless declared, and without that the scores drop with no error.</p>
 <table>
 <thead>
 <tr>
@@ -3553,11 +3629,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>rfdetr</code></td>
 <td>predict() eager</td>
 <td>fp32</td>
-<td>21.2</td>
+<td>19.5</td>
 <td>56.5</td>
-<td>47.2</td>
-<td>115.9</td>
-<td>115.6</td>
+<td>51.2</td>
+<td>139.8</td>
+<td>149.2</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3565,11 +3641,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>rfdetr</code></td>
 <td>inference() CUDA Graph</td>
 <td>fp16</td>
-<td>4.7</td>
+<td>3.5</td>
 <td>—</td>
-<td>213.3</td>
-<td>262.7</td>
-<td>249.9</td>
+<td>283.9</td>
+<td>362.4</td>
+<td>337.7</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3577,11 +3653,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>inference-models</code></td>
 <td>torch (CUDA)</td>
 <td>fp32</td>
-<td>24.6</td>
+<td>21.6</td>
 <td>56.4</td>
-<td>40.6</td>
-<td>96.6</td>
-<td>104.4</td>
+<td>46.2</td>
+<td>120.4</td>
+<td>130.5</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3589,11 +3665,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>rfdetr</code></td>
 <td>CUDA EP</td>
 <td>fp32</td>
-<td>10.2</td>
+<td>8.4</td>
 <td>56.5</td>
-<td>98.1</td>
-<td>116.4</td>
-<td>106.4</td>
+<td>119.2</td>
+<td>132.9</td>
+<td>120.5</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3601,11 +3677,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>inference-models</code></td>
 <td>CUDA EP</td>
 <td>fp32</td>
-<td>11.3</td>
+<td>9.4</td>
 <td>56.4</td>
-<td>88.2</td>
-<td>89.5</td>
-<td>90.0</td>
+<td>106.0</td>
+<td>105.9</td>
+<td>109.3</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3613,11 +3689,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>rfdetr</code></td>
 <td>.trt engine</td>
 <td>fp16</td>
-<td>5.4</td>
+<td>3.6</td>
 <td>56.5</td>
-<td>186.7</td>
-<td>233.9</td>
-<td>252.2</td>
+<td>278.7</td>
+<td>402.4</td>
+<td>401.9</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3625,11 +3701,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>inference-models</code></td>
 <td>managed engine</td>
 <td>auto</td>
-<td>3.5</td>
+<td>3.6</td>
 <td>56.3</td>
-<td>285.7</td>
-<td>359.2</td>
-<td>373.5</td>
+<td>277.7</td>
+<td>349.3</td>
+<td>363.7</td>
 </tr>
 <tr>
 <td>NVIDIA L4</td>
@@ -3637,11 +3713,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>inference-models</code></td>
 <td>managed engine</td>
 <td>fp32</td>
-<td>6.8</td>
+<td>7.0</td>
 <td>56.4</td>
-<td>148.0</td>
-<td>153.2</td>
-<td>154.5</td>
+<td>142.9</td>
+<td>152.0</td>
+<td>154.3</td>
 </tr>
 <tr>
 <td>x86 CPU (Colab)</td>
@@ -3741,7 +3817,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>On the same runtime the two packages are close, and the accuracy is the same within 0.1 mAP: the ONNX CPU rows differ by 16%, and at batch 1 the <code>inference-models</code> PyTorch model (25.6 ms, fp32) is slower than eager <code>predict()</code> (20.0 ms) and 2.3 times slower than <code>inference()</code> with inductor in fp32 (11.1 ms). The ONNX CoreML EP row runs a different execution provider from the CPU rows, so it is not a like-for-like comparison with them; <code>rfdetr</code>'s ONNX loader does not select that provider. These Apple rows come from a busy machine (load average above 10), so treat gaps under about 15% as noise. On the L4 the historical managed TensorRT rows use a shorter timing scope, so they do not establish a package ranking. On the same ONNX Runtime provider the recorded <code>rfdetr</code> call is 11% faster at batch 1 (10.2 against 11.3 ms). Separating host and engine contributions also requires measuring the managed engine itself; see the <a href="tensorrt/#why-the-managed-engine-is-faster-end-to-end">TensorRT timing limitations</a>. On the x86 CPU the two packages are level within the noise for PyTorch (421.8 against 401.6 ms eager, standard deviations of 66 to 73 ms); the one gap outside the noise is ONNX Runtime, where <code>inference-models</code> ran at 393.8 ms and <code>rfdetr</code>'s loader at 546.9 ms on the same ONNX Runtime 1.22.1. That gap was not investigated.</p>
+<p>On the same runtime the two packages are close, and the accuracy is the same within 0.1 mAP: the ONNX CPU rows differ by 16%, and at batch 1 the <code>inference-models</code> PyTorch model (25.6 ms, fp32) is slower than eager <code>predict()</code> (20.0 ms) and 2.3 times slower than <code>inference()</code> with inductor in fp32 (11.1 ms). The ONNX CoreML EP row runs a different execution provider from the CPU rows, so it is not a like-for-like comparison with them; <code>rfdetr</code>'s ONNX loader does not select that provider. These Apple rows come from a busy machine (load average above 10), so treat gaps under about 15% as noise. On the L4 the packages are level on TensorRT at batch 1 (3.6 ms each) and <code>rfdetr</code> is ahead at batch 4 and 8; on the same ONNX Runtime provider <code>rfdetr</code> is 11% faster at batch 1 (8.4 against 9.4 ms), and the <code>inference-models</code> PyTorch model (21.6 ms) is slower than eager <code>predict()</code> (19.5 ms); see the <a href="tensorrt/#why-the-managed-engine-is-faster-end-to-end">TensorRT page</a>. On the x86 CPU the two packages are level within the noise for PyTorch (421.8 against 401.6 ms eager, standard deviations of 66 to 73 ms); the one gap outside the noise is ONNX Runtime, where <code>inference-models</code> ran at 393.8 ms and <code>rfdetr</code>'s loader at 546.9 ms on the same ONNX Runtime 1.22.1. That gap was not investigated.</p>
 <p><code>Memory [MB]</code> in the cookbooks is comparable only within one cookbook: the CUDA cookbook measures device memory, the CPU, Apple and mobile cookbooks measure host resident memory (RSS).</p>
 <p>Each cookbook also scores every exported model and precision at batch 1 on the same seeded 500-image COCO val2017 subset (box mAP@50:95 and mAP@50), so a precision setting that loses accuracy shows up next to its latency. The subset is chosen for run time, so these are not the full-val2017 numbers on the <a href="../learn/benchmarks/">Benchmarks page</a>; set <code>FULL_VAL = True</code> in a cookbook to score all 5000 images.</p>
 <div class="admonition note">
@@ -3752,13 +3828,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>Deployed product</strong> (L4, Roboflow Inference, scope not stated, batch 1) — what a Roboflow Inference user gets. See <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>.</li>
 <li><strong>Export cookbooks</strong> (this page and below) — end-to-end timings for every export format, on one machine per cookbook. Their value is <strong>ratios within one machine</strong>, not absolute milliseconds to set against the other two pages.</li>
 </ul>
-<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The cookbook's L4 end-to-end times at batch 1 (3.50 ms for the managed TensorRT engine, 5.36 ms for the <code>.trt</code> engine, 10.19 ms for ONNX Runtime) include host preprocessing and postprocessing, and are not comparable with the 8.3 ms TensorRT and 12.9 ms ONNX on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled.</p>
+<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The cookbook's L4 end-to-end times at batch 1 (3.6 ms for the managed TensorRT engine, 3.6 ms for the <code>.trt</code> engine, 8.4 ms for ONNX Runtime) include host preprocessing and postprocessing, and are not comparable with the 8.3 ms TensorRT and 12.9 ms ONNX on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">fp16 pays off only where the silicon implements it</p>
 <p>Reduced precision is not a portable speedup, and the cookbooks measure this directly:</p>
 <ul>
-<li><strong>GPU — large win.</strong> On an L4, TensorRT's auto-selected precision is 1.93× faster than the same engine forced to fp32 (3.50 vs 6.76 ms end-to-end, batch 1), and PyTorch <code>inference(dtype=torch.float16)</code> cuts the eager fp32 baseline from 21.17 to 11.28 ms.</li>
+<li><strong>GPU — large win.</strong> On an L4, TensorRT's auto-selected precision is 1.94× faster than the same engine forced to fp32 (3.6 vs 7.0 ms end-to-end, batch 1), and PyTorch <code>inference(dtype=torch.float16)</code> cuts the eager fp32 baseline from 19.5 to 9.9 ms.</li>
 <li><strong>CPU — no measured win from fp16.</strong> A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 storage saves disk and bandwidth, not arithmetic. On the Colab x86 host the OpenVINO fp16 IR ran at 452.3 ms against 373.7 ms for the fp32 IR at batch 1, no faster, at half the size. INT8 is the lever that changes CPU arithmetic, and it did not help consistently: ONNX INT8 ran 1.3 times faster than ONNX fp32 (411.1 against 546.9 ms) for 1.8 mAP, while OpenVINO INT8 was slower than its fp32 IR (542.1 against 373.7 ms) at 3.6 times smaller, and an earlier run on another Colab host had it level with fp32. See the <a href="openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> and <a href="onnx/#on-an-x86-cpu">ONNX</a> pages. The TFLite rows are pending a rerun: they ran through <code>tf.lite.Interpreter</code> at its default thread count (the same fp32 <code>.tflite</code> runs in 119 ms on one thread and 59 ms on eight through <code>ai_edge_litert</code> on the M4 Max, against 785 ms in the cookbook).</li>
 <li><strong>Apple — runtime-dependent.</strong> On the M4 Max, CoreML fp16 came out <em>slower</em> than its fp32 default (23.6 against 12.0 ms at batch 1, macOS 26.7.1) at half the size, and ExecuTorch's CoreML backend (fp16 only) matched CoreML fp16 at batch 1. An earlier macOS 27.0 run measured Core AI fp16 faster than its fp32 default (13.53 against 14.62 ms); Core AI cannot be measured on an older macOS, where it runs on the CPU only. Measure per runtime, not per platform. See the <a href="coreml/#measured-latency-on-apple-silicon">CoreML</a> and <a href="executorch/#measured-latency-on-apple-silicon">ExecuTorch</a> pages.</li>
 </ul>
@@ -3797,7 +3873,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 22:26:53 UTC">2026-11-05 22:26:53</span>
   </span>
 
     

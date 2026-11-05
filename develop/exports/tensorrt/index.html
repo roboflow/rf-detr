@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-05T16:07:06">
+  <meta property="article:modified_time" content="2026-11-05T22:26:53">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-05T16:07:06",
+    "dateModified": "2026-11-05T22:26:53",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1844,6 +1844,45 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#measured-latency-across-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Latency Across NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Measured Latency Across NVIDIA GPUs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#batch-1-latency-ms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch 1 latency [ms]
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch-8-throughput-imgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch 8 throughput [img/s]
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#predict-with-rfdetrinference" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3342,6 +3381,45 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Comparing engine and host overhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measured-latency-across-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Latency Across NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Measured Latency Across NVIDIA GPUs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#batch-1-latency-ms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch 1 latency [ms]
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch-8-throughput-imgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch 8 throughput [img/s]
       
     </span>
   </a>
@@ -5155,11 +5233,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>If you plan to run inference with <a href="../basics/#run-inference-with-inference-models"><code>inference-models</code></a> (a separate deployment option), do <strong>not</strong> pass <code>format="tensorrt"</code> — <code>inference-models</code> builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let <code>inference-models</code> handle the backend.</p>
 </div>
 <h2 id="measured-latency-on-an-nvidia-l4">Measured Latency on an NVIDIA L4<a class="headerlink" href="#measured-latency-on-an-nvidia-l4" title="Permanent link">&para;</a></h2>
-<p>Batch 1, 4 and 8 on a Colab NVIDIA L4, <code>RFDETRSmall</code>, <code>rfdetr</code> 1.12.0.dev0, TensorRT 10.16.1.11, 20 warmup + 100 timed runs per row, from the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>. The <code>rfdetr</code> rows time the end-to-end <code>predict()</code> call (preprocessing, forward, postprocessing); the historical managed-engine rows have the conversion limitation noted below. The <code>Package</code> column says which package ran each row: <code>rfdetr</code> rows are this package (<code>model.export()</code> plus <code>RFDETRInference</code>, loading the <code>.trt</code> file this page exports), <code>inference-models</code> rows are the separate <a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> package, which selects and loads its own prebuilt TensorRT engine and runs its own call path. <code>FPS</code> is images per second. <code>mAP@50:95</code> is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed, for every row. The ONNX Runtime rows from the same run are on the <a href="../onnx/#measured-latency">ONNX page</a>, the PyTorch baseline and the other <code>inference-models</code> backends on the <a href="../#pytorch-baseline">export overview</a>.</p>
-<div class="admonition warning">
-<p class="admonition-title">Managed-engine timing needs a rerun</p>
-<p>The recorded managed-engine rows below excluded PIL-to-NumPy input conversion and conversion to <code>sv.Detections</code>, which the comparison rows include. The cookbook now times all <code>inference-models</code> backends through the same wrapper. These historical numbers have not been regenerated; use them only with that timing-scope limitation, not to rank end-to-end package performance.</p>
-</div>
+<p>Batch 1, 4 and 8 on a Colab NVIDIA L4, <code>RFDETRSmall</code>, <code>rfdetr</code> 1.12.0.dev0, TensorRT 10.16.1.11, 20 warmup + 100 timed runs per row, from the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>. Every row times the end-to-end call on one decoded RGB NumPy array (preprocessing, forward, postprocessing, and conversion to <code>sv.Detections</code>), and the <code>rfdetr</code> rows pass <code>include_source_image=False</code>, as <code>inference-models</code> returns no copy of the input either. The <code>Package</code> column says which package ran each row: <code>rfdetr</code> rows are this package (<code>model.export()</code> plus <code>RFDETRInference</code>, loading the <code>.trt</code> file this page exports), <code>inference-models</code> rows are the separate <a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> package, which selects and loads its own prebuilt TensorRT engine and runs its own call path. <code>FPS</code> is images per second. The batch 4 and 8 latencies are batch size divided by the measured img/s, rounded to one decimal. <code>mAP@50:95</code> is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed, for every row. The ONNX Runtime rows from the same run are on the <a href="../onnx/#measured-latency">ONNX page</a>, the PyTorch baseline and the other <code>inference-models</code> backends on the <a href="../#pytorch-baseline">export overview</a>.</p>
 <table>
 <thead>
 <tr>
@@ -5179,8 +5253,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>managed engine</td>
 <td>auto</td>
 <td>1</td>
-<td>3.50</td>
-<td>285.7</td>
+<td>3.6</td>
+<td>277.7</td>
 <td>56.3</td>
 <td>—</td>
 </tr>
@@ -5189,8 +5263,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>managed engine</td>
 <td>fp32</td>
 <td>1</td>
-<td>6.76</td>
-<td>148.0</td>
+<td>7.0</td>
+<td>142.9</td>
 <td>56.4</td>
 <td>—</td>
 </tr>
@@ -5199,8 +5273,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>.trt engine</td>
 <td>fp16</td>
 <td>1</td>
-<td>5.36</td>
-<td>186.7</td>
+<td>3.6</td>
+<td>278.7</td>
 <td>56.5</td>
 <td>63.0</td>
 </tr>
@@ -5209,8 +5283,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>managed engine</td>
 <td>auto</td>
 <td>4</td>
-<td>11.14</td>
-<td>359.2</td>
+<td>11.5</td>
+<td>349.3</td>
 <td>—</td>
 <td>—</td>
 </tr>
@@ -5219,8 +5293,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>managed engine</td>
 <td>fp32</td>
 <td>4</td>
-<td>26.11</td>
-<td>153.2</td>
+<td>26.3</td>
+<td>152.0</td>
 <td>—</td>
 <td>—</td>
 </tr>
@@ -5229,8 +5303,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>.trt engine</td>
 <td>fp16</td>
 <td>4</td>
-<td>17.10</td>
-<td>233.9</td>
+<td>9.9</td>
+<td>402.4</td>
 <td>—</td>
 <td>63.0</td>
 </tr>
@@ -5239,8 +5313,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>managed engine</td>
 <td>auto</td>
 <td>8</td>
-<td>21.42</td>
-<td>373.5</td>
+<td>22.0</td>
+<td>363.7</td>
 <td>—</td>
 <td>—</td>
 </tr>
@@ -5249,8 +5323,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>managed engine</td>
 <td>fp32</td>
 <td>8</td>
-<td>51.78</td>
-<td>154.5</td>
+<td>51.8</td>
+<td>154.3</td>
 <td>—</td>
 <td>—</td>
 </tr>
@@ -5259,8 +5333,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>.trt engine</td>
 <td>fp16</td>
 <td>8</td>
-<td>31.72</td>
-<td>252.2</td>
+<td>19.9</td>
+<td>401.9</td>
 <td>—</td>
 <td>63.0</td>
 </tr>
@@ -5268,9 +5342,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </table>
 <p>What the table supports:</p>
 <ul>
-<li>The <code>.trt</code> engine through <code>RFDETRInference</code> takes 5.36 ms end to end at batch 1, 4.0 times faster than eager PyTorch (21.17 ms) and 1.9 times faster than ONNX Runtime on CUDA (10.19 ms), at the same mAP (56.5).</li>
-<li>The historical managed-engine calls took 3.50 ms with auto precision and 6.76 ms with fp32 at batch 1. Their differing timing scope prevents an end-to-end package ranking. The auto engine scores 56.3 mAP@50:95, 0.2 below the <code>.trt</code> engine.</li>
-<li>The <code>.trt</code> engine scales with batch: 186.7, 233.9 and 252.2 FPS at batch 1, 4 and 8.</li>
+<li>The <code>.trt</code> engine through <code>RFDETRInference</code> takes 3.6 ms end to end at batch 1, 5.4 times faster than eager PyTorch (19.5 ms) and 2.3 times faster than ONNX Runtime on CUDA (8.4 ms), at the same mAP (56.5).</li>
+<li>At batch 1 the two packages are level: 3.6 ms for the <code>.trt</code> engine and 3.6 ms for the managed engine with auto precision (278.7 and 277.7 img/s). At batch 4 and 8 the <code>.trt</code> engine is ahead (402.4 and 401.9 against 349.3 and 363.7 img/s).</li>
+<li>The managed engine with auto precision scores 56.3 mAP@50:95, 0.2 below the <code>.trt</code> engine. Forced to fp32 it takes 7.0 ms, 1.9 times longer than auto.</li>
+<li>The <code>.trt</code> engine scales with batch: 278.7, 402.4 and 401.9 FPS at batch 1, 4 and 8.</li>
 <li>The fp16 <code>.trt</code> engine scores the same mAP as eager PyTorch fp32 (56.5), so fp16 costs no accuracy on the subset.</li>
 </ul>
 <div class="admonition note">
@@ -5278,16 +5353,281 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>These times include preprocessing and postprocessing on the host. They are not the engine-only times of the INT8 benchmark above, and not the 8.3 ms TensorRT and 12.9 ms ONNX figures on Roboflow's model page, whose timing scope is not stated.</p>
 </div>
 <h3 id="why-the-managed-engine-is-faster-end-to-end">Comparing engine and host overhead<a class="headerlink" href="#why-the-managed-engine-is-faster-end-to-end" title="Permanent link">&para;</a></h3>
-<p>The recorded end-to-end timings differ, but the managed engine’s execution time was not measured, so the measurements do not separate engine and host contributions. Timed on the engine alone, with the input already on the GPU and CUDA events around <code>execute_async_v3</code>, the static batch-1 FP16 <code>RFDETRSmall</code> engine takes 2.24 ms per call, or 2.11 ms replayed as a CUDA graph (Section 8.1 of the cookbook). The same kind of engine through <code>RFDETRInference.predict()</code> takes 5.04 ms, and 4.98 ms with <code>runtime_options={"cuda_graph": True}</code> (Section 8). These measurements show overhead outside the measured <code>rfdetr</code> engine, but do not determine the managed engine’s speed or explain the difference between packages. The managed engine time and matching conversion-inclusive end-to-end time must both be measured before separating host and engine contributions.</p>
-<p>What the <code>rfdetr</code> call does outside the engine, from <code>src/rfdetr/_prediction/core.py</code>: it copies each image to the GPU through a pinned buffer, resizes it and normalizes it with separate PyTorch operations, runs the engine, then selects the top detections, filters them with a data-dependent <code>nonzero</code>, copies boxes, scores and labels back and builds <code>sv.Detections</code>. A profile of the same path on an L4 (an earlier build of <code>RFDETRNano</code>, batch 1, engine in a CUDA graph) counted five stream synchronizations, four device-to-host copies and about forty small kernel launches per image, with the GPU busy for under a third of the call. Each synchronization stops the host from queuing the next stage.</p>
-<p>The <code>inference-models</code> source (version 0.39.8, read for this analysis) contains a different route for the same stages: a fused Triton kernel that does the resize and the normalization in one pass over a uint8 image already on the GPU, a fused Triton postprocessor, a preprocessing stage on its own CUDA stream, and an engine launch through a cache of captured CUDA graphs. Triton was loaded in the cookbook run, but which implementation its selector picked for each stage was not recorded. Fewer launches and fewer host round trips are possible explanations to test; neither their contribution nor equal engine execution times was established.</p>
+<p>An earlier version of this comparison put the <code>.trt</code> engine at 5.4 ms against 3.5 ms for the managed engine. The rerun changed three things at once: the <code>rfdetr</code> rows now receive a decoded array instead of a PIL image, which <code>predict()</code> first copies into a NumPy array (about 1.3 ms on a Colab host, 0.24 ms on an M4 Max); they pass <code>include_source_image=False</code>, so the source image is no longer kept in the result; and the managed rows no longer convert a PIL image inside the timed call. The run does not separate these effects, so the earlier gap cannot be assigned to the input type alone. What it shows is that with the same decoded array and no source copy the <code>rfdetr</code> call matches the managed engine at batch 1 (3.6 ms each). A PIL image still costs the copy; pass <code>np.array(image)</code> or a file path when latency matters. A separately built static <code>rfdetr</code> engine took about 2.1 ms at batch 1 with CUDA events around <code>execute_async_v3</code> (Section 8.1 of the cookbook). That engine is not either artifact timed here, so the remainder of the 3.6 ms is probably host work, but this comparison did not measure that split for either package.</p>
+<p>What the <code>rfdetr</code> call does outside the engine, from <code>src/rfdetr/_prediction/core.py</code>: it copies the image to the GPU through a pinned buffer, resizes it and normalizes it with separate PyTorch operations, runs the engine, then selects the top detections, filters them with a data-dependent <code>nonzero</code>, copies boxes, scores and labels back and builds <code>sv.Detections</code>. The <code>inference-models</code> 0.39.8 route uses a fused Triton kernel for the resize and normalization, a fused Triton postprocessor and a cache of captured CUDA graphs. In a stage timing on the same L4 the Triton preprocessing took about 0.8 ms against 1.9 ms for <code>rfdetr</code>, and the <code>rfdetr</code> postprocessing about 1.1 ms against 0.7 ms, yet the two totals matched, so the fused kernels did not produce a measurable end-to-end gain at batch 1.</p>
 <p>Three practical points follow from the measurements:</p>
 <ul>
-<li>On this GPU, <code>model.inference()</code> with fp16 and a CUDA graph (4.69 ms at batch 1, see the <a href="../#pytorch-baseline">export overview</a>) is faster than the <code>.trt</code> engine through <code>RFDETRInference</code> at batch 1 and 4 and level with it at batch 8, in the recorded run. The CUDA graph captures the model forward pass; preprocessing and postprocessing run outside it. If the end-to-end call matters more than the last millisecond of the engine, it is the <code>rfdetr</code> route to start from.</li>
-<li>A folder of 256 images ran at 413.1 img/s through the dynamic-batch <code>.trt</code> engine with <code>include_source_image=False</code> (404.6 img/s with the source image kept). Comparing this with the managed-engine throughput requires rerunning that engine with the corrected conversion-inclusive wrapper.</li>
-<li><code>cuda_graph</code> is worth turning on only for the fixed-shape engine it supports, and it moved the end-to-end time by 1% here.</li>
+<li>On this GPU, <code>model.inference()</code> with fp16 and a CUDA graph (3.5 ms at batch 1, see the <a href="../#pytorch-baseline">export overview</a>) is level with the <code>.trt</code> engine through <code>RFDETRInference</code> at batch 1 and slower at batch 4 and 8 (362.4 and 337.7 against 402.4 and 401.9 img/s). The CUDA graph captures the model forward pass; preprocessing and postprocessing run outside it, and it keeps the native <code>predict()</code> API.</li>
+<li>A folder of 256 images ran at 420.4 img/s through the dynamic-batch <code>.trt</code> engine with <code>include_source_image=False</code> (418.4 img/s with the source image kept), against 331.6 img/s through the <code>inference()</code> CUDA graph and 119.5 img/s through ONNX Runtime.</li>
+<li><code>cuda_graph</code> is worth turning on only for the fixed-shape engine it supports; it moved the end-to-end time by about 1% in an earlier run.</li>
 </ul>
-<p>A quick INT8 check on the same L4 (<code>RFDETRSmall</code>, static batch-1 engines, 128 calibration images held out of the scored images, end-to-end <code>predict()</code>) gave 56.0 mAP@50:95 for INT8 against 56.6 for FP16, 4.90 against 5.04 ms (1.03 times), and a 39.6 MB engine against 61.8 MB. End to end the gain is small because preprocessing and postprocessing dominate a call this short. Timed on the engine alone with a CUDA graph, as in the tables above, INT8 was 1.14 times faster at batch 1 and 1.28 times at batch 8 (1.848 against 2.110 ms per image at batch 1) for 0.08 box AP. This is the quick default of Section 8.1 (one model, 500 images, <code>val2017</code> calibration), not the full benchmark behind the RTX 5070 and Tesla T4 tables, so it is not added to them.</p>
+<p>A quick INT8 check on the same L4 (<code>RFDETRSmall</code>, static batch-1 engines, 128 calibration images held out of the scored images, end-to-end <code>predict()</code>) gave 56.0 mAP@50:95 for INT8 against 56.6 for FP16, 4.90 against 5.04 ms (1.03 times), and a 39.6 MB engine against 61.8 MB. Those two end-to-end times come from a run that passed a PIL image, so they include the PIL-to-array copy and are pending a rerun with array input; the engine-only figures below are unaffected. Timed on the engine alone with a CUDA graph, as in the tables above, INT8 was 1.14 times faster at batch 1 and 1.28 times at batch 8 (1.848 against 2.110 ms per image at batch 1) for 0.08 box AP. This is the quick default of Section 8.1 (one model, 500 images, <code>val2017</code> calibration), not the full benchmark behind the RTX 5070 and Tesla T4 tables, so it is not added to them.</p>
+<h2 id="measured-latency-across-nvidia-gpus">Measured Latency Across NVIDIA GPUs<a class="headerlink" href="#measured-latency-across-nvidia-gpus" title="Permanent link">&para;</a></h2>
+<p>The same end-to-end measurement as the L4 section, repeated for the four detection sizes on four GPUs: Tesla T4, NVIDIA L4, A100 SXM4 80 GB and RTX PRO 6000 Blackwell Server Edition. All four ran <code>rfdetr</code> 1.12.0.dev0, <code>inference-models</code> 0.39.8, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to <code>sv.Detections</code>, and the <code>rfdetr</code> rows pass <code>include_source_image=False</code>. The bold value is the fastest route in its row.</p>
+<ul>
+<li><strong>Latency only.</strong> No accuracy was scored here. INT8 engines were also timed in this run but are left out, because no harness in the repository reproduces those end-to-end figures yet; the INT8 results that the cookbook does reproduce are in the <a href="#int8">INT8</a> section.</li>
+<li><strong>The managed engine needs a published package for the GPU.</strong> On the A100 and the RTX PRO 6000 <code>inference-models</code> raised <code>NoModelPackagesAvailableError</code> for every size, so those columns are <code>n/a</code>. This is a registry gap for those two GPUs, not a measured slowdown.</li>
+<li><strong><code>inference()</code> CUDA graph</strong> is the PyTorch route with a captured graph; <code>.trt</code> is a static-batch engine exported with <code>RFDETR.export(format="tensorrt")</code> and loaded by <code>RFDETRInference</code>.</li>
+</ul>
+<h3 id="batch-1-latency-ms">Batch 1 latency [ms]<a class="headerlink" href="#batch-1-latency-ms" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th>Size</th>
+<th style="text-align: right;"><code>inference()</code> CUDA graph FP16</th>
+<th style="text-align: right;"><code>.trt</code> FP16</th>
+<th style="text-align: right;"><code>inference-models</code> managed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>T4</td>
+<td>Nano</td>
+<td style="text-align: right;">5.36</td>
+<td style="text-align: right;"><strong>5.12</strong></td>
+<td style="text-align: right;">5.20</td>
+</tr>
+<tr>
+<td>T4</td>
+<td>Small</td>
+<td style="text-align: right;">7.66</td>
+<td style="text-align: right;">6.21</td>
+<td style="text-align: right;"><strong>5.89</strong></td>
+</tr>
+<tr>
+<td>T4</td>
+<td>Medium</td>
+<td style="text-align: right;">9.47</td>
+<td style="text-align: right;"><strong>7.20</strong></td>
+<td style="text-align: right;">7.35</td>
+</tr>
+<tr>
+<td>T4</td>
+<td>Large</td>
+<td style="text-align: right;">13.15</td>
+<td style="text-align: right;">10.86</td>
+<td style="text-align: right;"><strong>10.22</strong></td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Nano</td>
+<td style="text-align: right;"><strong>2.78</strong></td>
+<td style="text-align: right;">3.25</td>
+<td style="text-align: right;">3.22</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Small</td>
+<td style="text-align: right;">3.60</td>
+<td style="text-align: right;"><strong>3.57</strong></td>
+<td style="text-align: right;">3.70</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Medium</td>
+<td style="text-align: right;">4.52</td>
+<td style="text-align: right;"><strong>4.13</strong></td>
+<td style="text-align: right;">4.23</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Large</td>
+<td style="text-align: right;">5.64</td>
+<td style="text-align: right;"><strong>5.14</strong></td>
+<td style="text-align: right;">5.18</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Nano</td>
+<td style="text-align: right;"><strong>3.16</strong></td>
+<td style="text-align: right;">3.29</td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Small</td>
+<td style="text-align: right;">3.62</td>
+<td style="text-align: right;"><strong>3.44</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Medium</td>
+<td style="text-align: right;"><strong>3.80</strong></td>
+<td style="text-align: right;">4.22</td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Large</td>
+<td style="text-align: right;"><strong>4.27</strong></td>
+<td style="text-align: right;">4.35</td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Nano</td>
+<td style="text-align: right;">1.54</td>
+<td style="text-align: right;"><strong>1.47</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Small</td>
+<td style="text-align: right;">1.83</td>
+<td style="text-align: right;"><strong>1.62</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Medium</td>
+<td style="text-align: right;">1.95</td>
+<td style="text-align: right;"><strong>1.76</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Large</td>
+<td style="text-align: right;">2.20</td>
+<td style="text-align: right;"><strong>2.08</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+</tbody>
+</table>
+<h3 id="batch-8-throughput-imgs">Batch 8 throughput [img/s]<a class="headerlink" href="#batch-8-throughput-imgs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th>Size</th>
+<th style="text-align: right;"><code>inference()</code> CUDA graph FP16</th>
+<th style="text-align: right;"><code>.trt</code> FP16</th>
+<th style="text-align: right;"><code>inference-models</code> managed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>T4</td>
+<td>Nano</td>
+<td style="text-align: right;">276</td>
+<td style="text-align: right;"><strong>334</strong></td>
+<td style="text-align: right;">271</td>
+</tr>
+<tr>
+<td>T4</td>
+<td>Small</td>
+<td style="text-align: right;">160</td>
+<td style="text-align: right;"><strong>197</strong></td>
+<td style="text-align: right;">191</td>
+</tr>
+<tr>
+<td>T4</td>
+<td>Medium</td>
+<td style="text-align: right;">119</td>
+<td style="text-align: right;">149</td>
+<td style="text-align: right;"><strong>153</strong></td>
+</tr>
+<tr>
+<td>T4</td>
+<td>Large</td>
+<td style="text-align: right;">82</td>
+<td style="text-align: right;">98</td>
+<td style="text-align: right;"><strong>99</strong></td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Nano</td>
+<td style="text-align: right;">596</td>
+<td style="text-align: right;"><strong>724</strong></td>
+<td style="text-align: right;">466</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Small</td>
+<td style="text-align: right;">324</td>
+<td style="text-align: right;"><strong>432</strong></td>
+<td style="text-align: right;">355</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Medium</td>
+<td style="text-align: right;">256</td>
+<td style="text-align: right;"><strong>349</strong></td>
+<td style="text-align: right;">286</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Large</td>
+<td style="text-align: right;">170</td>
+<td style="text-align: right;"><strong>227</strong></td>
+<td style="text-align: right;">216</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Nano</td>
+<td style="text-align: right;">877</td>
+<td style="text-align: right;"><strong>967</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Small</td>
+<td style="text-align: right;">688</td>
+<td style="text-align: right;"><strong>783</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Medium</td>
+<td style="text-align: right;">590</td>
+<td style="text-align: right;"><strong>676</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>A100</td>
+<td>Large</td>
+<td style="text-align: right;">457</td>
+<td style="text-align: right;"><strong>558</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Nano</td>
+<td style="text-align: right;">1976</td>
+<td style="text-align: right;"><strong>2271</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Small</td>
+<td style="text-align: right;">1381</td>
+<td style="text-align: right;"><strong>1782</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Medium</td>
+<td style="text-align: right;">1262</td>
+<td style="text-align: right;"><strong>1608</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>RTX PRO 6000</td>
+<td>Large</td>
+<td style="text-align: right;">984</td>
+<td style="text-align: right;"><strong>1249</strong></td>
+<td style="text-align: right;">n/a</td>
+</tr>
+</tbody>
+</table>
+<p>What the tables support:</p>
+<ul>
+<li><strong>At batch 8 the <code>.trt</code> FP16 engine is the fastest route on every GPU and size except T4 Medium and Large</strong>, where the managed engine is ahead by 3% and 1% (153 against 149 and 99 against 98 img/s).</li>
+<li><strong>At batch 1 the routes are close on most rows</strong>, so the choice matters little for single-image latency. The CUDA-graph route is fastest on L4 Nano, and on A100 Nano, Medium and Large; it is 1.2× to 1.3× slower than a <code>.trt</code> engine on T4 Small to Large.</li>
+<li><strong>The managed engine is competitive on the T4 and the L4</strong>: fastest at batch 1 on T4 Small and Large, within 0.5 ms of the best on the L4 at batch 1, and 5% to 36% behind the FP16 <code>.trt</code> engine at batch 8 on the L4.</li>
+<li><strong>The RTX PRO 6000 is 2.2× to 2.5× faster than the L4 at batch 1</strong> for the FP16 <code>.trt</code> engine (Nano: 1.47 against 3.25 ms), while the A100 is slower than the L4 for Nano (3.16 against 2.78 ms, both on the CUDA-graph route). Batch 1 does not scale with GPU size; the likely cause is the host-side share of the call, which was not measured here.</li>
+</ul>
 <h2 id="predict-with-rfdetrinference">Predict with RFDETRInference<a class="headerlink" href="#predict-with-rfdetrinference" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
@@ -5447,7 +5787,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 22:26:53 UTC">2026-11-05 22:26:53</span>
   </span>
 
     

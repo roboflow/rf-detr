@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-05T16:07:06">
+  <meta property="article:modified_time" content="2026-11-05T22:26:53">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-05T16:07:06",
+    "dateModified": "2026-11-05T22:26:53",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4225,6 +4225,8 @@ device-wide, so it also captures ONNX Runtime's CUDA execution provider and Tens
 <code>cudaMalloc</code> calls, not just PyTorch's own caching allocator. Every exported artifact is
 loaded with <code>RFDETRInference</code>, so it runs the same preprocessing, postprocessing and class mapping as <code>predict()</code> on the
 PyTorch rows. The installed <code>rfdetr</code> version is printed so the Results header can be filled from it.</p>
+<p>Every timed <code>rfdetr</code> <code>predict()</code> call passes <code>include_source_image=False</code>. <code>inference-models</code> returns no copy of the input image in its results, so <code>rfdetr</code> is timed without one too; with the default <code>True</code> it also copies each image into its results.</p>
+<p>Every timed call takes the same decoded RGB array, <code>frame</code>, as a camera or video decoder delivers it, so no row pays a JPEG decode or a PIL-to-array copy.</p>
 </div>
 </div>
 </div>
@@ -4403,6 +4405,10 @@ detections. The image is downloaded once and reused for every format below.</p>
 
 <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="c1"># A camera or video decoder delivers decoded arrays, so every timed call below takes this RGB array and no</span>
+<span class="c1"># call pays a PIL-to-array copy or a JPEG decode.</span>
+<span class="n">frame</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-4">import urllib.request
 
@@ -4412,7 +4418,11 @@ if not IMAGE_PATH.exists():
     urllib.request.urlretrieve(IMAGE_URL, IMAGE_PATH)
 
 image = Image.open(IMAGE_PATH).convert("RGB")
-print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
+print(f"Sample image: {image.size[0]}×{image.size[1]}")
+
+# A camera or video decoder delivers decoded arrays, so every timed call below takes this RGB array and no
+# call pays a PIL-to-array copy or a JPEG decode.
+frame = np.array(image)</div>
 </div>
 </div>
 </div>
@@ -4480,9 +4490,9 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 
 <span class="n">pytorch_fp32_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="n">pytorch_fp32_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"PyTorch predict() fp32 batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -4492,13 +4502,13 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 <span class="n">pytorch_fp16_jit_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
         <span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"torchscript"</span><span class="p">)</span>
-        <span class="n">_</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">)</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
     <span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">pytorch_fp16_jit_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"PyTorch inference() fp16+JIT batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -4509,7 +4519,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 <span class="n">pytorch_fp16_cudagraph_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
     <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
     <span class="n">cudagraph_free_before</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
@@ -4522,7 +4532,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch fp16 CUDA Graph: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="n">visualize_detections</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="p">)</span>
     <span class="n">pytorch_fp16_cudagraph_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">cudagraph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">cudagraph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"PyTorch inference() fp16+CUDA Graph batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -4556,9 +4566,9 @@ visualize_detections(baseline_detections, image)
 
 pytorch_fp32_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     pytorch_fp32_results[batch] = measure_latency(
-        partial(model.predict, images_batch),
+        partial(model.predict, images_batch, include_source_image=False),
         label=f"PyTorch predict() fp32 batch={batch}",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -4568,13 +4578,13 @@ for batch in BATCH_SIZES:
 pytorch_fp16_jit_results: dict[int, BenchmarkResult] = {}
 pytorch_fp16_jit_memory_mb: dict[int, float] = {}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     with measure_memory(device="cuda") as mem:
         predictor = model.inference(dtype=torch.float16, batch_size=batch, compile_backend="torchscript")
-        _ = predictor.predict(images_batch)
+        _ = predictor.predict(images_batch, include_source_image=False)
     pytorch_fp16_jit_memory_mb[batch] = mem.delta_mb
     pytorch_fp16_jit_results[batch] = measure_latency(
-        partial(predictor.predict, images_batch),
+        partial(predictor.predict, images_batch, include_source_image=False),
         label=f"PyTorch inference() fp16+JIT batch={batch}",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -4585,7 +4595,7 @@ for batch in BATCH_SIZES:
 pytorch_fp16_cudagraph_results: dict[int, BenchmarkResult] = {}
 pytorch_fp16_cudagraph_memory_mb: dict[int, float] = {}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     cudagraph_free_before, _ = torch.cuda.mem_get_info()
@@ -4598,7 +4608,7 @@ for batch in BATCH_SIZES:
         print(f"PyTorch fp16 CUDA Graph: {len(cudagraph_detections[0])} detections above {CONFIDENCE_THRESHOLD}")
         visualize_detections(cudagraph_detections[0], image)
     pytorch_fp16_cudagraph_results[batch] = measure_latency(
-        partial(cudagraph_predictor.predict, images_batch),
+        partial(cudagraph_predictor.predict, images_batch, include_source_image=False),
         label=f"PyTorch inference() fp16+CUDA Graph batch={batch}",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -4753,13 +4763,13 @@ visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")<
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">onnx_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">onnx_memory_by_batch</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">onnx_memory_mb</span><span class="p">}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">onnx_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">)</span>
+            <span class="n">onnx_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
         <span class="n">onnx_memory_by_batch</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">onnx_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">onnx_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">onnx_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"ONNX (CUDA) end2end batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -4771,13 +4781,13 @@ visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")<
 <div class="clipboard-copy-txt" id="cell-8">onnx_end2end_results: dict[int, BenchmarkResult] = {}
 onnx_memory_by_batch: dict[int, float] = {BATCH_SIZES[0]: onnx_memory_mb}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     if batch != BATCH_SIZES[0]:
         with measure_memory(device="cuda") as mem:
-            onnx_predictor.predict(images_batch)
+            onnx_predictor.predict(images_batch, include_source_image=False)
         onnx_memory_by_batch[batch] = mem.delta_mb
     onnx_end2end_results[batch] = measure_latency(
-        partial(onnx_predictor.predict, images_batch),
+        partial(onnx_predictor.predict, images_batch, include_source_image=False),
         label=f"ONNX (CUDA) end2end batch={batch}",
         device="cpu",
         warmup=WARMUP_RUNS,
@@ -4853,7 +4863,7 @@ kwarg used for the standalone <code>.trt</code> export: <code>quantization=None<
 based on device capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>"bf16"</code>/<code>"int8"</code> request one explicitly.
 <code>verbose=True</code> prints <code>inference-models</code>' own package-selection log line, which names the
 backend and the quantization it actually picked for <code>quantization=None</code> below. A NumPy array is BGR to <code>inference-models</code> unless the call says otherwise, so every call passes <code>input_color_format="rgb"</code> for the
-RGB arrays made from PIL images, and <code>confidence=</code> so its threshold is the one <code>rfdetr</code> uses. It is constructed
+decoded RGB arrays, and <code>confidence=</code> so its threshold is the one <code>rfdetr</code> uses. It is constructed
 once and fed every batch size below through its documented <code>List[np.ndarray]</code> call signature —
 what it does per batch internally is not part of this repository and not something this
 notebook can verify, only measure.</p>
@@ -4942,15 +4952,13 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">"""Run an `inference-models` model on RGB PIL images and return `sv.Detections`, like `RFDETRInference.predict`."""</span>
-    <span class="n">arrays</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">img</span><span class="p">)</span> <span class="k">for</span> <span class="n">img</span> <span class="ow">in</span> <span class="n">images</span><span class="p">]</span>
-    <span class="k">return</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">im_model</span><span class="p">(</span><span class="n">arrays</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">threshold</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)]</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="n">frames</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Run an `inference-models` model on RGB arrays and return `sv.Detections`, like `RFDETRInference.predict`."""</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">im_model</span><span class="p">(</span><span class="n">frames</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">threshold</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)]</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">def im_predict(im_model, images: list[Image.Image], threshold: float) -&gt; list[sv.Detections]:
-    """Run an `inference-models` model on RGB PIL images and return `sv.Detections`, like `RFDETRInference.predict`."""
-    arrays = [np.array(img) for img in images]
-    return [p.to_supervision() for p in im_model(arrays, confidence=threshold, input_color_format="rgb")]</div>
+<div class="clipboard-copy-txt" id="cell-11">def im_predict(im_model, frames: list[np.ndarray], threshold: float) -&gt; list[sv.Detections]:
+    """Run an `inference-models` model on RGB arrays and return `sv.Detections`, like `RFDETRInference.predict`."""
+    return [p.to_supervision() for p in im_model(frames, confidence=threshold, input_color_format="rgb")]</div>
 </div>
 </div>
 </div>
@@ -4977,7 +4985,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trt_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
             <span class="n">im_predict</span><span class="p">(</span><span class="n">trt_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
@@ -4994,7 +5002,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-12">trt_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     if batch != BATCH_SIZES[0]:
         with measure_memory(device="cuda") as mem:
             im_predict(trt_model, images_batch, CONFIDENCE_THRESHOLD)
@@ -5059,7 +5067,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 
 <span class="n">trt_fp32_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
             <span class="n">im_predict</span><span class="p">(</span><span class="n">trt_fp32_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
@@ -5089,7 +5097,7 @@ visualize_detections(trt_fp32_detections, image, EXPORT_DIR / "annotated_tensorr
 
 trt_fp32_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     if batch != BATCH_SIZES[0]:
         with measure_memory(device="cuda") as mem:
             im_predict(trt_fp32_model, images_batch, CONFIDENCE_THRESHOLD)
@@ -5255,13 +5263,13 @@ same convention as ONNX and the managed engine above.</p>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trt_raw_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">trt_raw_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">)</span>
+            <span class="n">trt_raw_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
         <span class="n">trt_raw_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">trt_raw_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">trt_raw_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">trt_raw_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT (raw .trt engine) end2end batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -5272,13 +5280,13 @@ same convention as ONNX and the managed engine above.</p>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-16">trt_raw_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
-    images_batch = [image] * batch
+    images_batch = [frame] * batch
     if batch != BATCH_SIZES[0]:
         with measure_memory(device="cuda") as mem:
-            trt_raw_predictor.predict(images_batch)
+            trt_raw_predictor.predict(images_batch, include_source_image=False)
         trt_raw_memory_mb[batch] = mem.delta_mb
     trt_raw_end2end_results[batch] = measure_latency(
-        partial(trt_raw_predictor.predict, images_batch),
+        partial(trt_raw_predictor.predict, images_batch, include_source_image=False),
         label=f"TensorRT (raw .trt engine) end2end batch={batch}",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -5337,17 +5345,17 @@ for batch in BATCH_SIZES:
 <span class="w">    </span><span class="sd">"""Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""</span>
     <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
         <span class="n">im_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span>
-        <span class="n">detections</span> <span class="o">=</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">image</span><span class="p">],</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+        <span class="n">detections</span> <span class="o">=</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">frame</span><span class="p">],</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
     <span class="n">im_models</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">im_model</span>
     <span class="n">im_results</span><span class="p">[</span><span class="n">key</span><span class="p">],</span> <span class="n">im_memory_mb</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
             <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-                <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+                <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
             <span class="n">im_memory_mb</span><span class="p">[</span><span class="n">key</span><span class="p">][</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
         <span class="n">im_results</span><span class="p">[</span><span class="n">key</span><span class="p">][</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-            <span class="n">partial</span><span class="p">(</span><span class="n">im_predict</span><span class="p">,</span> <span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">),</span>
+            <span class="n">partial</span><span class="p">(</span><span class="n">im_predict</span><span class="p">,</span> <span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">),</span>
             <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2"> batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
             <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
             <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -5366,17 +5374,17 @@ def benchmark_inference_models(key: str, **load_kwargs) -&gt; None:
     """Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""
     with measure_memory(device="cuda") as mem:
         im_model = AutoModel.from_pretrained("rfdetr-small", **load_kwargs)
-        detections = im_predict(im_model, [image], CONFIDENCE_THRESHOLD)
+        detections = im_predict(im_model, [frame], CONFIDENCE_THRESHOLD)
     im_models[key] = im_model
     im_results[key], im_memory_mb[key] = {}, {BATCH_SIZES[0]: mem.delta_mb}
     print(f"{key}: {len(detections[0])} detections above {CONFIDENCE_THRESHOLD}")
     for batch in BATCH_SIZES:
         if batch != BATCH_SIZES[0]:
             with measure_memory(device="cuda") as mem:
-                im_predict(im_model, [image] * batch, CONFIDENCE_THRESHOLD)
+                im_predict(im_model, [frame] * batch, CONFIDENCE_THRESHOLD)
             im_memory_mb[key][batch] = mem.delta_mb
         im_results[key][batch] = measure_latency(
-            partial(im_predict, im_model, [image] * batch, CONFIDENCE_THRESHOLD),
+            partial(im_predict, im_model, [frame] * batch, CONFIDENCE_THRESHOLD),
             label=f"{key} batch={batch}",
             device="cuda",
             warmup=WARMUP_RUNS,
@@ -5833,7 +5841,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 <span class="n">im_models</span><span class="p">[</span><span class="s2">"TensorRT inference-models auto"</span><span class="p">]</span> <span class="o">=</span> <span class="n">trt_model</span>
 <span class="n">im_models</span><span class="p">[</span><span class="s2">"TensorRT inference-models fp32"</span><span class="p">]</span> <span class="o">=</span> <span class="n">trt_fp32_model</span>
 <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">im_model</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">im_models</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"COCO mAP, inference-models"</span><span class="p">):</span>
-    <span class="n">map_results</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">img</span><span class="p">,</span> <span class="n">m</span><span class="o">=</span><span class="n">im_model</span><span class="p">:</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="p">[</span><span class="n">img</span><span class="p">],</span> <span class="mf">0.001</span><span class="p">)[</span><span class="mi">0</span><span class="p">],</span> <span class="n">coco_subset</span><span class="p">)</span>
+    <span class="n">map_results</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">img</span><span class="p">,</span> <span class="n">m</span><span class="o">=</span><span class="n">im_model</span><span class="p">:</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">img</span><span class="p">)],</span> <span class="mf">0.001</span><span class="p">)[</span><span class="mi">0</span><span class="p">],</span> <span class="n">coco_subset</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: mAP@50:95 </span><span class="si">{</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">map_results</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">map50_95</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> %"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-28">from tqdm.auto import tqdm
@@ -5841,7 +5849,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 im_models["TensorRT inference-models auto"] = trt_model
 im_models["TensorRT inference-models fp32"] = trt_fp32_model
 for key, im_model in tqdm(im_models.items(), desc="COCO mAP, inference-models"):
-    map_results[key] = evaluate_coco_map(lambda img, m=im_model: im_predict(m, [img], 0.001)[0], coco_subset)
+    map_results[key] = evaluate_coco_map(lambda img, m=im_model: im_predict(m, [np.array(img)], 0.001)[0], coco_subset)
     print(f"  {key}: mAP@50:95 {100 * map_results[key].map50_95:.1f} %")</div>
 </div>
 </div>
@@ -6165,10 +6173,10 @@ predictor's memory is not measured here.</p>
 <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">((</span><span class="s2">"FP16"</span><span class="p">,</span> <span class="n">trt_fp16_b1_path</span><span class="p">),</span> <span class="p">(</span><span class="s2">"INT8"</span><span class="p">,</span> <span class="n">trt_int8_path</span><span class="p">)):</span>
     <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
         <span class="n">trt_b1</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
-        <span class="n">trt_b1</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">trt_b1</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
     <span class="n">trt_b1_memory_mb</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">trt_b1_results</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">image</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">frame</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> default call batch=1"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -6176,9 +6184,9 @@ predictor's memory is not measured here.</p>
     <span class="p">)</span>
     <span class="c1"># The first call of a cuda_graph predictor captures the graph, so it is made here, before any timed call.</span>
     <span class="n">graph_predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">runtime_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"cuda_graph"</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>
-    <span class="n">graph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="n">graph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
     <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">graph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">image</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">graph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">frame</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> CUDA graph batch=1"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -6198,10 +6206,10 @@ trt_b1_memory_mb = {}
 for name, path in (("FP16", trt_fp16_b1_path), ("INT8", trt_int8_path)):
     with measure_memory(device="cuda") as mem:
         trt_b1[name] = RFDETRInference(path, device="cuda")
-        trt_b1[name].predict(image)
+        trt_b1[name].predict(frame, include_source_image=False)
     trt_b1_memory_mb[name] = mem.delta_mb
     trt_b1_results[name] = measure_latency(
-        partial(trt_b1[name].predict, image),
+        partial(trt_b1[name].predict, frame, include_source_image=False),
         label=f"TensorRT {name} default call batch=1",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -6209,9 +6217,9 @@ for name, path in (("FP16", trt_fp16_b1_path), ("INT8", trt_int8_path)):
     )
     # The first call of a cuda_graph predictor captures the graph, so it is made here, before any timed call.
     graph_predictor = RFDETRInference(path, device="cuda", runtime_options={"cuda_graph": True})
-    graph_predictor.predict(image)
+    graph_predictor.predict(frame, include_source_image=False)
     trt_b1_graph_results[name] = measure_latency(
-        partial(graph_predictor.predict, image),
+        partial(graph_predictor.predict, frame, include_source_image=False),
         label=f"TensorRT {name} CUDA graph batch=1",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -7780,7 +7788,7 @@ display(decision)</div>
 <span class="n">detail_table</span><span class="p">[</span><span class="n">numeric</span><span class="p">]</span> <span class="o">=</span> <span class="n">detail</span><span class="p">[</span><span class="n">numeric</span><span class="p">]</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
     <span class="k">lambda</span> <span class="n">column</span><span class="p">:</span> <span class="n">column</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">value</span><span class="p">:</span> <span class="s2">"—"</span> <span class="k">if</span> <span class="n">pd</span><span class="o">.</span><span class="n">isna</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="p">)</span>
-<span class="n">display</span><span class="p">(</span><span class="n">detail_table</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">detail_table</span><span class="o">.</span><span class="n">to_markdown</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
 <span class="nb">print</span><span class="p">(</span>
     <span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs per row, batches </span><span class="si">{</span><span class="n">BATCH_SIZES</span><span class="si">}</span><span class="s2">, GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
 <span class="p">)</span>
@@ -7790,7 +7798,7 @@ detail_table = detail.copy()
 detail_table[numeric] = detail[numeric].apply(
     lambda column: column.map(lambda value: "—" if pd.isna(value) else f"{value:.1f}")
 )
-display(detail_table)
+print(detail_table.to_markdown(index=False))
 print(
     f"\n{MEASURE_RUNS} timed + {WARMUP_RUNS} warmup runs per row, batches {BATCH_SIZES}, GPU: {torch.cuda.get_device_name(0)}."
 )</div>
@@ -7887,7 +7895,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 22:26:53 UTC">2026-11-05 22:26:53</span>
   </span>
 
     
