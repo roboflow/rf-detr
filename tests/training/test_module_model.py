@@ -35,9 +35,8 @@ from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.imports import _IS_PYTORCH_OPTIMIZER_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
-
-from .helpers import _fake_postprocess as _helpers_fake_postprocess
-from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from tests.training.helpers import _fake_postprocess as _helpers_fake_postprocess
+from tests.training.helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
 _requires_pytorch_optimizer = pytest.mark.skipif(
     not _IS_PYTORCH_OPTIMIZER_INSTALLED, reason="pytorch_optimizer not installed"
@@ -1015,32 +1014,21 @@ class TestLoadPretrainWeights:
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
         assert checkpoint["model"]["query_feat.weight"].shape[0] == desired
 
-    def test_redownloads_on_load_failure(self, mocker, base_model_config, build_module):
-        """A corrupted checkpoint must trigger re-download and a second load attempt."""
+    def test_load_failure_does_not_redownload_existing_weights(self, mocker, base_model_config, build_module):
+        """A checkpoint read failure propagates without replacing the existing file."""
         mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
         mock_download = mocker.patch("rfdetr.models.weights.download_pretrain_weights")
         mocker.patch("rfdetr.models.weights.os.path.isfile", return_value=True)
         mc = base_model_config(num_classes=90)
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
-        load_calls = [0]
+        mock_load = mocker.patch("rfdetr.utilities.io._safe_torch_load", side_effect=RuntimeError("corrupted file"))
+        with pytest.raises(RuntimeError, match="corrupted file"):
+            load_pretrain_weights(module.model, module.model_config)
 
-        def fake_safe_load(*args, **kwargs):
-            load_calls[0] += 1
-            if load_calls[0] == 1:
-                raise RuntimeError("corrupted file")
-            return checkpoint
-
-        # Patched at its definition site: weights.py imports _safe_torch_load lazily. MD5 validation stays on the retry
-        # (hash-mismatched files are rejected, never silently accepted).
-        mocker.patch("rfdetr.utilities.io._safe_torch_load", side_effect=fake_safe_load)
-        load_pretrain_weights(module.model, module.model_config)
-
-        redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
-        assert len(redownload_calls) >= 1
-        assert load_calls[0] == 2
+        mock_download.assert_called_once_with("/fake/weights.pth")
+        mock_load.assert_called_once()
 
     def test_download_before_load_when_weights_absent(self, mocker, base_model_config, build_module):
         """download_pretrain_weights is called before torch.load when weights are absent.

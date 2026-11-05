@@ -37,8 +37,7 @@ from rfdetr.training.cli import RFDETRCli
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.training.param_groups import _PARAM_GROUP_SETTINGS, _resolve_resumed_param_group_settings
-
-from .test_module_model import _fake_criterion, _fake_model, _fake_postprocess
+from tests.training.test_module_model import _fake_criterion, _fake_model, _fake_postprocess
 
 #: The shipped config the trainer tests parse, as ``rfdetr fit --config configs/rfdetr_nano.yaml`` does.
 _NANO_CONFIG = Path(__file__).parents[2] / "configs" / "rfdetr_nano.yaml"

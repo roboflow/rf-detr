@@ -205,6 +205,35 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         )
         assert mc.num_classes == 2, "Auto-aligned checkpoint class count must be persisted back onto ModelConfig."
 
+    def test_auto_aligned_num_classes_is_not_marked_explicit(self, monkeypatch):
+        """A checkpoint-derived num_classes must not count as user-set, so a larger dataset can still raise it.
+
+        Scenario: ``RFDETRSegXLarge(pretrain_weights="own_18_class.pth")`` then ``train()`` on a dataset with 20
+        classes. The constructor's load auto-aligns ``num_classes`` to the checkpoint; that assignment lands in
+        ``model_fields_set`` and ``RFDETR._align_num_classes_from_dataset`` then treats it as explicit, keeps the
+        checkpoint's count with a warning, and the training module loads a head and a criterion that are too small
+        for the dataset's labels (index out of bounds at the first step). The flag must be cleared after the
+        auto-alignment, as ``from_checkpoint`` clears every checkpoint-derived field, so the later dataset-driven
+        assignment is honoured by the second load (load then expand).
+        """
+        mc = _base_config()
+        _serve_checkpoint(monkeypatch, _make_checkpoint(num_classes=3))
+        load_pretrain_weights(_fake_nn_model(), mc)
+
+        assert mc.num_classes == 2
+        assert "num_classes" not in mc.model_fields_set, (
+            "A checkpoint-derived num_classes must not be recorded as user-set; "
+            "_align_num_classes_from_dataset would refuse to raise it for a dataset with more classes."
+        )
+
+        mc.num_classes = 5  # what _align_num_classes_from_dataset does for a 5-class dataset
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        calls = nn_model.reinitialize_detection_head.call_args_list
+        assert calls == [call(3), call(6)], f"Expected reinit to [3, 6] (load then expand to the dataset), got {calls}"
+        assert mc.num_classes == 5, "The dataset-aligned num_classes must survive the training module's load."
+
     @pytest.mark.parametrize(
         ("num_classes", "checkpoint_classes", "expected_calls"),
         [

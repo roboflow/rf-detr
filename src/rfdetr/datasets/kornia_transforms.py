@@ -653,7 +653,7 @@ def _make_affine(params: dict[str, Any]) -> Any:
     from ``[-tx, tx]``. The conversion takes ``max(|min|, |max|)`` for each axis. A scalar cannot preserve
     Albumentations' fixed positive translation, so this builder warns before approximating it with symmetric signed
     sampling. Albumentations ``scale`` also accepts a scalar, while Kornia requires a range, so scalars become
-    ``(v, v)``.
+    ``(v, v)``. An unset ``rotate`` means no rotation, as in Albumentations.
 
     Args:
         params: The ``Affine`` aug_config params.
@@ -694,7 +694,7 @@ def _make_affine(params: dict[str, Any]) -> Any:
         translate = translate_percent
 
     return RandomAffine(
-        degrees=params.get("rotate", (-15, 15)),
+        degrees=params.get("rotate", (0.0, 0.0)),
         translate=translate,
         scale=scale,
         shear=params.get("shear"),

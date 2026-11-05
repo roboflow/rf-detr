@@ -12,8 +12,8 @@ import io
 import operator
 import os
 import re
-from collections.abc import Callable, Generator, Iterable, Iterator
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable, Generator, Iterable, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -23,18 +23,18 @@ import numpy as np
 import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
-from PIL import Image
+from PIL import Image, JpegImagePlugin
 
 try:
     # torchvision 0.29 deprecated these codecs for removal in favour of TorchCodec. Once they are gone, local files
     # passed to predict() decode through Pillow instead of ``import rfdetr`` failing.
-    from torchvision.io import ImageReadMode, decode_image
+    from torchvision.io import ImageReadMode, decode_image, decode_jpeg
 
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = True
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
-from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source, iter_source_batches
+from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source
 from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
@@ -95,7 +95,8 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
     For a CUDA tensor in ``float16``/``float32``/``float64`` with every dimension greater than one, the
     multiply-then-truncate cast runs on-device before the (now ``uint8``) transfer; every other input,
     including CPU tensors and CUDA tensors of another dtype such as ``bfloat16``, keeps the previous
-    NumPy-side conversion. NaN pixels convert successfully on both paths, but only the NumPy-side path
+    NumPy-side conversion, with ``bfloat16`` widened to ``float32`` first because NumPy has no such type.
+    NaN pixels convert successfully on both paths, but only the NumPy-side path
     emits an incidental invalid-cast ``RuntimeWarning`` for them; the on-device path does not.
 
     Args:
@@ -121,7 +122,11 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
         # NumPy types ``ndarray.copy`` as ``Any``, so ``asarray`` restores the element type; it returns the very
         # same object for an ndarray, keeping the copy's ownership, writability, and strides untouched.
         return np.asarray(source_view.mul(255).to(torch.uint8).cpu().numpy().copy(order="K"))
-    return (source_view.cpu().numpy() * 255).astype(np.uint8)
+    source_view = source_view.cpu()
+    if source_view.dtype == torch.bfloat16:
+        # NumPy has no bfloat16 type, so widen on the host before the conversion below.
+        source_view = source_view.float()
+    return (source_view.numpy() * 255).astype(np.uint8)
 
 
 def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
@@ -153,8 +158,199 @@ def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
 #: height (4 bytes each).
 _PNG_BIT_DEPTH_OFFSET = 24
 
+#: Pillow's chroma subsampling codes for the JPEG files the GPU may decode: 4:4:4, 4:2:2 and 4:2:0.
+_GPU_JPEG_SAMPLINGS = frozenset({0, 1, 2})
 
-def _decode_local_image(path: str) -> torch.Tensor | None:
+#: Whether the GPU decode gave the CPU decoder's exact pixels for this process's first JPEG of each (CUDA device index,
+#: chroma subsampling). nvjpeg picks a hardware or a CUDA decoder by GPU, so the comparison runs once per process and
+#: device, not once per release. ``False`` sends every later JPEG of that kind back to the CPU decoder. Two threads may
+#: both run the first comparison; both then record the same result.
+_GPU_JPEG_MATCHES: dict[tuple[int | None, int], bool] = {}
+
+#: The stream each CUDA device index decodes JPEG files on, used for nothing else; see :func:`_decode_on_own_stream`.
+_GPU_JPEG_STREAMS: dict[int | None, torch.cuda.Stream] = {}
+
+
+@dataclass(frozen=True)
+class _EncodedJpeg:
+    """A JPEG file read and header-checked ahead of its batch, left for the GPU to decode with the rest of the batch.
+
+    Attributes:
+        data: The file's bytes, as the one-dimensional ``uint8`` CPU tensor :func:`~torchvision.io.decode_jpeg` reads.
+        sampling: Its chroma subsampling, as Pillow reports it; one of :data:`_GPU_JPEG_SAMPLINGS`.
+    """
+
+    data: torch.Tensor
+    sampling: int
+
+
+def _decodes_on_gpu(header: Image.Image, device: torch.device) -> bool:
+    """Tell whether a JPEG file's header lets the GPU decode it to the pixels the CPU decoder gives.
+
+    Only baseline colour JPEGs with 4:4:4, 4:2:2 or 4:2:0 chroma qualify. Grayscale, CMYK and RGB-coded Adobe files
+    convert colour in steps nvjpeg need not share with libjpeg, and progressive files take nvjpeg's slower
+    host-assisted decoder. A kind that :data:`_GPU_JPEG_MATCHES` records as differing on ``device`` stays on the CPU.
+
+    Args:
+        header: The file, opened by Pillow; only its header has been read.
+        device: The CUDA device that would decode it.
+
+    Returns:
+        Whether to leave the file encoded for :func:`_decode_jpegs_on_gpu`.
+
+    Examples:
+        >>> buffer = io.BytesIO()
+        >>> Image.new("RGB", (16, 16)).save(buffer, "JPEG")
+        >>> _decodes_on_gpu(Image.open(buffer), torch.device("cuda", 0))
+        True
+        >>> Image.new("RGB", (16, 16)).save(buffer := io.BytesIO(), "JPEG", progressive=True)
+        >>> _decodes_on_gpu(Image.open(buffer), torch.device("cuda", 0))
+        False
+    """
+    if header.format != "JPEG" or header.mode != "RGB" or header.info.get("progressive"):
+        return False
+    # An Adobe marker with transform 0 means the components are R, G and B, not Y, Cb and Cr.
+    if header.info.get("adobe_transform") == 0:
+        return False
+    sampling = JpegImagePlugin.get_sampling(header)
+    return sampling in _GPU_JPEG_SAMPLINGS and _GPU_JPEG_MATCHES.get((device.index, sampling), True)
+
+
+def _decode_on_cpu(data: torch.Tensor) -> torch.Tensor | None:
+    """Decode a JPEG or PNG file's bytes into RGB ``uint8`` CHW storage on the CPU.
+
+    Args:
+        data: The file's bytes, as a one-dimensional ``uint8`` CPU tensor.
+
+    Returns:
+        The decoded image, or ``None`` when the caller should open the file with Pillow.
+
+    Examples:
+        >>> buffer = io.BytesIO()
+        >>> Image.new("RGB", (5, 3), (10, 20, 30)).save(buffer, "PNG")
+        >>> _decode_on_cpu(torch.frombuffer(buffer.getbuffer(), dtype=torch.uint8)).shape
+        torch.Size([3, 3, 5])
+    """
+    try:
+        decoded = decode_image(data, mode=ImageReadMode.RGB)
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        # torchvision raises RuntimeError for bytes it cannot decode, and torch raises AttributeError when the image
+        # operators were not loaded. torchvision 0.29+ also warns on every call that its codecs are deprecated, which
+        # ``-W error`` turns into a raised DeprecationWarning.
+        return None
+    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
+    return decoded if decoded.dtype == torch.uint8 else None
+
+
+def _decode_one_on_gpu(item: _EncodedJpeg, device: torch.device) -> torch.Tensor | None:
+    """Decode one encoded JPEG file on the GPU, or return ``None`` when nvjpeg refuses it.
+
+    Args:
+        item: A file :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        Its RGB ``uint8`` CHW image on ``device``, or ``None``.
+    """
+    try:
+        return cast("torch.Tensor", decode_jpeg(item.data, mode=ImageReadMode.RGB, device=device))
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        return None
+
+
+def _decode_with_nvjpeg(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
+    """Decode files with nvjpeg in one call, or one at a time when that call fails.
+
+    Args:
+        encoded: Files :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        For each file, in order, its RGB ``uint8`` CHW image on ``device``, or ``None`` when nvjpeg refused it.
+    """
+    try:
+        return list(decode_jpeg([item.data for item in encoded], mode=ImageReadMode.RGB, device=device))
+    except (RuntimeError, DeprecationWarning, AttributeError):
+        # nvjpeg returns nothing when one file fails, so decode them one at a time: a corrupt file then falls back
+        # alone.
+        return [_decode_one_on_gpu(item, device) for item in encoded]
+
+
+def _decode_on_own_stream(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
+    """Run :func:`_decode_with_nvjpeg` on a stream of its own and hand its images to the caller's current stream.
+
+    torchvision allocates nvjpeg's outputs on the caller's current stream but writes them from a stream of its own
+    that does not wait for the caller's. The allocator can then hand it memory the current stream has freed but still
+    reads, such as the input of a forward pass still running, and the decode overwrites it. Allocated on a stream that
+    runs nothing else, the outputs share no memory with work queued on the current stream; that stream then waits for
+    the decode, and each output stays allocated until the current stream's work queued before its release is done.
+    Only torchvision allocates on that stream, and it waits for its own earlier writes before writing again, so writes
+    an nvjpeg error leaves queued land in memory nothing else reads.
+
+    Args:
+        encoded: Files :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        For each file, in order, its RGB ``uint8`` CHW image on ``device``, or ``None`` when nvjpeg refused it.
+    """
+    consumer = torch.cuda.current_stream(device)
+    decode_stream = _GPU_JPEG_STREAMS.get(device.index)
+    if decode_stream is None:
+        decode_stream = _GPU_JPEG_STREAMS.setdefault(device.index, torch.cuda.Stream(device))  # type: ignore[no-untyped-call]
+    with torch.cuda.stream(decode_stream):
+        decoded = _decode_with_nvjpeg(encoded, device)
+    consumer.wait_stream(decode_stream)
+    for image in decoded:
+        if image is not None:
+            image.record_stream(consumer)
+    return decoded
+
+
+def _decode_jpegs_on_gpu(encoded: list[_EncodedJpeg], device: torch.device) -> list[torch.Tensor | None]:
+    """Decode a batch's encoded JPEG files on the GPU in one nvjpeg call, keeping the CPU decoder's pixels.
+
+    The first file of each chroma subsampling on ``device`` is also decoded on the CPU and compared, and the result is
+    recorded in :data:`_GPU_JPEG_MATCHES`; files of a kind that differs decode on the CPU, now and ahead of later
+    batches. A file nvjpeg refuses (a corrupt file the CPU decoder tolerates) decodes on the CPU alone. When nvjpeg
+    refuses every file of a batch (a torchvision without nvjpeg), their kinds go back to the CPU as well.
+
+    Args:
+        encoded: Files :func:`_decode_local_image` left encoded.
+        device: The CUDA device to decode on.
+
+    Returns:
+        For each file, in order, its RGB ``uint8`` CHW image on ``device``, or on the CPU when it decoded there, or
+        ``None`` when the caller should open it with Pillow.
+    """
+    decoded = _decode_on_own_stream(encoded, device)
+    if all(image is None for image in decoded):
+        # An error from every file (a torchvision without nvjpeg) turns the GPU path off for these kinds.
+        for item in encoded:
+            _GPU_JPEG_MATCHES[(device.index, item.sampling)] = False
+        logger.info("Decoding JPEG files on the CPU: the GPU decoder failed on every file of a batch.")
+    images: list[torch.Tensor | None] = []
+    for item, on_gpu in zip(encoded, decoded):
+        key = (device.index, item.sampling)
+        if on_gpu is None:
+            images.append(_decode_on_cpu(item.data))
+        elif key not in _GPU_JPEG_MATCHES:
+            on_cpu = _decode_on_cpu(item.data)
+            _GPU_JPEG_MATCHES[key] = on_cpu is not None and torch.equal(on_gpu.cpu(), on_cpu)
+            if not _GPU_JPEG_MATCHES[key]:
+                logger.info(
+                    f"Decoding JPEG files with chroma subsampling {item.sampling} on the CPU: the GPU decoder "
+                    "gave different pixels on this device."
+                )
+            images.append(on_gpu if _GPU_JPEG_MATCHES[key] else on_cpu)
+        elif _GPU_JPEG_MATCHES[key]:
+            images.append(on_gpu)
+        else:
+            images.append(_decode_on_cpu(item.data))
+    return images
+
+
+def _decode_local_image(path: str, gpu_device: torch.device | None = None) -> torch.Tensor | _EncodedJpeg | None:
     """Decode a local JPEG or PNG directly into RGB ``uint8`` CHW storage.
 
     Pillow remains the compatibility path for every other format and for files that torchvision
@@ -177,11 +373,18 @@ def _decode_local_image(path: str) -> torch.Tensor | None:
     route them through ``logging``, and redirecting file descriptor 2 would affect the whole process,
     so they are left as is.
 
+    With ``gpu_device``, a JPEG file whose header passes :func:`_decodes_on_gpu` is only read and checked here: the
+    batch decodes it on that device with the rest of its JPEG files (:func:`_decode_jpegs_on_gpu`), which takes the
+    CPU decode off the worker threads and the copy of the decoded pixels off the bus.
+
     Args:
         path: Local image path.
+        gpu_device: The CUDA device the batch will decode suitable JPEG files on, or ``None`` to decode every file
+            here.
 
     Returns:
-        An RGB ``uint8`` CHW tensor, or ``None`` when the caller should use Pillow.
+        An RGB ``uint8`` CHW tensor, the file's bytes as an :class:`_EncodedJpeg` for the GPU, or ``None`` when the
+        caller should use Pillow.
 
     Raises:
         Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
@@ -199,18 +402,16 @@ def _decode_local_image(path: str) -> torch.Tensor | None:
             # rejected below, so read the bit depth first rather than pay for a full decode.
             if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
                 return None
-        # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
-        # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
-        decoded = decode_image(torch.frombuffer(stream.getbuffer(), dtype=torch.uint8), mode=ImageReadMode.RGB)
-    except (OSError, RuntimeError, DeprecationWarning, AttributeError):
-        # A missing or unreadable path and bytes Pillow cannot identify raise OSError, torchvision raises RuntimeError
-        # for bytes it cannot decode, and torch raises AttributeError when the image operators were not loaded.
-        # torchvision 0.29+ also warns on every call that its codecs are deprecated, which ``-W error`` turns into a
-        # raised DeprecationWarning. The caller then opens the path with Pillow, which reports each of those cases
-        # with its usual error.
+            on_gpu = gpu_device is not None and _decodes_on_gpu(header, gpu_device)
+            sampling = JpegImagePlugin.get_sampling(header) if on_gpu else -1
+    except OSError:
+        # A missing or unreadable path and bytes Pillow cannot identify raise OSError. The caller then opens the path
+        # with Pillow, which reports it with its usual error.
         return None
-    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
-    return decoded if decoded.dtype == torch.uint8 else None
+    # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
+    # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
+    data = torch.frombuffer(stream.getbuffer(), dtype=torch.uint8)
+    return _EncodedJpeg(data, sampling) if on_gpu else _decode_on_cpu(data)
 
 
 def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
@@ -303,11 +504,12 @@ def _normalization_tensors(
 def _copy_results_to_cpu_once(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
     """Copy a batch's boxes, scores and labels to the CPU in a single transfer.
 
-    The per-image filter that follows would otherwise sync twice per image on a synchronous accelerator such as MPS:
-    once to size its ``nonzero`` index and once to copy the kept rows. After this copy it runs on the CPU, where neither
-    waits. The rows are packed in float32, or float64 when the scores or boxes are float64, so every value round-trips
-    exactly: float16 and bfloat16 values, and class ids below 2**24, fit in float32. Every tensor gets its own dtype
-    back, unlike :func:`_copy_rows_to_cpu_once`, which returns float32 boxes and scores for the keypoint and mask paths.
+    The per-image filter that follows would otherwise wait for the device twice per image, once to size its ``nonzero``
+    index and once to copy the kept rows: MPS copies synchronously, and on CUDA both the ``nonzero`` size and the copy
+    to the CPU sync. After this copy it runs on the CPU, where neither waits. The rows are packed in float32, or
+    float64 when the scores or boxes are float64, so every value round-trips exactly: float16 and bfloat16 values, and
+    class ids below 2**24, fit in float32. Every tensor gets its own dtype back, unlike :func:`_copy_rows_to_cpu_once`,
+    which returns float32 boxes and scores for the keypoint and mask paths.
 
     Args:
         results: Per-image dictionaries holding ``boxes`` ``(N, 4)``, ``scores`` ``(N,)`` and ``labels`` ``(N,)``.
@@ -514,6 +716,7 @@ def predict(
     batch: int | None = None,
     vid_stride: int = 1,
     stream_buffer: bool = False,
+    prepare_ahead: bool = False,
 ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
 
@@ -535,10 +738,14 @@ def predict(
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         stream: Yield results on demand instead of collecting them.
         batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch, an eager
-            directory or glob (or a list of them) in batches of eight when the model has no fixed batch size, and
-            other expanded or streamed sources one image or frame at a time. An integer bounds every batch.
+            directory or glob (or a list of them) in batches of eight, or of an export's smaller ``max_batch_size``,
+            when the model has no fixed batch size, and other expanded or streamed sources one image or frame at a
+            time. An integer bounds every batch.
         vid_stride: Read every Nth video frame.
         stream_buffer: Queue live frames instead of retaining the latest frame.
+        prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs. That reads the
+            next batch's context before the current batch's results are yielded, so pass it only when nothing changes
+            the model between batches, as for a predictor that owns its model or runtime.
 
     Returns:
         A lazy generator, a scalar image result, or a list of results.
@@ -559,6 +766,9 @@ def predict(
         _class_thresholds(threshold, context)
         if batch is None:
             batch = _default_batch(images, context, stream=stream)
+        # Imported here: the pipelines module builds on this one's batch phases.
+        from rfdetr._prediction.pipelines import _predict_stream
+
         results = _predict_stream(
             context_factory,
             images,
@@ -571,6 +781,7 @@ def predict(
             vid_stride=vid_stride,
             stream_buffer=stream_buffer,
             warn_on_live=not stream,
+            prepare_ahead=prepare_ahead,
         )
         return results if stream else list(results)
     return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
@@ -587,9 +798,11 @@ def _default_batch(images: _PredictionInput, context: PredictionContext, *, stre
     """Choose the batch size for an expanded or streamed source when the caller passes ``batch=None``.
 
     A BCHW tensor already is one batch. An eager directory or glob runs in batches of :data:`_DEFAULT_EAGER_BATCH` on a
-    model that accepts any batch size; its results are collected anyway, so batching costs no latency. Streamed
-    sources keep one image per batch, so the first result arrives after one image, and a compiled snapshot or export
-    keeps it because its batch size is fixed or bounded.
+    model or export without a fixed batch size, or of the export's ``max_batch_size`` when that is smaller; its results
+    are collected anyway, so batching costs no latency. Batching raises peak memory (about 35% more resident memory for
+    a Nano ONNX export on the ONNX Runtime CPU provider, with no measured gain in throughput there), so a memory-bound
+    host passes ``batch=1``. Streamed sources keep one image per batch, so the first result arrives after one image,
+    and a compiled snapshot or fixed-batch export keeps it too.
 
     Args:
         images: The prediction source.
@@ -606,90 +819,12 @@ def _default_batch(images: _PredictionInput, context: PredictionContext, *, stre
     if isinstance(images, torch.Tensor) and images.ndim == 4:
         # Split a BCHW tensor only when the caller bounds the batch size.
         return max(images.shape[0], 1)
-    flexible_batch = not context.fixed_shape and context.batch_size is None and context.max_batch_size is None
-    if not stream and flexible_batch and has_only_finite_images(images):
-        return _DEFAULT_EAGER_BATCH
+    # A fixed input resolution does not fix the batch axis, so only a fixed batch size keeps one image per batch.
+    if not stream and context.batch_size is None and has_only_finite_images(images):
+        if context.max_batch_size is None:
+            return _DEFAULT_EAGER_BATCH
+        return min(_DEFAULT_EAGER_BATCH, context.max_batch_size)
     return 1
-
-
-def _predict_stream(
-    context_factory: Callable[[], PredictionContext],
-    images: _PredictionInput,
-    threshold: _ThresholdInput,
-    shape: tuple[int, int] | None,
-    patch_size: int | None,
-    include_source_image: bool,
-    *,
-    antialias: bool | None,
-    batch: int,
-    vid_stride: int,
-    stream_buffer: bool,
-    warn_on_live: bool,
-) -> Generator[_PredictionResult, None, None]:
-    """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
-
-    The model's channel count is read once from the first context so captured frames convert to grayscale for
-    one-channel models. Each batch runs through :func:`_predict_batch`, which re-reads the context. Closing the
-    generator closes the source reader.
-
-    A source with no live input (see :func:`~rfdetr._prediction.sources.has_only_finite_images`) is read one batch
-    ahead for three-channel models on an accelerator: the next batch's image files decode on worker threads while the
-    current batch runs, so at most two batches of decoded images are held at once. Live sources, and models whose
-    context device is the CPU, keep reading one batch at a time.
-
-    Args:
-        context_factory: Read current execution rules when a batch starts.
-        images: Image data, paths, collections, videos, or live sources.
-        threshold: A single confidence threshold, or a ``ClassThresholds``; see :func:`predict`.
-        shape: Input height and width.
-        patch_size: Backbone patch size for shape validation.
-        include_source_image: Store source pixels in each result.
-        antialias: Use antialiasing during image resize.
-        batch: Maximum number of images per batch.
-        vid_stride: Read every Nth video or live frame.
-        stream_buffer: Queue live frames instead of retaining the latest frame.
-        warn_on_live: Warn about memory growth from live sources and large finite sources; set for eager callers, whose
-            results accumulate.
-
-    Yields:
-        One result per input image or frame, in source order.
-    """
-    context = context_factory()
-    num_channels = context.config.num_channels
-    source_batches = iter_source_batches(
-        images,
-        batch=batch,
-        vid_stride=vid_stride,
-        stream_buffer=stream_buffer,
-        warn_on_live=warn_on_live,
-        # Frame sources decode RGB; the model's channel count decides whether they convert to grayscale.
-        num_channels=num_channels,
-        # Eager results each keep a full source image, so large finite sources warn before decoding starts.
-        warn_on_retained_frames=warn_on_live and include_source_image,
-    )
-    # Only the RGB decoder runs ahead; one-channel models open files with Pillow inside `_predict_batch`. A native model
-    # on the CPU keeps decoding inline: its forward pass already uses every core, and decode threads competing with it
-    # slowed the forward pass by more than the overlap saved. Exported runtimes report a CPU context device whatever
-    # hardware they run on, and decode ahead: Core ML gained 18% from it and ONNX Runtime on the CPU lost nothing.
-    native_on_cpu = context.device.type == "cpu" and context.runtime_info.get("backend") == "pytorch"
-    decode_ahead = num_channels == 3 and not native_on_cpu and has_only_finite_images(images)
-    pool = ThreadPoolExecutor(_DECODE_WORKERS, thread_name_prefix="rfdetr-decode") if decode_ahead else None
-    batches = source_batches if pool is None else _decode_ahead(source_batches, pool)
-    try:
-        for image_batch in batches:
-            results = _predict_batch(
-                context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias
-            )
-            yield from cast("list[_PredictionResult]", results)
-    finally:
-        if pool is not None:
-            # Decodes already queued for a batch nobody will read are dropped; running ones finish first.
-            pool.shutdown(wait=True, cancel_futures=True)
-        source_batches.close()
-
-
-#: Worker threads decoding the next batch's image files. File reads and torchvision's decoder release the GIL.
-_DECODE_WORKERS = 4
 
 
 @dataclass(frozen=True)
@@ -702,55 +837,37 @@ class _PrefetchedImage:
     """
 
     path: str
-    decoded: Future[torch.Tensor | None]
+    decoded: Future[torch.Tensor | _EncodedJpeg | None]
 
 
-def _decode_ahead(
-    source_batches: Iterator[list[_ImageInput]], pool: ThreadPoolExecutor
-) -> Generator[list[_ImageInput | _PrefetchedImage], None, None]:
-    """Yield each batch after reading the next one from the source and submitting its file decodes.
+def _decode_prefetched_jpegs(images: Sequence[Any], device: torch.device) -> dict[int, torch.Tensor | None]:
+    """Decode on ``device`` the batch's JPEG files that the read-ahead left encoded for the GPU.
 
-    Local file paths become :class:`_PrefetchedImage` entries; every other item passes through unchanged. A source error
-    raised while the next batch is read is re-raised after the current batch is yielded, where the serial loop raised
-    it.
+    On a CUDA device, waits for every prefetched entry of the batch, then decodes the encoded ones in one
+    :func:`_decode_jpegs_on_gpu` call. Other devices return at once, so their batch keeps preparing each image as soon
+    as its own decode is done.
 
     Args:
-        source_batches: Batches from :func:`~rfdetr._prediction.sources.iter_source_batches`.
-        pool: Executor running :func:`_decode_local_image`.
+        images: The batch's entries.
+        device: The context device; entries are only left encoded when it is a CUDA device.
 
-    Yields:
-        The source's batches, in order, with their local image files decoding in ``pool``.
+    Returns:
+        The decoded image (``None`` for Pillow) of each entry that was left encoded, keyed by its index in ``images``.
 
     Examples:
-        >>> from concurrent.futures import ThreadPoolExecutor
-        >>> with ThreadPoolExecutor(1) as pool:
-        ...     list(_decode_ahead(iter([["https://example.com/a.jpg"]]), pool))
-        [['https://example.com/a.jpg']]
+        >>> _decode_prefetched_jpegs(["a.jpg", np.zeros((2, 2, 3), np.uint8)], torch.device("cpu"))
+        {}
     """
-
-    def submit(image_batch: list[_ImageInput]) -> list[_ImageInput | _PrefetchedImage]:
-        scheduled: list[_ImageInput | _PrefetchedImage] = []
-        for item in image_batch:
-            if isinstance(item, (str, os.PathLike)) and urlparse(os.fspath(item)).scheme not in ("http", "https"):
-                path = os.fspath(item)
-                scheduled.append(_PrefetchedImage(path, pool.submit(_decode_local_image, path)))
-            else:
-                scheduled.append(item)
-        return scheduled
-
-    upcoming = next(source_batches, None)
-    scheduled = None if upcoming is None else submit(upcoming)
-    while scheduled is not None:
-        current = scheduled
-        deferred_error: Exception | None = None
-        try:
-            upcoming = next(source_batches, None)
-        except Exception as error:  # re-raised below, after the batch the serial loop would have finished first
-            deferred_error, upcoming = error, None
-        scheduled = None if upcoming is None else submit(upcoming)
-        yield current
-        if deferred_error is not None:
-            raise deferred_error
+    if device.type != "cuda":
+        return {}
+    encoded = {
+        index: result
+        for index, item in enumerate(images)
+        if isinstance(item, _PrefetchedImage) and isinstance(result := item.decoded.result(), _EncodedJpeg)
+    }
+    if not encoded:
+        return {}
+    return dict(zip(encoded, _decode_jpegs_on_gpu(list(encoded.values()), device)))
 
 
 @torch.inference_mode()
@@ -792,8 +909,64 @@ def _predict_batch(
             match ``class_names`` (more ids than names, names in another order, or an id outside
             ``0..num_classes``).
     """
-    from supervision import Detections, KeyPoints
+    prepared = _prepare_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+    return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
 
+
+@dataclass(frozen=True)
+class _PreparedBatch:
+    """One batch's model input on the context device, with what decoding its results needs.
+
+    Attributes:
+        context: The prediction rules read for this batch.
+        batch_tensor: The normalized ``(B, C, H, W)`` model input.
+        target_sizes: ``(B, 2)`` source heights and widths, on the context device.
+        orig_sizes: The same sizes as Python tuples, for the results' ``source_shape``.
+        source_images: Source pixels per image; empty unless ``include_source_image``.
+        include_source_image: Store the source image in result metadata.
+        single_input: The caller passed one image, so decoding returns one result instead of a list.
+        score_floor: The single threshold, or the lowest per-class one.
+        threshold_by_class_id: The per-class threshold table, or ``None`` for a single threshold.
+    """
+
+    context: PredictionContext
+    batch_tensor: torch.Tensor
+    target_sizes: torch.Tensor
+    orig_sizes: list[Any]
+    source_images: list[Any]
+    include_source_image: bool
+    single_input: bool
+    score_floor: float
+    threshold_by_class_id: torch.Tensor | None
+
+
+@torch.inference_mode()
+def _prepare_batch(
+    context_factory: Callable[[], PredictionContext],
+    images: _PredictionInput | list[_ImageInput | _PrefetchedImage],
+    threshold: _ThresholdInput,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    include_source_image: bool,
+    antialias: bool | None,
+) -> _PreparedBatch:
+    """Read the batch's context, check its arguments and images, and build the model input on the context device.
+
+    This is the part of :func:`_predict_batch` before the forward pass; its arguments, and what it raises, are the
+    same.
+
+    Args:
+        context_factory: Read execution and decoding rules for this batch.
+        images: An image, file path, URL string, or list or tuple of those inputs.
+        threshold: A single confidence threshold, or a ``ClassThresholds``; see :func:`_predict_batch`.
+        shape: Input height and width.
+        patch_size: Backbone patch size for shape validation.
+        include_source_image: Store the source image in result metadata.
+        antialias: Use antialiasing during image resize.
+
+    Returns:
+        The model input and the data :func:`_decode_batch` needs.
+    """
     if not isinstance(images, list):
         # A list, including a batch with decode-ahead entries, already is a collection.
         images = _as_collection(images)
@@ -842,6 +1015,8 @@ def _predict_batch(
     if not isinstance(images, (list, tuple)):
         # ``_as_collection`` already read every other iterable into a list, so this is one image.
         images = [cast("_ImageInput", images)]
+    # The batch's JPEG files left encoded for the GPU decode in one nvjpeg call rather than one call per image.
+    gpu_decoded = _decode_prefetched_jpegs(images, context.device)
 
     orig_sizes: list[Any] = []
     processed_images: list[Any] = []
@@ -872,10 +1047,10 @@ def _predict_batch(
     resize_on_cpu = antialias and context.device.type == "mps" and _mps_lacks_antialiased_resize()
     preprocess_device = torch.device("cpu") if resize_on_cpu else context.device
 
-    for img_input in images:
+    for index, img_input in enumerate(images):
         img: Any = img_input
         decoded_local_file = False
-        prefetched: Future[torch.Tensor | None] | None = None
+        prefetched: Future[torch.Tensor | _EncodedJpeg | None] | None = None
         if isinstance(img, _PrefetchedImage):
             img, prefetched = img.path, img.decoded
         if isinstance(img, os.PathLike):
@@ -888,7 +1063,14 @@ def _predict_batch(
             elif context.config.num_channels == 3:
                 # The fast decoder is RGB-only. Keep grayscale on Pillow so files and PIL inputs use the same
                 # luminance conversion; a grayscale codec path needs pixel-parity and latency evidence first.
-                decoded = prefetched.result() if prefetched is not None else _decode_local_image(img)
+                if index in gpu_decoded:
+                    decoded = gpu_decoded[index]
+                else:
+                    # Without a GPU device the decode never leaves a file encoded.
+                    decoded = cast(
+                        "torch.Tensor | None",
+                        prefetched.result() if prefetched is not None else _decode_local_image(img),
+                    )
                 if decoded is not None:
                     img = decoded
                     decoded_local_file = True
@@ -1035,14 +1217,50 @@ def _predict_batch(
     batch_tensor = batch_tensor.sub_(mean).div_(std)
 
     # Copied to the device before the forward pass is queued: on MPS, building it after the forward measured slower.
-    target_sizes = torch.tensor(orig_sizes, device=context.device)
-    predictions = context.run(batch_tensor)
+    if context.device.type == "cuda":
+        # A pageable copy makes the host wait for the transfer; from pinned memory it is queued like the images.
+        target_sizes = torch.tensor(orig_sizes, device="cpu").pin_memory().to(context.device, non_blocking=True)
+    else:
+        target_sizes = torch.tensor(orig_sizes, device=context.device)
+    return _PreparedBatch(
+        context=context,
+        batch_tensor=batch_tensor,
+        target_sizes=target_sizes,
+        orig_sizes=orig_sizes,
+        source_images=source_images,
+        include_source_image=include_source_image,
+        single_input=single_input,
+        score_floor=score_floor,
+        threshold_by_class_id=threshold_by_class_id,
+    )
+
+
+@torch.inference_mode()
+def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]) -> _PredictionOutput:
+    """Post-process one batch's model outputs, apply the confidence threshold, and build Supervision results.
+
+    This is the part of :func:`_predict_batch` after the forward pass.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        predictions: The model's outputs for ``prepared.batch_tensor``.
+
+    Returns:
+        One Supervision result or a list matching the input container.
+    """
+    from supervision import Detections, KeyPoints
+
+    context = prepared.context
+    score_floor, threshold_by_class_id = prepared.score_floor, prepared.threshold_by_class_id
+    orig_sizes, source_images = prepared.orig_sizes, prepared.source_images
+    include_source_image = prepared.include_source_image
     # `score_floor` is the single threshold, or the lowest per-class one, the loosest bound: the pre-filter in
     # ``postprocess`` then never drops a row that the per-class filter below keeps.
-    results = context.postprocess(predictions, target_sizes=target_sizes, score_threshold=score_floor)
-    # A synchronous accelerator such as MPS would wait twice per image below; detection rows are small enough to bring
-    # the whole batch to the CPU first. Masks and keypoints stay on the device until the filter has dropped rows.
-    if results[0]["scores"].device.type not in ("cuda", "cpu") and all(r.keys() == _ROW_KEYS for r in results):
+    results = context.postprocess(predictions, target_sizes=prepared.target_sizes, score_threshold=score_floor)
+    # On an accelerator the filter below would wait for the device twice per image (MPS copies synchronously, and on
+    # CUDA `nonzero` and the copy each sync); detection rows are small enough to bring the whole batch to the CPU in
+    # one copy first. Masks and keypoints stay on the device until the filter has dropped rows.
+    if results[0]["scores"].device.type != "cpu" and all(r.keys() == _ROW_KEYS for r in results):
         results = _copy_results_to_cpu_once(results)
 
     _class_id_to_name = context.class_id_to_name
@@ -1193,7 +1411,7 @@ def _predict_batch(
                 keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
             raw_precision = keypoint_data.get("keypoint_precision_cholesky")
             raw_source_shape = keypoint_data.get("source_shape")
-            if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
+            if raw_precision is not None and raw_source_shape is not None:
                 precision = np.asarray(raw_precision, dtype=np.float32)
                 source_shape = np.asarray(raw_source_shape, dtype=np.float32)
                 if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
@@ -1216,4 +1434,4 @@ def _predict_batch(
         else:
             predictions_list.append(detections)
 
-    return predictions_list[0] if single_input else predictions_list
+    return predictions_list[0] if prepared.single_input else predictions_list

@@ -294,6 +294,7 @@ class SegmentationHead(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1), requires_grad=True)
 
         self._export = False
+        self._native_prediction_upsample = False
 
     def export(self) -> None:
         self._export = True
@@ -413,7 +414,11 @@ class SegmentationHead(nn.Module):
         assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
 
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
+        if self._native_prediction_upsample:
+            # Prediction snapshots never run backward; bypass only the deterministic-backward decomposition.
+            spatial_features = torch._C._nn.upsample_bilinear2d(spatial_features, target_size, False, None)
+        else:
+            spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         if not skip_blocks:
             for block in self.blocks:

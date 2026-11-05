@@ -20,7 +20,7 @@ from PIL import Image
 from pytest_mock import MockerFixture
 from supervision import Detections, KeyPoints
 
-from rfdetr.detr import RFDETR, _default_compile_backend
+from rfdetr.detr import RFDETR, _CUDAGraphInferenceModel, _default_compile_backend
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.inference import RFDETRInference
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -30,9 +30,8 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
-from tests._markers import _requires_mps
-
-from .helpers import _DummyModel, _DummyRFDETR
+from tests._markers import _cuda_marks, _requires_cuda, _requires_mps
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 _requires_mps_inductor = pytest.mark.skipif(
     not torch.backends.mps.is_available() or _default_compile_backend(torch.device("mps")) != "inductor",
@@ -206,10 +205,15 @@ class TestLiveModelDevicePolicy:
 class TestLiveModelSource:
     """Exercise live model behavior through the inference API."""
 
-    def test_stream_reads_current_native_state_between_batches(self) -> None:
-        """A borrowed stream refreshes live model state per batch without leaking inference mode to the caller."""
+    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=_cuda_marks)])
+    def test_stream_reads_current_native_state_between_batches(self, device: str) -> None:
+        """A borrowed stream refreshes live model state per batch without leaking inference mode to the caller.
+
+        On CUDA an owned predictor builds the next batch while the current one runs, reading the model's state before
+        the caller sees the current results; a borrowed model must not, so a change between batches reaches the next.
+        """
         native = _DummyRFDETR()
-        native.model = _DummyModel(class_names=["cat"], labels=[0])
+        native.model = _DummyModel(class_names=["cat"], labels=[0], device=device)
         predictor = RFDETRInference(native)
         images = np.zeros((24, 32, 3), dtype=np.uint8)
         results = predictor.predict([images, images], stream=True)
@@ -218,7 +222,7 @@ class TestLiveModelSource:
             first = next(results)
             assert list(first.data["class_name"]) == ["dog"]
             assert not torch.is_inference_mode_enabled()
-            native.model = _DummyModel(class_names=["owl"], labels=[0])
+            native.model = _DummyModel(class_names=["owl"], labels=[0], device=device)
             second = next(results)
             assert list(second.data["class_name"]) == ["owl"]
             assert not torch.is_inference_mode_enabled()
@@ -289,6 +293,49 @@ class TestLiveModelSource:
 
         assert facade.runtime_info["device"] == "cpu"
         assert nano_model.model.device == torch.device("cpu")
+
+
+class TestPrepareAheadOwnership:
+    """Only a predictor that owns its model or runtime lets a CUDA prediction build the next batch ahead.
+
+    Building ahead reads the next batch's model state before the caller sees the current results, so a borrowed live
+    model, which the caller may change between batches, keeps its batches serial.
+    """
+
+    def test_borrowed_live_model_does_not_prepare_ahead(self, nano_model: RFDETRNano, mocker: MockerFixture) -> None:
+        """A live model passed to the constructor stays the caller's, who may change it between batches."""
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        RFDETRInference(nano_model).predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is False
+
+    def test_inference_snapshot_prepares_ahead(self, nano_model: RFDETRNano, mocker: MockerFixture) -> None:
+        """The snapshot ``inference()`` copies from the source model belongs to its predictor alone."""
+        predictor = nano_model.inference(compile=False)
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        predictor.predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is True
+
+    def test_checkpoint_prepares_ahead(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A model loaded from a checkpoint path belongs to its predictor alone."""
+        mocker.patch.object(RFDETR, "from_checkpoint", classmethod(lambda cls, path, **kwargs: _DummyRFDETR()))
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        RFDETRInference(tmp_path / "model.ckpt").predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is True
+
+    def test_exported_artifact_prepares_ahead(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A runtime loaded from an exported artifact belongs to its predictor alone."""
+        mocker.patch("rfdetr.export._runtime.context.load_exported_context", return_value=mocker.Mock())
+        pipeline = mocker.patch("rfdetr.inference.predict", return_value=[])
+
+        RFDETRInference(tmp_path / "model.onnx").predict("image.jpg")
+
+        assert pipeline.call_args.kwargs["prepare_ahead"] is True
 
 
 class TestCheckpointSource:
@@ -381,6 +428,40 @@ class TestCheckpointSource:
         np.testing.assert_allclose(actual.confidence, unoptimized.confidence, rtol=1e-4, atol=1e-6)
         assert facade.runtime_info["input_shape"] == (None, 3, 64, 64)
         assert facade.runtime_info["batch_size"] is None
+
+    def test_bare_checkpoint_name_loads_from_working_directory(
+        self,
+        nano_model: RFDETRNano,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A bare checkpoint name means the working directory's file, even with a same-named file in the model cache."""
+        local = {
+            "model": nano_model.model.model.state_dict(),
+            "model_config": nano_model.model_config.model_dump(),
+            "model_name": "RFDETRNano",
+            "args": {"class_names": ["cat", "dog"]},
+        }
+        cached = {
+            **local,
+            "model": {**local["model"], "class_embed.weight": local["model"]["class_embed.weight"] + 1.0},
+            "args": {"class_names": ["x", "y"]},
+        }
+        working_dir = tmp_path / "cwd"
+        cache_dir = tmp_path / "cache"
+        working_dir.mkdir()
+        cache_dir.mkdir()
+        torch.save(local, working_dir / "model.pth")
+        torch.save(cached, cache_dir / "model.pth")
+        monkeypatch.chdir(working_dir)
+        monkeypatch.setenv("RF_HOME", str(cache_dir))
+
+        predictor = RFDETRInference("model.pth", device="cpu")
+
+        assert predictor.class_names == ["cat", "dog"]
+        assert predictor._native_model is not None
+        weight = predictor._native_model.model.model.state_dict()["class_embed.weight"]
+        assert torch.equal(weight, local["model"]["class_embed.weight"]), "weights must come from the working directory"
 
 
 @pytest.fixture
@@ -815,7 +896,8 @@ class TestMpsCheckpointRewrites:
 
 
 class TestDefaultCompileBackend:
-    """``inference()`` without ``compile_backend`` compiles with inductor on MPS and TorchScript elsewhere."""
+    """``inference()`` without ``compile_backend`` captures a CUDA graph on CUDA, uses inductor on MPS, else
+    TorchScript."""
 
     @pytest.mark.parametrize(
         ("device", "codegen_installed", "expected"),
@@ -823,13 +905,14 @@ class TestDefaultCompileBackend:
             ("mps", True, "inductor"),
             ("mps", False, "torchscript"),
             ("cpu", True, "torchscript"),
-            ("cuda", True, "torchscript"),
+            ("cuda", True, "cudagraph"),
+            ("cuda", False, "cudagraph"),
         ],
     )
     def test_backend_per_device(
         self, mocker: MockerFixture, device: str, codegen_installed: bool, expected: str
     ) -> None:
-        """Inductor only on MPS, and only when the installed PyTorch has its MPS code generator."""
+        """CUDA graphs on CUDA; inductor only on MPS with its code generator installed; TorchScript otherwise."""
         mocker.patch("rfdetr.detr.is_installed", return_value=codegen_installed)
 
         assert _default_compile_backend(torch.device(device)) == expected
@@ -850,6 +933,33 @@ class TestDefaultCompileBackend:
         mps_nano_model.inference()
 
         compile_mock.assert_called_once()
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        "model_type,result_type",
+        [
+            pytest.param(RFDETRNano, Detections, id="detection"),
+            pytest.param(RFDETRSegNano, Detections, id="segmentation"),
+            pytest.param(RFDETRKeypointPreview, KeyPoints, id="keypoints"),
+        ],
+    )
+    def test_cuda_default_captures_a_graph_that_predicts(
+        self, model_type: type[RFDETR], result_type: type[Detections | KeyPoints]
+    ) -> None:
+        """The CUDA default replays a captured graph, and a prediction through it returns the task's result type.
+
+        The capture runs a real model on the device, so a module that cannot be captured fails here rather than in a
+        user's first ``inference()`` call. A failed capture is fatal for the process, so every task head that can reach
+        this default is captured.
+        """
+        model = model_type(pretrain_weights=None, device="cuda", resolution=96, num_queries=4, num_select=4)
+
+        predictor = model.inference()
+
+        assert predictor._native_model is not None
+        assert isinstance(predictor._native_model.model.inference_model, _CUDAGraphInferenceModel)
+        assert isinstance(predictor.predict(np.zeros((96, 96, 3), dtype=np.uint8), threshold=0.0), result_type)
 
     def test_inductor_off_cuda_compiles_without_cuda_graphs(
         self, nano_model: RFDETRNano, mocker: MockerFixture

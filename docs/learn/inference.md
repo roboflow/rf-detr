@@ -30,13 +30,13 @@ predictor = model.inference(compile=False)
 results = predictor.predict("image.jpg")
 ```
 
-The native factory defaults to inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
+The native factory defaults to a captured CUDA graph (`compile_backend="cudagraph"`) on CUDA, inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass `compile=False` for a CPU-safe eager predictor. Compilation settings such as `batch_size`, `dtype`, and `compile_backend` belong to each returned predictor; the factory does not change the source model. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` remain only for legacy model state and do not manage predictor lifetime.
 
 ### Choose a fast route
 
 `model.inference()` is the fast native route. `RFDETRInference(model)` and a `.pth`, `.pt`, or `.ckpt` path passed to `RFDETRInference` run the eager model, which is slower per image than a compiled predictor. For a checkpoint, load it with `RFDETR.from_checkpoint()` and call `inference()` on the result. On MPS, a checkpoint path passed to `RFDETRInference` takes the same model rewrites as `inference()` (see below); a live model never does.
 
-On Apple Silicon, `inference()` compiles with inductor by default when the installed PyTorch has its MPS code generator, which can be faster than TorchScript; pass `compile_backend="torchscript"` to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source.
+On Apple Silicon, `inference()` compiles with inductor by default when the installed PyTorch has its MPS code generator, which can be faster than TorchScript; pass `compile_backend="torchscript"` to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source. On an M4 Max, `inference()` with inductor (10.3 ms in fp16, 11.1 ms in fp32 at batch 1) and a [Core ML export](../exports/coreml.md#measured-latency-on-apple-silicon) loaded with `RFDETRInference` (12.0 ms in fp32) are within two milliseconds of each other and nearly twice as fast as eager `predict()` (20.0 ms) and `inference(compile_backend="torchscript")` in fp32. Choose between them by deployment target rather than speed; whether fp16 or the Neural Engine helps a Core ML export depends on the model.
 
 ```python
 from pathlib import Path
@@ -53,6 +53,12 @@ results = predictor.predict(images, batch=8)
 ```
 
 On MPS, the predictor also samples the decoder's deformable attention with PyTorch's fused `grid_sample` and, for TorchScript and eager predictors, folds the backbone's LayerScale weights into the Linear layers before them. Only the predictor's copy of the model changes; at float32 its predictions match the source model's to float rounding, and in half precision they can differ by more.
+
+On CUDA, `inference()` captures the predictor's forward pass into a CUDA graph by default and replays it on every call, which removes most of the kernel-launch cost that bounds small batches. The capture runs before `inference()` returns. It synchronizes the device and empties the process-wide CUDA caches, so build predictors before any serving threads start. If a capture fails, restart the process before trying another backend; `compile_backend="torchscript"` skips the capture.
+
+For more CUDA throughput, export a TensorRT engine and load it with `RFDETRInference`. An engine exported with `dynamic_batch=True` and a `max_batch_size` runs a directory or glob in batches of up to eight without a `batch` argument, and so does any other export with a dynamic batch axis. ONNX Runtime with the CUDA execution provider (`onnxruntime-gpu`) also prepares its batches on the GPU and keeps them there.
+
+With `include_source_image=False`, a directory, glob, manifest or batched list predicted on a CUDA device decodes its baseline color JPEG files on the GPU, one nvjpeg call per batch, instead of on CPU threads. The first file of each kind is checked against the CPU decoder, and a GPU that gives different pixels sends those files back to the CPU, so the model sees the same input either way. Not every GPU matches: a Tesla T4 differed for every kind and so keeps decoding on the CPU. Grayscale, CMYK, progressive and PNG files always decode on the CPU.
 
 For the borrowed live-model behavior, construct `RFDETRInference(model)` directly. That facade reads the model's current state on every prediction, so it observes later training or optimization changes; configure the model's device and omit `device`, `metadata`, and `runtime_options` for this source. This mode does not promise safety when training mutates the model concurrently with prediction.
 

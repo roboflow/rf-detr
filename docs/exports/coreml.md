@@ -246,17 +246,17 @@ The two graphs give close but not identical outputs, and the same accuracy. On C
 
 ## Measured Latency on Apple Silicon
 
-Apple M4 Max, macOS 26.7.1, `RFDETRSmall`, 5 warmup + 30 timed runs per row, from the [Apple cookbook](../../cookbooks/export-apple/). Every latency is the end-to-end `predict()` call through `RFDETRInference` (preprocessing, forward, postprocessing); `FPS` is images per second at that batch size. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed. The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline); the ExecuTorch CoreML-backend rows of the same run are on the [ExecuTorch page](executorch.md#measured-latency-on-apple-silicon).
+Apple M4 Max, macOS 26.7.1, `RFDETRSmall`, `rfdetr` develop, 5 warmup + 30 timed runs per row, from the [Apple cookbook](../../cookbooks/export-apple/). Every latency is the end-to-end `predict()` call through `RFDETRInference` (preprocessing, forward, postprocessing); `FPS` is images per second at that batch size. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed. The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline); the ExecuTorch CoreML-backend rows of the same run are on the [ExecuTorch page](executorch.md#measured-latency-on-apple-silicon).
 
 | Compute units           | Precision | b1 latency [ms] | Size [MB] | mAP@50:95 [%] | FPS b1 | FPS b4 | FPS b8 |
 | ----------------------- | --------- | --------------- | --------- | ------------- | ------ | ------ | ------ |
-| `ALL` (`device="auto"`) | fp32      | 12.7            | 114.7     | 56.5          | 78.9   | 113.6  | 121.3  |
-| `ALL` (`device="auto"`) | fp16      | 24.4            | 57.7      | 56.5          | 41.0   | 47.8   | 62.0   |
+| `ALL` (`device="auto"`) | fp32      | 12.0            | 114.7     | 56.5          | 83.4   | 119.3  | 124.7  |
+| `ALL` (`device="auto"`) | fp16      | 23.6            | 57.7      | 56.5          | 42.4   | 48.1   | 68.2   |
 
-CoreML fp32 is the faster row at every batch size, and 1.8 times faster than eager PyTorch `predict()` on the same machine at batch 1 (12.7 against 22.6 ms). Its fp16 export is half the size but about twice as slow at batch 1 (24.4 against 12.7 ms), so on Apple Silicon fp16 saves disk space, not time; measure it per chip generation. Both rows score the same mAP on the subset as eager PyTorch, so the choice here is about latency, size and tooling.
+CoreML fp32 is the faster of the two CoreML rows at every batch size, and a folder of 64 images runs at 86.1 img/s in fp32 against 58.1 in fp16, and 1.7 times faster than eager PyTorch `predict()` on the same machine at batch 1 (12.0 against 20.0 ms). It is not faster than PyTorch's best route on this Mac: `inference()` with inductor, the MPS default, ran at 10.3 ms in fp16 and 11.1 ms in fp32 (see the [PyTorch baseline](index.md#pytorch-baseline)), so at batch 1 the two are within two milliseconds of each other and the choice is about size, tooling and deployment target rather than speed. Its fp16 export is half the size but about twice as slow at batch 1 (23.6 against 12.0 ms), so for `RFDETRSmall`'s default graph under `ALL`, fp16 saves disk space, not time. That is not a rule for every model and compute unit: in the [Neural Engine export](#neural-engine-export) table, the fp16 Neural Engine graph on `CPU_AND_NE` is the fastest row for `RFDETRNano`, and in the M3 Pro table fp16 under `ALL` beats fp32. Those tables come from another macOS release and timing method (p50 over 3 runs of 100 iterations, not 30 timed `predict()` calls), so compare rankings across them, not milliseconds. Measure fp16 per model and chip generation. Both rows score the same mAP on the subset as eager PyTorch, so the choice here is about latency, size and tooling.
 
 On a Mac with macOS earlier than 27 the Core AI package loads and runs, but only on the CPU, so it is not measured here; see [Core AI](coreai.md).
 
 !!! note "Noisy run"
 
-    Another job ran on the machine during this measurement, so some deviations are large (CoreML fp16 batch 8: ± 11.0 ms). Rerun on an idle machine for tighter numbers.
+    The machine was busy during this measurement (load average about 10, an IDE indexing in the background), so batch 4 and 8 rows, and the inductor rows in the PyTorch baseline in particular, read lower than an idle run. Rerun on an idle machine for tighter numbers.

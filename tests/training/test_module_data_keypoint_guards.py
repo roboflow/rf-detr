@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Setup-time guards for keypoint training on the Kornia GPU augmentation path."""
+"""Setup-time guards for training on the Kornia GPU augmentation path."""
 
 from unittest.mock import patch
 
@@ -11,8 +11,33 @@ import pytest
 import torch
 import torch.utils.data
 
-from rfdetr.config import AugmentationBackend, RFDETRKeypointPreviewConfig, TrainConfig
+from rfdetr.config import (
+    AugmentationBackend,
+    RFDETRKeypointPreviewConfig,
+    RFDETRNanoConfig,
+    RFDETRSegNanoConfig,
+    TrainConfig,
+)
 from rfdetr.training.module_data import RFDETRDataModule
+
+
+def _build_datamodule(tmp_path, model_config_class, **train_overrides):
+    """Return an ``RFDETRDataModule`` for *model_config_class* whose train config carries *train_overrides*.
+
+    Examples:
+        >>> import pathlib, tempfile
+        >>> dm = _build_datamodule(pathlib.Path(tempfile.mkdtemp()), RFDETRNanoConfig, multi_scale="off")
+        >>> dm.model_config.use_grouppose_keypoints
+        False
+    """
+    model_config = model_config_class(pretrain_weights=None, device="cpu")
+    train_config = TrainConfig(
+        dataset_dir=str(tmp_path / "dataset"),
+        output_dir=str(tmp_path / "output"),
+        batch_size=2,
+        **train_overrides,
+    )
+    return RFDETRDataModule(model_config, train_config)
 
 
 def _build_keypoint_datamodule(tmp_path, **train_overrides):
@@ -24,14 +49,7 @@ def _build_keypoint_datamodule(tmp_path, **train_overrides):
         >>> dm.model_config.use_grouppose_keypoints, dm.train_config.multi_scale.value
         (True, 'off')
     """
-    model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
-    train_config = TrainConfig(
-        dataset_dir=str(tmp_path / "dataset"),
-        output_dir=str(tmp_path / "output"),
-        batch_size=2,
-        **train_overrides,
-    )
-    return RFDETRDataModule(model_config, train_config)
+    return _build_datamodule(tmp_path, RFDETRKeypointPreviewConfig, **train_overrides)
 
 
 def _run_fit_setup(datamodule):
@@ -52,6 +70,69 @@ def _run_fit_setup(datamodule):
         patch.object(RFDETRDataModule, "_setup_kornia_pipeline"),
     ):
         datamodule.setup("fit")
+
+
+class TestKorniaPaddedBatchGuard:
+    """``setup("fit")`` rejects padded Kornia batches for detection and segmentation too."""
+
+    @pytest.mark.parametrize(
+        "model_config_class",
+        [
+            pytest.param(RFDETRNanoConfig, id="detection"),
+            pytest.param(RFDETRSegNanoConfig, id="segmentation"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("square_resize_div_64", "multi_scale"),
+        [
+            pytest.param(False, "off", id="aspect-ratio-resize"),
+            pytest.param(True, "per-sample", id="per-sample-random-resize"),
+        ],
+    )
+    @pytest.mark.parametrize("augmentation_backend", ["kornia", "auto"])
+    def test_padded_collation_raises(
+        self, tmp_path, model_config_class, square_resize_div_64, multi_scale, augmentation_backend
+    ):
+        """Boxes are normalized by the batch canvas, so smaller images would train on shrunken targets."""
+        datamodule = _build_datamodule(
+            tmp_path,
+            model_config_class,
+            augmentation_backend=augmentation_backend,
+            square_resize_div_64=square_resize_div_64,
+            multi_scale=multi_scale,
+        )
+
+        with pytest.raises(ValueError, match="does not support training with padded batches"):
+            _run_fit_setup(datamodule)
+
+    @pytest.mark.parametrize("multi_scale", ["off", "per-batch"])
+    def test_uniform_square_batches_are_accepted(self, tmp_path, multi_scale):
+        """The default square resize never pads, so the canvas is every image's own size."""
+        datamodule = _build_datamodule(
+            tmp_path,
+            RFDETRNanoConfig,
+            augmentation_backend="kornia",
+            square_resize_div_64=True,
+            multi_scale=multi_scale,
+        )
+
+        _run_fit_setup(datamodule)
+
+        assert datamodule._dataset_train is not None
+
+    def test_cpu_backend_with_padded_collation_is_accepted(self, tmp_path):
+        """The CPU path normalizes boxes per image before collation, so padding does not trigger the guard."""
+        datamodule = _build_datamodule(
+            tmp_path,
+            RFDETRNanoConfig,
+            augmentation_backend="torchvision",
+            square_resize_div_64=False,
+            multi_scale="off",
+        )
+
+        _run_fit_setup(datamodule)
+
+        assert datamodule._dataset_train is not None
 
 
 class TestKeypointKorniaPaddedBatchGuard:
@@ -80,7 +161,7 @@ class TestKeypointKorniaPaddedBatchGuard:
         with pytest.raises(ValueError) as exc_info:
             _run_fit_setup(datamodule)
 
-        assert "does not support keypoint training with padded batches" in str(exc_info.value)
+        assert "does not support training with padded batches" in str(exc_info.value)
 
     @pytest.mark.parametrize("multi_scale", ["off", "per-batch"])
     def test_uniform_square_batches_are_accepted(self, tmp_path, multi_scale):

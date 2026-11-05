@@ -36,7 +36,8 @@ class RFDETRInference:
 
     This facade shares prediction behavior across native models and exported runtimes. ``model.inference()`` returns
     an owned, optimized snapshot of a live model. Passing a live model directly to this constructor borrows it instead:
-    predictions follow later changes to that model.
+    predictions follow later changes to that model, and its batches run one at a time, so each batch reads the model's
+    state when it starts. A predictor that owns its model or runtime may build the next CUDA batch while one runs.
 
     Examples:
         Skipped when run as a doctest: requires model weights and an image file.
@@ -112,6 +113,9 @@ class RFDETRInference:
         device = str(device)
         self._native_model: RFDETR | None = None
         self._export_context: PredictionContext | None = None
+        # A path loads a model or runtime only this predictor uses; a live model passed in stays the caller's, who may
+        # change it between batches.
+        self._owns_source = not isinstance(source, RFDETR)
         if isinstance(source, RFDETR):
             self._set_native_model(source, device, metadata, runtime_options)
             return
@@ -138,6 +142,23 @@ class RFDETRInference:
         self._export_context = load_exported_context(
             path, device=device, metadata=metadata, runtime_options=runtime_options
         )
+
+    @classmethod
+    def _from_owned_model(cls, native_model: RFDETR) -> RFDETRInference:
+        """Wrap a native model that only this predictor uses, such as the snapshot :meth:`RFDETR.inference` builds.
+
+        Nothing changes an owned model between batches, so a CUDA prediction may read the next batch's model state
+        while the current batch runs, which a borrowed live model must not.
+
+        Args:
+            native_model: A model no caller keeps a reference to.
+
+        Returns:
+            A predictor owning ``native_model``.
+        """
+        predictor = cls(native_model)
+        predictor._owns_source = True
+        return predictor
 
     def _set_native_model(
         self,
@@ -225,7 +246,9 @@ class RFDETRInference:
                 and False for native models.
             stream: Yield results lazily. Close the generator on early exit.
             batch: Maximum finite-source batch size. None runs a bare BCHW tensor or an eager image-only list as
-                one batch and other expanded sources one image or frame at a time. An integer bounds every batch,
+                one batch, an eager directory or glob in batches of eight (or of a smaller export
+                ``max_batch_size``) when the model or export has no fixed batch size, and other expanded sources
+                one image or frame at a time. An integer bounds every batch,
                 including eager image lists. Each batch must satisfy the runtime limits.
                 Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.
             vid_stride: Read every Nth video frame.
@@ -262,6 +285,7 @@ class RFDETRInference:
             batch=batch,
             vid_stride=vid_stride,
             stream_buffer=stream_buffer,
+            prepare_ahead=self._owns_source,
         )
 
 

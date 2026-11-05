@@ -28,8 +28,7 @@ from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 from tests._markers import _requires_mps
-
-from ..helpers import _DummyModel, _DummyRFDETR
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 
 class TestPredictEmptyInputs:
@@ -392,6 +391,17 @@ class TestPredictSourceData:
         assert detections.data["source_shape"].shape == (len(detections), 2)
         assert np.array_equal(detections.data["source_shape"][0], [48, 64])
 
+    @pytest.mark.parametrize(("value", "expected"), [(0.0, 0), (0.5, 127), (1.0, 255)])
+    def test_bfloat16_tensor_keeps_its_source_image(self, value: float, expected: int) -> None:
+        """A ``bfloat16`` tensor predicts with the default source image, as other floats do."""
+        image = torch.full((3, 48, 64), value, dtype=torch.bfloat16)
+        model = _DummyRFDETR()
+
+        detections = model.predict(image)
+
+        source_image = detections.metadata["source_image"]
+        np.testing.assert_array_equal(source_image, np.full((48, 64, 3), expected, dtype=np.uint8))
+
     @pytest.mark.gpu
     @pytest.mark.parametrize(
         ("dtype", "shape", "expected_transfer_dtype"),
@@ -611,6 +621,16 @@ class TestPredictSourceData:
         assert key_points.visible.shape == (0, 17)
         np.testing.assert_allclose(key_points.data["xyxy"], np.empty((0, 4), dtype=np.float32))
         assert key_points.as_detections().is_empty()
+
+    def test_keypoint_covariance_is_present_when_all_filtered(self) -> None:
+        """The documented covariance key stays in the result when no detections remain."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
+
+        key_points = model.predict(img, threshold=1.1)
+
+        assert key_points.data["covariance"].shape == (0, 17, 2, 2)
 
     def test_non_keypoint_prediction_has_no_keypoints_key(self) -> None:
         """Non-keypoint predictions do not attach keypoint fields."""

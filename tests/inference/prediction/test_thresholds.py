@@ -19,9 +19,8 @@ import torch
 from pytest_mock import MockerFixture
 
 from rfdetr import ClassThresholds, RFDETRInference, RFDETRSegNano
-from rfdetr._prediction import core
-
-from ..helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
+from rfdetr._prediction import core, pipelines
+from tests.inference.helpers import _DummyModel, _DummyRFDETR, _record_model_inputs
 
 
 class TestClassThresholds:
@@ -740,7 +739,7 @@ class TestPredictPerClassThreshold:
         self, three_class_model: _DummyRFDETR, mocker: MockerFixture
     ) -> None:
         """A NaN threshold with ``stream=True`` is refused before the source reader is created or a frame decoded."""
-        source_batches = mocker.patch.object(core, "iter_source_batches", autospec=True)
+        source_batches = mocker.patch.object(pipelines, "iter_source_batches", autospec=True)
 
         with pytest.raises(ValueError, match="NaN"):
             RFDETRInference(three_class_model).predict([_PER_CLASS_IMAGE], threshold=float("nan"), stream=True)

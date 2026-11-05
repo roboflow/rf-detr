@@ -26,8 +26,7 @@ from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from tests._markers import _requires_gloo_spawn
-
-from .helpers import (
+from tests.training.helpers import (
     _fake_postprocess,
     _FakeCriterion,
     _FakeDataset,

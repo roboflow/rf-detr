@@ -13,8 +13,7 @@ import torch
 from pytest_mock import MockerFixture
 
 from rfdetr import detr as detr_module
-
-from .helpers import _BaseFakeRFDETR
+from tests.inference.helpers import _BaseFakeRFDETR
 
 
 class _FakeModelWithDropout(torch.nn.Module):
