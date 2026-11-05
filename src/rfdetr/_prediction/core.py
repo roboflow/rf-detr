@@ -1411,7 +1411,7 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
                 keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
             raw_precision = keypoint_data.get("keypoint_precision_cholesky")
             raw_source_shape = keypoint_data.get("source_shape")
-            if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
+            if raw_precision is not None and raw_source_shape is not None:
                 precision = np.asarray(raw_precision, dtype=np.float32)
                 source_shape = np.asarray(raw_source_shape, dtype=np.float32)
                 if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
