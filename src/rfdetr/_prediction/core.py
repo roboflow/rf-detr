@@ -1314,7 +1314,12 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         # image's tensor forward instead of raising. Rebinding every iteration makes that failure
         # mode a loud AttributeError/TypeError on the stale `None` instead of a silent wrong value.
         keypoints = result["keypoints"][keep_idx] if has_keypoints_result else None
-        masks = result["masks"][keep_idx] if has_masks else None
+        masks = result["masks"] if has_masks else None
+        # PostProcess already filters segmentation rows at score_floor. If every row survives this predicate,
+        # keep_idx is the identity: avoid copying the entire full-resolution mask tensor on the accelerator.
+        all_masks_kept = masks is not None and keep_idx.numel() == masks.shape[0]
+        if masks is not None and not all_masks_kept:
+            masks = masks[keep_idx]
         keypoint_precision = result["keypoint_precision_cholesky"][keep_idx] if has_kp_precision else None
 
         # PERF: queue every GPU->CPU transfer for this image as non_blocking, then
@@ -1353,7 +1358,9 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
             # A synchronous accelerator blocks on every copy; pay that wait once for the three row tensors.
             boxes_cpu, scores_cpu, labels_cpu = _copy_rows_to_cpu_once(boxes, scores, labels)
         keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
-        masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda) if masks is not None else None
+        # Preserve independent output storage for CPU postprocessors too; the device-to-host transfer already
+        # supplies that copy for accelerator tensors, without an intermediate copy on the accelerator.
+        masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda, copy=all_masks_kept) if masks is not None else None
         keypoint_precision_cpu = (
             keypoint_precision.float().to("cpu", non_blocking=is_cuda) if keypoint_precision is not None else None
         )
