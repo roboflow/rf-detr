@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-02T13:14:33">
+  <meta property="article:modified_time" content="2026-11-05T16:07:06">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-02T13:14:33",
+    "dateModified": "2026-11-05T16:07:06",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3131,6 +3131,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#61-inference-models-pytorch-and-onnx-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 <code>inference-models</code>: PyTorch and ONNX Runtime
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#7-coco-val2017-accuracy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3264,10 +3275,21 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#9-results" class="md-nav__link">
+  <a href="#9-throughput-on-a-folder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        9. Results
+        9. Throughput on a folder
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Results
       
     </span>
   </a>
@@ -4063,6 +4085,11 @@ prediction API, <code>RFDETRInference(path)</code>, and timed end to end through
 <td><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> (selects and loads its own prebuilt TensorRT engine — see note below), <strong>and</strong> <code>RFDETRInference(path).predict()</code> loading the <code>.trt</code> file directly</td>
 </tr>
 <tr>
+<td><strong><code>inference-models</code></strong></td>
+<td><em>(prebuilt by that package)</em></td>
+<td>PyTorch (CUDA) and ONNX Runtime (CUDA execution provider) through <code>AutoModel.from_pretrained()</code>, next to the TensorRT rows</td>
+</tr>
+<tr>
 <td><strong>TensorRT INT8</strong></td>
 <td><code>model.export(format="trt", quantization="int8", calibration_data=...)</code> → <code>*_int8.trt</code></td>
 <td><code>RFDETRInference(path).predict()</code>, compared with a batch-1 FP16 engine on latency, size and COCO mAP</td>
@@ -4162,7 +4189,7 @@ loaded until a restart.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">RFDETR_SPEC</span> <span class="o">=</span> <span class="s2">"rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span>
 <span class="c1"># RFDETR_SPEC = "rfdetr[onnx,tensorrt]&gt;=1.12,&lt;2"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">onnxruntime</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span>
-<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="s2">"inference-models[trt10]"</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">tabulate</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="s2">"inference-models[trt10,onnx-cu12]"</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">tabulate</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span> <span class="o">--</span><span class="n">extra</span><span class="o">-</span><span class="n">index</span><span class="o">-</span><span class="n">url</span> <span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">aiinfra</span><span class="o">.</span><span class="n">pkgs</span><span class="o">.</span><span class="n">visualstudio</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">PublicPackages</span><span class="o">/</span><span class="n">_packaging</span><span class="o">/</span><span class="n">onnxruntime</span><span class="o">-</span><span class="n">cuda</span><span class="o">-</span><span class="mi">12</span><span class="o">/</span><span class="n">pypi</span><span class="o">/</span><span class="n">simple</span><span class="o">/</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="s2">"pillow==11.3.0"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">torchaudio</span>
@@ -4170,7 +4197,7 @@ loaded until a restart.</p>
 <div class="clipboard-copy-txt" id="cell-1">RFDETR_SPEC = "rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"
 # RFDETR_SPEC = "rfdetr[onnx,tensorrt]&gt;=1.12,&lt;2"
 !pip uninstall -q -y onnxruntime onnxruntime-gpu
-!pip install -q "{RFDETR_SPEC}" "inference-models[trt10]" supervision pandas tabulate faster-coco-eval
+!pip install -q "{RFDETR_SPEC}" "inference-models[trt10,onnx-cu12]" supervision pandas tabulate faster-coco-eval
 !pip install -q --force-reinstall --no-deps onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 !pip install -q --force-reinstall --no-deps "pillow==11.3.0"
 !pip uninstall -q -y torchaudio</div>
@@ -4190,9 +4217,8 @@ loaded until a restart.</p>
 <code>WARMUP_RUNS</code> discards the first N inferences (GPU kernels are JIT-compiled on first use);
 <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch
 matrix every export format below measures — <code>(1, 4, 8)</code>, not a single number, so each export
-format contributes three rows to the final results table. The direct CUDA Graph comparison
-retains its measured fixed-batch-1 row and is not presented as a batch-scaling result, and so do the
-static batch-1 FP16 and INT8 engines of Section 8, which have a table of their own.</p>
+format contributes three rows to the final results table. A CUDA graph is captured for one batch size, so the CUDA Graph rows capture one predictor per batch. The static batch-1 FP16
+and INT8 engines of Section 8 have a table of their own.</p>
 <p><code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module;
 <code>measure_memory(device="cuda")</code> measures device-memory growth via <code>torch.cuda.mem_get_info()</code> —
 device-wide, so it also captures ONNX Runtime's CUDA execution provider and TensorRT's own
@@ -4480,30 +4506,34 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
     <span class="p">)</span>
     <span class="k">del</span> <span class="n">predictor</span>
 
-<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
-<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-<span class="n">cudagraph_free_before</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
-<span class="n">cudagraph_predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">compile_backend</span><span class="o">=</span><span class="s2">"cudagraph"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
-<span class="n">cudagraph_detections</span> <span class="o">=</span> <span class="n">cudagraph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
-<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-<span class="n">cudagraph_free_after</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
-<span class="n">pytorch_fp16_cudagraph_memory_mb</span> <span class="o">=</span> <span class="p">(</span><span class="n">cudagraph_free_before</span> <span class="o">-</span> <span class="n">cudagraph_free_after</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1e6</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch fp16 CUDA Graph: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="n">visualize_detections</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
-
-<span class="n">pytorch_fp16_cudagraph</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-    <span class="n">partial</span><span class="p">(</span><span class="n">cudagraph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">image</span><span class="p">),</span>
-    <span class="n">label</span><span class="o">=</span><span class="s2">"PyTorch inference() fp16+CUDA Graph batch=1"</span><span class="p">,</span>
-    <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
-    <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
-    <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="k">del</span> <span class="n">cudagraph_predictor</span>
-<span class="nb">print</span><span class="p">(</span>
-    <span class="sa">f</span><span class="s2">"  batch=1  fp16+CUDA Graph  </span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms"</span>
-    <span class="sa">f</span><span class="s2">" ± </span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span>
-    <span class="sa">f</span><span class="s2">"   +</span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
-<span class="p">)</span>
+<span class="n">pytorch_fp16_cudagraph_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">cudagraph_free_before</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
+    <span class="n">cudagraph_predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">compile_backend</span><span class="o">=</span><span class="s2">"cudagraph"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+    <span class="n">cudagraph_detections</span> <span class="o">=</span> <span class="n">cudagraph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">cudagraph_free_after</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
+    <span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">cudagraph_free_before</span> <span class="o">-</span> <span class="n">cudagraph_free_after</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1e6</span>
+    <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch fp16 CUDA Graph: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">visualize_detections</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="p">)</span>
+    <span class="n">pytorch_fp16_cudagraph_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">cudagraph_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"PyTorch inference() fp16+CUDA Graph batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+        <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+        <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">del</span> <span class="n">cudagraph_predictor</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">pytorch_fp16_cudagraph_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  fp16+CUDA Graph  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span>
+        <span class="sa">f</span><span class="s2">"   +</span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
+    <span class="p">)</span>
 
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
     <span class="n">r32</span><span class="p">,</span> <span class="n">r16</span> <span class="o">=</span> <span class="n">pytorch_fp32_results</span><span class="p">[</span><span class="n">batch</span><span class="p">],</span> <span class="n">pytorch_fp16_jit_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
@@ -4552,30 +4582,34 @@ for batch in BATCH_SIZES:
     )
     del predictor
 
-torch.cuda.empty_cache()
-torch.cuda.synchronize()
-cudagraph_free_before, _ = torch.cuda.mem_get_info()
-cudagraph_predictor = model.inference(compile_backend="cudagraph", batch_size=1, dtype=torch.float16)
-cudagraph_detections = cudagraph_predictor.predict(image, threshold=CONFIDENCE_THRESHOLD)
-torch.cuda.synchronize()
-cudagraph_free_after, _ = torch.cuda.mem_get_info()
-pytorch_fp16_cudagraph_memory_mb = (cudagraph_free_before - cudagraph_free_after) / 1e6
-print(f"PyTorch fp16 CUDA Graph: {len(cudagraph_detections)} detections above {CONFIDENCE_THRESHOLD}")
-visualize_detections(cudagraph_detections, image)
-
-pytorch_fp16_cudagraph = measure_latency(
-    partial(cudagraph_predictor.predict, image),
-    label="PyTorch inference() fp16+CUDA Graph batch=1",
-    device="cuda",
-    warmup=WARMUP_RUNS,
-    runs=MEASURE_RUNS,
-)
-del cudagraph_predictor
-print(
-    f"  batch=1  fp16+CUDA Graph  {pytorch_fp16_cudagraph.mean_ms:6.2f} ms"
-    f" ± {pytorch_fp16_cudagraph.std_ms:5.2f}   ({pytorch_fp16_cudagraph.fps:6.1f} FPS)"
-    f"   +{pytorch_fp16_cudagraph_memory_mb:.1f} MB"
-)
+pytorch_fp16_cudagraph_results: dict[int, BenchmarkResult] = {}
+pytorch_fp16_cudagraph_memory_mb: dict[int, float] = {}
+for batch in BATCH_SIZES:
+    images_batch = [image] * batch
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    cudagraph_free_before, _ = torch.cuda.mem_get_info()
+    cudagraph_predictor = model.inference(compile_backend="cudagraph", batch_size=batch, dtype=torch.float16)
+    cudagraph_detections = cudagraph_predictor.predict(images_batch, threshold=CONFIDENCE_THRESHOLD)
+    torch.cuda.synchronize()
+    cudagraph_free_after, _ = torch.cuda.mem_get_info()
+    pytorch_fp16_cudagraph_memory_mb[batch] = (cudagraph_free_before - cudagraph_free_after) / 1e6
+    if batch == BATCH_SIZES[0]:
+        print(f"PyTorch fp16 CUDA Graph: {len(cudagraph_detections[0])} detections above {CONFIDENCE_THRESHOLD}")
+        visualize_detections(cudagraph_detections[0], image)
+    pytorch_fp16_cudagraph_results[batch] = measure_latency(
+        partial(cudagraph_predictor.predict, images_batch),
+        label=f"PyTorch inference() fp16+CUDA Graph batch={batch}",
+        device="cuda",
+        warmup=WARMUP_RUNS,
+        runs=MEASURE_RUNS,
+    )
+    del cudagraph_predictor
+    r = pytorch_fp16_cudagraph_results[batch]
+    print(
+        f"  batch={batch}  fp16+CUDA Graph  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({batch * r.fps:6.1f} FPS)"
+        f"   +{pytorch_fp16_cudagraph_memory_mb[batch]:.1f} MB"
+    )
 
 for batch in BATCH_SIZES:
     r32, r16 = pytorch_fp32_results[batch], pytorch_fp16_jit_results[batch]
@@ -4818,7 +4852,8 @@ controlled by <code>AutoModel.from_pretrained(..., quantization=...)</code>, ind
 kwarg used for the standalone <code>.trt</code> export: <code>quantization=None</code> (default) picks automatically
 based on device capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>"bf16"</code>/<code>"int8"</code> request one explicitly.
 <code>verbose=True</code> prints <code>inference-models</code>' own package-selection log line, which names the
-backend and the quantization it actually picked for <code>quantization=None</code> below. It is constructed
+backend and the quantization it actually picked for <code>quantization=None</code> below. A NumPy array is BGR to <code>inference-models</code> unless the call says otherwise, so every call passes <code>input_color_format="rgb"</code> for the
+RGB arrays made from PIL images, and <code>confidence=</code> so its threshold is the one <code>rfdetr</code> uses. It is constructed
 once and fed every batch size below through its documented <code>List[np.ndarray]</code> call signature —
 what it does per batch internally is not part of this repository and not something this
 notebook can verify, only measure.</p>
@@ -4848,7 +4883,7 @@ notebook can verify, only measure.</p>
 
 <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
     <span class="n">trt_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">trt_predictions</span> <span class="o">=</span> <span class="n">trt_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">))</span>
+    <span class="n">trt_predictions</span> <span class="o">=</span> <span class="n">trt_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">),</span> <span class="n">confidence</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)</span>
 <span class="n">trt_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
 
 <span class="n">trt_detections</span> <span class="o">=</span> <span class="n">trt_predictions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span>
@@ -4861,7 +4896,7 @@ notebook can verify, only measure.</p>
 
 with measure_memory(device="cuda") as mem:
     trt_model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT, verbose=True)
-    trt_predictions = trt_model(np.array(image))
+    trt_predictions = trt_model(np.array(image), confidence=CONFIDENCE_THRESHOLD, input_color_format="rgb")
 trt_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
 
 trt_detections = trt_predictions[0].to_supervision()
@@ -4889,7 +4924,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=627feba1">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=managed-shared-predict">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4907,15 +4942,48 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </div>
 </clipboard-copy>
 </div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Run an `inference-models` model on RGB PIL images and return `sv.Detections`, like `RFDETRInference.predict`."""</span>
+    <span class="n">arrays</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">img</span><span class="p">)</span> <span class="k">for</span> <span class="n">img</span> <span class="ow">in</span> <span class="n">images</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">im_model</span><span class="p">(</span><span class="n">arrays</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">threshold</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)]</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-11">def im_predict(im_model, images: list[Image.Image], threshold: float) -&gt; list[sv.Detections]:
+    """Run an `inference-models` model on RGB PIL images and return `sv.Detections`, like `RFDETRInference.predict`."""
+    arrays = [np.array(img) for img in images]
+    return [p.to_supervision() for p in im_model(arrays, confidence=threshold, input_color_format="rgb")]</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=627feba1">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trt_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">)]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">trt_model</span><span class="p">(</span><span class="n">images_batch</span><span class="p">)</span>
+            <span class="n">im_predict</span><span class="p">(</span><span class="n">trt_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
         <span class="n">trt_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">trt_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">trt_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">im_predict</span><span class="p">,</span> <span class="n">trt_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT (inference-models, managed engine) auto end2end batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -4924,15 +4992,15 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
     <span class="n">r</span> <span class="o">=</span> <span class="n">trt_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">trt_end2end_results: dict[int, BenchmarkResult] = {}
+<div class="clipboard-copy-txt" id="cell-12">trt_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
-    images_batch = [np.array(image)] * batch
+    images_batch = [image] * batch
     if batch != BATCH_SIZES[0]:
         with measure_memory(device="cuda") as mem:
-            trt_model(images_batch)
+            im_predict(trt_model, images_batch, CONFIDENCE_THRESHOLD)
         trt_memory_mb[batch] = mem.delta_mb
     trt_end2end_results[batch] = measure_latency(
-        partial(trt_model, images_batch),
+        partial(im_predict, trt_model, images_batch, CONFIDENCE_THRESHOLD),
         label=f"TensorRT (inference-models, managed engine) auto end2end batch={batch}",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -4966,7 +5034,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4980,7 +5048,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
     <span class="n">trt_fp32_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
         <span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp32"</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">trt_fp32_predictions</span> <span class="o">=</span> <span class="n">trt_fp32_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">))</span>
+    <span class="n">trt_fp32_predictions</span> <span class="o">=</span> <span class="n">trt_fp32_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">),</span> <span class="n">confidence</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)</span>
 <span class="n">trt_fp32_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
 
 <span class="n">trt_fp32_detections</span> <span class="o">=</span> <span class="n">trt_fp32_predictions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span>
@@ -4991,13 +5059,13 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 
 <span class="n">trt_fp32_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
-    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">)]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">trt_fp32_model</span><span class="p">(</span><span class="n">images_batch</span><span class="p">)</span>
+            <span class="n">im_predict</span><span class="p">(</span><span class="n">trt_fp32_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
         <span class="n">trt_fp32_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
     <span class="n">trt_fp32_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">partial</span><span class="p">(</span><span class="n">trt_fp32_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">),</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">im_predict</span><span class="p">,</span> <span class="n">trt_fp32_model</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">),</span>
         <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT (inference-models, managed engine) fp32 end2end batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
         <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
@@ -5006,11 +5074,11 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
     <span class="n">r</span> <span class="o">=</span> <span class="n">trt_fp32_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">with measure_memory(device="cuda") as mem:
+<div class="clipboard-copy-txt" id="cell-13">with measure_memory(device="cuda") as mem:
     trt_fp32_model = AutoModel.from_pretrained(
         "rfdetr-small", backend=BackendType.TRT, quantization="fp32", verbose=True
     )
-    trt_fp32_predictions = trt_fp32_model(np.array(image))
+    trt_fp32_predictions = trt_fp32_model(np.array(image), confidence=CONFIDENCE_THRESHOLD, input_color_format="rgb")
 trt_fp32_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
 
 trt_fp32_detections = trt_fp32_predictions[0].to_supervision()
@@ -5021,13 +5089,13 @@ visualize_detections(trt_fp32_detections, image, EXPORT_DIR / "annotated_tensorr
 
 trt_fp32_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
-    images_batch = [np.array(image)] * batch
+    images_batch = [image] * batch
     if batch != BATCH_SIZES[0]:
         with measure_memory(device="cuda") as mem:
-            trt_fp32_model(images_batch)
+            im_predict(trt_fp32_model, images_batch, CONFIDENCE_THRESHOLD)
         trt_fp32_memory_mb[batch] = mem.delta_mb
     trt_fp32_end2end_results[batch] = measure_latency(
-        partial(trt_fp32_model, images_batch),
+        partial(im_predict, trt_fp32_model, images_batch, CONFIDENCE_THRESHOLD),
         label=f"TensorRT (inference-models, managed engine) fp32 end2end batch={batch}",
         device="cuda",
         warmup=WARMUP_RUNS,
@@ -5068,7 +5136,7 @@ builds the input accordingly, so nothing in the notebook casts the tensor on the
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5084,7 +5152,7 @@ builds the input accordingly, so nothing in the notebook casts the tensor on the
 <span class="n">trt_raw_engine_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_raw_engine_path</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT engine (dynamic batch 1-</span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">BATCH_SIZES</span><span class="p">)</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">trt_raw_engine_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">trt_raw_engine_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13">trt_raw_engine_path = model.export(
+<div class="clipboard-copy-txt" id="cell-14">trt_raw_engine_path = model.export(
     format="trt", dynamic_batch=True, max_batch_size=max(BATCH_SIZES), output_dir=str(EXPORT_DIR)
 )
 trt_raw_engine_size_mb = _artifact_size_mb(trt_raw_engine_path)
@@ -5119,7 +5187,7 @@ the runtime already allocated at construction rather than allocating anything ne
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5139,7 +5207,7 @@ the runtime already allocated at construction rather than allocating anything ne
 <span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">trt_raw_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_tensorrt_raw.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-14">with measure_memory(device="cuda") as mem:
+<div class="clipboard-copy-txt" id="cell-15">with measure_memory(device="cuda") as mem:
     trt_raw_predictor = RFDETRInference(trt_raw_engine_path, device="cuda")
     trt_raw_detections = trt_raw_predictor.predict(image, threshold=CONFIDENCE_THRESHOLD)
 trt_raw_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
@@ -5175,7 +5243,7 @@ same convention as ONNX and the managed engine above.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5202,7 +5270,7 @@ same convention as ONNX and the managed engine above.</p>
     <span class="n">e2e</span> <span class="o">=</span> <span class="n">trt_raw_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  end2end  </span><span class="si">{</span><span class="n">e2e</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">e2e</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">e2e</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">trt_raw_end2end_results: dict[int, BenchmarkResult] = {}
+<div class="clipboard-copy-txt" id="cell-16">trt_raw_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
     images_batch = [image] * batch
     if batch != BATCH_SIZES[0]:
@@ -5218,6 +5286,141 @@ for batch in BATCH_SIZES:
     )
     e2e = trt_raw_end2end_results[batch]
     print(f"  batch={batch}  end2end  {e2e.mean_ms:6.2f} ms ± {e2e.std_ms:5.2f}   ({batch * e2e.fps:6.1f} FPS)")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ca21901f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="61-inference-models-pytorch-and-onnx-runtime">6.1 <code>inference-models</code>: PyTorch and ONNX Runtime<a class="anchor-link" href="#61-inference-models-pytorch-and-onnx-runtime">¶</a></h2><p>Section 6 timed <code>inference-models</code>' managed TensorRT engine. The same package also serves RF-DETR through PyTorch and ONNX Runtime. They run here on the same GPU, at the same batch sizes and end-to-end scope, next to the <code>rfdetr</code> rows.</p>
+<p>Two call settings keep the comparison fair, and the managed-engine rows above use them too:</p>
+<ul>
+<li><code>input_color_format="rgb"</code>: a NumPy array is BGR to this package unless declared. Without it the network sees swapped channels and the scores drop, with no error.</li>
+<li><code>confidence=</code>: passed on every call, so both packages use the same threshold.</li>
+</ul>
+<p><code>onnx_execution_providers=["CUDAExecutionProvider", "CPUExecutionProvider"]</code> pins ONNX Runtime to the CUDA provider, like the <code>rfdetr</code> ONNX row.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6a699ef6">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1">#: `inference-models` models by the key of their `map_results` entry, kept for the COCO section.</span>
+<span class="n">im_models</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">im_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">im_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">benchmark_inference_models</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""</span>
+    <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+        <span class="n">im_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span>
+        <span class="n">detections</span> <span class="o">=</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">image</span><span class="p">],</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+    <span class="n">im_models</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">im_model</span>
+    <span class="n">im_results</span><span class="p">[</span><span class="n">key</span><span class="p">],</span> <span class="n">im_memory_mb</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">batch</span> <span class="o">!=</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+            <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+                <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+            <span class="n">im_memory_mb</span><span class="p">[</span><span class="n">key</span><span class="p">][</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+        <span class="n">im_results</span><span class="p">[</span><span class="n">key</span><span class="p">][</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+            <span class="n">partial</span><span class="p">(</span><span class="n">im_predict</span><span class="p">,</span> <span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">image</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">),</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2"> batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+            <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+            <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">im_results</span><span class="p">[</span><span class="n">key</span><span class="p">][</span><span class="n">batch</span><span class="p">]</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-17">#: `inference-models` models by the key of their `map_results` entry, kept for the COCO section.
+im_models: dict[str, object] = {}
+im_results: dict[str, dict[int, BenchmarkResult]] = {}
+im_memory_mb: dict[str, dict[int, float]] = {}
+
+
+def benchmark_inference_models(key: str, **load_kwargs) -&gt; None:
+    """Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""
+    with measure_memory(device="cuda") as mem:
+        im_model = AutoModel.from_pretrained("rfdetr-small", **load_kwargs)
+        detections = im_predict(im_model, [image], CONFIDENCE_THRESHOLD)
+    im_models[key] = im_model
+    im_results[key], im_memory_mb[key] = {}, {BATCH_SIZES[0]: mem.delta_mb}
+    print(f"{key}: {len(detections[0])} detections above {CONFIDENCE_THRESHOLD}")
+    for batch in BATCH_SIZES:
+        if batch != BATCH_SIZES[0]:
+            with measure_memory(device="cuda") as mem:
+                im_predict(im_model, [image] * batch, CONFIDENCE_THRESHOLD)
+            im_memory_mb[key][batch] = mem.delta_mb
+        im_results[key][batch] = measure_latency(
+            partial(im_predict, im_model, [image] * batch, CONFIDENCE_THRESHOLD),
+            label=f"{key} batch={batch}",
+            device="cuda",
+            warmup=WARMUP_RUNS,
+            runs=MEASURE_RUNS,
+        )
+        r = im_results[key][batch]
+        print(f"  batch={batch}: {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({batch * r.fps:6.1f} FPS)")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=2e89bccf">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_inference_models</span><span class="p">(</span>
+    <span class="s2">"ONNX inference-models CUDA EP"</span><span class="p">,</span>
+    <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">ONNX</span><span class="p">,</span>
+    <span class="n">onnx_execution_providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CUDAExecutionProvider"</span><span class="p">,</span> <span class="s2">"CPUExecutionProvider"</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">benchmark_inference_models</span><span class="p">(</span><span class="s2">"PyTorch inference-models"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TORCH</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-18">benchmark_inference_models(
+    "ONNX inference-models CUDA EP",
+    backend=BackendType.ONNX,
+    onnx_execution_providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+)
+benchmark_inference_models("PyTorch inference-models", backend=BackendType.TORCH, device="cuda")</div>
 </div>
 </div>
 </div>
@@ -5243,10 +5446,7 @@ latency times the number of images. On the L4 that is ~20 ms × 500 ≈ 10 s for
 <code>sv.Detections</code>, whose <code>class_id</code> values are COCO category IDs for the pretrained checkpoint, at a 0.001 score floor that
 keeps the whole precision-recall curve. No per-format decoding is involved, so an exported row differs from the PyTorch row
 only by what the export itself changed.</p>
-<p>The two <code>inference-models</code> managed-engine rows are skipped. Their <code>to_supervision()</code> output is
-already decoded, and no cell above shows that its <code>class_id</code> values are COCO category IDs (the
-label names in <code>visualize_detections</code> come from <code>.data["class_name"]</code>, not from <code>class_id</code>), so
-they cannot be scored against COCO ground truth without that check.</p>
+<p>The <code>inference-models</code> rows are scored too, through <code>im_predict</code> with <code>confidence=0.001</code>. Their <code>class_id</code> values are COCO category IDs: on the sample image the dog is 18, the person 1, the backpack 27 and the handbag 31 in both packages' output, so the same ground truth applies.</p>
 </div>
 </div>
 </div>
@@ -5259,7 +5459,7 @@ they cannot be scored against COCO ground truth without that check.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5275,7 +5475,7 @@ they cannot be scored against COCO ground truth without that check.</p>
 <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
 <span class="n">N_CALIB</span> <span class="o">=</span> <span class="mi">128</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">N_EVAL = 500
+<div class="clipboard-copy-txt" id="cell-19">N_EVAL = 500
 FULL_VAL = False
 COCO_SEED = 0
 COCO_ROOT = Path("coco")
@@ -5307,7 +5507,7 @@ annotation archive once, then only the selected images, and skips files already 
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5322,7 +5522,7 @@ annotation archive once, then only the selected images, and skips files already 
 <span class="n">coco_subset</span> <span class="o">=</span> <span class="n">fetch_coco_val2017</span><span class="p">(</span><span class="n">COCO_ROOT</span><span class="p">,</span> <span class="n">n_images</span><span class="o">=</span><span class="kc">None</span> <span class="k">if</span> <span class="n">FULL_VAL</span> <span class="k">else</span> <span class="n">N_EVAL</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">COCO_SEED</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"COCO val2017 images to score: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">image_ids</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-17">from rfdetr.export._benchmark import evaluate_coco_map, fetch_coco_val2017
+<div class="clipboard-copy-txt" id="cell-20">from rfdetr.export._benchmark import evaluate_coco_map, fetch_coco_val2017
 
 coco_subset = fetch_coco_val2017(COCO_ROOT, n_images=None if FULL_VAL else N_EVAL, seed=COCO_SEED)
 print(f"COCO val2017 images to score: {len(coco_subset.image_ids)}")</div>
@@ -5352,7 +5552,7 @@ image (batch 1), the same call its latency row timed.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5366,7 +5566,7 @@ image (batch 1), the same call its latency row timed.</p>
 
 <span class="n">map_results</span> <span class="o">=</span> <span class="p">{}</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-18">pytorch_predict_run = partial(model.predict, threshold=0.001)
+<div class="clipboard-copy-txt" id="cell-21">pytorch_predict_run = partial(model.predict, threshold=0.001)
 
 map_results = {}</div>
 </div>
@@ -5394,7 +5594,7 @@ map_results = {}</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5406,7 +5606,7 @@ map_results = {}</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch predict() fp32"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">pytorch_predict_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-19">map_results["PyTorch predict() fp32"] = evaluate_coco_map(pytorch_predict_run, coco_subset)</div>
+<div class="clipboard-copy-txt" id="cell-22">map_results["PyTorch predict() fp32"] = evaluate_coco_map(pytorch_predict_run, coco_subset)</div>
 </div>
 </div>
 </div>
@@ -5433,7 +5633,7 @@ the latency row, and the next cell scores it through <code>predict()</code>.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-23">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5446,7 +5646,7 @@ the latency row, and the next cell scores it through <code>predict()</code>.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"torchscript"</span><span class="p">)</span>
 <span class="n">pytorch_predict_run</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-20">predictor = model.inference(dtype=torch.float16, batch_size=1, compile_backend="torchscript")
+<div class="clipboard-copy-txt" id="cell-23">predictor = model.inference(dtype=torch.float16, batch_size=1, compile_backend="torchscript")
 pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 </div>
 </div>
@@ -5462,7 +5662,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-24">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5474,7 +5674,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference() fp16+JIT"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">pytorch_predict_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-21">map_results["PyTorch inference() fp16+JIT"] = evaluate_coco_map(pytorch_predict_run, coco_subset)</div>
+<div class="clipboard-copy-txt" id="cell-24">map_results["PyTorch inference() fp16+JIT"] = evaluate_coco_map(pytorch_predict_run, coco_subset)</div>
 </div>
 </div>
 </div>
@@ -5500,7 +5700,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-25">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5512,7 +5712,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">del</span> <span class="n">predictor</span><span class="p">,</span> <span class="n">pytorch_predict_run</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-22">del predictor, pytorch_predict_run</div>
+<div class="clipboard-copy-txt" id="cell-25">del predictor, pytorch_predict_run</div>
 </div>
 </div>
 </div>
@@ -5538,7 +5738,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-23">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-26">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5550,7 +5750,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX CUDA EP"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">onnx_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">),</span> <span class="n">coco_subset</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-23">map_results["ONNX CUDA EP"] = evaluate_coco_map(partial(onnx_predictor.predict, threshold=0.001), coco_subset)</div>
+<div class="clipboard-copy-txt" id="cell-26">map_results["ONNX CUDA EP"] = evaluate_coco_map(partial(onnx_predictor.predict, threshold=0.001), coco_subset)</div>
 </div>
 </div>
 </div>
@@ -5576,7 +5776,7 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-24">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-27">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5590,9 +5790,59 @@ pytorch_predict_run = partial(predictor.predict, threshold=0.001)</div>
     <span class="n">partial</span><span class="p">(</span><span class="n">trt_raw_predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">),</span> <span class="n">coco_subset</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-24">map_results["TensorRT (raw .trt engine) RFDETRInference, fp16"] = evaluate_coco_map(
+<div class="clipboard-copy-txt" id="cell-27">map_results["TensorRT (raw .trt engine) RFDETRInference, fp16"] = evaluate_coco_map(
     partial(trt_raw_predictor.predict, threshold=0.001), coco_subset
 )</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7b905724">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Then every <code>inference-models</code> model, the two managed TensorRT engines of Section 6 and the PyTorch and ONNX models of Section 6.1.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7aefc19f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-28">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+
+<span class="n">im_models</span><span class="p">[</span><span class="s2">"TensorRT inference-models auto"</span><span class="p">]</span> <span class="o">=</span> <span class="n">trt_model</span>
+<span class="n">im_models</span><span class="p">[</span><span class="s2">"TensorRT inference-models fp32"</span><span class="p">]</span> <span class="o">=</span> <span class="n">trt_fp32_model</span>
+<span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">im_model</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">im_models</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"COCO mAP, inference-models"</span><span class="p">):</span>
+    <span class="n">map_results</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">img</span><span class="p">,</span> <span class="n">m</span><span class="o">=</span><span class="n">im_model</span><span class="p">:</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="p">[</span><span class="n">img</span><span class="p">],</span> <span class="mf">0.001</span><span class="p">)[</span><span class="mi">0</span><span class="p">],</span> <span class="n">coco_subset</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: mAP@50:95 </span><span class="si">{</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">map_results</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">map50_95</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> %"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-28">from tqdm.auto import tqdm
+
+im_models["TensorRT inference-models auto"] = trt_model
+im_models["TensorRT inference-models fp32"] = trt_fp32_model
+for key, im_model in tqdm(im_models.items(), desc="COCO mAP, inference-models"):
+    map_results[key] = evaluate_coco_map(lambda img, m=im_model: im_predict(m, [img], 0.001)[0], coco_subset)
+    print(f"  {key}: mAP@50:95 {100 * map_results[key].map50_95:.1f} %")</div>
 </div>
 </div>
 </div>
@@ -5620,7 +5870,7 @@ problem, not a faster model.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-25">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-29">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5638,6 +5888,10 @@ problem, not a faster model.</p>
     <span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() JIT"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference() fp16+JIT"</span><span class="p">]),</span>
     <span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"CUDA EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX CUDA EP"</span><span class="p">]),</span>
     <span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">".trt engine"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT (raw .trt engine) RFDETRInference, fp16"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference-models"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models CUDA EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX inference-models CUDA EP"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"auto"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT inference-models auto"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT inference-models fp32"</span><span class="p">]),</span>
 <span class="p">]</span>
 <span class="n">display</span><span class="p">(</span>
     <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
@@ -5655,7 +5909,7 @@ problem, not a faster model.</p>
     <span class="p">)</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-25">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-29">import pandas as pd
 from IPython.display import display
 
 map_rows = [
@@ -5663,6 +5917,10 @@ map_rows = [
     ("PyTorch", Config("inference() JIT", "fp16"), map_results["PyTorch inference() fp16+JIT"]),
     ("ONNX", Config("CUDA EP", "fp32"), map_results["ONNX CUDA EP"]),
     ("TensorRT", Config(".trt engine", "fp16"), map_results["TensorRT (raw .trt engine) RFDETRInference, fp16"]),
+    ("PyTorch", Config("inference-models", "fp32"), map_results["PyTorch inference-models"]),
+    ("ONNX", Config("inference-models CUDA EP", "fp32"), map_results["ONNX inference-models CUDA EP"]),
+    ("TensorRT", Config("inference-models", "auto"), map_results["TensorRT inference-models auto"]),
+    ("TensorRT", Config("inference-models", "fp32"), map_results["TensorRT inference-models fp32"]),
 ]
 display(
     pd.DataFrame(
@@ -5732,7 +5990,7 @@ the calibration source: the engine's INT8 placement and its calibration ranges d
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-26">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-30">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5767,7 +6025,7 @@ the calibration source: the engine's INT8 placement and its calibration ranges d
     <span class="sa">f</span><span class="s2">"calibration: </span><span class="si">{</span><span class="n">N_CALIB</span><span class="si">}</span><span class="s2"> COCO val2017 images (selection seed </span><span class="si">{</span><span class="n">COCO_SEED</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">)"</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-26">import shutil
+<div class="clipboard-copy-txt" id="cell-30">import shutil
 
 import tensorrt
 
@@ -5820,7 +6078,7 @@ INT8 TensorRT export would write an FP16 engine instead, which the assert below 
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-27">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-31">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5842,7 +6100,7 @@ INT8 TensorRT export would write an FP16 engine instead, which the assert below 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT FP16 (batch 1): </span><span class="si">{</span><span class="n">trt_fp16_b1_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_fp16_b1_path</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT INT8 (batch 1): </span><span class="si">{</span><span class="n">trt_int8_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_int8_path</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-27">trt_fp16_b1_path = model.export(format="trt", output_dir=str(EXPORT_DIR / "trt_fp16_b1"))
+<div class="clipboard-copy-txt" id="cell-31">trt_fp16_b1_path = model.export(format="trt", output_dir=str(EXPORT_DIR / "trt_fp16_b1"))
 trt_int8_path = model.export(
     format="trt",
     quantization="int8",
@@ -5890,7 +6148,7 @@ predictor's memory is not measured here.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-28">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-32">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5933,7 +6191,7 @@ predictor's memory is not measured here.</p>
         <span class="sa">f</span><span class="s2">"   CUDA graph </span><span class="si">{</span><span class="n">graph_call</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">graph_call</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   engine </span><span class="si">{</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-28">trt_b1 = {}
+<div class="clipboard-copy-txt" id="cell-32">trt_b1 = {}
 trt_b1_results = {}
 trt_b1_graph_results = {}
 trt_b1_memory_mb = {}
@@ -5993,7 +6251,7 @@ scores show.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-29">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-33">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6011,7 +6269,7 @@ scores show.</p>
     <span class="n">best_iou</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">box_iou_batch</span><span class="p">(</span><span class="n">fp16_detections</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">int8_detections</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best IoU of each FP16 detection with an INT8 one: </span><span class="si">{</span><span class="p">[</span><span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">iou</span><span class="p">),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">iou</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">best_iou</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-29">fp16_detections = trt_b1["FP16"].predict(image, threshold=CONFIDENCE_THRESHOLD)
+<div class="clipboard-copy-txt" id="cell-33">fp16_detections = trt_b1["FP16"].predict(image, threshold=CONFIDENCE_THRESHOLD)
 int8_detections = trt_b1["INT8"].predict(image, threshold=CONFIDENCE_THRESHOLD)
 print(f"Detections above {CONFIDENCE_THRESHOLD}: FP16 {len(fp16_detections)}, INT8 {len(int8_detections)}")
 print(f"FP16 scores: {[round(float(score), 2) for score in fp16_detections.confidence]}")
@@ -6044,7 +6302,7 @@ with the FP16 row.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-30">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-34">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6061,7 +6319,7 @@ with the FP16 row.</p>
     <span class="n">partial</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="s2">"INT8"</span><span class="p">]</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">),</span> <span class="n">coco_subset</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-30">map_results["TensorRT (raw .trt engine) RFDETRInference, fp16, batch 1"] = evaluate_coco_map(
+<div class="clipboard-copy-txt" id="cell-34">map_results["TensorRT (raw .trt engine) RFDETRInference, fp16, batch 1"] = evaluate_coco_map(
     partial(trt_b1["FP16"].predict, threshold=0.001), coco_subset
 )
 map_results["TensorRT (raw .trt engine) RFDETRInference, int8, batch 1"] = evaluate_coco_map(
@@ -6094,7 +6352,7 @@ own data and GPU before deploying: the gain depends on the GPU, the model size a
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-31">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-35">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6124,7 +6382,7 @@ own data and GPU before deploying: the gain depends on the GPU, the model size a
 <span class="n">graph_speedup</span> <span class="o">=</span> <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="s2">"FP16"</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span> <span class="o">/</span> <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="s2">"INT8"</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"INT8 speedup at batch 1: default call </span><span class="si">{</span><span class="n">default_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x, CUDA graph </span><span class="si">{</span><span class="n">graph_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-31">int8_rows = []
+<div class="clipboard-copy-txt" id="cell-35">int8_rows = []
 for name in ("FP16", "INT8"):
     map_result = map_results[f"TensorRT (raw .trt engine) RFDETRInference, {name.lower()}, batch 1"]
     path = trt_fp16_b1_path if name == "FP16" else trt_int8_path
@@ -6211,7 +6469,7 @@ the GPU and the TensorRT version, which are printed with the results; the docs t
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-32">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-36">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6227,7 +6485,7 @@ the GPU and the TensorRT version, which are printed with the results; the docs t
 <span class="n">BENCH_CALIBRATION</span> <span class="o">=</span> <span class="s2">"val2017"</span>  <span class="c1"># "train2017" calibrates as the docs tables do</span>
 <span class="n">BENCH_ROUNDS</span><span class="p">,</span> <span class="n">BENCH_RUNS</span><span class="p">,</span> <span class="n">BENCH_WARMUP</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">50</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-32"># The defaults are a quick run. The tables of the docs use every model, 5000 images, train2017 calibration and 15 x 200.
+<div class="clipboard-copy-txt" id="cell-36"># The defaults are a quick run. The tables of the docs use every model, 5000 images, train2017 calibration and 15 x 200.
 BENCH_MODELS = ("Detection Small",)
 BENCH_AP_IMAGES = N_EVAL
 BENCH_CALIBRATION = "val2017"  # "train2017" calibrates as the docs tables do
@@ -6246,7 +6504,7 @@ BENCH_ROUNDS, BENCH_RUNS, BENCH_WARMUP = 5, 100, 50</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-33">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-37">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6339,7 +6597,7 @@ BENCH_ROUNDS, BENCH_RUNS, BENCH_WARMUP = 5, 100, 50</div>
     <span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">trt</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">, onnxruntime </span><span class="si">{</span><span class="n">ort</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">"</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-33">import itertools
+<div class="clipboard-copy-txt" id="cell-37">import itertools
 import json
 import shutil
 import time
@@ -6447,7 +6705,7 @@ already built; delete <code>int8_bench/engines</code> to build them again.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-34">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-38">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6513,7 +6771,7 @@ already built; delete <code>int8_bench/engines</code> to build them again.</p>
 <span class="n">bench_model</span><span class="o">.</span><span class="n">cache_clear</span><span class="p">()</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-34">BENCH_PRECISIONS = {
+<div class="clipboard-copy-txt" id="cell-38">BENCH_PRECISIONS = {
     "FP16": {"fp16": True},
     "INT8": {
         "quantization": "int8",
@@ -6595,7 +6853,7 @@ CUDA events divided by the batch, so a batch-8 row is the cost of one image.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-35">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-39">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6702,7 +6960,7 @@ CUDA events divided by the batch, so a batch-8 row is the cost of one image.</p>
     <span class="n">bench_latency</span><span class="o">.</span><span class="n">pivot_table</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="p">[</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"mode"</span><span class="p">,</span> <span class="s2">"batch"</span><span class="p">],</span> <span class="n">columns</span><span class="o">=</span><span class="s2">"precision"</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="s2">"ms"</span><span class="p">,</span> <span class="n">sort</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-35">BENCH_TORCH_DTYPES = {
+<div class="clipboard-copy-txt" id="cell-39">BENCH_TORCH_DTYPES = {
     trt.DataType.FLOAT: torch.float32,
     trt.DataType.HALF: torch.float16,
     trt.DataType.INT32: torch.int32,
@@ -6826,7 +7084,7 @@ the one <code>predict()</code> uses, so a box, mask or keypoint is scored as the
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-36">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-40">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6882,7 +7140,7 @@ the one <code>predict()</code> uses, so a box, mask or keypoint is scored as the
 
 <span class="n">bench_accuracy</span> <span class="o">=</span> <span class="p">{</span><span class="n">model_name</span><span class="p">:</span> <span class="n">bench_coco_ap</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span> <span class="k">for</span> <span class="n">model_name</span> <span class="ow">in</span> <span class="n">BENCH_MODELS</span><span class="p">}</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-36">from faster_coco_eval import COCO
+<div class="clipboard-copy-txt" id="cell-40">from faster_coco_eval import COCO
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 from rfdetr.export.benchmark import infer_transforms
@@ -6956,7 +7214,7 @@ launch time that a graph replay removes. AP was scored at batch 1 only. The tabl
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-37">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-41">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7011,7 +7269,7 @@ launch time that a graph replay removes. AP was scored at batch 1 only. The tabl
     <span class="sa">f</span><span class="s2">"calibration </span><span class="si">{</span><span class="n">BENCH_CALIBRATION</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">calibration_names</span><span class="p">)</span><span class="si">}</span><span class="s2"> images), </span><span class="si">{</span><span class="n">BENCH_ROUNDS</span><span class="si">}</span><span class="s2"> rounds of </span><span class="si">{</span><span class="n">BENCH_RUNS</span><span class="si">}</span><span class="s2"> executions"</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-37">ms = bench_latency.set_index(["model", "mode", "batch", "precision"])["ms"]
+<div class="clipboard-copy-txt" id="cell-41">ms = bench_latency.set_index(["model", "mode", "batch", "precision"])["ms"]
 
 
 def bench_row(model_name: str, batch: int, precision: str) -&gt; dict:
@@ -7061,13 +7319,155 @@ print(
 </div>
 </div>
 </div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5843d503">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="9-throughput-on-a-folder">9. Throughput on a folder<a class="anchor-link" href="#9-throughput-on-a-folder">¶</a></h2><p>The batch rows call <code>predict()</code> on one image repeated. A real job predicts a folder, and on a GPU the input side decides how close a runtime gets to its model-only speed. <code>predict(folder)</code> reads and decodes images on worker threads ahead of the model and runs them in batches:</p>
+<ul>
+<li>A runtime with a dynamic batch axis (the ONNX file, the <code>max_batch_size=8</code> TensorRT engine of Section 6) runs up to eight images per call; a fixed batch-1 engine runs one. A CUDA graph takes the batch it was captured for (<code>batch=8</code> here).</li>
+<li>ONNX Runtime with the CUDA provider prepares each batch on the GPU.</li>
+<li>With <code>include_source_image=False</code>, baseline colour JPEG files decode on the GPU in one nvjpeg call per batch. The first file of each kind is checked against the CPU decoder, and a GPU that differs falls back to the CPU, so the model sees the same pixels either way. The <code>.trt</code> engine is timed with and without the source image kept to show what that is worth here.</li>
+</ul>
+<p><code>N_FOLDER</code> eval images are copied into one folder and the median of <code>FOLDER_REPS</code> timed passes (after one warm-up pass) gives images per second over the whole call.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=26a052a8">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-42">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+
+<span class="n">N_FOLDER</span> <span class="o">=</span> <span class="mi">256</span>  <span class="c1"># a multiple of 8, so every batch of the batch-8 predictors is full</span>
+<span class="n">FOLDER_REPS</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">TemporaryDirectory</span>
+
+<span class="c1"># Own the benchmark images without deleting a pre-existing export folder.</span>
+<span class="n">folder_workspace</span> <span class="o">=</span> <span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"rfdetr-folder-"</span><span class="p">)</span>
+<span class="n">FOLDER_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">folder_workspace</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">image_id</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">image_ids</span><span class="p">[:</span><span class="n">N_FOLDER</span><span class="p">],</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"Copy images"</span><span class="p">):</span>
+    <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">images_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">image_id</span><span class="si">:</span><span class="s2">012d</span><span class="si">}</span><span class="s2">.jpg"</span><span class="p">,</span> <span class="n">FOLDER_DIR</span><span class="p">)</span>
+<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">FOLDER_DIR</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.jpg"</span><span class="p">)))</span> <span class="o">==</span> <span class="n">N_FOLDER</span>
+
+<span class="n">folder_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_folder</span><span class="p">(</span>
+    <span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Config</span><span class="p">,</span> <span class="n">predictor</span><span class="p">,</span> <span class="n">include_source_image</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">predict_kwargs</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Time `predictor.predict(folder)` end to end and record the median images per second."""</span>
+    <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">,</span> <span class="s2">"include_source_image"</span><span class="p">:</span> <span class="n">include_source_image</span><span class="p">,</span> <span class="o">**</span><span class="n">predict_kwargs</span><span class="p">}</span>
+    <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">FOLDER_DIR</span><span class="p">),</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>  <span class="c1"># warm-up pass</span>
+    <span class="n">seconds</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">FOLDER_REPS</span><span class="p">):</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">FOLDER_DIR</span><span class="p">),</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="n">seconds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span> <span class="o">==</span> <span class="n">N_FOLDER</span>
+    <span class="n">img_s</span> <span class="o">=</span> <span class="n">N_FOLDER</span> <span class="o">/</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">seconds</span><span class="p">)[</span><span class="nb">len</span><span class="p">(</span><span class="n">seconds</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">folder_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span>
+            <span class="s2">"Runtime"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span><span class="p">,</span>
+            <span class="s2">"Precision"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">precision</span><span class="p">,</span>
+            <span class="s2">"Source image kept"</span><span class="p">:</span> <span class="n">include_source_image</span><span class="p">,</span>
+            <span class="s2">"Folder [img/s]"</span><span class="p">:</span> <span class="n">img_s</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">format_label</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">)</span><span class="si">}</span><span class="s2">, source image kept: </span><span class="si">{</span><span class="n">include_source_image</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">img_s</span><span class="si">:</span><span class="s2">7.1f</span><span class="si">}</span><span class="s2"> img/s"</span><span class="p">)</span>
+
+
+<span class="n">cudagraph_predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">compile_backend</span><span class="o">=</span><span class="s2">"cudagraph"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+<span class="n">measure_folder</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() CUDA Graph"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="n">cudagraph_predictor</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<span class="k">del</span> <span class="n">cudagraph_predictor</span>
+<span class="n">measure_folder</span><span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"CUDA EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">onnx_predictor</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">kept</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+    <span class="n">measure_folder</span><span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">".trt engine"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="n">trt_raw_predictor</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="n">kept</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-42">import shutil
+import time
+
+from tqdm.auto import tqdm
+
+N_FOLDER = 256  # a multiple of 8, so every batch of the batch-8 predictors is full
+FOLDER_REPS = 3
+from tempfile import TemporaryDirectory
+
+# Own the benchmark images without deleting a pre-existing export folder.
+folder_workspace = TemporaryDirectory(prefix="rfdetr-folder-")
+FOLDER_DIR = Path(folder_workspace.name)
+for image_id in tqdm(coco_subset.image_ids[:N_FOLDER], desc="Copy images"):
+    shutil.copy(coco_subset.images_dir / f"{image_id:012d}.jpg", FOLDER_DIR)
+assert len(list(FOLDER_DIR.glob("*.jpg"))) == N_FOLDER
+
+folder_rows: list[dict] = []
+
+
+def measure_folder(
+    format_label: str, config: Config, predictor, include_source_image: bool = False, **predict_kwargs
+) -&gt; None:
+    """Time `predictor.predict(folder)` end to end and record the median images per second."""
+    kwargs = {"threshold": CONFIDENCE_THRESHOLD, "include_source_image": include_source_image, **predict_kwargs}
+    predictor.predict(str(FOLDER_DIR), **kwargs)  # warm-up pass
+    seconds = []
+    for _ in range(FOLDER_REPS):
+        start = time.perf_counter()
+        results = predictor.predict(str(FOLDER_DIR), **kwargs)
+        seconds.append(time.perf_counter() - start)
+    assert len(results) == N_FOLDER
+    img_s = N_FOLDER / sorted(seconds)[len(seconds) // 2]
+    folder_rows.append(
+        {
+            "Format": format_label,
+            "Runtime": config.runtime,
+            "Precision": config.precision,
+            "Source image kept": include_source_image,
+            "Folder [img/s]": img_s,
+        }
+    )
+    print(f"  {format_label} ({', '.join(config)}, source image kept: {include_source_image}): {img_s:7.1f} img/s")
+
+
+cudagraph_predictor = model.inference(compile_backend="cudagraph", batch_size=8, dtype=torch.float16)
+measure_folder("PyTorch", Config("inference() CUDA Graph", "fp16"), cudagraph_predictor, batch=8)
+del cudagraph_predictor
+measure_folder("ONNX", Config("CUDA EP", "fp32"), onnx_predictor)
+for kept in (True, False):
+    measure_folder("TensorRT", Config(".trt engine", "fp16"), trt_raw_predictor, include_source_image=kept)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=886355b0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="9-results">9. Results<a class="anchor-link" href="#9-results">¶</a></h2><p>The last cell prints a decision table (one row per format and config: batch-1 latency, speed against PyTorch <code>predict()</code>, size, mAP@50:95 and FPS at each batch size) and a detail table with <code>± std</code> and memory growth. Every latency is the end-to-end <code>predict()</code> call, and <code>mAP@50:95</code> is scored on the same artifact that was timed (the two <code>inference-models</code> managed-engine rows are not scored: <code>—</code>). <code>Memory [MB]</code> is device-memory growth; the batch-4 and batch-8 raw-engine rows can read <code>0.0</code> because the engine sizes its output buffers for the batch-8 profile maximum when it is loaded. The CUDA Graph row is batch 1 only and its memory is not measured.</p>
+<h2 id="10-results">10. Results<a class="anchor-link" href="#10-results">¶</a></h2><p>The last cell prints a decision table (one row per format and config: batch-1 latency, speed against PyTorch <code>predict()</code>, size, mAP@50:95 and FPS at each batch size) and a detail table with <code>± std</code> and memory growth. Every latency is the end-to-end <code>predict()</code> call, and <code>mAP@50:95</code> is scored on the same artifact that was timed (every <code>inference-models</code> row is scored as well). <code>Memory [MB]</code> is device-memory growth; the batch-4 and batch-8 raw-engine rows can read <code>0.0</code> because the engine sizes its output buffers for the batch-8 profile maximum when it is loaded. Each CUDA Graph row is its own predictor, captured for that batch size; its memory is the device-memory growth of the capture. All <code>inference-models</code> rows are scored.</p>
 <p>The numbers from the last Colab L4 run, with their notes, are kept on the <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#measured-latency-on-an-nvidia-l4">TensorRT export page</a> so this notebook stays short. After a rerun, update that page from the printed table. The FP16 and INT8 <code>.trt</code> engines of <a href="#8-tensorrt-int8">Section 8</a> are batch 1 only and are not in this table; the INT8 numbers produced by <a href="#81-benchmark-for-the-docs-tables">Section 8.1</a> are in the <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#int8">TensorRT INT8 section of the docs</a>.</p>
 </div>
 </div>
@@ -7081,7 +7481,7 @@ print(
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-38">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-43">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7106,10 +7506,47 @@ print(
         <span class="kc">None</span><span class="p">,</span>
         <span class="s2">"PyTorch inference() fp16+JIT"</span><span class="p">,</span>
     <span class="p">),</span>
-    <span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() CUDA Graph"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="p">{</span><span class="mi">1</span><span class="p">:</span> <span class="n">pytorch_fp16_cudagraph</span><span class="p">},</span> <span class="p">{},</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+    <span class="p">(</span>
+        <span class="s2">"PyTorch"</span><span class="p">,</span>
+        <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() CUDA Graph"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span>
+        <span class="n">pytorch_fp16_cudagraph_results</span><span class="p">,</span>
+        <span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="p">,</span>
+        <span class="kc">None</span><span class="p">,</span>
+        <span class="kc">None</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="p">(</span>
+        <span class="s2">"PyTorch"</span><span class="p">,</span>
+        <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
+        <span class="n">im_results</span><span class="p">[</span><span class="s2">"PyTorch inference-models"</span><span class="p">],</span>
+        <span class="n">im_memory_mb</span><span class="p">[</span><span class="s2">"PyTorch inference-models"</span><span class="p">],</span>
+        <span class="kc">None</span><span class="p">,</span>
+        <span class="s2">"PyTorch inference-models"</span><span class="p">,</span>
+    <span class="p">),</span>
     <span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"CUDA EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">onnx_end2end_results</span><span class="p">,</span> <span class="n">onnx_memory_by_batch</span><span class="p">,</span> <span class="n">onnx_size_mb</span><span class="p">,</span> <span class="s2">"ONNX CUDA EP"</span><span class="p">),</span>
-    <span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"auto"</span><span class="p">),</span> <span class="n">trt_end2end_results</span><span class="p">,</span> <span class="n">trt_memory_mb</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-    <span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">trt_fp32_end2end_results</span><span class="p">,</span> <span class="n">trt_fp32_memory_mb</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
+    <span class="p">(</span>
+        <span class="s2">"ONNX"</span><span class="p">,</span>
+        <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models CUDA EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
+        <span class="n">im_results</span><span class="p">[</span><span class="s2">"ONNX inference-models CUDA EP"</span><span class="p">],</span>
+        <span class="n">im_memory_mb</span><span class="p">[</span><span class="s2">"ONNX inference-models CUDA EP"</span><span class="p">],</span>
+        <span class="kc">None</span><span class="p">,</span>
+        <span class="s2">"ONNX inference-models CUDA EP"</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="p">(</span>
+        <span class="s2">"TensorRT"</span><span class="p">,</span>
+        <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"auto"</span><span class="p">),</span>
+        <span class="n">trt_end2end_results</span><span class="p">,</span>
+        <span class="n">trt_memory_mb</span><span class="p">,</span>
+        <span class="kc">None</span><span class="p">,</span>
+        <span class="s2">"TensorRT inference-models auto"</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="p">(</span>
+        <span class="s2">"TensorRT"</span><span class="p">,</span>
+        <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
+        <span class="n">trt_fp32_end2end_results</span><span class="p">,</span>
+        <span class="n">trt_fp32_memory_mb</span><span class="p">,</span>
+        <span class="kc">None</span><span class="p">,</span>
+        <span class="s2">"TensorRT inference-models fp32"</span><span class="p">,</span>
+    <span class="p">),</span>
     <span class="p">(</span>
         <span class="s2">"TensorRT"</span><span class="p">,</span>
         <span class="n">Config</span><span class="p">(</span><span class="s2">".trt engine"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span>
@@ -7158,7 +7595,7 @@ print(
 <span class="n">decision</span> <span class="o">=</span> <span class="n">headline</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="k">lambda</span> <span class="n">column</span><span class="p">:</span> <span class="n">column</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">value</span><span class="p">:</span> <span class="s2">"—"</span> <span class="k">if</span> <span class="n">pd</span><span class="o">.</span><span class="n">isna</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">))</span>
 <span class="n">display</span><span class="p">(</span><span class="n">decision</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-38">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-43">import pandas as pd
 from IPython.display import display
 
 KEYS = ["Format", "Runtime", "Precision", "Quantization"]
@@ -7173,10 +7610,47 @@ entries = [
         None,
         "PyTorch inference() fp16+JIT",
     ),
-    ("PyTorch", Config("inference() CUDA Graph", "fp16"), {1: pytorch_fp16_cudagraph}, {}, None, None),
+    (
+        "PyTorch",
+        Config("inference() CUDA Graph", "fp16"),
+        pytorch_fp16_cudagraph_results,
+        pytorch_fp16_cudagraph_memory_mb,
+        None,
+        None,
+    ),
+    (
+        "PyTorch",
+        Config("inference-models", "fp32"),
+        im_results["PyTorch inference-models"],
+        im_memory_mb["PyTorch inference-models"],
+        None,
+        "PyTorch inference-models",
+    ),
     ("ONNX", Config("CUDA EP", "fp32"), onnx_end2end_results, onnx_memory_by_batch, onnx_size_mb, "ONNX CUDA EP"),
-    ("TensorRT", Config("inference-models", "auto"), trt_end2end_results, trt_memory_mb, None, None),
-    ("TensorRT", Config("inference-models", "fp32"), trt_fp32_end2end_results, trt_fp32_memory_mb, None, None),
+    (
+        "ONNX",
+        Config("inference-models CUDA EP", "fp32"),
+        im_results["ONNX inference-models CUDA EP"],
+        im_memory_mb["ONNX inference-models CUDA EP"],
+        None,
+        "ONNX inference-models CUDA EP",
+    ),
+    (
+        "TensorRT",
+        Config("inference-models", "auto"),
+        trt_end2end_results,
+        trt_memory_mb,
+        None,
+        "TensorRT inference-models auto",
+    ),
+    (
+        "TensorRT",
+        Config("inference-models", "fp32"),
+        trt_fp32_end2end_results,
+        trt_fp32_memory_mb,
+        None,
+        "TensorRT inference-models fp32",
+    ),
     (
         "TensorRT",
         Config(".trt engine", "fp16"),
@@ -7249,7 +7723,7 @@ display(decision)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-39">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-44">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7263,7 +7737,7 @@ display(decision)</div>
     <span class="n">decision</span><span class="o">.</span><span class="n">reset_index</span><span class="p">()</span><span class="o">.</span><span class="n">to_markdown</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">disable_numparse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="p">)</span>  <span class="c1"># keep the one-decimal strings as they are</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-39">print(
+<div class="clipboard-copy-txt" id="cell-44">print(
     decision.reset_index().to_markdown(index=False, disable_numparse=True)
 )  # keep the one-decimal strings as they are</div>
 </div>
@@ -7291,7 +7765,7 @@ display(decision)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-40">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-45">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7311,7 +7785,7 @@ display(decision)</div>
     <span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs per row, batches </span><span class="si">{</span><span class="n">BATCH_SIZES</span><span class="si">}</span><span class="s2">, GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-40">numeric = detail.columns.difference(["Format", "Runtime", "Precision", "Quantization", "Batch"])
+<div class="clipboard-copy-txt" id="cell-45">numeric = detail.columns.difference(["Format", "Runtime", "Precision", "Quantization", "Batch"])
 detail_table = detail.copy()
 detail_table[numeric] = detail[numeric].apply(
     lambda column: column.map(lambda value: "—" if pd.isna(value) else f"{value:.1f}")
@@ -7320,6 +7794,48 @@ display(detail_table)
 print(
     f"\n{MEASURE_RUNS} timed + {WARMUP_RUNS} warmup runs per row, batches {BATCH_SIZES}, GPU: {torch.cuda.get_device_name(0)}."
 )</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5af850f9">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Folder throughput of Section 9, images per second over a whole <code>predict(folder)</code> call:</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3d2f80cb">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-46">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">folder</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">folder_rows</span><span class="p">)</span>
+<span class="n">folder</span><span class="p">[</span><span class="s2">"Folder [img/s]"</span><span class="p">]</span> <span class="o">=</span> <span class="n">folder</span><span class="p">[</span><span class="s2">"Folder [img/s]"</span><span class="p">]</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">value</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">display</span><span class="p">(</span><span class="n">folder</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-46">folder = pd.DataFrame(folder_rows)
+folder["Folder [img/s]"] = folder["Folder [img/s]"].map(lambda value: f"{value:.1f}")
+display(folder)</div>
 </div>
 </div>
 </div>
@@ -7371,7 +7887,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 2, 2026 13:14:33 UTC">2026-11-02 13:14:33</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
   </span>
 
     

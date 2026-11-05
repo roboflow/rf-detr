@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-03T02:46:28">
+  <meta property="article:modified_time" content="2026-11-05T16:07:06">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-03T02:46:28",
+    "dateModified": "2026-11-05T16:07:06",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3139,7 +3139,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The native factory defaults to a captured CUDA graph (<code>compile_backend="cudagraph"</code>) on CUDA, inductor compilation on Apple Silicon (MPS), when the installed PyTorch has its MPS code generator, and TorchScript compilation otherwise, batch size 1, and float32. Pass <code>compile=False</code> for a CPU-safe eager predictor. Compilation settings such as <code>batch_size</code>, <code>dtype</code>, and <code>compile_backend</code> belong to each returned predictor; the factory does not change the source model. The removed <code>inplace</code> keyword is rejected. <code>remove_optimized_model()</code> and <code>is_optimized_inplace</code> remain only for legacy model state and do not manage predictor lifetime.</p>
 <h3 id="choose-a-fast-route">Choose a fast route<a class="headerlink" href="#choose-a-fast-route" title="Permanent link">&para;</a></h3>
 <p><code>model.inference()</code> is the fast native route. <code>RFDETRInference(model)</code> and a <code>.pth</code>, <code>.pt</code>, or <code>.ckpt</code> path passed to <code>RFDETRInference</code> run the eager model, which is slower per image than a compiled predictor. For a checkpoint, load it with <code>RFDETR.from_checkpoint()</code> and call <code>inference()</code> on the result. On MPS, a checkpoint path passed to <code>RFDETRInference</code> takes the same model rewrites as <code>inference()</code> (see below); a live model never does.</p>
-<p>On Apple Silicon, <code>inference()</code> compiles with inductor by default when the installed PyTorch has its MPS code generator, which can be faster than TorchScript; pass <code>compile_backend="torchscript"</code> to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source. For deployment on a Mac, also try a <a href="../../exports/coreml/#measured-latency-on-apple-silicon">Core ML export</a> loaded with <code>RFDETRInference</code>: on an M4 Max its fp32 <code>.mlpackage</code> ran <code>predict()</code> faster than every PyTorch route the cookbook measured, and whether fp16 or the Neural Engine helps depends on the model.</p>
+<p>On Apple Silicon, <code>inference()</code> compiles with inductor by default when the installed PyTorch has its MPS code generator, which can be faster than TorchScript; pass <code>compile_backend="torchscript"</code> to compare with your model, batch size and resolution. Inductor compilation takes several seconds the first time and runs again for each new input shape, so TorchScript can suit short runs better. A compiled predictor accepts only its compiled batch size, including for the last batch of a source. On an M4 Max, <code>inference()</code> with inductor (10.3 ms in fp16, 11.1 ms in fp32 at batch 1) and a <a href="../../exports/coreml/#measured-latency-on-apple-silicon">Core ML export</a> loaded with <code>RFDETRInference</code> (12.0 ms in fp32) are within two milliseconds of each other and nearly twice as fast as eager <code>predict()</code> (20.0 ms) and <code>inference(compile_backend="torchscript")</code> in fp32. Choose between them by deployment target rather than speed; whether fp16 or the Neural Engine helps a Core ML export depends on the model.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
@@ -3252,7 +3252,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 3, 2026 02:46:28 UTC">2026-11-03 02:46:28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
   </span>
 
     

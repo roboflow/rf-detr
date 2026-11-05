@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T19:57:56">
+  <meta property="article:modified_time" content="2026-11-05T16:07:06">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T19:57:56",
+    "dateModified": "2026-11-05T16:07:06",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3274,7 +3274,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="measured-latency">Measured Latency<a class="headerlink" href="#measured-latency" title="Permanent link">&para;</a></h2>
 <p>Every latency is the end-to-end <code>predict()</code> call (preprocessing, forward, postprocessing) through <code>RFDETRInference</code>, <code>RFDETRSmall</code>. <code>FPS</code> is images per second. <code>mAP@50:95</code> is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed. The PyTorch baseline of each machine is on the <a href="../#pytorch-baseline">export overview</a>.</p>
 <h3 id="on-an-nvidia-l4">On an NVIDIA L4<a class="headerlink" href="#on-an-nvidia-l4" title="Permanent link">&para;</a></h3>
-<p>Colab NVIDIA L4, <code>rfdetr</code> 1.12.0.dev0, CUDA execution provider, 20 warmup + 100 timed runs per row, from the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>. <code>Memory [MB]</code> is device-memory growth.</p>
+<p>Colab NVIDIA L4, <code>rfdetr</code> 1.12.0.dev0, CUDA execution provider, 20 warmup + 100 timed runs per row, from the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>. On this provider <code>RFDETRInference</code> prepares each batch on the GPU and hands it to ONNX Runtime through IO binding, so the input never returns to the host.</p>
 <table>
 <thead>
 <tr>
@@ -3285,7 +3285,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <th>FPS [img/s]</th>
 <th>mAP@50:95 [%]</th>
 <th>Size [MB]</th>
-<th>Memory [MB]</th>
 </tr>
 </thead>
 <tbody>
@@ -3293,37 +3292,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>CUDA EP</td>
 <td>fp32</td>
 <td>1</td>
-<td>15.45 ± 0.48</td>
-<td>64.7</td>
+<td>10.19</td>
+<td>98.1</td>
 <td>56.5</td>
 <td>127.5</td>
-<td>293.6</td>
 </tr>
 <tr>
 <td>CUDA EP</td>
 <td>fp32</td>
 <td>4</td>
-<td>44.04 ± 1.24</td>
-<td>90.8</td>
+<td>34.35</td>
+<td>116.4</td>
 <td>—</td>
 <td>127.5</td>
-<td>268.4</td>
 </tr>
 <tr>
 <td>CUDA EP</td>
 <td>fp32</td>
 <td>8</td>
-<td>101.39 ± 2.71</td>
-<td>78.9</td>
+<td>75.17</td>
+<td>106.4</td>
 <td>—</td>
 <td>127.5</td>
-<td>536.9</td>
 </tr>
 </tbody>
 </table>
-<p>ONNX Runtime on CUDA does not scale with batch: batch 8 is slower per image than batch 4. On this GPU a <a href="../tensorrt/#measured-latency-on-an-nvidia-l4">TensorRT engine</a> is the faster route.</p>
+<p>ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than batch 4 (106.4 against 116.4 img/s). The same model through <code>inference-models</code> on the same provider ran at 11.3 ms and 88.2 img/s at batch 1 with 56.4 mAP@50:95 (see the <a href="../#side-by-side-with-inference-models">side-by-side table</a>). On this GPU a <a href="../tensorrt/#measured-latency-on-an-nvidia-l4">TensorRT engine</a> is the faster route.</p>
 <h3 id="on-an-x86-cpu">On an x86 CPU<a class="headerlink" href="#on-an-x86-cpu" title="Permanent link">&para;</a></h3>
-<p>Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, <code>rfdetr</code> 1.12.0.dev0, ONNX Runtime 1.31.1, CPU execution provider at its default intra-op pool (one thread per physical core), 15 warmup + 50 timed runs per row, from the <a href="../../cookbooks/export-cpu/">CPU cookbook</a>. The INT8 model was calibrated on 100 val2017 images held out of the scored subset and is batch 1 only. <code>Memory [MB]</code> is host resident-memory growth, a rough per-row indication.</p>
+<p>Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, <code>rfdetr</code> 1.12.0.dev0, ONNX Runtime 1.22.1, CPU execution provider at its default intra-op pool (one thread per physical core), 15 warmup + 50 timed runs per row, from the <a href="../../cookbooks/export-cpu/">CPU cookbook</a>. The INT8 model was calibrated on 100 val2017 images held out of the scored subset and is batch 1 only. <code>Memory [MB]</code> is host resident-memory growth, a rough per-row indication. ONNX Runtime 1.22.1 is the version the <code>inference-models</code> ONNX extra installs, so both packages ran on it in this notebook; the previous run used 1.31.1 and its ONNX numbers are not comparable with these.</p>
 <table>
 <thead>
 <tr>
@@ -3344,37 +3340,37 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>fp32</td>
 <td>—</td>
 <td>1</td>
-<td>377.95 ± 20.14</td>
-<td>2.6</td>
+<td>546.87 ± 11.78</td>
+<td>1.8</td>
 <td>56.5</td>
 <td>127.5</td>
-<td>47.2</td>
+<td>66.2</td>
 </tr>
 <tr>
 <td>CPU EP</td>
 <td>INT8</td>
 <td>static QDQ</td>
 <td>1</td>
-<td>251.47 ± 10.81</td>
-<td>4.0</td>
+<td>411.08 ± 45.86</td>
+<td>2.4</td>
 <td>54.7</td>
 <td>39.1</td>
-<td>1.2</td>
+<td>0.7</td>
 </tr>
 <tr>
 <td>CPU EP</td>
 <td>fp32</td>
 <td>—</td>
 <td>4</td>
-<td>1205.38 ± 68.19</td>
-<td>3.3</td>
+<td>1594.08 ± 324.89</td>
+<td>2.5</td>
 <td>—</td>
 <td>127.5</td>
-<td>253.9</td>
+<td>234.7</td>
 </tr>
 </tbody>
 </table>
-<p>Static INT8 is 1.5 times faster than fp32 and 3.3 times smaller, for 1.8 mAP. Standard deviations are 4 to 10% of the mean, so fp32 ONNX Runtime (377.9 ms) is no better than eager PyTorch on this host (345.4 ms); <a href="../openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> is the faster full-accuracy route on an Intel CPU.</p>
+<p>Static INT8 is 1.3 times faster than fp32 and 3.3 times smaller, for 1.8 mAP. fp32 ONNX Runtime (546.9 ms) is the slowest fp32 row of the CPU cookbook on this host, behind eager PyTorch (401.6 ms) and <a href="../openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> (373.7 ms), which is the faster full-accuracy route on an Intel CPU. The same ONNX model through <code>inference-models</code> on the same ONNX Runtime ran at 393.8 ms (56.4 mAP@50:95), in 72% of the time <code>rfdetr</code>'s own loader needed in this run; the cause was not investigated (see the <a href="../#side-by-side-with-inference-models">side-by-side table</a>).</p>
 
 
 
@@ -3395,7 +3391,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
   </span>
 
     
