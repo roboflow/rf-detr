@@ -1274,8 +1274,7 @@ class TestFromCheckpointBareFilename:
 
     @pytest.fixture
     def cache_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        """Enter an empty working directory and point the model cache at another empty directory.
-        """
+        """Enter an empty working directory and point the model cache at another empty directory."""
         working_dir = tmp_path / "cwd"
         cache = tmp_path / "cache"
         working_dir.mkdir()
