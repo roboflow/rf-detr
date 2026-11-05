@@ -1364,6 +1364,23 @@ class TestFromCheckpointBareFilename:
         with pytest.raises(FileNotFoundError, match=r"run\.pth"):
             RFDETR.from_checkpoint("run.pth", device="cpu")
 
+    def test_reload_failure_preserves_published_named_checkpoint(self, cache_dir: Path, mocker: MockerFixture) -> None:
+        """A failed second read must not replace the checkpoint with published weights."""
+        checkpoint = self._checkpoint(["a", "b", "c"])
+        path = Path("rf-detr-nano.pth")
+        torch.save(checkpoint, path)
+        original = path.read_bytes()
+        mocker.patch("rfdetr.utilities.io._safe_torch_load", side_effect=[checkpoint, OSError("second read failed")])
+        download = mocker.patch(
+            "rfdetr.assets.model_weights._download_file", side_effect=AssertionError("must not download")
+        )
+
+        with pytest.raises(OSError, match="second read failed"):
+            RFDETR.from_checkpoint(path, device="cpu")
+
+        download.assert_not_called()
+        assert path.read_bytes() == original
+
 
 # ---------------------------------------------------------------------------
 # PE-Core-T plus models (RFDETRAtto / RFDETRFemto / RFDETRPico)
