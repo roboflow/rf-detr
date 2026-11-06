@@ -1295,6 +1295,7 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         # its output size via `nonzero(bool_mask)` on every call (a documented CUDA host-device
         # sync), while `t[int64_index]` is index_select-shaped and needs no further sync. Row order
         # is unaffected — `nonzero` returns ascending indices, identical to bool-mask selection order.
+        num_rows = scores.shape[0]
         if label_thresholds is None:
             keep_idx = (scores > score_floor).nonzero(as_tuple=True)[0]
         else:
@@ -1315,9 +1316,12 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         # mode a loud AttributeError/TypeError on the stale `None` instead of a silent wrong value.
         keypoints = result["keypoints"][keep_idx] if has_keypoints_result else None
         masks = result["masks"] if has_masks else None
-        # PostProcess already filters segmentation rows at score_floor. If every row survives this predicate,
-        # keep_idx is the identity: avoid copying the entire full-resolution mask tensor on the accelerator.
-        all_masks_kept = masks is not None and keep_idx.numel() == masks.shape[0]
+        # PostProcess already filters segmentation rows at score_floor. If every score row survives this predicate,
+        # keep_idx is the identity over the score rows, and it is also the identity over the mask rows only when
+        # both have the same count: a postprocessor returning fewer mask rows than score rows must still reach the
+        # gather below so the row mismatch surfaces instead of silently pairing the wrong rows.
+        # Skipping the gather avoids copying the entire full-resolution mask tensor on the accelerator.
+        all_masks_kept = masks is not None and keep_idx.numel() == num_rows == masks.shape[0]
         if masks is not None and not all_masks_kept:
             masks = masks[keep_idx]
         keypoint_precision = result["keypoint_precision_cholesky"][keep_idx] if has_kp_precision else None
@@ -1359,8 +1363,13 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
             boxes_cpu, scores_cpu, labels_cpu = _copy_rows_to_cpu_once(boxes, scores, labels)
         keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
         # Preserve independent output storage for CPU postprocessors too; the device-to-host transfer already
-        # supplies that copy for accelerator tensors, without an intermediate copy on the accelerator.
-        masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda, copy=all_masks_kept) if masks is not None else None
+        # supplies that copy for accelerator tensors, without an intermediate copy on the accelerator. `masks` still
+        # being the postprocessor's own tensor (no gather happened) is what makes the copy necessary.
+        masks_cpu = (
+            masks.squeeze(1).to("cpu", non_blocking=is_cuda, copy=masks is result["masks"])
+            if masks is not None
+            else None
+        )
         keypoint_precision_cpu = (
             keypoint_precision.float().to("cpu", non_blocking=is_cuda) if keypoint_precision is not None else None
         )
