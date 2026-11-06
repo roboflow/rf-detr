@@ -43,6 +43,8 @@ Which format is fastest depends on the hardware you deploy to. Four per-hardware
 
 All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to end (preprocessing, forward, postprocessing). Compare *within* a row group, never across machines.
 
+<!-- COPIES: the "NVIDIA L4" row repeats docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs" (L4, Small, .trt FP16), and "Fastest route across NVIDIA GPUs" below uses the same source. Update them together. -->
+
 | Hardware                             | Fastest route          | Precision | end2end [ms]   | FPS [img/s] | mAP@50:95 [%] | Full table                                                                           |
 | ------------------------------------ | ---------------------- | --------- | -------------- | ----------- | ------------- | ------------------------------------------------------------------------------------ |
 | NVIDIA L4                            | TensorRT `.trt` engine | fp16      | 3.57           | 280         | —             | [TensorRT](tensorrt.md#latency-across-nvidia-gpus)                                   |
@@ -54,6 +56,8 @@ All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to
 - No mobile or edge CPU row is listed: the TFLite, LiteRT and ExecuTorch tables are pending a rerun with a pinned thread count.
 
 ### Fastest route across NVIDIA GPUs
+
+<!-- COPIES: derived from the detection tables in docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs". Update both together; the "NVIDIA L4" row of the table above is the same source (Small, .trt FP16). -->
 
 Fastest measured route per GPU and size, `ms` at batch 1 and `img/s` at batch 8, with the winning route: C = `inference()` CUDA graph FP16, F = `.trt` FP16 engine. Latency only, TensorRT 10.16.1.11. All routes are in [TensorRT](tensorrt.md#latency-across-nvidia-gpus).
 
