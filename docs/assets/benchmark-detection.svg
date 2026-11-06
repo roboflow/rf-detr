@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1920" viewBox="0 0 1920 1920" role="img" aria-labelledby="title description">
+<title id="title">Object detection accuracy vs latency: RF-DETR, YOLO11, YOLO26, LW-DETR, D-FINE</title>
+<desc id="description">Four panels: COCO mAP@50, COCO mAP@50:95, RF100-VL average mAP@50 and mAP@50:95 against T4 TensorRT FP16 batch-1 latency in milliseconds. Values are listed in the benchmark tables.</desc>
+<rect width="1920" height="1920" fill="#ffffff"/>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<text x="515.0" y="30" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Object Detection (MS COCO)</text>
+<rect x="90" y="50" width="850" height="830" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M140.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="140.0" y="908" text-anchor="middle" font-size="20" fill="#262626">2</text>
+<path d="M240.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="240.0" y="908" text-anchor="middle" font-size="20" fill="#262626">4</text>
+<path d="M340.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="340.0" y="908" text-anchor="middle" font-size="20" fill="#262626">6</text>
+<path d="M440.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="440.0" y="908" text-anchor="middle" font-size="20" fill="#262626">8</text>
+<path d="M540.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="540.0" y="908" text-anchor="middle" font-size="20" fill="#262626">10</text>
+<path d="M640.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="640.0" y="908" text-anchor="middle" font-size="20" fill="#262626">12</text>
+<path d="M740.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="740.0" y="908" text-anchor="middle" font-size="20" fill="#262626">14</text>
+<path d="M840.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="840.0" y="908" text-anchor="middle" font-size="20" fill="#262626">16</text>
+<path d="M90 765.5H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="772.5" text-anchor="end" font-size="20" fill="#262626">55</text>
+<path d="M90 622.4H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="629.4" text-anchor="end" font-size="20" fill="#262626">60</text>
+<path d="M90 479.3H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="486.3" text-anchor="end" font-size="20" fill="#262626">65</text>
+<path d="M90 336.2H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="343.2" text-anchor="end" font-size="20" fill="#262626">70</text>
+<path d="M90 193.1H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="200.1" text-anchor="end" font-size="20" fill="#262626">75</text>
+<text x="515.0" y="942" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="24" y="465.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 24 465.0)">MS COCO mAP@50</text>
+<clipPath id="c0-0"><rect x="78" y="38" width="874" height="854"/></clipPath>
+<g clip-path="url(#c0-0)">
+<polyline points="145.0,616.7 215.0,404.9 310.0,261.8 415.0,196.0 615.0,141.6" fill="none" stroke="#9c7660" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="145.0" y="622.7" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="215.0" y="410.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="310.0" y="267.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="415.0" y="202.0" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="615.0" y="147.6" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="135.0,602.4 170.0,427.8 260.0,279.0 385.0,204.6 690.0,138.7" fill="none" stroke="#4c78a8" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="135.0" y="608.4" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">T</text>
+<text x="170.0" y="433.8" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="260.0" y="285.0" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="385.0" y="210.6" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="690.0" y="144.7" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="125.0,742.6 170.0,499.3 260.0,344.8 325.0,304.7 520.0,221.7" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="125.0" y="748.6" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="170.0" y="505.3" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="260.0" y="350.8" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="325.0" y="310.7" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="520.0" y="227.7" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="165.0,851.4 200.0,631.0 295.0,505.1 365.0,482.2 565.0,447.8" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="165.0" y="857.4" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="200.0" y="637.0" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="295.0" y="511.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="365.0" y="488.2" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="565.0" y="453.8" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="155.0,404.9 215.0,276.1 260.0,233.2 380.0,190.2 615.0,124.4 900.0,92.9" fill="none" stroke="#9467bd" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="155.0" y="410.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="215.0" y="282.1" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="260.0" y="239.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="380.0" y="196.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="615.0" y="130.4" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<text x="900.0" y="98.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">2XL</text>
+</g>
+<rect x="767" y="704" width="161" height="164" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
+<path d="M779 723H825" stroke="#9467bd" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="728" font-size="19" fill="#262626">RF-DETR</text>
+<path d="M779 753H825" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="758" font-size="19" fill="#262626">YOLO11</text>
+<path d="M779 783H825" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="788" font-size="19" fill="#262626">YOLO26</text>
+<path d="M779 813H825" stroke="#4c78a8" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="818" font-size="19" fill="#262626">LW-DETR</text>
+<path d="M779 843H825" stroke="#9c7660" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="848" font-size="19" fill="#262626">D-FINE</text>
+</g>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<text x="1475.0" y="30" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Object Detection (MS COCO)</text>
+<rect x="1050" y="50" width="850" height="830" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M1100.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1100.0" y="908" text-anchor="middle" font-size="20" fill="#262626">2</text>
+<path d="M1200.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1200.0" y="908" text-anchor="middle" font-size="20" fill="#262626">4</text>
+<path d="M1300.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1300.0" y="908" text-anchor="middle" font-size="20" fill="#262626">6</text>
+<path d="M1400.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1400.0" y="908" text-anchor="middle" font-size="20" fill="#262626">8</text>
+<path d="M1500.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1500.0" y="908" text-anchor="middle" font-size="20" fill="#262626">10</text>
+<path d="M1600.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1600.0" y="908" text-anchor="middle" font-size="20" fill="#262626">12</text>
+<path d="M1700.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1700.0" y="908" text-anchor="middle" font-size="20" fill="#262626">14</text>
+<path d="M1800.0 50V880" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1800.0" y="908" text-anchor="middle" font-size="20" fill="#262626">16</text>
+<path d="M1050 763.8H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="770.8" text-anchor="end" font-size="20" fill="#262626">40</text>
+<path d="M1050 597.8H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="604.8" text-anchor="end" font-size="20" fill="#262626">45</text>
+<path d="M1050 431.8H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="438.8" text-anchor="end" font-size="20" fill="#262626">50</text>
+<path d="M1050 265.8H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="272.8" text-anchor="end" font-size="20" fill="#262626">55</text>
+<path d="M1050 99.8H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="106.8" text-anchor="end" font-size="20" fill="#262626">60</text>
+<text x="1475.0" y="942" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="984" y="465.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 984 465.0)">MS COCO mAP@50:95</text>
+<clipPath id="c960-0"><rect x="1038" y="38" width="874" height="854"/></clipPath>
+<g clip-path="url(#c960-0)">
+<polyline points="1105.0,674.2 1175.0,411.9 1270.0,265.8 1375.0,192.8 1575.0,123.0" fill="none" stroke="#9c7660" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1105.0" y="680.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1175.0" y="417.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1270.0" y="271.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1375.0" y="198.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1575.0" y="129.0" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1095.0,667.5 1130.0,498.2 1220.0,345.5 1345.0,229.3 1650.0,156.2" fill="none" stroke="#4c78a8" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1095.0" y="673.5" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">T</text>
+<text x="1130.0" y="504.2" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1220.0" y="351.5" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1345.0" y="235.3" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1650.0" y="162.2" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1085.0,753.8 1130.0,508.2 1220.0,348.8 1285.0,295.7 1480.0,202.7" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1085.0" y="759.8" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1130.0" y="514.2" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1220.0" y="354.8" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1285.0" y="301.7" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1480.0" y="208.7" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1125.0,850.1 1160.0,617.7 1255.0,478.3 1325.0,435.1 1525.0,401.9" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1125.0" y="856.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1160.0" y="623.7" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1255.0" y="484.3" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1325.0" y="441.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1525.0" y="407.9" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1115.0,484.9 1175.0,332.2 1220.0,275.8 1340.0,216.0 1575.0,146.3 1860.0,96.5" fill="none" stroke="#9467bd" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1115.0" y="490.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1175.0" y="338.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1220.0" y="281.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1340.0" y="222.0" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1575.0" y="152.3" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<text x="1860.0" y="102.5" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">2XL</text>
+</g>
+<rect x="1727" y="704" width="161" height="164" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
+<path d="M1739 723H1785" stroke="#9467bd" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="728" font-size="19" fill="#262626">RF-DETR</text>
+<path d="M1739 753H1785" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="758" font-size="19" fill="#262626">YOLO11</text>
+<path d="M1739 783H1785" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="788" font-size="19" fill="#262626">YOLO26</text>
+<path d="M1739 813H1785" stroke="#4c78a8" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="818" font-size="19" fill="#262626">LW-DETR</text>
+<path d="M1739 843H1785" stroke="#9c7660" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="848" font-size="19" fill="#262626">D-FINE</text>
+</g>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<text x="515.0" y="990" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Object Detection (RF100-VL)</text>
+<rect x="90" y="1010" width="850" height="830" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M140.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="140.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">2</text>
+<path d="M240.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="240.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">4</text>
+<path d="M340.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="340.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">6</text>
+<path d="M440.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="440.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">8</text>
+<path d="M540.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="540.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">10</text>
+<path d="M640.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="640.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">12</text>
+<path d="M740.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="740.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">14</text>
+<path d="M840.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="840.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">16</text>
+<path d="M90 1719.7H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="1726.7" text-anchor="end" font-size="20" fill="#262626">78</text>
+<path d="M90 1599.4H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="1606.4" text-anchor="end" font-size="20" fill="#262626">80</text>
+<path d="M90 1479.1H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="1486.1" text-anchor="end" font-size="20" fill="#262626">82</text>
+<path d="M90 1358.8H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="1365.8" text-anchor="end" font-size="20" fill="#262626">84</text>
+<path d="M90 1238.6H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="1245.6" text-anchor="end" font-size="20" fill="#262626">86</text>
+<path d="M90 1118.3H940" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="1125.3" text-anchor="end" font-size="20" fill="#262626">88</text>
+<text x="515.0" y="1902" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="24" y="1425.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 24 1425.0)">RF100-VL average mAP@50</text>
+<clipPath id="c0-960"><rect x="78" y="998" width="874" height="854"/></clipPath>
+<g clip-path="url(#c0-960)">
+<polyline points="145.0,1334.8 215.0,1280.7 310.0,1268.6 415.0,1214.5 615.0,1184.4" fill="none" stroke="#9c7660" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="145.0" y="1340.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="215.0" y="1286.7" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="310.0" y="1274.6" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="415.0" y="1220.5" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="615.0" y="1190.4" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="135.0,1316.7 170.0,1298.7 260.0,1190.4 385.0,1154.3 690.0,1124.3" fill="none" stroke="#4c78a8" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="135.0" y="1322.7" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">T</text>
+<text x="170.0" y="1304.7" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="260.0" y="1196.4" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="385.0" y="1160.3" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="690.0" y="1130.3" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="125.0,1797.9 170.0,1437.0 260.0,1334.8 325.0,1298.7 520.0,1262.6" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="125.0" y="1803.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="170.0" y="1443.0" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="260.0" y="1340.8" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="325.0" y="1304.7" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="520.0" y="1268.6" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="165.0,1515.2 200.0,1461.1 295.0,1449.1 365.0,1467.1 565.0,1497.2" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="165.0" y="1521.2" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="200.0" y="1467.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="295.0" y="1455.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="365.0" y="1473.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="565.0" y="1503.2" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="155.0,1298.7 215.0,1196.4 260.0,1154.3 380.0,1106.2 615.0,1088.2 900.0,1058.1" fill="none" stroke="#9467bd" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="155.0" y="1304.7" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="215.0" y="1202.4" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="260.0" y="1160.3" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="380.0" y="1112.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="615.0" y="1094.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<text x="900.0" y="1064.1" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">2XL</text>
+</g>
+<rect x="767" y="1664" width="161" height="164" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
+<path d="M779 1683H825" stroke="#9467bd" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="1688" font-size="19" fill="#262626">RF-DETR</text>
+<path d="M779 1713H825" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="1718" font-size="19" fill="#262626">YOLO11</text>
+<path d="M779 1743H825" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="1748" font-size="19" fill="#262626">YOLO26</text>
+<path d="M779 1773H825" stroke="#4c78a8" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="1778" font-size="19" fill="#262626">LW-DETR</text>
+<path d="M779 1803H825" stroke="#9c7660" stroke-width="3.5" stroke-linecap="round"/>
+<text x="837" y="1808" font-size="19" fill="#262626">D-FINE</text>
+</g>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<text x="1475.0" y="990" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Object Detection (RF100-VL)</text>
+<rect x="1050" y="1010" width="850" height="830" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M1100.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1100.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">2</text>
+<path d="M1200.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1200.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">4</text>
+<path d="M1300.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1300.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">6</text>
+<path d="M1400.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1400.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">8</text>
+<path d="M1500.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1500.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">10</text>
+<path d="M1600.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1600.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">12</text>
+<path d="M1700.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1700.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">14</text>
+<path d="M1800.0 1010V1840" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1800.0" y="1868" text-anchor="middle" font-size="20" fill="#262626">16</text>
+<path d="M1050 1806.3H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="1813.3" text-anchor="end" font-size="20" fill="#262626">52</text>
+<path d="M1050 1671.3H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="1678.3" text-anchor="end" font-size="20" fill="#262626">54</text>
+<path d="M1050 1536.3H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="1543.3" text-anchor="end" font-size="20" fill="#262626">56</text>
+<path d="M1050 1401.4H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="1408.4" text-anchor="end" font-size="20" fill="#262626">58</text>
+<path d="M1050 1266.4H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="1273.4" text-anchor="end" font-size="20" fill="#262626">60</text>
+<path d="M1050 1131.5H1900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1040" y="1138.5" text-anchor="end" font-size="20" fill="#262626">62</text>
+<text x="1475.0" y="1902" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="984" y="1425.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 984 1425.0)">RF100-VL average mAP@50:95</text>
+<clipPath id="c960-960"><rect x="1038" y="998" width="874" height="854"/></clipPath>
+<g clip-path="url(#c960-960)">
+<polyline points="1105.0,1387.9 1175.0,1246.2 1270.0,1225.9 1375.0,1158.5 1575.0,1118.0" fill="none" stroke="#9c7660" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1105.0" y="1393.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1175.0" y="1252.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1270.0" y="1231.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1375.0" y="1164.5" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1575.0" y="1124.0" text-anchor="middle" font-size="17" font-weight="700" fill="#9c7660" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1095.0,1462.1 1130.0,1441.9 1220.0,1279.9 1345.0,1165.2 1650.0,1124.7" fill="none" stroke="#4c78a8" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1095.0" y="1468.1" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">T</text>
+<text x="1130.0" y="1447.9" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1220.0" y="1285.9" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1345.0" y="1171.2" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1650.0" y="1130.7" text-anchor="middle" font-size="17" font-weight="700" fill="#4c78a8" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1085.0,1806.3 1130.0,1468.9 1220.0,1354.1 1285.0,1313.7 1480.0,1266.4" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1085.0" y="1812.3" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1130.0" y="1474.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1220.0" y="1360.1" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1285.0" y="1319.7" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1480.0" y="1272.4" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1125.0,1583.6 1160.0,1522.8 1255.0,1502.6 1325.0,1502.6 1525.0,1522.8" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1125.0" y="1589.6" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1160.0" y="1528.8" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1255.0" y="1508.6" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1325.0" y="1508.6" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1525.0" y="1528.8" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1115.0,1421.6 1175.0,1252.9 1220.0,1185.4 1340.0,1118.0 1575.0,1070.7 1860.0,1050.5" fill="none" stroke="#9467bd" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1115.0" y="1427.6" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1175.0" y="1258.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1220.0" y="1191.4" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1340.0" y="1124.0" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1575.0" y="1076.7" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<text x="1860.0" y="1056.5" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">2XL</text>
+</g>
+<rect x="1727" y="1664" width="161" height="164" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
+<path d="M1739 1683H1785" stroke="#9467bd" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="1688" font-size="19" fill="#262626">RF-DETR</text>
+<path d="M1739 1713H1785" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="1718" font-size="19" fill="#262626">YOLO11</text>
+<path d="M1739 1743H1785" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="1748" font-size="19" fill="#262626">YOLO26</text>
+<path d="M1739 1773H1785" stroke="#4c78a8" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="1778" font-size="19" fill="#262626">LW-DETR</text>
+<path d="M1739 1803H1785" stroke="#9c7660" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1797" y="1808" font-size="19" fill="#262626">D-FINE</text>
+</g>
+</svg>
