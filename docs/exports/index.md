@@ -55,7 +55,7 @@ All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to
 
 ### Fastest route across NVIDIA GPUs
 
-Fastest measured route per GPU and size, `ms` at batch 1 and `img/s` at batch 8, with the winning route: C = `inference()` CUDA graph FP16, F = `.trt` FP16 engine. Latency only, TensorRT 10.16.1.11. All routes are in [TensorRT](tensorrt.md#latency-across-nvidia-gpus).
+Fastest measured route per GPU and size, `ms` at batch 1 and `img/s` at batch 8, with the winning route: C = `inference()` CUDA graph FP16, F = `.trt` FP16 engine. Latency only, TensorRT 10.16.1.11. All routes are in [TensorRT](tensorrt.md#latency-across-nvidia-gpus); the [GPU sweep cookbook](../cookbooks/export-cuda-gpus.ipynb) reproduces them.
 
 | GPU          | Nano                         | Small                        | Medium                       | Large                        |
 | ------------ | ---------------------------- | ---------------------------- | ---------------------------- | ---------------------------- |

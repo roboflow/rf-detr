@@ -64,6 +64,7 @@ The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-
 
 - **AP** is scored at batch 1 on all 5000 `val2017` images, decoded the way `predict()` decodes. Detection uses box AP, segmentation mask AP, Keypoint Preview keypoint AP. Δ is INT8 minus FP16 in AP points.
 - **Latency** is GPU time per image at batch 1 with a CUDA graph (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved). It is engine-only time, not the end-to-end time of the [latency section](#latency-across-nvidia-gpus) below. Speedup is FP16 ÷ INT8.
+- **Not the Benchmarks page:** the T4 FP16 figures here (Nano 3.65 ms, Medium 6.96, Large 10.80) are about 1.6× the model-only T4 figures of the [Benchmarks page](../learn/benchmarks.md) (2.3, 4.4, 6.8 ms). That page uses TensorRT 10.4 and a 200 ms pause between forward passes; these runs use TensorRT 11.4 and back-to-back executions on a Colab T4. Which of the two differences causes the gap was not isolated, so compare within a page.
 - **API:** these tables do **not** go through `RFDETRInference`. Latency calls the raw TensorRT engine (`execute_async_v3`, replayed as a CUDA graph) from Section 8.1 of the cookbook, so it excludes preprocessing, postprocessing and `RFDETRInference` overhead. The RTX 5070 and Tesla T4 runs predate the current `RFDETRInference` and were not repeated through it. Treat the speedup ratios and AP deltas as the finding, and the absolute milliseconds as engine-only figures for those two machines. The end-to-end `RFDETRInference` figures are in [Latency Across NVIDIA GPUs](#latency-across-nvidia-gpus), which has no INT8 row.
 - **Size** is the engine file at batch 1. INT8 engines are calibrated on the first 128 `train2017` images by file name.
 
@@ -127,10 +128,10 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 ## Latency Across NVIDIA GPUs
 
-The same end-to-end measurement for the four detection sizes on four GPUs, from the [CUDA cookbook](../../cookbooks/export-cuda/). All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
+The same end-to-end measurement for the four detection sizes on four GPUs, from the [GPU sweep cookbook](../../cookbooks/export-cuda-gpus/), one notebook run per GPU. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
 
 - **Routes:** `inference()` graph = `model.inference()` with fp16 and a captured CUDA graph; `.trt` = a static FP16 engine from `RFDETR.export(format="tensorrt")` loaded by `RFDETRInference`.
-- **Latency only.** No accuracy was scored and INT8 engines are left out, because no harness in the repository reproduces their end-to-end figures. INT8 results are in [Results](#results) (engine-only time, so they are not comparable with these).
+- **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables. The same notebook runs a static INT8 `.trt` engine for Nano, Small and Medium, listed under the tables.
 - Latency is batch 1 in ms (lower is better); throughput is batch 8 in img/s (higher is better).
 
 === "Tesla T4"
@@ -169,16 +170,36 @@ The same end-to-end measurement for the four detection sizes on four GPUs, from 
     | Medium | 1.95      | 1.76       | 1262         | 1608          |
     | Large  | 2.20      | 2.08       | 984          | 1249          |
 
+Static INT8 `.trt` engine against the FP16 one from the same run, end to end (batch 1 in ms, batch 8 in img/s):
+
+| GPU          | Size   | FP16 ms | INT8 ms | Speedup | FP16 img/s | INT8 img/s |
+| ------------ | ------ | ------- | ------- | ------- | ---------- | ---------- |
+| Tesla T4     | Nano   | 5.12    | 4.90    | 1.05×   | 334        | 386        |
+| Tesla T4     | Small  | 6.21    | 6.10    | 1.02×   | 197        | 223        |
+| Tesla T4     | Medium | 7.20    | 7.02    | 1.03×   | 149        | 165        |
+| NVIDIA L4    | Nano   | 3.25    | 2.92    | 1.11×   | 724        | 809        |
+| NVIDIA L4    | Small  | 3.57    | 3.45    | 1.04×   | 432        | 516        |
+| NVIDIA L4    | Medium | 4.13    | 4.10    | 1.01×   | 349        | 406        |
+| A100         | Nano   | 3.29    | 3.40    | 0.97×   | 967        | 924        |
+| A100         | Small  | 3.44    | 3.69    | 0.93×   | 783        | 760        |
+| A100         | Medium | 4.22    | 4.06    | 1.04×   | 676        | 674        |
+| RTX PRO 6000 | Nano   | 1.47    | 1.37    | 1.08×   | 2271       | 2563       |
+| RTX PRO 6000 | Small  | 1.62    | 1.57    | 1.03×   | 1782       | 1916       |
+| RTX PRO 6000 | Medium | 1.76    | 1.73    | 1.02×   | 1608       | 1694       |
+
 What the tables support:
 
 - **At batch 8 the `.trt` FP16 engine is the fastest route on every GPU and size.**
 - **At batch 1 the routes are close on most rows**, so the choice matters little for single-image latency. The CUDA graph is fastest on L4 Nano and on A100 Nano, Medium and Large, and 1.2× to 1.3× slower than a `.trt` engine on T4 Small to Large.
 - **Batch 1 does not scale with GPU size.** The RTX PRO 6000 is 2.2× to 2.5× faster than the L4 for the FP16 `.trt` engine (Nano: 1.47 against 3.25 ms), yet the A100 is slower than the L4 for Nano (3.16 against 2.78 ms, both CUDA graph). The likely cause is the host share of the call, which was not measured.
+- **Static INT8 gains little end to end.** Batch 1 is 0.93× to 1.11× of the FP16 engine, and the A100 is slower on Nano and Small. The engine-only speedups above are 1.17× to 1.41× for these sizes and shrink here because host preprocessing and postprocessing are the same for both engines. At batch 8 the host share is smaller and INT8 is faster on every GPU except the A100 (Nano 0.96×, Small 0.97×, Medium level). Large is left out because its attention stays FP16 (see [Placement rules](#placement-rules)).
 - **Pass an array, not a PIL image.** `predict()` first copies a PIL image into a NumPy array, so pass `np.array(image)` or a file path when latency matters. Most of the time above the engine itself is host preprocessing and postprocessing.
 
 !!! note "Not comparable with other figures"
 
     These times include preprocessing and postprocessing on the host. They are not the engine-only times of the INT8 results above, and not the 8.3 ms TensorRT and 12.9 ms ONNX figures on Roboflow's model page, whose timing scope is not stated.
+
+    The managed `inference-models` TensorRT engine is not in the tables: the same run measured it on the T4 and L4, but `inference-models` 0.39.8 selected no engine for any size on the A100 and RTX PRO 6000 (`NoModelPackagesAvailableError`).
 
 ## Predict with RFDETRInference
 
