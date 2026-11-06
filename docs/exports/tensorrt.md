@@ -185,6 +185,33 @@ What the tables support:
 
     The managed `inference-models` TensorRT engine is not in the tables: the same run measured it on the T4 and L4, but `inference-models` 0.39.8 selected no engine for any size on the A100 and RTX PRO 6000 (`NoModelPackagesAvailableError`).
 
+### Instance Segmentation
+
+The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on the same four GPUs, with 20 warmup and 100 timed runs, one run per GPU. The A100 here is the 40 GB part, and the RTX PRO 6000 ran PyTorch 2.14.1 with CUDA 13.0; the other GPUs ran PyTorch 2.15.0 with CUDA 13.2. Each call returns masks, so the times include decoding them on the host. They are not comparable with the detection tables above. Latency only: no mask AP was scored. Batch 1 is in ms and batch 8 in img/s.
+
+| GPU          | Size   | Graph ms | FP16 ms | INT8 ms | INT8 speedup | FP16 img/s | INT8 img/s |
+| ------------ | ------ | -------- | ------- | ------- | ------------ | ---------- | ---------- |
+| Tesla T4     | Nano   | 8.62     | 6.60    | 7.23    | 0.91×        | 191        | 178        |
+| Tesla T4     | Small  | 11.01    | 8.29    | 8.70    | 0.95×        | 144        | 145        |
+| Tesla T4     | Medium | 14.56    | 10.09   | 11.18   | 0.90×        | 109        | 101        |
+| Tesla T4     | Large  | 20.08    | 13.45   | 14.50   | 0.93×        | 80         | 75         |
+| NVIDIA L4    | Nano   | 4.19     | 4.32    | 4.38    | 0.99×        | 367        | 363        |
+| NVIDIA L4    | Small  | 4.74     | 4.51    | 4.50    | 1.00×        | 275        | 267        |
+| NVIDIA L4    | Medium | 5.93     | 5.29    | 5.38    | 0.98×        | 212        | 201        |
+| NVIDIA L4    | Large  | 7.16     | 6.27    | 6.39    | 0.98×        | 155        | 152        |
+| A100         | Nano   | 3.98     | 4.15    | 4.31    | 0.96×        | 518        | 487        |
+| A100         | Small  | 4.31     | 4.26    | 4.59    | 0.93×        | 455        | 429        |
+| A100         | Medium | 4.74     | 4.60    | 5.14    | 0.90×        | 431        | 391        |
+| A100         | Large  | 5.41     | 4.97    | 5.51    | 0.90×        | 370        | 338        |
+| RTX PRO 6000 | Nano   | 2.03     | 1.90    | 1.99    | 0.95×        | 1381       | 1368       |
+| RTX PRO 6000 | Small  | 2.20     | 2.06    | 1.91    | 1.08×        | 1184       | 1231       |
+| RTX PRO 6000 | Medium | 2.56     | 2.18    | 2.08    | 1.05×        | 1080       | 1031       |
+| RTX PRO 6000 | Large  | 2.69     | 2.38    | 2.29    | 1.04×        | 838        | 845        |
+
+- **Static INT8 does not speed up segmentation end to end.** Batch 1 is 0.90× to 1.08× of the FP16 engine, and INT8 is slower on 12 of 16 rows. Segmentation attention is only partly INT8-eligible (see [Placement rules](#placement-rules)), so use the FP16 engine.
+- **At batch 8 a `.trt` engine is the fastest route on every GPU and size.** FP16 leads on 13 of 16 rows; INT8 is ahead by at most 4% on T4 Small, RTX PRO 6000 Small and RTX PRO 6000 Large.
+- **The managed `inference-models` engine is the slowest route.** On the T4 and L4 it took 21.8 to 27.6 ms and 15.4 to 20.9 ms at batch 1, about 2× to 4× the `.trt` engine. `inference-models` 0.39.8 selected no engine on the A100 and RTX PRO 6000 (`NoModelPackagesAvailableError`).
+
 ## Predict with RFDETRInference
 
 ```python
