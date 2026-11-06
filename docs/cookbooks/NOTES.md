@@ -52,7 +52,6 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 | `custom-augmentations.ipynb`            | Custom Augmentations and Live Training Progress        | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`      | Custom Optimizer and LR Scheduler                      | v1.9.0  |
 | `export-cuda.ipynb`                     | RF-DETR on NVIDIA GPUs — Export, Inference & Latency   | v1.11.0 |
-| `export-cuda-gpus.ipynb`                | RF-DETR on NVIDIA GPUs — Latency Across Sizes and GPUs | v1.12.0 |
 | `export-cpu.ipynb`                      | RF-DETR on CPU — Export, Inference & Latency           | v1.11.0 |
 | `export-mobile.ipynb`                   | RF-DETR on Mobile & Edge — Export, Inference & Latency | v1.11.0 |
 | `export-apple.ipynb`                    | RF-DETR on Apple Silicon — Export, Inference & Latency | v1.11.0 |

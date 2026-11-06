@@ -112,10 +112,10 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 ## Latency Across NVIDIA GPUs
 
-The same end-to-end measurement for the four detection sizes on four GPUs, from the [GPU sweep cookbook](../../cookbooks/export-cuda-gpus/), one notebook run per GPU. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
+The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same `RFDETRInference` calls as the [CUDA cookbook](../../cookbooks/export-cuda/), which times Small only. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
 
 - **Routes:** `inference()` graph = `model.inference()` with fp16 and a captured CUDA graph; `.trt` = a static FP16 engine from `RFDETR.export(format="tensorrt")` loaded by `RFDETRInference`.
-- **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables. The same notebook runs a static INT8 `.trt` engine for Nano, Small and Medium, listed under the tables.
+- **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables. The same run also times a static INT8 `.trt` engine for Nano, Small and Medium, listed under the tables.
 - Latency is batch 1 in ms (lower is better); throughput is batch 8 in img/s (higher is better).
 
 === "Tesla T4"
