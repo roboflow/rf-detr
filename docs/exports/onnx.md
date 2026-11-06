@@ -128,7 +128,7 @@ model.export(format="onnx", quantization="int8", calibration_data="calibration_i
 
 Quantization runs on CPU via ONNX Runtime, which the `rfdetr[onnx]` extra already installs.
 
-In the [CPU cookbook](../../cookbooks/export-cpu/) run on a Colab x86 host (`RFDETRSmall`, batch 1, 100 calibration images held out of a 500-image val2017 subset), the INT8 model ran at 251.5 ms against 378.0 ms for the fp32 model, 1.5 times faster, at 54.7 mAP@50:95 against 56.5, a cost of 1.8 mAP. The full table is [below](#on-an-x86-cpu).
+The x86 CPU timing and accuracy comparison against the fp32 model is pending a rerun of the [CPU cookbook](../../cookbooks/export-cpu/); see [On an x86 CPU](#on-an-x86-cpu) below.
 
 ## Measured Latency
 
