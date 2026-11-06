@@ -62,6 +62,8 @@ Those ranges decide the engine's accuracy, so use images from the deployment dom
 
 The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables), run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The table holds every model.
 
+<!-- COPIES: this table comes from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
+
 - **AP** is scored at batch 1 on all 5000 `val2017` images, decoded the way `predict()` decodes. Detection uses box AP, segmentation mask AP, Keypoint Preview keypoint AP. Δ is INT8 minus FP16 in AP points.
 - **Latency** is GPU time per image at batch 1 with a CUDA graph (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved). It is engine-only time, not the end-to-end time of the [latency section](#latency-across-nvidia-gpus) below. Speedup is FP16 ÷ INT8.
 - **Not the Benchmarks page:** the T4 FP16 figures here (Nano 3.65 ms, Medium 6.96, Large 10.80) are about 1.6× the model-only T4 figures of the [Benchmarks page](../learn/benchmarks.md) (2.3, 4.4, 6.8 ms). That page uses TensorRT 10.4 and a 200 ms pause between forward passes; these runs use TensorRT 11.4 and back-to-back executions on a Colab T4. Which of the two differences causes the gap was not isolated, so compare within a page.
@@ -114,103 +116,107 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same `RFDETRInference` calls as the [CUDA cookbook](../../cookbooks/export-cuda/), which times Small only. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
 
-- **Routes:** `inference()` graph = `model.inference()` with fp16 and a captured CUDA graph; `.trt` = a static FP16 engine from `RFDETR.export(format="tensorrt")` loaded by `RFDETRInference`.
-- **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables. The same run also times a static INT8 `.trt` engine for Nano, Small and Medium, listed under the tables.
-- Latency is batch 1 in ms (lower is better); throughput is batch 8 in img/s (higher is better).
+- **Routes:** `inference()` graph = `model.inference()` with fp16 and a captured CUDA graph; `.trt` = a static FP16 or INT8 engine from `RFDETR.export(format="tensorrt")` loaded by `RFDETRInference`; managed engine = the TensorRT package that `inference-models` selects itself, so its precision is not set here. `—` = not measured, `no engine` = `inference-models` 0.39.8 selected none (`NoModelPackagesAvailableError`). No FP32 engine was timed.
+- **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables. INT8 was timed for Nano, Small and Medium.
+- Each cell is `latency at batch 1 (throughput at batch 8)`, for example `5.12 ms (334 img/s)`. Lower latency is better, higher throughput is better, so the two numbers move in opposite directions.
+
+<!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the faster of Graph and .trt per cell, ms at batch 1, img/s at batch 8) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt FP16). Update all of them together. -->
 
 === "Tesla T4"
 
-    | Size   | Graph, ms | `.trt`, ms | Graph, img/s | `.trt`, img/s |
-    | ------ | --------- | ---------- | ------------ | ------------- |
-    | Nano   | 5.36      | 5.12       | 276          | 334           |
-    | Small  | 7.66      | 6.21       | 160          | 197           |
-    | Medium | 9.47      | 7.20       | 119          | 149           |
-    | Large  | 13.15     | 10.86      | 82           | 98            |
+    | Route                          | Nano                | Small               | Medium              | Large               |
+    | ------------------------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+    | `inference()` graph, FP16      | 5.36 ms (276 img/s) | 7.66 ms (160 img/s) | 9.47 ms (119 img/s) | 13.15 ms (82 img/s) |
+    | `.trt` engine, FP16            | 5.12 ms (334 img/s) | 6.21 ms (197 img/s) | 7.20 ms (149 img/s) | 10.86 ms (98 img/s) |
+    | `.trt` engine, INT8            | 4.90 ms (386 img/s) | 6.10 ms (223 img/s) | 7.02 ms (165 img/s) | —                   |
+    | Managed engine, auto precision | 5.20 ms (271 img/s) | 5.89 ms (191 img/s) | 7.35 ms (153 img/s) | 10.22 ms (99 img/s) |
 
 === "NVIDIA L4"
 
-    | Size   | Graph, ms | `.trt`, ms | Graph, img/s | `.trt`, img/s |
-    | ------ | --------- | ---------- | ------------ | ------------- |
-    | Nano   | 2.78      | 3.25       | 596          | 724           |
-    | Small  | 3.60      | 3.57       | 324          | 432           |
-    | Medium | 4.52      | 4.13       | 256          | 349           |
-    | Large  | 5.64      | 5.14       | 170          | 227           |
+    | Route                          | Nano                | Small               | Medium              | Large               |
+    | ------------------------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+    | `inference()` graph, FP16      | 2.78 ms (596 img/s) | 3.60 ms (324 img/s) | 4.52 ms (256 img/s) | 5.64 ms (170 img/s) |
+    | `.trt` engine, FP16            | 3.25 ms (724 img/s) | 3.57 ms (432 img/s) | 4.13 ms (349 img/s) | 5.14 ms (227 img/s) |
+    | `.trt` engine, INT8            | 2.92 ms (809 img/s) | 3.45 ms (516 img/s) | 4.10 ms (406 img/s) | —                   |
+    | Managed engine, auto precision | 3.22 ms (466 img/s) | 3.70 ms (355 img/s) | 4.23 ms (286 img/s) | 5.18 ms (216 img/s) |
 
 === "A100"
 
-    | Size   | Graph, ms | `.trt`, ms | Graph, img/s | `.trt`, img/s |
-    | ------ | --------- | ---------- | ------------ | ------------- |
-    | Nano   | 3.16      | 3.29       | 877          | 967           |
-    | Small  | 3.62      | 3.44       | 688          | 783           |
-    | Medium | 3.80      | 4.22       | 590          | 676           |
-    | Large  | 4.27      | 4.35       | 457          | 558           |
+    | Route                          | Nano                | Small               | Medium              | Large               |
+    | ------------------------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+    | `inference()` graph, FP16      | 3.16 ms (877 img/s) | 3.62 ms (688 img/s) | 3.80 ms (590 img/s) | 4.27 ms (457 img/s) |
+    | `.trt` engine, FP16            | 3.29 ms (967 img/s) | 3.44 ms (783 img/s) | 4.22 ms (676 img/s) | 4.35 ms (558 img/s) |
+    | `.trt` engine, INT8            | 3.40 ms (924 img/s) | 3.69 ms (760 img/s) | 4.06 ms (674 img/s) | —                   |
+    | Managed engine, auto precision | no engine           | no engine           | no engine           | no engine           |
 
 === "RTX PRO 6000"
 
-    | Size   | Graph, ms | `.trt`, ms | Graph, img/s | `.trt`, img/s |
-    | ------ | --------- | ---------- | ------------ | ------------- |
-    | Nano   | 1.54      | 1.47       | 1976         | 2271          |
-    | Small  | 1.83      | 1.62       | 1381         | 1782          |
-    | Medium | 1.95      | 1.76       | 1262         | 1608          |
-    | Large  | 2.20      | 2.08       | 984          | 1249          |
-
-Static INT8 `.trt` engine against the FP16 one from the same run, end to end (batch 1 in ms, batch 8 in img/s):
-
-| GPU          | Size   | FP16 ms | INT8 ms | Speedup | FP16 img/s | INT8 img/s |
-| ------------ | ------ | ------- | ------- | ------- | ---------- | ---------- |
-| Tesla T4     | Nano   | 5.12    | 4.90    | 1.05×   | 334        | 386        |
-| Tesla T4     | Small  | 6.21    | 6.10    | 1.02×   | 197        | 223        |
-| Tesla T4     | Medium | 7.20    | 7.02    | 1.03×   | 149        | 165        |
-| NVIDIA L4    | Nano   | 3.25    | 2.92    | 1.11×   | 724        | 809        |
-| NVIDIA L4    | Small  | 3.57    | 3.45    | 1.04×   | 432        | 516        |
-| NVIDIA L4    | Medium | 4.13    | 4.10    | 1.01×   | 349        | 406        |
-| A100         | Nano   | 3.29    | 3.40    | 0.97×   | 967        | 924        |
-| A100         | Small  | 3.44    | 3.69    | 0.93×   | 783        | 760        |
-| A100         | Medium | 4.22    | 4.06    | 1.04×   | 676        | 674        |
-| RTX PRO 6000 | Nano   | 1.47    | 1.37    | 1.08×   | 2271       | 2563       |
-| RTX PRO 6000 | Small  | 1.62    | 1.57    | 1.03×   | 1782       | 1916       |
-| RTX PRO 6000 | Medium | 1.76    | 1.73    | 1.02×   | 1608       | 1694       |
+    | Route                          | Nano                 | Small                | Medium               | Large                |
+    | ------------------------------ | -------------------- | -------------------- | -------------------- | -------------------- |
+    | `inference()` graph, FP16      | 1.54 ms (1976 img/s) | 1.83 ms (1381 img/s) | 1.95 ms (1262 img/s) | 2.20 ms (984 img/s)  |
+    | `.trt` engine, FP16            | 1.47 ms (2271 img/s) | 1.62 ms (1782 img/s) | 1.76 ms (1608 img/s) | 2.08 ms (1249 img/s) |
+    | `.trt` engine, INT8            | 1.37 ms (2563 img/s) | 1.57 ms (1916 img/s) | 1.73 ms (1694 img/s) | —                    |
+    | Managed engine, auto precision | no engine            | no engine            | no engine            | no engine            |
 
 What the tables support:
 
-- **At batch 8 the `.trt` FP16 engine is the fastest route on every GPU and size.**
-- **At batch 1 the routes are close on most rows**, so the choice matters little for single-image latency. The CUDA graph is fastest on L4 Nano and on A100 Nano, Medium and Large, and 1.2× to 1.3× slower than a `.trt` engine on T4 Small to Large.
+- **At batch 8 a `.trt` engine is the fastest route on 15 of 16 cells:** INT8 on 9 (T4, L4 and RTX PRO 6000, Nano to Medium), FP16 on 6 (all four A100 sizes, and Large on L4 and RTX PRO 6000). The managed engine leads only T4 Large, 99 against 98 img/s.
+- **At batch 1 the routes are close and no route wins everywhere.** The fastest is the INT8 `.trt` engine on 7 of 16 cells, the CUDA graph on 4 (L4 Nano, A100 Nano, Medium and Large), the FP16 `.trt` engine on 3 (L4 Large, A100 Small, RTX PRO 6000 Large) and the managed engine on 2 (T4 Small and Large). The CUDA graph is 1.2× to 1.3× slower than the FP16 `.trt` engine on T4 Small to Large.
 - **Batch 1 does not scale with GPU size.** The RTX PRO 6000 is 2.2× to 2.5× faster than the L4 for the FP16 `.trt` engine (Nano: 1.47 against 3.25 ms), yet the A100 is slower than the L4 for Nano (3.16 against 2.78 ms, both CUDA graph). The likely cause is the host share of the call, which was not measured.
-- **Static INT8 gains little end to end.** Batch 1 is 0.93× to 1.11× of the FP16 engine, and the A100 is slower on Nano and Small. The T4 engine-only speedups above are 1.17× to 1.25× for these sizes, against 1.02× to 1.05× end to end on the same GPU, because host preprocessing and postprocessing are the same for both engines. At batch 8 the host share is smaller and INT8 is faster on every GPU except the A100 (Nano 0.96×, Small 0.97×, Medium level). Large is left out because its attention stays FP16 (see [Placement rules](#placement-rules)).
+- **Static INT8 gains little end to end.** At batch 1 the INT8 engine is within 11% of the FP16 one, and slower on A100 Nano and Small (3.40 against 3.29 ms, 3.69 against 3.44 ms). The T4 engine-only gains above are 1.17× to 1.25× for these sizes, against 1.02× to 1.05× end to end on the same GPU, because host preprocessing and postprocessing are the same for both engines. At batch 8 the host share is smaller and INT8 is faster on every GPU except the A100 (Nano 924 against 967 img/s, Small 760 against 783, Medium level). Large is not timed with INT8 because its attention stays FP16 (see [Placement rules](#placement-rules)).
 - **Pass an array, not a PIL image.** `predict()` first copies a PIL image into a NumPy array, so pass `np.array(image)` or a file path when latency matters. Most of the time above the engine itself is host preprocessing and postprocessing.
 
 !!! note "Not comparable with other figures"
 
     These times include preprocessing and postprocessing on the host. They are not the engine-only times of the INT8 results above, and not the 8.3 ms TensorRT and 12.9 ms ONNX figures on Roboflow's model page, whose timing scope is not stated.
 
-    The managed `inference-models` TensorRT engine is not in the tables: the same run measured it on the T4 and L4, but `inference-models` 0.39.8 selected no engine for any size on the A100 and RTX PRO 6000 (`NoModelPackagesAvailableError`).
+    The managed engine row needs `inference-models`: version 0.39.8 selected no engine for any size on the A100 and RTX PRO 6000 (`NoModelPackagesAvailableError`), so those cells are empty.
 
 ### Instance Segmentation
 
-The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on the same four GPUs, with 20 warmup and 100 timed runs, one run per GPU. The A100 here is the 40 GB part, and the RTX PRO 6000 ran PyTorch 2.14.1 with CUDA 13.0; the other GPUs ran PyTorch 2.15.0 with CUDA 13.2. Each call returns masks, so the times include decoding them on the host. They are not comparable with the detection tables above. Latency only: no mask AP was scored. Batch 1 is in ms and batch 8 in img/s.
+The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on the same four GPUs, one run per GPU with 20 warmup and 100 timed runs. The A100 here is the 40 GB part, and the RTX PRO 6000 ran PyTorch 2.14.1 with CUDA 13.0; the other GPUs ran PyTorch 2.15.0 with CUDA 13.2. Each call returns masks, so the times include decoding them on the host and are not comparable with the detection tables above. Latency only: no mask AP was scored. Cells and the INT8 speedup read as in the detection tabs above.
 
-| GPU          | Size   | Graph ms | FP16 ms | INT8 ms | INT8 speedup | FP16 img/s | INT8 img/s |
-| ------------ | ------ | -------- | ------- | ------- | ------------ | ---------- | ---------- |
-| Tesla T4     | Nano   | 8.62     | 6.60    | 7.23    | 0.91×        | 191        | 178        |
-| Tesla T4     | Small  | 11.01    | 8.29    | 8.70    | 0.95×        | 144        | 145        |
-| Tesla T4     | Medium | 14.56    | 10.09   | 11.18   | 0.90×        | 109        | 101        |
-| Tesla T4     | Large  | 20.08    | 13.45   | 14.50   | 0.93×        | 80         | 75         |
-| NVIDIA L4    | Nano   | 4.19     | 4.32    | 4.38    | 0.99×        | 367        | 363        |
-| NVIDIA L4    | Small  | 4.74     | 4.51    | 4.50    | 1.00×        | 275        | 267        |
-| NVIDIA L4    | Medium | 5.93     | 5.29    | 5.38    | 0.98×        | 212        | 201        |
-| NVIDIA L4    | Large  | 7.16     | 6.27    | 6.39    | 0.98×        | 155        | 152        |
-| A100         | Nano   | 3.98     | 4.15    | 4.31    | 0.96×        | 518        | 487        |
-| A100         | Small  | 4.31     | 4.26    | 4.59    | 0.93×        | 455        | 429        |
-| A100         | Medium | 4.74     | 4.60    | 5.14    | 0.90×        | 431        | 391        |
-| A100         | Large  | 5.41     | 4.97    | 5.51    | 0.90×        | 370        | 338        |
-| RTX PRO 6000 | Nano   | 2.03     | 1.90    | 1.99    | 0.95×        | 1381       | 1368       |
-| RTX PRO 6000 | Small  | 2.20     | 2.06    | 1.91    | 1.08×        | 1184       | 1231       |
-| RTX PRO 6000 | Medium | 2.56     | 2.18    | 2.08    | 1.05×        | 1080       | 1031       |
-| RTX PRO 6000 | Large  | 2.69     | 2.38    | 2.29    | 1.04×        | 838        | 845        |
+<!-- COPIES: none yet. If these tables are copied elsewhere, list the copy here and in the copy. -->
 
-- **Static INT8 does not speed up segmentation end to end.** Batch 1 is 0.90× to 1.08× of the FP16 engine, and INT8 is slower on 12 of 16 rows. Segmentation attention is only partly INT8-eligible (see [Placement rules](#placement-rules)), so use the FP16 engine.
+=== "Tesla T4"
+
+    | Route                          | Nano                | Small               | Medium               | Large               |
+    | ------------------------------ | ------------------- | ------------------- | -------------------- | ------------------- |
+    | `inference()` graph, FP16      | 8.62 ms (132 img/s) | 11.01 ms (94 img/s) | 14.56 ms (66 img/s)  | 20.08 ms (51 img/s) |
+    | `.trt` engine, FP16            | 6.60 ms (191 img/s) | 8.29 ms (144 img/s) | 10.09 ms (109 img/s) | 13.45 ms (80 img/s) |
+    | `.trt` engine, INT8            | 7.23 ms (178 img/s) | 8.70 ms (145 img/s) | 11.18 ms (101 img/s) | 14.50 ms (75 img/s) |
+    | Managed engine, auto precision | 21.83 ms (57 img/s) | 22.10 ms (52 img/s) | 26.88 ms (42 img/s)  | 27.58 ms (36 img/s) |
+
+=== "NVIDIA L4"
+
+    | Route                          | Nano                | Small               | Medium              | Large               |
+    | ------------------------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+    | `inference()` graph, FP16      | 4.19 ms (322 img/s) | 4.74 ms (218 img/s) | 5.93 ms (163 img/s) | 7.16 ms (124 img/s) |
+    | `.trt` engine, FP16            | 4.32 ms (367 img/s) | 4.51 ms (275 img/s) | 5.29 ms (212 img/s) | 6.27 ms (155 img/s) |
+    | `.trt` engine, INT8            | 4.38 ms (363 img/s) | 4.50 ms (267 img/s) | 5.38 ms (201 img/s) | 6.39 ms (152 img/s) |
+    | Managed engine, auto precision | 15.43 ms (71 img/s) | 16.45 ms (63 img/s) | 19.04 ms (57 img/s) | 20.91 ms (50 img/s) |
+
+=== "A100"
+
+    | Route                          | Nano                | Small               | Medium              | Large               |
+    | ------------------------------ | ------------------- | ------------------- | ------------------- | ------------------- |
+    | `inference()` graph, FP16      | 3.98 ms (463 img/s) | 4.31 ms (405 img/s) | 4.74 ms (363 img/s) | 5.41 ms (294 img/s) |
+    | `.trt` engine, FP16            | 4.15 ms (518 img/s) | 4.26 ms (455 img/s) | 4.60 ms (431 img/s) | 4.97 ms (370 img/s) |
+    | `.trt` engine, INT8            | 4.31 ms (487 img/s) | 4.59 ms (429 img/s) | 5.14 ms (391 img/s) | 5.51 ms (338 img/s) |
+    | Managed engine, auto precision | no engine           | no engine           | no engine           | no engine           |
+
+=== "RTX PRO 6000"
+
+    | Route                          | Nano                 | Small                | Medium               | Large               |
+    | ------------------------------ | -------------------- | -------------------- | -------------------- | ------------------- |
+    | `inference()` graph, FP16      | 2.03 ms (1173 img/s) | 2.20 ms (961 img/s)  | 2.56 ms (859 img/s)  | 2.69 ms (687 img/s) |
+    | `.trt` engine, FP16            | 1.90 ms (1381 img/s) | 2.06 ms (1184 img/s) | 2.18 ms (1080 img/s) | 2.38 ms (838 img/s) |
+    | `.trt` engine, INT8            | 1.99 ms (1368 img/s) | 1.91 ms (1231 img/s) | 2.08 ms (1031 img/s) | 2.29 ms (845 img/s) |
+    | Managed engine, auto precision | no engine            | no engine            | no engine            | no engine           |
+
+- **Static INT8 does not speed up segmentation end to end.** At batch 1 the INT8 engine is within 10% of the FP16 one and slower on 12 of 16 cells. Only Seg Small and Seg Medium get INT8 attention; Seg Nano and Seg Large keep it FP16 (see [Placement rules](#placement-rules)). So use the FP16 engine.
 - **At batch 8 a `.trt` engine is the fastest route on every GPU and size.** FP16 leads on 13 of 16 rows; INT8 is ahead by at most 4% on T4 Small, RTX PRO 6000 Small and RTX PRO 6000 Large.
-- **The managed `inference-models` engine is the slowest route.** On the T4 and L4 it took 21.8 to 27.6 ms and 15.4 to 20.9 ms at batch 1, about 2× to 4× the `.trt` engine. `inference-models` 0.39.8 selected no engine on the A100 and RTX PRO 6000 (`NoModelPackagesAvailableError`).
+- **The managed `inference-models` engine is the slowest route.** On the T4 and L4 it is about 2× to 4× the `.trt` engine at batch 1.
 
 ## Predict with RFDETRInference
 
