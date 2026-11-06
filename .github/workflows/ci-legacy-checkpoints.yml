@@ -133,6 +133,9 @@ jobs:
     # Bumped from 15: now runs one real CPU forward pass per version plus a
     # small reference-image download, on top of the existing load checks.
     timeout-minutes: 20
+    env:
+      # Read by both the install step and the completeness check after it.
+      EXTRAS: train,cli
 
     steps:
       - name: 📥 Checkout repository
@@ -148,7 +151,11 @@ jobs:
       - name: 📦 Install current rfdetr from source (CPU-only torch)
         env:
           UV_TORCH_BACKEND: cpu
-        run: uv pip install -e ".[train,cli]" --group tests
+        run: uv pip install -e ".[$EXTRAS]" --group tests
+
+      - name: 🔎 Verify the installed extras are complete
+        # A missing package would turn its _IS_*_INSTALLED flag false and silently skip the tests it gates.
+        run: uv run --no-sync python .github/scripts/check_install_flags.py --extras "$EXTRAS" --groups tests
 
       - name: 📥 Download all checkpoint artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
