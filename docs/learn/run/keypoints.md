@@ -16,7 +16,7 @@ RF-DETR Keypoint is a real-time transformer architecture for keypoint detection,
 
 RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable latency on MS COCO. Latency measured on NVIDIA T4, TensorRT FP16, batch size 1.
 
-![RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO](../../assets/keypoints/kp-map-latency.png){ width=560 }
+![RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO](../../assets/benchmark-keypoints.svg){ width=560 }
 
 |       Model        |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
