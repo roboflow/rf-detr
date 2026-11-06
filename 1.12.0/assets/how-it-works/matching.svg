@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="460" viewBox="0 0 1000 460" role="img" aria-labelledby="title desc">
+  <!-- Sources: 13 query groups (group_detr) and 300 queries (num_queries) from src/rfdetr/config.py. -->
+  <title id="title">One-to-one matching between queries and ground-truth objects</title>
+  <desc id="desc">A cost matrix scores every pair of predicted query and ground-truth object. The Hungarian algorithm picks the cheapest assignment in which each object gets exactly one query. Query 3 is close to object A but loses to query 2, so it is trained to predict no object.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; }
+    .s { font-size: 15px; fill: #B8B8B8; }
+    .lbl { font-size: 15px; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+    .m { fill: #22252C; stroke: #3A3F49; stroke-width: 1; }
+    .num { font-size: 16px; fill: #B8B8B8; text-anchor: middle; }
+    .win { fill: #2B4A23; stroke: #83C167; stroke-width: 2.5; animation: pick 8s infinite; }
+    .wnum { font-size: 16px; fill: #ECECEC; text-anchor: middle; font-weight: bold; }
+    .lose { animation: fade 8s infinite; opacity: .4; }
+    @keyframes pick { 0%, 25% { fill: #22252C; stroke: #3A3F49; } 40%, 92% { fill: #2B4A23; stroke: #83C167; } 100% { fill: #22252C; stroke: #3A3F49; } }
+    @keyframes fade { 0%, 40% { opacity: 1; } 55%, 92% { opacity: .4; } 100% { opacity: 1; } }
+  </style>
+  <rect width="1000" height="460" rx="16" fill="#16181D"/>
+  <text class="h" x="40" y="46">Who gets which object?</text>
+  <text class="s" x="40" y="70">cost of every (query, object) pair: lower is better</text>
+  <ellipse cx="263.0" cy="92" rx="12" ry="15" fill="#1C758A" stroke="#58C4DD"/><text class="s" x="281.0" y="98">A</text>
+  <rect x="336.0" y="78" width="26" height="26" rx="4" fill="#8A5A1C" stroke="#F0AC5F"/><text class="s" x="367.0" y="98">B</text>
+  <path d="M 435.0 77 L 450.0 105 L 420.0 105 z" fill="#1E6B5A" stroke="#5CD0B3"/><text class="s" x="455.0" y="98">C</text>
+  <g class="lose"><circle cx="110" cy="132.0" r="10" fill="#9A72AC" stroke="#16181D" stroke-width="2"/><text class="lbl" x="128" y="137.0">query 1</text><text class="s" x="494" y="137.0">→ “no object”</text></g>
+  <rect class="m" x="220" y="110" width="86" height="44"/><text class="num" x="263.0" y="138.0">2.9</text>
+  <rect class="m" x="306" y="110" width="86" height="44"/><text class="num" x="349.0" y="138.0">3.4</text>
+  <rect class="m" x="392" y="110" width="86" height="44"/><text class="num" x="435.0" y="138.0">3.1</text>
+  <g><circle cx="110" cy="176.0" r="10" fill="#58C4DD" stroke="#16181D" stroke-width="2"/><text class="lbl" x="128" y="181.0">query 2</text></g>
+  <rect class="win" x="220" y="154" width="86" height="44"/><text class="wnum" x="263.0" y="182.0">0.4</text>
+  <rect class="m" x="306" y="154" width="86" height="44"/><text class="num" x="349.0" y="182.0">2.8</text>
+  <rect class="m" x="392" y="154" width="86" height="44"/><text class="num" x="435.0" y="182.0">3.0</text>
+  <g class="lose"><circle cx="110" cy="220.0" r="10" fill="#5CD0B3" stroke="#16181D" stroke-width="2"/><text class="lbl" x="128" y="225.0">query 3</text><text class="s" x="494" y="225.0">→ “no object” (A is taken)</text></g>
+  <rect class="m" x="220" y="198" width="86" height="44"/><text class="num" x="263.0" y="226.0">0.9</text>
+  <rect class="m" x="306" y="198" width="86" height="44"/><text class="num" x="349.0" y="226.0">2.5</text>
+  <rect class="m" x="392" y="198" width="86" height="44"/><text class="num" x="435.0" y="226.0">2.7</text>
+  <g><circle cx="110" cy="264.0" r="10" fill="#F0AC5F" stroke="#16181D" stroke-width="2"/><text class="lbl" x="128" y="269.0">query 4</text></g>
+  <rect class="m" x="220" y="242" width="86" height="44"/><text class="num" x="263.0" y="270.0">3.1</text>
+  <rect class="win" x="306" y="242" width="86" height="44"/><text class="wnum" x="349.0" y="270.0">0.6</text>
+  <rect class="m" x="392" y="242" width="86" height="44"/><text class="num" x="435.0" y="270.0">2.2</text>
+  <g><circle cx="110" cy="308.0" r="10" fill="#FC6255" stroke="#16181D" stroke-width="2"/><text class="lbl" x="128" y="313.0">query 5</text></g>
+  <rect class="m" x="220" y="286" width="86" height="44"/><text class="num" x="263.0" y="314.0">2.7</text>
+  <rect class="m" x="306" y="286" width="86" height="44"/><text class="num" x="349.0" y="314.0">2.4</text>
+  <rect class="win" x="392" y="286" width="86" height="44"/><text class="wnum" x="435.0" y="314.0">0.5</text>
+  <g class="lose"><circle cx="110" cy="352.0" r="10" fill="#D147BD" stroke="#16181D" stroke-width="2"/><text class="lbl" x="128" y="357.0">query 6</text><text class="s" x="494" y="357.0">→ “no object”</text></g>
+  <rect class="m" x="220" y="330" width="86" height="44"/><text class="num" x="263.0" y="358.0">3.3</text>
+  <rect class="m" x="306" y="330" width="86" height="44"/><text class="num" x="349.0" y="358.0">3.0</text>
+  <rect class="m" x="392" y="330" width="86" height="44"/><text class="num" x="435.0" y="358.0">2.9</text>
+  <text class="lbl" x="700" y="130">cost = class mismatch</text>
+  <text class="lbl" x="746" y="154">+ L1 box distance</text>
+  <text class="lbl" x="746" y="178">+ GIoU box overlap</text>
+  <text class="s" x="700" y="222">Hungarian algorithm: the cheapest</text>
+  <text class="s" x="700" y="242">assignment where each object gets</text>
+  <text class="s" x="700" y="262">exactly one query.</text>
+  <text class="s" x="700" y="298">A near-duplicate is told “no object”,</text>
+  <text class="s" x="700" y="318">so the network learns not to make one.</text>
+  <text class="lbl" x="40" y="410">Training only: 13 query groups, each matched on its own, so every object gets 13 positive queries.</text>
+  <text class="s" x="40" y="436">At inference one group of 300 queries remains, and the network has learned not to produce duplicates.</text>
+</svg>

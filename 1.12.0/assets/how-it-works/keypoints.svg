@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="470" viewBox="0 0 1000 470" role="img" aria-labelledby="title desc">
+  <!-- Sources: ConditionalQueryInitializer in src/rfdetr/models/heads/keypoints.py (learned per-keypoint queries modulated by the object query); TransformerDecoderLayer.forward_post in src/rfdetr/models/transformer.py (group self-attention over the object query and its keypoint queries with a cross-class mask, keypoint deformable cross-attention around the object's reference box into the second projector memory, keypoint FFN); RFDETRKeypointPreviewConfig in src/rfdetr/config.py (17 keypoints, 4 decoder layers, 100 queries, dual_projector_kp_only, inter_instance_kp_attn off); keypoint_embed in src/rfdetr/models/lwdetr.py (MLP read after every decoder layer). -->
+  <title id="title">How keypoint queries travel through the decoder</title>
+  <desc id="desc">Every object query is joined by 17 keypoint queries, one per keypoint type, which start from learned vectors adjusted by that object query. In each of the 4 decoder layers the group first runs self-attention among the object query and its own keypoint queries only, then every keypoint query reads a second memory with deformable attention around the object's reference box, then a feed-forward layer updates it. After every layer a small MLP reads the keypoint queries and places 17 keypoints inside the object's box.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; }
+    .s { font-size: 15px; fill: #B8B8B8; }
+    .lbl { font-size: 15px; }
+    .arrow { stroke: #B8B8B8; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .step { fill: #22252C; stroke: #3A3F49; stroke-width: 1; }
+    .group { fill: none; stroke: #3A3F49; stroke-width: 1.5; stroke-dasharray: 6 4; }
+    .kp { fill: #8A5A1C; stroke: #F0AC5F; stroke-width: 1.5; }
+    .bone { stroke: #F0AC5F; stroke-width: 2; stroke-linecap: round; }
+    .joint { fill: #F0AC5F; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B8B8B8"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="470" rx="16" fill="#16181D"/>
+  <text class="h" x="40" y="46">Each object query brings its own keypoint queries</text>
+  <text class="s" x="40" y="70">a second stream of queries that runs through every decoder layer</text>
+
+  <!-- one group: object query + 17 keypoint queries -->
+  <rect class="group" x="40" y="100" width="250" height="200" rx="10"/>
+  <circle cx="76" cy="138" r="14" fill="#1C758A" stroke="#58C4DD" stroke-width="2"/>
+  <text class="lbl" x="102" y="143">object query</text>
+  <circle class="kp" cx="70" cy="185" r="7"/>
+  <circle class="kp" cx="104" cy="185" r="7"/>
+  <circle class="kp" cx="138" cy="185" r="7"/>
+  <circle class="kp" cx="172" cy="185" r="7"/>
+  <circle class="kp" cx="206" cy="185" r="7"/>
+  <circle class="kp" cx="240" cy="185" r="7"/>
+  <circle class="kp" cx="70" cy="212" r="7"/>
+  <circle class="kp" cx="104" cy="212" r="7"/>
+  <circle class="kp" cx="138" cy="212" r="7"/>
+  <circle class="kp" cx="172" cy="212" r="7"/>
+  <circle class="kp" cx="206" cy="212" r="7"/>
+  <circle class="kp" cx="240" cy="212" r="7"/>
+  <circle class="kp" cx="70" cy="239" r="7"/>
+  <circle class="kp" cx="104" cy="239" r="7"/>
+  <circle class="kp" cx="138" cy="239" r="7"/>
+  <circle class="kp" cx="172" cy="239" r="7"/>
+  <circle class="kp" cx="206" cy="239" r="7"/>
+  <text class="lbl" x="62" y="278">17 keypoint queries</text>
+  <text class="s" x="40" y="326">one group per object query</text>
+  <text class="s" x="40" y="346">100 groups in the preview model</text>
+  <text class="lbl" x="40" y="392">where keypoint queries start</text>
+  <text class="s" x="40" y="412">one learned vector per keypoint type,</text>
+  <text class="s" x="40" y="432">scaled and shifted by its object query</text>
+
+  <path class="arrow" d="M 298 200 L 352 200"/>
+
+  <!-- the three keypoint steps inside one decoder layer -->
+  <text class="lbl" x="360" y="112">inside each of the 4 decoder layers</text>
+  <rect class="step" x="360" y="125" width="300" height="70" rx="8"/>
+  <text class="lbl" x="378" y="153">1  group self-attention</text>
+  <text class="s" x="378" y="176">an object and its 17 keypoints, nobody else</text>
+  <path class="arrow" d="M 510 197 L 510 213"/>
+  <rect class="step" x="360" y="215" width="300" height="70" rx="8"/>
+  <text class="lbl" x="378" y="243">2  deformable cross-attention</text>
+  <text class="s" x="378" y="266">a second memory, sampled around the box</text>
+  <path class="arrow" d="M 510 287 L 510 303"/>
+  <rect class="step" x="360" y="305" width="300" height="70" rx="8"/>
+  <text class="lbl" x="378" y="333">3  feed-forward</text>
+  <text class="s" x="378" y="356">each keypoint query on its own</text>
+  <text class="s" x="360" y="412">the object query runs its own detection</text>
+  <text class="s" x="360" y="432">steps first, exactly as before</text>
+
+  <path class="arrow" d="M 668 250 L 760 250"/>
+  <text class="s" x="676" y="238">MLP</text>
+
+  <!-- output: 17 keypoints placed inside the object's box -->
+  <rect x="775" y="115" width="150" height="280" fill="none" stroke="#58C4DD" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <g class="bone">
+    <line x1="876" y1="385" x2="872" y2="330"/>
+    <line x1="872" y1="330" x2="868" y2="270"/>
+    <line x1="824" y1="385" x2="828" y2="330"/>
+    <line x1="828" y1="330" x2="832" y2="270"/>
+    <line x1="868" y1="270" x2="832" y2="270"/>
+    <line x1="875" y1="175" x2="868" y2="270"/>
+    <line x1="825" y1="175" x2="832" y2="270"/>
+    <line x1="875" y1="175" x2="825" y2="175"/>
+    <line x1="875" y1="175" x2="888" y2="225"/>
+    <line x1="825" y1="175" x2="810" y2="222"/>
+    <line x1="888" y1="225" x2="895" y2="270"/>
+    <line x1="810" y1="222" x2="802" y2="268"/>
+    <line x1="856" y1="134" x2="844" y2="134"/>
+    <line x1="850" y1="140" x2="856" y2="134"/>
+    <line x1="850" y1="140" x2="844" y2="134"/>
+    <line x1="856" y1="134" x2="863" y2="138"/>
+    <line x1="844" y1="134" x2="837" y2="138"/>
+    <line x1="863" y1="138" x2="875" y2="175"/>
+    <line x1="837" y1="138" x2="825" y2="175"/>
+  </g>
+  <g class="joint">
+    <circle cx="850" cy="140" r="4"/>
+    <circle cx="856" cy="134" r="3"/>
+    <circle cx="844" cy="134" r="3"/>
+    <circle cx="863" cy="138" r="3"/>
+    <circle cx="837" cy="138" r="3"/>
+    <circle cx="875" cy="175" r="4"/>
+    <circle cx="825" cy="175" r="4"/>
+    <circle cx="888" cy="225" r="4"/>
+    <circle cx="810" cy="222" r="4"/>
+    <circle cx="895" cy="270" r="4"/>
+    <circle cx="802" cy="268" r="4"/>
+    <circle cx="868" cy="270" r="4"/>
+    <circle cx="832" cy="270" r="4"/>
+    <circle cx="872" cy="330" r="4"/>
+    <circle cx="828" cy="330" r="4"/>
+    <circle cx="876" cy="385" r="4"/>
+    <circle cx="824" cy="385" r="4"/>
+  </g>
+  <text class="lbl" x="775" y="425">17 keypoints per object</text>
+  <text class="s" x="775" y="445">placed inside its box</text>
+</svg>

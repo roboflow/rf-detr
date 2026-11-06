@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 710" role="img" aria-labelledby="title desc">
+  <title id="title">RF-DETR inference data flow</title>
+  <desc id="desc">Source loading selects a borrowed live model, a native predictor snapshot created by RFDETR.inference(), or an owned checkpoint or exported runtime, with task and preprocessing metadata. For each call, images are converted and batched, preprocessed, executed once, decoded by the shared pipeline, and returned as Supervision detections or keypoints.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#425466"/></marker>
+    <style>
+      .box { fill: #f4f7fb; stroke: #45617b; stroke-width: 2; rx: 12; }
+      .owner { fill: #e8f3ee; stroke: #28734d; stroke-width: 2; rx: 12; }
+      .flow { fill: none; stroke: #425466; stroke-width: 3; marker-end: url(#arrow); }
+      .label { fill: #162433; font: 600 19px sans-serif; text-anchor: middle; }
+      .small { fill: #35475a; font: 16px sans-serif; text-anchor: middle; }
+      .heading { fill: #162433; font: 700 24px sans-serif; }
+    </style>
+  </defs>
+  <text class="heading" x="45" y="45">1 · Load source and execution context</text>
+  <rect class="box" x="45" y="80" width="300" height="100"/>
+  <text class="label" x="195" y="120">Live RF-DETR model</text>
+  <text class="small" x="195" y="150">borrowed; current model state</text>
+  <rect class="box" x="450" y="80" width="300" height="100"/>
+  <text class="label" x="600" y="120">Checkpoint path</text>
+  <text class="small" x="600" y="150">native model loaded and owned</text>
+  <rect class="box" x="855" y="80" width="300" height="100"/>
+  <text class="label" x="1005" y="120">Full export path</text>
+  <text class="small" x="1005" y="150">runtime loaded and owned</text>
+  <path class="flow" d="M195 180 V235 H600 V270"/>
+  <path class="flow" d="M600 180 V270"/>
+  <path class="flow" d="M1005 180 V235 H600 V270"/>
+  <rect class="owner" x="335" y="270" width="530" height="92"/>
+  <text class="label" x="600" y="306">Execution context</text>
+  <text class="small" x="600" y="337">task · classes · input shape · device policy · metadata</text>
+  <path class="flow" d="M600 362 V390 H420 V455" stroke-dasharray="6 6"/>
+  <text class="heading" x="45" y="420">2 · One prediction call</text>
+  <rect class="box" x="45" y="465" width="210" height="110"/>
+  <text class="label" x="150" y="505">Images</text>
+  <text class="small" x="150" y="535">file · PIL · array · tensor</text>
+  <text class="small" x="150" y="557">list/tuple = one batch</text>
+  <rect class="box" x="315" y="465" width="210" height="110"/>
+  <text class="label" x="420" y="505">Preprocess</text>
+  <text class="small" x="420" y="535">convert · resize · normalize</text>
+  <rect class="owner" x="585" y="465" width="210" height="110"/>
+  <text class="label" x="690" y="505">Runtime</text>
+  <text class="small" x="690" y="535">one execution; no split/pad</text>
+  <rect class="owner" x="855" y="465" width="155" height="110"/>
+  <text class="label" x="932" y="505">Shared</text>
+  <text class="small" x="932" y="535">decode results</text>
+  <rect class="box" x="1070" y="465" width="110" height="110"/>
+  <text class="label" x="1125" y="505">Results</text>
+  <text class="small" x="1125" y="535">Detections</text>
+  <text class="small" x="1125" y="557">or KeyPoints</text>
+  <path class="flow" d="M255 520 H305"/>
+  <path class="flow" d="M525 520 H575"/>
+  <path class="flow" d="M795 520 H845"/>
+  <path class="flow" d="M1010 520 H1060"/>
+  <text class="small" x="600" y="625">Context supplies input rules, runtime execution, task decoding and class names.</text>
+  <text class="small" x="600" y="655">Live native state is read per call; exported metadata and session are loaded once.</text>
+  <text class="small" x="600" y="685">model.inference() instead snapshots native weights into its own predictor.</text>
+</svg>
