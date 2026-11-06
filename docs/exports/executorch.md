@@ -103,18 +103,7 @@ The `soc` parameter is required for QNN and must be a `QcomChipset` name matchin
 
 ## Measured Latency on a Laptop CPU
 
-XNNPACK backend, Apple M4 Max CPU (arm64), `RFDETRSmall`, 5 warmup + 30 timed runs per row, `executorch==1.3.1`, one `.pte` per batch size, from the [mobile cookbook](../../cookbooks/export-mobile/). The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline). For the CoreML backend see [below](#measured-latency-on-apple-silicon).
-
-| Runtime | Precision | Quantization | Batch | forward [ms]  | end2end [ms]  | FPS [img/s] (end2end) | Memory [MB] |
-| ------- | --------- | ------------ | ----- | ------------- | ------------- | --------------------- | ----------- |
-| XNNPACK | fp32      | —            | 1     | 81.68 ± 3.31  | 80.74 ± 1.90  | 12.4                  | 140.2       |
-| XNNPACK | fp32      | —            | 4     | 313.56 ± 3.24 | 318.27 ± 6.67 | 12.6                  | 1075.7      |
-
-!!! warning "Earlier measurement, pending a rerun"
-
-    These rows were measured before the cookbook pinned one thread count for every runtime. Treat each row as a same-machine ratio, never as a phone latency: a phone's own delegate (NNAPI, Hexagon, Core ML) is not exercised.
-
-The XNNPACK program does not beat eager PyTorch on the machine that exported it (80.74 against 54.54 ms at batch 1): export formats exist for portability and on-device deployment without a Python runtime. The memory jump at batch 4 (1075.7 against 140.2 MB) is a full second program load in the same process, not a leak.
+No latency table is published for this format yet. The earlier rows were measured before the cookbook pinned one thread count for every runtime, so they were not comparable across runtimes and have been removed pending a rerun of the [mobile cookbook](../../cookbooks/export-mobile/).
 
 ## Measured Latency on Apple Silicon
 
