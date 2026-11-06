@@ -51,7 +51,7 @@ model.export(format="openvino", shape=(608, 608))
 
 ## OpenVINO Export with Precision
 
-OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only. The precision the device *computes* in is a runtime setting, chosen when the model is compiled (see the warning under [Advanced: Use the OpenVINO session directly](#advanced-use-the-openvino-session-directly)):
+OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only. The precision the device *computes* in is a runtime setting, chosen when the model is compiled (see the warning under [Runtime Options](#runtime-options)):
 
 ```python
 model.export(format="openvino", openvino_precision="float32")
@@ -68,7 +68,7 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
 
-`runtime_options` takes `cache_dir`, `inference_precision` and `config`, with the meaning they have on the [OpenVINO session](#advanced-use-the-openvino-session-directly) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
+`runtime_options` takes `cache_dir`, `inference_precision` and `config`, as described under [Runtime Options](#runtime-options) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
 
 ```python
 model = RFDETRInference(
@@ -78,56 +78,19 @@ model = RFDETRInference(
 )
 ```
 
-<span id="openvino-inference-example"></span>
-
-## Advanced: Use the OpenVINO session directly
-
-!!! warning "OpenVINOInference is deprecated"
-
-    Constructing `OpenVINOInference` emits `FutureWarning`: it is deprecated since v1.12.0 and will be removed in v1.15.0. Use `RFDETRInference(model_path).predict(image)` for image inputs and Supervision results, and its `runtime_options` for `cache_dir`, `inference_precision` and `config`. The old class remains available for compatibility until then.
-
-The compatibility class takes preprocessed NCHW tensors and returns raw outputs. It shares session loading and execution functions with the common adapter. The adapter calls these functions directly and does not construct the deprecated class.
-
-!!! warning "The input array must be float32 and contiguous"
-
-    `infer()` validates this at the boundary and raises `ValueError` if violated, but a resize step that diverges from `predict()`'s own preprocessing (e.g. PIL's default `Image.resize()`, which resamples with bicubic) will still silently produce different — not obviously wrong — detections. Use `torchvision.transforms.functional.resize(..., antialias=False)` as below to match `predict()`'s antialias-free bilinear resize exactly.
-
-```python
-import torchvision.transforms.functional as F
-from PIL import Image
-from rfdetr.export.inference import OpenVINOInference
-
-# Load the exported model; device is "AUTO", "CPU", "GPU" or "NPU"
-model = OpenVINOInference("output/rfdetr-medium.xml", device="AUTO")
-
-# Prepare input image (NCHW format, ImageNet normalized) — matches predict()'s own preprocessing
-image = Image.open("image.jpg").convert("RGB")
-image_tensor = F.to_tensor(image)
-image_tensor = F.resize(image_tensor, [576, 576], antialias=False)
-
-mean = [0.485, 0.456, 0.406]
-std = [0.229, 0.224, 0.225]
-image_tensor = F.normalize(image_tensor, mean, std)
-
-# Convert to NCHW format
-image_array = image_tensor.unsqueeze(0).numpy()
-
-# Run inference
-outputs = model(image_array)
-boxes, labels = outputs  # boxes: normalized cxcywh (center_x, center_y, width, height), not xywh
-```
+## Runtime Options
 
 !!! warning "Execution precision: OpenVINO computes in float32 by default through RF-DETR"
 
-    OpenVINO's CPU plugin picks its own execution precision, whatever precision the IR was stored in, and on hardware with native half-precision support it can compute in f16 or bf16. In f16 RF-DETR's class logits collapse: on an Apple M4 Max, `RFDETRNano` went from 3 detections above 0.5 to none. The same collapse in bf16 on x86 is expected but has not been measured. `RFDETRInference` and the deprecated `OpenVINOInference` therefore set `INFERENCE_PRECISION_HINT` to `"f32"` unless told otherwise (on the NPU it sends no hint, because that plugin does not support f32; an explicit `inference_precision` is always passed through), which keeps the confident logits close to ONNX Runtime's (the CPU cookbook's `parity` check reports the actual drift). OpenVINO's own `EXECUTION_MODE_HINT=ACCURACY` is another way to ask for full precision. For `RFDETRInference`, pass `runtime_options={"inference_precision": None}` to keep the device default (faster on hardware that computes natively in reduced precision, at that accuracy cost), or another hint such as `"f16"` to set it explicitly. Further compile properties, such as `{"INFERENCE_NUM_THREADS": 4}`, go in `runtime_options["config"]`. The deprecated class accepts these settings as direct constructor keywords. Calling `openvino.Core().compile_model(...)` yourself leaves the device default in place, so pass `{"INFERENCE_PRECISION_HINT": "f32"}` there too.
+    OpenVINO's CPU plugin picks its own execution precision, whatever precision the IR was stored in, and on hardware with native half-precision support it can compute in f16 or bf16. In f16 RF-DETR's class logits collapse: on an Apple M4 Max, `RFDETRNano` went from 3 detections above 0.5 to none. The same collapse in bf16 on x86 is expected but has not been measured. `RFDETRInference` therefore sets `INFERENCE_PRECISION_HINT` to `"f32"` unless told otherwise (on the NPU it sends no hint, because that plugin does not support f32; an explicit `inference_precision` is always passed through), which keeps the confident logits close to ONNX Runtime's (the CPU cookbook's `parity` check reports the actual drift). OpenVINO's own `EXECUTION_MODE_HINT=ACCURACY` is another way to ask for full precision. Pass `runtime_options={"inference_precision": None}` to keep the device default (faster on hardware that computes natively in reduced precision, at that accuracy cost), or another hint such as `"f16"` to set it explicitly. Further compile properties, such as `{"INFERENCE_NUM_THREADS": 4}`, go in `runtime_options["config"]`. Calling `openvino.Core().compile_model(...)` yourself leaves the device default in place, so pass `{"INFERENCE_PRECISION_HINT": "f32"}` there too.
 
 !!! tip "Construct once, and use one instance per worker thread"
 
-    Building an `OpenVINOInference` compiles the model, which is the expensive step — do it once and reuse the instance for every image. Pass `cache_dir="<dir>"` to reuse compiled kernels across process starts as well. Calls through a single instance are serialized by an internal lock, so sharing one instance across threads is safe but not faster; for parallel throughput give each worker thread its own instance.
+    Building an `RFDETRInference` for an OpenVINO model compiles it, which is the expensive step — do it once and reuse the instance for every image. Pass `runtime_options={"cache_dir": "<dir>"}` to reuse compiled kernels across process starts as well. Calls through a single instance are serialized by an internal lock, so sharing one instance across threads is safe but not faster; for parallel throughput give each worker thread its own instance.
 
 ## Benchmark OpenVINO Model
 
-Use OpenVINO's `benchmark_app` tool to measure performance. Pass `-infer_precision f32` so it times the same execution precision `RFDETRInference` and the deprecated `OpenVINOInference` use by default; without it, `benchmark_app` times the device's reduced-precision default:
+Use OpenVINO's `benchmark_app` tool to measure performance. Pass `-infer_precision f32` so it times the same execution precision `RFDETRInference` uses by default; without it, `benchmark_app` times the device's reduced-precision default:
 
 ```bash
 benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576] -infer_precision f32

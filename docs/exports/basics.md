@@ -173,7 +173,7 @@ Pass `runtime_options` to configure the runtime of an exported artifact. Each fo
 | Format         | Keys                                                                                                                                                                       |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TensorRT       | `cuda_graph`, `engine_host_code_allowed`, `verbose`, each a `bool` that defaults to `False`. See [Predict with RFDETRInference](tensorrt.md#predict-with-rfdetrinference). |
-| OpenVINO       | `cache_dir`, `inference_precision`, `config`, with the meaning they have on the [OpenVINO session](openvino.md#advanced-use-the-openvino-session-directly).                |
+| OpenVINO       | `cache_dir`, `inference_precision`, `config`, with the meaning they have on the [OpenVINO page](openvino.md#runtime-options).                                              |
 | TFLite, LiteRT | `num_threads`, a positive `int`: CPU threads for the interpreter, which otherwise runs on one thread.                                                                      |
 | Other formats  | None.                                                                                                                                                                      |
 
@@ -288,70 +288,6 @@ detections = model.predict("image.jpg", threshold=0.5)
 The JSON file or mapping may instead hold an envelope of the form `{"artifact_sha256": "<artifact digest>", "metadata": { ... }}`, with the complete metadata object under `metadata`. Both keys must be present for an explicit override to be treated as an envelope. For a single-file ONNX artifact, the digest is the SHA-256 hex digest of its bytes. Automatically loaded `<artifact-name>.rfdetr.json` sidecars require this envelope. A digest mismatch is rejected, including when you also pass `metadata=`.
 
 Supplied metadata can fill missing stored fields but cannot replace a stored value with a different value. Embedded ONNX metadata and a sidecar must agree if both exist. Omitting `schema_version` selects version 1; an unsupported version is rejected with an instruction to upgrade `rfdetr`. Do not relabel newer metadata as version 1 to bypass this check. Schema validation is followed by runtime interface checks; a schema-valid object alone does not establish that it matches an artifact.
-
-## Run Inference with `inference-models`
-
-[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is a separate deployment option. It supports PyTorch, ONNX, and TensorRT with automatic backend selection and its own API.
-
-### Installation
-
-```bash
-# CPU / PyTorch only
-pip install inference-models
-
-# With TensorRT support (NVIDIA GPU required)
-pip install "inference-models[trt10]"  # TensorRT 10
-```
-
-See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/) for all installation options including Jetson and CUDA 11.x.
-
-### Load a Pre-trained RF-DETR Model
-
-```python
-import cv2
-from inference_models import AutoModel
-
-# Automatically selects the best available backend for your environment
-model = AutoModel.from_pretrained("rfdetr-small")
-
-image = cv2.imread("image.jpg")
-predictions = model(image)
-
-# Convert to supervision Detections
-detections = predictions[0].to_supervision()
-print(detections)
-```
-
-### Load a Local RF-DETR Checkpoint
-
-```python
-import cv2
-from inference_models import AutoModel
-
-# Load from a local .pth checkpoint (same file used by rfdetr for training)
-model = AutoModel.from_pretrained(
-    "/path/to/checkpoint.pth",
-    model_type="rfdetr-small",  # specify the architecture variant
-)
-
-image = cv2.imread("image.jpg")
-predictions = model(image)
-```
-
-### Force TensorRT Backend
-
-```python
-import cv2
-from inference_models import AutoModel, BackendType
-
-# Explicitly request TensorRT — requires TRT to be installed
-model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT)
-
-image = cv2.imread("image.jpg")
-predictions = model(image)
-```
-
-`AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or `backend="trt"` to override automatic backend selection.
 
 ## Using the Exported Model
 
