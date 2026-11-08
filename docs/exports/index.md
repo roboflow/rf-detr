@@ -59,14 +59,25 @@ All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to
 
 <!-- COPIES: derived from the detection tables in docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs". Update both together; the "NVIDIA L4" row of the table above is the same source (Small, .trt FP16). -->
 
-Fastest measured route per GPU and size, `ms` at batch 1 and `img/s` at batch 8, with the winning route: C = `inference()` CUDA graph FP16, F = `.trt` FP16 engine, I = `.trt` INT8 engine, M = managed `inference-models` engine. Latency only, TensorRT 10.16.1.11. All routes are in [TensorRT](tensorrt.md#latency-across-nvidia-gpus).
+Fastest measured route per GPU and size, with the winning route: C = `inference()` CUDA graph FP16, F = `.trt` FP16 engine, I = `.trt` INT8 engine, M = managed `inference-models` engine. Latency only, TensorRT 10.16.1.11. All routes are in [TensorRT](tensorrt.md#latency-across-nvidia-gpus).
 
-| GPU          | Nano                         | Small                        | Medium                       | Large                        |
-| ------------ | ---------------------------- | ---------------------------- | ---------------------------- | ---------------------------- |
-| T4           | 4.90 ms (I) / 386 img/s (I)  | 5.89 ms (M) / 223 img/s (I)  | 7.02 ms (I) / 165 img/s (I)  | 10.22 ms (M) / 99 img/s (M)  |
-| L4           | 2.78 ms (C) / 809 img/s (I)  | 3.45 ms (I) / 516 img/s (I)  | 4.10 ms (I) / 406 img/s (I)  | 4.72 ms (I) / 272 img/s (I)  |
-| A100         | 3.16 ms (C) / 967 img/s (F)  | 3.44 ms (F) / 783 img/s (F)  | 3.80 ms (C) / 676 img/s (F)  | 4.27 ms (C) / 563 img/s (I)  |
-| RTX PRO 6000 | 1.37 ms (I) / 2563 img/s (I) | 1.57 ms (I) / 1916 img/s (I) | 1.73 ms (I) / 1694 img/s (I) | 1.92 ms (I) / 1362 img/s (I) |
+Lowest latency, batch 1:
+
+| GPU          | Nano        | Small       | Medium      | Large        |
+| ------------ | ----------- | ----------- | ----------- | ------------ |
+| T4           | 4.90 ms (I) | 5.89 ms (M) | 7.02 ms (I) | 10.22 ms (M) |
+| L4           | 2.78 ms (C) | 3.45 ms (I) | 4.10 ms (I) | 4.72 ms (I)  |
+| A100         | 3.16 ms (C) | 3.44 ms (F) | 3.80 ms (C) | 4.27 ms (C)  |
+| RTX PRO 6000 | 1.37 ms (I) | 1.57 ms (I) | 1.73 ms (I) | 1.92 ms (I)  |
+
+Highest throughput, batch 8 (the winning route can differ, because a batch of 8 hides per-call overhead):
+
+| GPU          | Nano           | Small          | Medium         | Large          |
+| ------------ | -------------- | -------------- | -------------- | -------------- |
+| T4           | 386 img/s (I)  | 223 img/s (I)  | 165 img/s (I)  | 99 img/s (M)   |
+| L4           | 809 img/s (I)  | 516 img/s (I)  | 406 img/s (I)  | 272 img/s (I)  |
+| A100         | 967 img/s (F)  | 783 img/s (F)  | 676 img/s (F)  | 563 img/s (I)  |
+| RTX PRO 6000 | 2563 img/s (I) | 1916 img/s (I) | 1694 img/s (I) | 1362 img/s (I) |
 
 ### PyTorch Baseline
 
