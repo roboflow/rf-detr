@@ -26,13 +26,17 @@ jobs:
           python-version: ${{ inputs.python-version }}
           activate-environment: true
 
-      # PyPI renders the README with no repository around it, so pin its relative paths to
-      # this commit; a missing path fails the build instead of publishing a broken link.
-      - name: 🔗 Point README relative paths at this commit
+      # PyPI renders the README with no repository around it, so make its relative paths
+      # absolute: images under docs/ point at this version's docs site (publish-docs.yml
+      # deploys it on the same release), everything else and pre-releases at this commit.
+      # A missing path fails the build instead of publishing a broken link.
+      - name: 🔗 Make README relative paths absolute
         env:
           REPO: ${{ github.repository }}
           REF: ${{ github.sha }}
-        run: python .github/scripts/readme_absolute_urls.py README.md --repo "$REPO" --ref "$REF"
+        run: >-
+          python .github/scripts/readme_absolute_urls.py README.md
+          --repo "$REPO" --ref "$REF" --docs-url https://rfdetr.roboflow.com
 
       - name: 🏗️ Build source and wheel distributions
         run: |
