@@ -34,7 +34,7 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ## Detection
 
-<img alt="Object detection accuracy vs latency on COCO and RF100-VL: RF-DETR against YOLO11, YOLO26, LW-DETR and D-FINE" src="../assets/benchmark-detection.svg" />
+![Object detection accuracy vs latency on COCO and RF100-VL: RF-DETR against YOLO11, YOLO26, LW-DETR and D-FINE](../assets/benchmark-detection.svg)
 
 | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: | :--------: |
@@ -73,7 +73,7 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ## Segmentation
 
-<img alt="Instance segmentation accuracy vs latency on COCO: RF-DETR-Seg against YOLOv8, YOLOv11 and YOLO26" src="../assets/benchmark-segmentation.svg" />
+![Instance segmentation accuracy vs latency on COCO: RF-DETR-Seg against YOLOv8, YOLOv11 and YOLO26](../assets/benchmark-segmentation.svg)
 
 |  Architecture   | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :-------------: | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
@@ -101,7 +101,7 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ## Keypoints
 
-<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="../assets/benchmark-keypoints.svg" />
+![RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO](../assets/benchmark-keypoints.svg)
 
 |        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) |  License   |
 | :------------------------: | :---------------------: | :----------: | :--------: | :--------: |
