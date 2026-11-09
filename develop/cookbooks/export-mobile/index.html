@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T19:57:56">
+  <meta property="article:modified_time" content="2026-11-09T13:06:30">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T19:57:56",
+    "dateModified": "2026-11-09T13:06:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4254,6 +4254,7 @@ assert sys.version_info[:2] == (3, 12), (
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h3><p><code>WARMUP_RUNS</code> discards the first N inferences; <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch matrix every format below measures. <code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module.</p>
+<p><code>MODEL_SIZE</code> (nano, small, medium or large) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
 </div>
 </div>
 </div>
@@ -4287,9 +4288,15 @@ assert sys.version_info[:2] == (3, 12), (
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span><span class="p">,</span> <span class="n">RFDETRSmall</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">_artifact_size_mb</span><span class="p">,</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium or large</span>
+<span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-3">import importlib.metadata
 import os
@@ -4302,9 +4309,15 @@ import psutil
 import torch
 from PIL import Image
 
-from rfdetr import RFDETRInference, RFDETRSmall
+import rfdetr
+from rfdetr import RFDETRInference
 from rfdetr.export._benchmark import _artifact_size_mb, cpu_brand, visualize_detections
-from rfdetr.export.benchmark import measure_latency, measure_memory</div>
+from rfdetr.export.benchmark import measure_latency, measure_memory
+
+MODEL_SIZE = "small"  # nano, small, medium or large
+TASK = "detection"  # "detection" or "segmentation"
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
+MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files</div>
 </div>
 </div>
 </div>
@@ -4632,14 +4645,14 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
     <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="n">pytorch_eager_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-9">with measure_memory() as mem:
-    model = RFDETRSmall(device="cpu")
+    model = getattr(rfdetr, MODEL_CLASS)(device="cpu")
     baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
 pytorch_eager_memory_mb = mem.delta_mb
 print(f"PyTorch baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
@@ -4837,7 +4850,7 @@ of one dynamic-batch artifact resized at inference time.</p>
         <span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span>
         <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span>
         <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span>
-        <span class="n">output_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"rfdetr-small_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">output_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">MODEL_ID</span><span class="si">}</span><span class="s2">_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">),</span>
     <span class="p">)</span>
     <span class="n">stem</span> <span class="o">=</span> <span class="n">int8_path</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">removesuffix</span><span class="p">(</span><span class="s2">"_dynamic_range_quant.tflite"</span><span class="p">)</span>
@@ -4853,7 +4866,7 @@ for batch in BATCH_SIZES:
         format="tflite",
         quantization="int8",
         batch_size=batch,
-        output_name=f"rfdetr-small_b{batch}",
+        output_name=f"{MODEL_ID}_b{batch}",
         output_dir=str(EXPORT_DIR),
     )
     stem = int8_path.name.removesuffix("_dynamic_range_quant.tflite")
@@ -5484,6 +5497,7 @@ downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h3><p><code>WARMUP_RUNS</code> discards the first N inferences; <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch matrix every format below measures. <code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module.</p>
+<p><code>MODEL_SIZE</code> (nano, small, medium or large) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
 </div>
 </div>
 </div>
@@ -5517,9 +5531,15 @@ downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span><span class="p">,</span> <span class="n">RFDETRSmall</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium or large</span>
+<span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-24">import importlib.metadata
 import os
@@ -5532,9 +5552,15 @@ import psutil
 import torch
 from PIL import Image
 
-from rfdetr import RFDETRInference, RFDETRSmall
+import rfdetr
+from rfdetr import RFDETRInference
 from rfdetr.export._benchmark import cpu_brand, visualize_detections
-from rfdetr.export.benchmark import measure_latency, measure_memory</div>
+from rfdetr.export.benchmark import measure_latency, measure_memory
+
+MODEL_SIZE = "small"  # nano, small, medium or large
+TASK = "detection"  # "detection" or "segmentation"
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
+MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files</div>
 </div>
 </div>
 </div>
@@ -5688,7 +5714,7 @@ def record(
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fe1923cf">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1307deaa">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5832,7 +5858,7 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=32e15ae8">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=69c28592">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5843,7 +5869,7 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=802ab2d4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c54cf374">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5862,14 +5888,14 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
     <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="n">pytorch_eager_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-30">with measure_memory() as mem:
-    model = RFDETRSmall(device="cpu")
+    model = getattr(rfdetr, MODEL_CLASS)(device="cpu")
     baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
 pytorch_eager_memory_mb = mem.delta_mb
 print(f"PyTorch baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
@@ -5880,7 +5906,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b1109b9f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=ad02b033">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5891,7 +5917,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=74d0e446">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e693f555">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5948,7 +5974,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=30a87ae4">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=69173487">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5959,7 +5985,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c82e5463">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=42708ab2">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6050,13 +6076,13 @@ no keypoint model support on the current <code>litert-torch</code> version. See 
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">litert_paths</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
     <span class="n">litert_paths</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
-        <span class="nb">format</span><span class="o">=</span><span class="s2">"litert"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span> <span class="n">output_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"rfdetr-small_litert_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">)</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">"litert"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span> <span class="n">output_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">MODEL_ID</span><span class="si">}</span><span class="s2">_litert_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">)</span>
     <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-33">litert_paths: dict[int, Path] = {}
 for batch in BATCH_SIZES:
     litert_paths[batch] = model.export(
-        format="litert", batch_size=batch, output_name=f"rfdetr-small_litert_b{batch}", output_dir=str(EXPORT_DIR)
+        format="litert", batch_size=batch, output_name=f"{MODEL_ID}_litert_b{batch}", output_dir=str(EXPORT_DIR)
     )</div>
 </div>
 </div>
@@ -6064,7 +6090,7 @@ for batch in BATCH_SIZES:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=81ac9cd9">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b77bde4f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6075,7 +6101,7 @@ for batch in BATCH_SIZES:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=06e7755c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e67d8d7b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6231,7 +6257,7 @@ picking the single fastest runtime for one platform. See the
         <span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span>
         <span class="n">backend</span><span class="o">=</span><span class="s2">"xnnpack"</span><span class="p">,</span>
         <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span>
-        <span class="n">output_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"rfdetr-small_executorch_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">output_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">MODEL_ID</span><span class="si">}</span><span class="s2">_executorch_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
         <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">),</span>
     <span class="p">)</span>
 </pre></div>
@@ -6241,7 +6267,7 @@ for batch in BATCH_SIZES:
         format="executorch",
         backend="xnnpack",
         batch_size=batch,
-        output_name=f"rfdetr-small_executorch_b{batch}",
+        output_name=f"{MODEL_ID}_executorch_b{batch}",
         output_dir=str(EXPORT_DIR),
     )</div>
 </div>
@@ -6669,7 +6695,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 13:06:30 UTC">2026-11-09 13:06:30</span>
   </span>
 
     

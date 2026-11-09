@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-05T22:26:53">
+  <meta property="article:modified_time" content="2026-11-09T13:06:30">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-05T22:26:53",
+    "dateModified": "2026-11-09T13:06:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4106,6 +4106,7 @@ No CUDA guard needed — every format in this notebook runs on CPU. <code>measur
 the host resident-memory growth of constructing a runtime and running its first inference call.</p>
 <p>Every timed <code>rfdetr</code> <code>predict()</code> call passes <code>include_source_image=False</code>. <code>inference-models</code> returns no copy of the input image in its results, so <code>rfdetr</code> is timed without one too; with the default <code>True</code> it also copies each image into its results.</p>
 <p>Every timed call takes the same decoded RGB array, <code>frame</code>, as a camera or video decoder delivers it, so no row pays a JPEG decode or a PIL-to-array copy.</p>
+<p><code>MODEL_SIZE</code> (nano, small, medium or large) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
 </div>
 </div>
 </div>
@@ -4138,9 +4139,15 @@ the host resident-memory growth of constructing a runtime and running its first 
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">_artifact_size_mb</span><span class="p">,</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium or large</span>
+<span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
 
 <span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_cpu"</span><span class="p">)</span>
 <span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -4200,9 +4207,15 @@ import psutil
 import torch
 from PIL import Image
 
+import rfdetr
 from rfdetr import RFDETRInference
 from rfdetr.export._benchmark import _artifact_size_mb, cpu_brand, visualize_detections
 from rfdetr.export.benchmark import measure_latency, measure_memory
+
+MODEL_SIZE = "small"  # nano, small, medium or large
+TASK = "detection"  # "detection" or "segmentation"
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
+MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files
 
 EXPORT_DIR = Path("export_cpu")
 EXPORT_DIR.mkdir(exist_ok=True)
@@ -4524,19 +4537,15 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-
-<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
     <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="n">pytorch_eager_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">from rfdetr import RFDETRSmall
-
-with measure_memory() as mem:
-    model = RFDETRSmall(device="cpu")
+<div class="clipboard-copy-txt" id="cell-7">with measure_memory() as mem:
+    model = getattr(rfdetr, MODEL_CLASS)(device="cpu")
     baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
 pytorch_eager_memory_mb = mem.delta_mb
 print(f"PyTorch baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
@@ -5281,7 +5290,7 @@ benchmark_artifacts(
 <span class="w">    </span><span class="sd">"""Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""</span>
     <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">im_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span>
+            <span class="n">im_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL_ID</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span>
             <span class="n">detections</span> <span class="o">=</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">,</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
             <span class="n">im_models</span><span class="p">[(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">)]</span> <span class="o">=</span> <span class="n">im_model</span>
@@ -5314,7 +5323,7 @@ def benchmark_inference_models(format_label: str, config: Config, **load_kwargs)
     """Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""
     for batch in BATCH_SIZES:
         with measure_memory() as mem:
-            im_model = AutoModel.from_pretrained("rfdetr-small", **load_kwargs)
+            im_model = AutoModel.from_pretrained(MODEL_ID, **load_kwargs)
             detections = im_predict(im_model, [frame] * batch, CONFIDENCE_THRESHOLD)
         if batch == BATCH_SIZES[0]:
             im_models[(format_label, config)] = im_model
@@ -5946,7 +5955,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 22:26:53 UTC">2026-11-05 22:26:53</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 13:06:30 UTC">2026-11-09 13:06:30</span>
   </span>
 
     

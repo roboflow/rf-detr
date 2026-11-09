@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-06T13:51:09">
+  <meta property="article:modified_time" content="2026-11-09T13:06:30">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-06T13:51:09",
+    "dateModified": "2026-11-09T13:06:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1774,6 +1774,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Latency Across NVIDIA GPUs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#instance-segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance Segmentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3217,6 +3234,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Latency Across NVIDIA GPUs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#instance-segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance Segmentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3334,124 +3368,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>This writes <code>output/rfdetr-small_int8.trt</code> (next to the intermediate <code>output/rfdetr-small.onnx</code>). The export runs the first <code>max_images</code> (default <code>100</code>) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as <code>predict()</code> does, and records each quantized tensor's largest absolute value. For a detection model it makes two more passes: one to measure how wide each backbone LayerNorm output is per channel (so the widest channels can be folded into the weights that read them) and one to measure how much INT8 shifts each backbone MLP layer's mean output (subtracted from the layer's bias); see the <a href="#placement-rules">placement rules</a>.</p>
 <p>Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. <code>calibration_data</code> also accepts a <code>.npy</code> path or an array shaped <code>(N, C, H, W)</code>, already normalized the way <code>predict()</code> normalizes (an integer array of raw pixels is refused). <code>max_images</code> caps only a directory of images; an array or <code>.npy</code> file is used whole. Calibration runs the graph at the export's <code>batch_size</code>, so its host memory grows with the batch.</p>
 <h3 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h3>
-<p>The numbers come from <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a>, run on an RTX 5070 and a Tesla T4, both on TensorRT 11.4.0.106. Pick a GPU; each tab holds every model in one table.</p>
+<p>The numbers come from <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a>, run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The table holds every model.</p>
+<!-- COPIES: this table comes from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
+
 <ul>
 <li><strong>AP</strong> is scored at batch 1 on all 5000 <code>val2017</code> images, decoded the way <code>predict()</code> decodes. Detection uses box AP, segmentation mask AP, Keypoint Preview keypoint AP. Δ is INT8 minus FP16 in AP points.</li>
 <li><strong>Latency</strong> is GPU time per image at batch 1 with a CUDA graph (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved). It is engine-only time, not the end-to-end time of the <a href="#latency-across-nvidia-gpus">latency section</a> below. Speedup is FP16 ÷ INT8.</li>
-<li><strong>API:</strong> these tables do <strong>not</strong> go through <code>RFDETRInference</code>. Latency calls the raw TensorRT engine (<code>execute_async_v3</code>, replayed as a CUDA graph) from Section 8.1 of the cookbook, so it excludes preprocessing, postprocessing and <code>RFDETRInference</code> overhead. The RTX 5070 and Tesla T4 runs predate the current <code>RFDETRInference</code> and were not repeated through it. Treat the speedup ratios and AP deltas as the finding, and the absolute milliseconds as engine-only figures for those two machines. The end-to-end <code>RFDETRInference</code> figures are in <a href="#latency-across-nvidia-gpus">Latency Across NVIDIA GPUs</a>, which has no INT8 row.</li>
+<li><strong>Not the Benchmarks page:</strong> the T4 FP16 figures here (Nano 3.65 ms, Medium 6.96, Large 10.80) are about 1.6× the model-only T4 figures of the <a href="../../learn/benchmarks/">Benchmarks page</a> (2.3, 4.4, 6.8 ms). That page uses TensorRT 10.4 and a 200 ms pause between forward passes; these runs use TensorRT 11.4 and back-to-back executions on a Colab T4. Which of the two differences causes the gap was not isolated, so compare within a page.</li>
+<li><strong>API:</strong> these tables do <strong>not</strong> go through <code>RFDETRInference</code>. Latency calls the raw TensorRT engine (<code>execute_async_v3</code>, replayed as a CUDA graph) from Section 8.1 of the cookbook, so it excludes preprocessing, postprocessing and <code>RFDETRInference</code> overhead. The run predates the current <code>RFDETRInference</code> and was not repeated through it. Treat the speedup ratios and AP deltas as the finding, and the absolute milliseconds as engine-only figures for that machine. The end-to-end <code>RFDETRInference</code> figures are in <a href="#latency-across-nvidia-gpus">Latency Across NVIDIA GPUs</a>, which has no INT8 row.</li>
 <li><strong>Size</strong> is the engine file at batch 1. INT8 engines are calibrated on the first 128 <code>train2017</code> images by file name.</li>
 </ul>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">RTX 5070</label><label for="__tabbed_1_2">Tesla T4</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>AP, FP16</th>
-<th>AP, INT8</th>
-<th>Δ</th>
-<th>FP16 ms</th>
-<th>INT8 ms</th>
-<th>Speedup</th>
-<th>Size, FP16 → INT8</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Detection Nano</td>
-<td>48.02</td>
-<td>47.52</td>
-<td>−0.50</td>
-<td>0.883</td>
-<td>0.628</td>
-<td>1.41×</td>
-<td>62 → 38 MB</td>
-</tr>
-<tr>
-<td>Detection Small</td>
-<td>52.82</td>
-<td>52.35</td>
-<td>−0.47</td>
-<td>1.369</td>
-<td>1.030</td>
-<td>1.33×</td>
-<td>66 → 41 MB</td>
-</tr>
-<tr>
-<td>Detection Medium</td>
-<td>54.66</td>
-<td>54.00</td>
-<td>−0.66</td>
-<td>1.580</td>
-<td>1.262</td>
-<td>1.25×</td>
-<td>71 → 43 MB</td>
-</tr>
-<tr>
-<td>Detection Large</td>
-<td>56.53</td>
-<td>56.21</td>
-<td>−0.32</td>
-<td>1.961</td>
-<td>1.714</td>
-<td>1.14×</td>
-<td>68 → 49 MB</td>
-</tr>
-<tr>
-<td>Seg Nano</td>
-<td>40.09</td>
-<td>39.48</td>
-<td>−0.61</td>
-<td>1.227</td>
-<td>1.098</td>
-<td>1.12×</td>
-<td>69 → 51 MB</td>
-</tr>
-<tr>
-<td>Seg Small</td>
-<td>42.94</td>
-<td>41.98</td>
-<td>−0.97</td>
-<td>1.569</td>
-<td>1.272</td>
-<td>1.23×</td>
-<td>69 → 46 MB</td>
-</tr>
-<tr>
-<td>Seg Medium</td>
-<td>44.95</td>
-<td>43.93</td>
-<td>−1.01</td>
-<td>1.895</td>
-<td>1.608</td>
-<td>1.18×</td>
-<td>72 → 49 MB</td>
-</tr>
-<tr>
-<td>Seg Large</td>
-<td>46.44</td>
-<td>46.05</td>
-<td>−0.39</td>
-<td>2.350</td>
-<td>2.120</td>
-<td>1.11×</td>
-<td>73 → 54 MB</td>
-</tr>
-<tr>
-<td>Keypoint Preview</td>
-<td>71.77</td>
-<td>71.06</td>
-<td>−0.71</td>
-<td>3.177</td>
-<td>2.734</td>
-<td>1.16×</td>
-<td>81 → 61 MB</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div class="tabbed-block">
 <table>
 <thead>
 <tr>
@@ -3558,14 +3484,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-</div>
-</div>
-</div>
-<p>What the tables support:</p>
+<p>What the table supports:</p>
 <ul>
-<li>INT8 is faster than FP16 in every row (1.11× to 1.41× on the RTX 5070, 1.08× to 1.25× on the T4 at batch 1), loses at most 1.01 AP points, and the engine is 0.61× to 0.75× the FP16 size.</li>
-<li>The gain is largest where the backbone attention runs in INT8 (detection Nano, Small, Medium; Seg Small and Medium on the RTX 5070). On the T4 that split is weak for segmentation, and the cause was not measured.</li>
-<li>Batches 4 and 8 give similar speedups (up to 1.42× on the RTX 5070, 1.41× on the T4), and a plain call (no CUDA graph) is within 0.05× of the graph figure. The cookbook prints all of them.</li>
+<li>INT8 is faster than FP16 in every row (1.08× to 1.25× at batch 1), loses at most 0.97 AP points, and the engine is 0.61× to 0.74× the FP16 size.</li>
+<li>The gain is largest for detection Nano, Small and Medium (1.17× to 1.25×), where the backbone attention runs in INT8. Segmentation gains 1.08× to 1.10×; the cause of the weaker segmentation gain was not measured.</li>
+<li>Batches 4 and 8 give similar speedups (up to 1.41×), and a plain call (no CUDA graph) is within 0.05× of the graph figure. The cookbook prints all of them.</li>
 <li>The FP16 engine grows with the batch on the T4 (Detection Large: 70 MB at batch 1, 111 MB at batch 8) while the INT8 engine stays within a few MB. Engine size also depends on the GPU and TensorRT version, so use these as ratios.</li>
 </ul>
 <h3 id="placement-rules">Placement rules<a class="headerlink" href="#placement-rules" title="Permanent link">&para;</a></h3>
@@ -3575,7 +3498,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>FP16:</strong> the projector, the two-stage proposal head, the detection heads, the mask head and the keypoint heads (quantizing them cost accuracy or speed and bought nothing), plus the attention blocks below.</li>
 <li><strong>The patch embedding is a matrix multiply.</strong> TensorRT cannot run the 3-channel patch convolution in INT8 without padding its input to 32 channels and storing the zeros in the engine, growing it with the batch. So every convolution whose input channels are not a multiple of 32 stays FP16, and the export rewrites the patch embedding as a matrix multiply, which has nothing to pad. The detection models' 768-value patches are a multiple of 32 and run INT8. The segmentation and keypoint models' 432-value patches are not, so their matrix multiply stays FP16 (as INT8 it was no faster and less accurate). Other patch sizes that are not a multiple of 32, such as 14 pixels (588 values), take the same FP16 path and were not measured.</li>
 <li><strong>Detection backbone norms are smoothed (<a href="https://arxiv.org/abs/2211.10438">SmoothQuant</a>).</strong> One INT8 step per LayerNorm output is set by its widest channels. The export divides each channel of the norm's scale and bias by a factor measured on the calibration images and multiplies the matching rows of the projections that read it. The outputs are the same and the engine has no extra layer.</li>
-<li><strong>Detection backbone MLP biases are corrected.</strong> Rounding a layer's input to INT8 shifts the mean of its output, most of all for the one-sided GELU output the second MLP projection reads. The export measures that shift per output channel and subtracts it from the bias. Together the two steps cut the box AP lost at batch 1 on the RTX 5070 from 0.66, 0.71, 0.94 and 0.60 points to 0.50, 0.47, 0.66 and 0.32 (Nano to Large), at the same latency and size. Keep any new op off the GELU → second-projection path: on TensorRT 11.4 even a no-op subtraction there changed the fusion and cost more AP than the whole INT8 plan.</li>
+<li><strong>Detection backbone MLP biases are corrected.</strong> Rounding a layer's input to INT8 shifts the mean of its output, most of all for the one-sided GELU output the second MLP projection reads. The export measures that shift per output channel and subtracts it from the bias. On an RTX 5070 (a measurement not repeated on the table above) the two steps cut the box AP lost at batch 1 from 0.66, 0.71, 0.94 and 0.60 points to 0.50, 0.47, 0.66 and 0.32 (Nano to Large), at the same latency and size. Keep any new op off the GELU → second-projection path: on TensorRT 11.4 even a no-op subtraction there changed the fusion and cost more AP than the whole INT8 plan.</li>
 <li><strong>Attention is all INT8 or all FP16.</strong> A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, fused into one INT8 attention kernel. That covers the windowed blocks of detection Nano (145 tokens), Small (257) and Medium (325), and Seg Small (257) and Seg Medium (325). Detection Large (485), Seg Large (442), Keypoint Preview (577) and Seg Nano (677) keep attention in FP16: INT8 was no faster or less accurate at 442 to 485 tokens and much slower above the fused kernel's 512. Windows of 326 to 484 tokens that are not listed were not measured and stay FP16, as do global blocks and the decoder self-attention. A windowed block has <code>(resolution / patch_size / num_windows)² + 1</code> tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.</li>
 </ul>
 <h3 id="requirements-and-limits">Requirements and limits<a class="headerlink" href="#requirements-and-limits" title="Permanent link">&para;</a></h3>
@@ -3583,7 +3506,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Detection, segmentation and keypoint models. The smoothing and bias correction apply to detection models only. <code>RFDETRSegXLarge</code>, <code>RFDETRSeg2XLarge</code> and the <code>rfdetr_plus</code> detection models are accepted but were not measured. <code>backbone_only=True</code> is refused with <code>ValueError</code>.</li>
 <li>A static batch (<code>dynamic_batch=True</code> is refused), <code>fp16=True</code>, and TensorRT 10 or newer. The batch is fixed when you build the engine.</li>
 <li>All tables above were measured on TensorRT 11.4. The detection placement without the patch-embedding matrix multiply was also checked on 10.16 and 11.3; the segmentation and keypoint models only on 11.4, and other releases from 10 on are accepted but untested.</li>
-<li>Only an RTX 5070 (sm_120) and a Tesla T4 (sm_75) were measured for engine-only speed, and only without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>. Those settings are accepted with <code>quantization="int8"</code>, but a portable engine may not get the fused INT8 attention kernel the speedup relies on.</li>
+<li>Only a Tesla T4 (sm_75) was measured for engine-only speed (the end-to-end INT8 rows of <a href="#latency-across-nvidia-gpus">Latency Across NVIDIA GPUs</a> also cover the L4, A100 and RTX PRO 6000), and only without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>. Those settings are accepted with <code>quantization="int8"</code>, but a portable engine may not get the fused INT8 attention kernel the speedup relies on.</li>
 <li>The fused INT8 attention kernel is listed by NVIDIA for sm_75 to sm_90, sm_120 and sm_121. On other GPUs (for example sm_100, B200) attention would run unfused, so measure before deploying.</li>
 </ul>
 <div class="admonition note">
@@ -3591,53 +3514,71 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The <code>.trt</code> engine produced by <code>format="tensorrt"</code> is a standalone artifact, loaded with <code>RFDETRInference</code> or raw TensorRT. By default it is locked to the GPU architecture and TensorRT version of the machine that built it; see <a href="#portable-engines">Portable Engines</a> for options that widen that.</p>
 </div>
 <h2 id="latency-across-nvidia-gpus">Latency Across NVIDIA GPUs<a class="headerlink" href="#latency-across-nvidia-gpus" title="Permanent link">&para;</a></h2>
-<p>The same end-to-end measurement for the four detection sizes on four GPUs, from the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>. All ran <code>rfdetr</code> 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to <code>sv.Detections</code>, and passes <code>include_source_image=False</code>.</p>
+<p>The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same <code>RFDETRInference</code> calls as the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>, which times one size per run, set by <code>MODEL_SIZE</code>. Its Section 8 subsection <em>Batch 1, 4 and 8, end to end</em> reproduces the <code>.trt</code> FP16 and INT8 rows, with one static engine per batch size. All ran <code>rfdetr</code> 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to <code>sv.Detections</code>, and passes <code>include_source_image=False</code>.</p>
+<p>Routes (the letter is how the <a href="../#fastest-route-across-nvidia-gpus">fastest-route tables</a> name a route):</p>
 <ul>
-<li><strong>Routes:</strong> <code>inference()</code> graph = <code>model.inference()</code> with fp16 and a captured CUDA graph; <code>.trt</code> = a static FP16 engine from <code>RFDETR.export(format="tensorrt")</code> loaded by <code>RFDETRInference</code>.</li>
-<li><strong>Latency only.</strong> No accuracy was scored and INT8 engines are left out, because no harness in the repository reproduces their end-to-end figures. INT8 results are in <a href="#results">Results</a> (engine-only time, so they are not comparable with these).</li>
-<li>Latency is batch 1 in ms (lower is better); throughput is batch 8 in img/s (higher is better).</li>
+<li><strong>C</strong>, <code>inference()</code> graph, FP16: <code>model.inference()</code> with fp16 and a captured CUDA graph.</li>
+<li><strong>F</strong>, <code>.trt</code> engine, FP16: a static engine from <code>RFDETR.export(format="tensorrt")</code>, loaded by <code>RFDETRInference</code>.</li>
+<li><strong>I</strong>, <code>.trt</code> engine, INT8: the same export with <code>quantization="int8"</code> and calibration images.</li>
+<li><strong>M</strong>, managed engine: the TensorRT package that <code>inference-models</code> selects itself, so its precision is not set here. <code>no engine</code> means <code>inference-models</code> 0.39.8 selected none (<code>NoModelPackagesAvailableError</code>).</li>
+<li>
+<p><strong>FP32</strong>: a <code>.trt</code> engine with <code>fp16=False</code>. It has no letter and is only in the <a href="./#latency-across-nvidia-gpus">per-GPU tabs</a>, because it is never the fastest.</p>
+</li>
+<li>
+<p><strong>Latency only.</strong> No accuracy was scored; the INT8 accuracy is in <a href="#results">Results</a>, whose latency is engine-only time and so not comparable with these tables.</p>
+</li>
+<li>Each cell is <code>latency (throughput)</code>, for example <code>5.12 ms (334 img/s)</code>: latency in ms at <strong>batch 1</strong>, throughput in img/s at <strong>batch 8</strong>. Lower latency is better, higher throughput is better, so the two numbers move in opposite directions.</li>
 </ul>
-<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Tesla T4</label><label for="__tabbed_2_2">NVIDIA L4</label><label for="__tabbed_2_3">A100</label><label for="__tabbed_2_4">RTX PRO 6000</label></div>
+<!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt INT8). Update all of them together. -->
+
+<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Tesla T4</label><label for="__tabbed_1_2">NVIDIA L4</label><label for="__tabbed_1_3">A100</label><label for="__tabbed_1_4">RTX PRO 6000</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <table>
 <thead>
 <tr>
-<th>Size</th>
-<th>Graph, ms</th>
-<th><code>.trt</code>, ms</th>
-<th>Graph, img/s</th>
-<th><code>.trt</code>, img/s</th>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Nano</td>
-<td>5.36</td>
-<td>5.12</td>
-<td>276</td>
-<td>334</td>
+<td><code>inference()</code> graph, FP16</td>
+<td>5.36 ms (276 img/s)</td>
+<td>7.66 ms (160 img/s)</td>
+<td>9.47 ms (119 img/s)</td>
+<td>13.15 ms (82 img/s)</td>
 </tr>
 <tr>
-<td>Small</td>
-<td>7.66</td>
-<td>6.21</td>
-<td>160</td>
-<td>197</td>
+<td><code>.trt</code> engine, FP32</td>
+<td>12.34 ms (89 img/s)</td>
+<td>25.62 ms (39 img/s)</td>
+<td>33.27 ms (28 img/s)</td>
+<td>56.03 ms (18 img/s)</td>
 </tr>
 <tr>
-<td>Medium</td>
-<td>9.47</td>
-<td>7.20</td>
-<td>119</td>
-<td>149</td>
+<td><code>.trt</code> engine, FP16</td>
+<td>5.12 ms (334 img/s)</td>
+<td>6.21 ms (197 img/s)</td>
+<td>7.20 ms (149 img/s)</td>
+<td>10.86 ms (98 img/s)</td>
 </tr>
 <tr>
-<td>Large</td>
-<td>13.15</td>
-<td>10.86</td>
-<td>82</td>
-<td>98</td>
+<td><code>.trt</code> engine, INT8</td>
+<td>4.90 ms (386 img/s)</td>
+<td>6.10 ms (223 img/s)</td>
+<td>7.02 ms (165 img/s)</td>
+<td>11.45 ms (80 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>5.20 ms (271 img/s)</td>
+<td>5.89 ms (191 img/s)</td>
+<td>7.35 ms (153 img/s)</td>
+<td>10.22 ms (99 img/s)</td>
 </tr>
 </tbody>
 </table>
@@ -3646,41 +3587,48 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <table>
 <thead>
 <tr>
-<th>Size</th>
-<th>Graph, ms</th>
-<th><code>.trt</code>, ms</th>
-<th>Graph, img/s</th>
-<th><code>.trt</code>, img/s</th>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Nano</td>
-<td>2.78</td>
-<td>3.25</td>
-<td>596</td>
-<td>724</td>
+<td><code>inference()</code> graph, FP16</td>
+<td>2.78 ms (596 img/s)</td>
+<td>3.60 ms (324 img/s)</td>
+<td>4.52 ms (256 img/s)</td>
+<td>5.64 ms (170 img/s)</td>
 </tr>
 <tr>
-<td>Small</td>
-<td>3.60</td>
-<td>3.57</td>
-<td>324</td>
-<td>432</td>
+<td><code>.trt</code> engine, FP32</td>
+<td>6.32 ms (217 img/s)</td>
+<td>9.79 ms (100 img/s)</td>
+<td>13.49 ms (72 img/s)</td>
+<td>20.55 ms (43 img/s)</td>
 </tr>
 <tr>
-<td>Medium</td>
-<td>4.52</td>
-<td>4.13</td>
-<td>256</td>
-<td>349</td>
+<td><code>.trt</code> engine, FP16</td>
+<td>3.25 ms (724 img/s)</td>
+<td>3.57 ms (432 img/s)</td>
+<td>4.13 ms (349 img/s)</td>
+<td>5.14 ms (227 img/s)</td>
 </tr>
 <tr>
-<td>Large</td>
-<td>5.64</td>
-<td>5.14</td>
-<td>170</td>
-<td>227</td>
+<td><code>.trt</code> engine, INT8</td>
+<td>2.92 ms (809 img/s)</td>
+<td>3.45 ms (516 img/s)</td>
+<td>4.10 ms (406 img/s)</td>
+<td>4.72 ms (272 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>3.22 ms (466 img/s)</td>
+<td>3.70 ms (355 img/s)</td>
+<td>4.23 ms (286 img/s)</td>
+<td>5.18 ms (216 img/s)</td>
 </tr>
 </tbody>
 </table>
@@ -3689,41 +3637,48 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <table>
 <thead>
 <tr>
-<th>Size</th>
-<th>Graph, ms</th>
-<th><code>.trt</code>, ms</th>
-<th>Graph, img/s</th>
-<th><code>.trt</code>, img/s</th>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Nano</td>
-<td>3.16</td>
-<td>3.29</td>
-<td>877</td>
-<td>967</td>
+<td><code>inference()</code> graph, FP16</td>
+<td>3.16 ms (877 img/s)</td>
+<td>3.62 ms (688 img/s)</td>
+<td>3.80 ms (590 img/s)</td>
+<td>4.27 ms (457 img/s)</td>
 </tr>
 <tr>
-<td>Small</td>
-<td>3.62</td>
-<td>3.44</td>
-<td>688</td>
-<td>783</td>
+<td><code>.trt</code> engine, FP32</td>
+<td>5.72 ms (340 img/s)</td>
+<td>7.56 ms (212 img/s)</td>
+<td>9.13 ms (167 img/s)</td>
+<td>12.28 ms (111 img/s)</td>
 </tr>
 <tr>
-<td>Medium</td>
-<td>3.80</td>
-<td>4.22</td>
-<td>590</td>
-<td>676</td>
+<td><code>.trt</code> engine, FP16</td>
+<td>3.29 ms (967 img/s)</td>
+<td>3.44 ms (783 img/s)</td>
+<td>4.22 ms (676 img/s)</td>
+<td>4.35 ms (558 img/s)</td>
 </tr>
 <tr>
-<td>Large</td>
-<td>4.27</td>
-<td>4.35</td>
-<td>457</td>
-<td>558</td>
+<td><code>.trt</code> engine, INT8</td>
+<td>3.40 ms (924 img/s)</td>
+<td>3.69 ms (760 img/s)</td>
+<td>4.06 ms (674 img/s)</td>
+<td>4.34 ms (563 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
 </tr>
 </tbody>
 </table>
@@ -3732,41 +3687,48 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <table>
 <thead>
 <tr>
-<th>Size</th>
-<th>Graph, ms</th>
-<th><code>.trt</code>, ms</th>
-<th>Graph, img/s</th>
-<th><code>.trt</code>, img/s</th>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Nano</td>
-<td>1.54</td>
-<td>1.47</td>
-<td>1976</td>
-<td>2271</td>
+<td><code>inference()</code> graph, FP16</td>
+<td>1.54 ms (1976 img/s)</td>
+<td>1.83 ms (1381 img/s)</td>
+<td>1.95 ms (1262 img/s)</td>
+<td>2.20 ms (984 img/s)</td>
 </tr>
 <tr>
-<td>Small</td>
-<td>1.83</td>
-<td>1.62</td>
-<td>1381</td>
-<td>1782</td>
+<td><code>.trt</code> engine, FP32</td>
+<td>2.70 ms (1071 img/s)</td>
+<td>3.40 ms (607 img/s)</td>
+<td>3.64 ms (481 img/s)</td>
+<td>4.77 ms (282 img/s)</td>
 </tr>
 <tr>
-<td>Medium</td>
-<td>1.95</td>
-<td>1.76</td>
-<td>1262</td>
-<td>1608</td>
+<td><code>.trt</code> engine, FP16</td>
+<td>1.47 ms (2271 img/s)</td>
+<td>1.62 ms (1782 img/s)</td>
+<td>1.76 ms (1608 img/s)</td>
+<td>2.08 ms (1249 img/s)</td>
 </tr>
 <tr>
-<td>Large</td>
-<td>2.20</td>
-<td>2.08</td>
-<td>984</td>
-<td>1249</td>
+<td><code>.trt</code> engine, INT8</td>
+<td>1.37 ms (2563 img/s)</td>
+<td>1.57 ms (1916 img/s)</td>
+<td>1.73 ms (1694 img/s)</td>
+<td>1.92 ms (1362 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
 </tr>
 </tbody>
 </table>
@@ -3775,15 +3737,232 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <p>What the tables support:</p>
 <ul>
-<li><strong>At batch 8 the <code>.trt</code> FP16 engine is the fastest route on every GPU and size.</strong></li>
-<li><strong>At batch 1 the routes are close on most rows</strong>, so the choice matters little for single-image latency. The CUDA graph is fastest on L4 Nano and on A100 Nano, Medium and Large, and 1.2× to 1.3× slower than a <code>.trt</code> engine on T4 Small to Large.</li>
+<li><strong>At batch 8 a <code>.trt</code> engine is the fastest route on 15 of 16 cells:</strong> INT8 on 12, FP16 on 3 (A100 Nano, Small and Medium). The managed engine leads only T4 Large, 99 against 98 img/s.</li>
+<li><strong>At batch 1 the routes are close and no route wins everywhere.</strong> The fastest is the INT8 <code>.trt</code> engine on 9 of 16 cells, the CUDA graph on 4 (L4 Nano, A100 Nano, Medium and Large), the managed engine on 2 (T4 Small and Large) and the FP16 <code>.trt</code> engine on 1 (A100 Small). The CUDA graph is 1.2× to 1.3× slower than the FP16 <code>.trt</code> engine on T4 Small to Large.</li>
 <li><strong>Batch 1 does not scale with GPU size.</strong> The RTX PRO 6000 is 2.2× to 2.5× faster than the L4 for the FP16 <code>.trt</code> engine (Nano: 1.47 against 3.25 ms), yet the A100 is slower than the L4 for Nano (3.16 against 2.78 ms, both CUDA graph). The likely cause is the host share of the call, which was not measured.</li>
+<li><strong>Static INT8 gains little end to end.</strong> At <strong>batch 1</strong> the INT8 engine is within 11% of the FP16 one, and slower on A100 Nano and Small (3.40 against 3.29 ms, 3.69 against 3.44 ms) and on T4 Large (11.45 against 10.86 ms). The T4 engine-only gains above are 1.17× to 1.25× for Nano to Medium, against 1.02× to 1.05× end to end on the same GPU, because host preprocessing and postprocessing are the same for both engines. At <strong>batch 8</strong> the host share is smaller and INT8 is faster on every GPU except the A100 (Nano 924 against 967 img/s, Small 760 against 783, Medium level). Large keeps its attention in FP16 (see <a href="#placement-rules">Placement rules</a>) but still runs its patch embedding and MLPs in INT8: 4.72 against 5.14 ms on the L4 and 1.92 against 2.08 ms on the RTX PRO 6000.</li>
+<li><strong>FP32 is not a serving option.</strong> The FP32 <code>.trt</code> engine is 1.7× to 5.2× slower than FP16 at <strong>batch 1</strong> and 2.1× to 5.4× at <strong>batch 8</strong> across all four GPUs and sizes. Use it only as a numerical reference.</li>
 <li><strong>Pass an array, not a PIL image.</strong> <code>predict()</code> first copies a PIL image into a NumPy array, so pass <code>np.array(image)</code> or a file path when latency matters. Most of the time above the engine itself is host preprocessing and postprocessing.</li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Not comparable with other figures</p>
 <p>These times include preprocessing and postprocessing on the host. They are not the engine-only times of the INT8 results above, and not the 8.3 ms TensorRT and 12.9 ms ONNX figures on Roboflow's model page, whose timing scope is not stated.</p>
+<p>The managed engine row needs <code>inference-models</code>: version 0.39.8 selected no engine for any size on the A100 and RTX PRO 6000 (<code>NoModelPackagesAvailableError</code>), so those cells are empty.</p>
 </div>
+<h3 id="instance-segmentation">Instance Segmentation<a class="headerlink" href="#instance-segmentation" title="Permanent link">&para;</a></h3>
+<p>The same measurement for the four instance segmentation sizes (<code>RFDETRSeg*</code>) on the same four GPUs, one run per GPU with 20 warmup and 100 timed runs. The A100 here is the 40 GB part, and the RTX PRO 6000 ran PyTorch 2.14.1 with CUDA 13.0; the other GPUs ran PyTorch 2.15.0 with CUDA 13.2. Each call returns masks, so the times include decoding them on the host and are not comparable with the detection tables above. Latency only: no mask AP was scored. Cells and the INT8 speedup read as in the detection tabs above.</p>
+<!-- COPIES: none yet. If these tables are copied elsewhere, list the copy here and in the copy. -->
+
+<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Tesla T4</label><label for="__tabbed_2_2">NVIDIA L4</label><label for="__tabbed_2_3">A100</label><label for="__tabbed_2_4">RTX PRO 6000</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inference()</code> graph, FP16</td>
+<td>8.62 ms (132 img/s)</td>
+<td>11.01 ms (94 img/s)</td>
+<td>14.56 ms (66 img/s)</td>
+<td>20.08 ms (51 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP32</td>
+<td>23.37 ms (43 img/s)</td>
+<td>30.39 ms (35 img/s)</td>
+<td>42.24 ms (25 img/s)</td>
+<td>61.13 ms (17 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP16</td>
+<td>6.60 ms (191 img/s)</td>
+<td>8.29 ms (144 img/s)</td>
+<td>10.09 ms (109 img/s)</td>
+<td>13.45 ms (80 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, INT8</td>
+<td>7.23 ms (178 img/s)</td>
+<td>8.70 ms (145 img/s)</td>
+<td>11.18 ms (101 img/s)</td>
+<td>14.50 ms (75 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>21.83 ms (57 img/s)</td>
+<td>22.10 ms (52 img/s)</td>
+<td>26.88 ms (42 img/s)</td>
+<td>27.58 ms (36 img/s)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inference()</code> graph, FP16</td>
+<td>4.19 ms (322 img/s)</td>
+<td>4.74 ms (218 img/s)</td>
+<td>5.93 ms (163 img/s)</td>
+<td>7.16 ms (124 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP32</td>
+<td>9.35 ms (104 img/s)</td>
+<td>11.29 ms (79 img/s)</td>
+<td>16.15 ms (57 img/s)</td>
+<td>23.06 ms (37 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP16</td>
+<td>4.32 ms (367 img/s)</td>
+<td>4.51 ms (275 img/s)</td>
+<td>5.29 ms (212 img/s)</td>
+<td>6.27 ms (155 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, INT8</td>
+<td>4.38 ms (363 img/s)</td>
+<td>4.50 ms (267 img/s)</td>
+<td>5.38 ms (201 img/s)</td>
+<td>6.39 ms (152 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>15.43 ms (71 img/s)</td>
+<td>16.45 ms (63 img/s)</td>
+<td>19.04 ms (57 img/s)</td>
+<td>20.91 ms (50 img/s)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inference()</code> graph, FP16</td>
+<td>3.98 ms (463 img/s)</td>
+<td>4.31 ms (405 img/s)</td>
+<td>4.74 ms (363 img/s)</td>
+<td>5.41 ms (294 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP32</td>
+<td>7.76 ms (213 img/s)</td>
+<td>8.85 ms (169 img/s)</td>
+<td>10.87 ms (134 img/s)</td>
+<td>13.51 ms (100 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP16</td>
+<td>4.15 ms (518 img/s)</td>
+<td>4.26 ms (455 img/s)</td>
+<td>4.60 ms (431 img/s)</td>
+<td>4.97 ms (370 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, INT8</td>
+<td>4.31 ms (487 img/s)</td>
+<td>4.59 ms (429 img/s)</td>
+<td>5.14 ms (391 img/s)</td>
+<td>5.51 ms (338 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Nano</th>
+<th>Small</th>
+<th>Medium</th>
+<th>Large</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inference()</code> graph, FP16</td>
+<td>2.03 ms (1173 img/s)</td>
+<td>2.20 ms (961 img/s)</td>
+<td>2.56 ms (859 img/s)</td>
+<td>2.69 ms (687 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP32</td>
+<td>3.67 ms (633 img/s)</td>
+<td>3.96 ms (471 img/s)</td>
+<td>4.23 ms (359 img/s)</td>
+<td>5.22 ms (242 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, FP16</td>
+<td>1.90 ms (1381 img/s)</td>
+<td>2.06 ms (1184 img/s)</td>
+<td>2.18 ms (1080 img/s)</td>
+<td>2.38 ms (838 img/s)</td>
+</tr>
+<tr>
+<td><code>.trt</code> engine, INT8</td>
+<td>1.99 ms (1368 img/s)</td>
+<td>1.91 ms (1231 img/s)</td>
+<td>2.08 ms (1031 img/s)</td>
+<td>2.29 ms (845 img/s)</td>
+</tr>
+<tr>
+<td>Managed engine, auto precision</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
+<td>no engine</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<ul>
+<li><strong>Static INT8 does not speed up segmentation end to end.</strong> At <strong>batch 1</strong> the INT8 engine is within 10% of the FP16 one and slower on 12 of 16 cells. Only Seg Small and Seg Medium get INT8 attention; Seg Nano and Seg Large keep it FP16 (see <a href="#placement-rules">Placement rules</a>). So use the FP16 engine.</li>
+<li><strong>The FP32 <code>.trt</code> engine is 1.9× to 4.6× slower than FP16</strong> at <strong>batch 1</strong> and 2.2× to 4.7× at <strong>batch 8</strong>.</li>
+<li><strong>At batch 8 a <code>.trt</code> engine is the fastest route on every GPU and size.</strong> FP16 leads on 13 of 16 rows; INT8 is ahead by at most 4% on T4 Small, RTX PRO 6000 Small and RTX PRO 6000 Large.</li>
+<li><strong>The managed <code>inference-models</code> engine is the slowest route.</strong> On the T4 and L4 it is about 2× to 4× the <code>.trt</code> engine at <strong>batch 1</strong>.</li>
+</ul>
 <h2 id="predict-with-rfdetrinference">Predict with RFDETRInference<a class="headerlink" href="#predict-with-rfdetrinference" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
@@ -3938,7 +4117,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 6, 2026 13:51:09 UTC">2026-11-06 13:51:09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 13:06:30 UTC">2026-11-09 13:06:30</span>
   </span>
 
     

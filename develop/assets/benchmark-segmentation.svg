@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1000" viewBox="0 0 2000 1000" role="img" aria-labelledby="title description">
+<title id="title">Instance segmentation accuracy vs latency: RF-DETR-Seg, YOLO26, YOLOv8, YOLOv11</title>
+<desc id="description">Two panels: COCO mask mAP@50 and mAP@50:95 against T4 TensorRT FP16 batch-1 latency in milliseconds. Values are listed in the benchmark tables.</desc>
+<rect width="2000" height="1000" fill="#ffffff"/>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<text x="535.0" y="30" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Instance Segmentation (MS COCO)</text>
+<rect x="90" y="50" width="890" height="870" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M131.4 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="131.4" y="948" text-anchor="middle" font-size="20" fill="#262626">2.5</text>
+<path d="M234.9 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="234.9" y="948" text-anchor="middle" font-size="20" fill="#262626">5</text>
+<path d="M338.4 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="338.4" y="948" text-anchor="middle" font-size="20" fill="#262626">7.5</text>
+<path d="M441.9 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="441.9" y="948" text-anchor="middle" font-size="20" fill="#262626">10</text>
+<path d="M545.3 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="545.3" y="948" text-anchor="middle" font-size="20" fill="#262626">12.5</text>
+<path d="M648.8 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="648.8" y="948" text-anchor="middle" font-size="20" fill="#262626">15</text>
+<path d="M752.3 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="752.3" y="948" text-anchor="middle" font-size="20" fill="#262626">17.5</text>
+<path d="M855.8 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="855.8" y="948" text-anchor="middle" font-size="20" fill="#262626">20</text>
+<path d="M959.3 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="959.3" y="948" text-anchor="middle" font-size="20" fill="#262626">22.5</text>
+<path d="M90 891.9H980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="898.9" text-anchor="end" font-size="20" fill="#262626">45</text>
+<path d="M90 751.6H980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="758.6" text-anchor="end" font-size="20" fill="#262626">50</text>
+<path d="M90 611.3H980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="618.3" text-anchor="end" font-size="20" fill="#262626">55</text>
+<path d="M90 471.0H980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="478.0" text-anchor="end" font-size="20" fill="#262626">60</text>
+<path d="M90 330.6H980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="337.6" text-anchor="end" font-size="20" fill="#262626">65</text>
+<path d="M90 190.3H980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="80" y="197.3" text-anchor="end" font-size="20" fill="#262626">70</text>
+<text x="535.0" y="982" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="24" y="485.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 24 485.0)">MS COCO mAP@50</text>
+<clipPath id="c0-0"><rect x="78" y="38" width="914" height="894"/></clipPath>
+<g clip-path="url(#c0-0)">
+<polyline points="123.5,630.9 171.5,403.6 289.5,252.1 341.7,195.9 562.7,145.4" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="123.5" y="636.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="171.5" y="409.6" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="289.5" y="258.1" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="341.7" y="201.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="562.7" y="151.4" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="172.8,875.1 201.8,645.0 317.7,521.5 429.4,456.9 607.4,434.5" fill="none" stroke="#edc948" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="172.8" y="881.1" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="201.8" y="651.0" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="317.7" y="527.5" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="429.4" y="462.9" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="607.4" y="440.5" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<polyline points="176.9,813.4 218.3,600.1 313.5,471.0 371.5,428.9 595.0,403.6" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="176.9" y="819.4" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="218.3" y="606.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="313.5" y="477.0" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="371.5" y="434.9" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="595.0" y="409.6" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<polyline points="168.7,386.8 210.0,297.0 272.1,235.2 392.2,176.3 586.7,128.6 930.3,103.3" fill="none" stroke="#9467bd" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="168.7" y="392.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="210.0" y="303.0" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="272.1" y="241.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="392.2" y="182.3" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="586.7" y="134.6" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<text x="930.3" y="109.3" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">2XL</text>
+</g>
+<rect x="763" y="774" width="205" height="134" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
+<path d="M775 793H821" stroke="#9467bd" stroke-width="3.5" stroke-linecap="round"/>
+<text x="833" y="798" font-size="19" fill="#262626">RF-DETR-Seg</text>
+<path d="M775 823H821" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="833" y="828" font-size="19" fill="#262626">YOLOv11</text>
+<path d="M775 853H821" stroke="#edc948" stroke-width="3.5" stroke-linecap="round"/>
+<text x="833" y="858" font-size="19" fill="#262626">YOLOv8</text>
+<path d="M775 883H821" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="833" y="888" font-size="19" fill="#262626">YOLO26</text>
+</g>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<text x="1535.0" y="30" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Instance Segmentation (MS COCO)</text>
+<rect x="1090" y="50" width="890" height="870" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M1131.4 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1131.4" y="948" text-anchor="middle" font-size="20" fill="#262626">2.5</text>
+<path d="M1234.9 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1234.9" y="948" text-anchor="middle" font-size="20" fill="#262626">5</text>
+<path d="M1338.4 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1338.4" y="948" text-anchor="middle" font-size="20" fill="#262626">7.5</text>
+<path d="M1441.9 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1441.9" y="948" text-anchor="middle" font-size="20" fill="#262626">10</text>
+<path d="M1545.3 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1545.3" y="948" text-anchor="middle" font-size="20" fill="#262626">12.5</text>
+<path d="M1648.8 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1648.8" y="948" text-anchor="middle" font-size="20" fill="#262626">15</text>
+<path d="M1752.3 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1752.3" y="948" text-anchor="middle" font-size="20" fill="#262626">17.5</text>
+<path d="M1855.8 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1855.8" y="948" text-anchor="middle" font-size="20" fill="#262626">20</text>
+<path d="M1959.3 50V920" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1959.3" y="948" text-anchor="middle" font-size="20" fill="#262626">22.5</text>
+<path d="M1090 813.5H1980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1080" y="820.5" text-anchor="end" font-size="20" fill="#262626">30</text>
+<path d="M1090 635.9H1980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1080" y="642.9" text-anchor="end" font-size="20" fill="#262626">35</text>
+<path d="M1090 458.4H1980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1080" y="465.4" text-anchor="end" font-size="20" fill="#262626">40</text>
+<path d="M1090 280.8H1980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1080" y="287.8" text-anchor="end" font-size="20" fill="#262626">45</text>
+<path d="M1090 103.3H1980" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1080" y="110.3" text-anchor="end" font-size="20" fill="#262626">50</text>
+<text x="1535.0" y="982" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="1024" y="485.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 1024 485.0)">MS COCO mAP@50:95</text>
+<clipPath id="c1000-0"><rect x="1078" y="38" width="914" height="894"/></clipPath>
+<g clip-path="url(#c1000-0)">
+<polyline points="1123.5,646.6 1171.5,451.3 1289.5,316.3 1341.7,263.1 1562.7,216.9" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1123.5" y="652.6" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1171.5" y="457.3" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1289.5" y="322.3" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1341.7" y="269.1" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1562.7" y="222.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<polyline points="1172.8,873.8 1201.8,671.4 1317.7,554.2 1429.4,493.9 1607.4,476.1" fill="none" stroke="#edc948" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1172.8" y="879.8" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1201.8" y="677.4" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1317.7" y="560.2" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1429.4" y="499.9" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1607.4" y="482.1" text-anchor="middle" font-size="17" font-weight="700" fill="#edc948" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<polyline points="1176.9,813.5 1218.3,635.9 1313.5,511.6 1371.5,476.1 1595.0,454.8" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1176.9" y="819.5" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1218.3" y="641.9" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1313.5" y="517.6" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1371.5" y="482.1" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1595.0" y="460.8" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<polyline points="1168.7,447.7 1210.0,348.3 1272.1,270.2 1392.2,206.2 1586.7,145.9 1930.3,106.8" fill="none" stroke="#9467bd" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1168.7" y="453.7" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="1210.0" y="354.3" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="1272.1" y="276.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1392.2" y="212.2" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1586.7" y="151.9" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">XL</text>
+<text x="1930.3" y="112.8" text-anchor="middle" font-size="17" font-weight="700" fill="#9467bd" stroke="#fff" stroke-width="4" paint-order="stroke">2XL</text>
+</g>
+<rect x="1763" y="774" width="205" height="134" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
+<path d="M1775 793H1821" stroke="#9467bd" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1833" y="798" font-size="19" fill="#262626">RF-DETR-Seg</text>
+<path d="M1775 823H1821" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1833" y="828" font-size="19" fill="#262626">YOLOv11</text>
+<path d="M1775 853H1821" stroke="#edc948" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1833" y="858" font-size="19" fill="#262626">YOLOv8</text>
+<path d="M1775 883H1821" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1833" y="888" font-size="19" fill="#262626">YOLO26</text>
+</g>
+</svg>

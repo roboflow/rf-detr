@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-06T13:51:09">
+  <meta property="article:modified_time" content="2026-11-09T13:06:30">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-06T13:51:09",
+    "dateModified": "2026-11-09T13:06:30",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3209,6 +3209,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
+  <a href="#batch-1-4-and-8-end-to-end" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch 1, 4 and 8, end to end
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#81-benchmark-for-the-docs-tables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4217,8 +4228,8 @@ loaded until a restart.</p>
 <code>WARMUP_RUNS</code> discards the first N inferences (GPU kernels are JIT-compiled on first use);
 <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch
 matrix every export format below measures — <code>(1, 4, 8)</code>, not a single number, so each export
-format contributes three rows to the final results table. A CUDA graph is captured for one batch size, so the CUDA Graph rows capture one predictor per batch. The static batch-1 FP16
-and INT8 engines of Section 8 have a table of their own.</p>
+format contributes three rows to the final results table. A CUDA graph is captured for one batch size, so the CUDA Graph rows capture one predictor per batch. The static FP16
+and INT8 engines of Section 8, one pair per batch size, have tables of their own.</p>
 <p><code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module;
 <code>measure_memory(device="cuda")</code> measures device-memory growth via <code>torch.cuda.mem_get_info()</code> —
 device-wide, so it also captures ONNX Runtime's CUDA execution provider and TensorRT's own
@@ -4227,6 +4238,7 @@ loaded with <code>RFDETRInference</code>, so it runs the same preprocessing, pos
 PyTorch rows. The installed <code>rfdetr</code> version is printed so the Results header can be filled from it.</p>
 <p>Every timed <code>rfdetr</code> <code>predict()</code> call passes <code>include_source_image=False</code>. <code>inference-models</code> returns no copy of the input image in its results, so <code>rfdetr</code> is timed without one too; with the default <code>True</code> it also copies each image into its results.</p>
 <p>Every timed call takes the same decoded RGB array, <code>frame</code>, as a camera or video decoder delivers it, so no row pays a JPEG decode or a PIL-to-array copy.</p>
+<p><code>MODEL_SIZE</code> (nano, small, medium or large) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
 </div>
 </div>
 </div>
@@ -4268,6 +4280,13 @@ PyTorch rows. The installed <code>rfdetr</code> version is printed so the Result
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rfdetr: </span><span class="si">{</span><span class="n">importlib</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="s1">'rfdetr'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr</span>
+
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium or large</span>
+<span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
+
 <span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_cuda"</span><span class="p">)</span>
 <span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="n">CONFIDENCE_THRESHOLD</span> <span class="o">=</span> <span class="mf">0.5</span>
@@ -4301,6 +4320,13 @@ if not torch.cuda.is_available():
     raise RuntimeError("This notebook requires a CUDA GPU; none is available.")
 print(f"GPU: {torch.cuda.get_device_name(0)}")
 print(f"rfdetr: {importlib.metadata.version('rfdetr')}")
+
+import rfdetr
+
+MODEL_SIZE = "small"  # nano, small, medium or large
+TASK = "detection"  # "detection" or "segmentation"
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
+MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files
 
 EXPORT_DIR = Path("export_cuda")
 EXPORT_DIR.mkdir(exist_ok=True)
@@ -4479,10 +4505,8 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-
 <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)()</span>
     <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="n">pytorch_fp32_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch fp32 baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
@@ -4555,10 +4579,8 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">from functools import partial
 
-from rfdetr import RFDETRSmall
-
 with measure_memory(device="cuda") as mem:
-    model = RFDETRSmall()
+    model = getattr(rfdetr, MODEL_CLASS)()
     baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
 pytorch_fp32_memory_mb = mem.delta_mb
 print(f"PyTorch fp32 baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
@@ -4892,7 +4914,7 @@ notebook can verify, only measure.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">BackendType</span>
 
 <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">trt_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">trt_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL_ID</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">trt_predictions</span> <span class="o">=</span> <span class="n">trt_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">),</span> <span class="n">confidence</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)</span>
 <span class="n">trt_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
 
@@ -4905,7 +4927,7 @@ notebook can verify, only measure.</p>
 <div class="clipboard-copy-txt" id="cell-10">from inference_models import AutoModel, BackendType
 
 with measure_memory(device="cuda") as mem:
-    trt_model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT, verbose=True)
+    trt_model = AutoModel.from_pretrained(MODEL_ID, backend=BackendType.TRT, verbose=True)
     trt_predictions = trt_model(np.array(image), confidence=CONFIDENCE_THRESHOLD, input_color_format="rgb")
 trt_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
 
@@ -5053,9 +5075,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">trt_fp32_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
-        <span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp32"</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span>
-    <span class="p">)</span>
+    <span class="n">trt_fp32_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL_ID</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp32"</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">trt_fp32_predictions</span> <span class="o">=</span> <span class="n">trt_fp32_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">),</span> <span class="n">confidence</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)</span>
 <span class="n">trt_fp32_memory_mb</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
 
@@ -5083,9 +5103,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-13">with measure_memory(device="cuda") as mem:
-    trt_fp32_model = AutoModel.from_pretrained(
-        "rfdetr-small", backend=BackendType.TRT, quantization="fp32", verbose=True
-    )
+    trt_fp32_model = AutoModel.from_pretrained(MODEL_ID, backend=BackendType.TRT, quantization="fp32", verbose=True)
     trt_fp32_predictions = trt_fp32_model(np.array(image), confidence=CONFIDENCE_THRESHOLD, input_color_format="rgb")
 trt_fp32_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
 
@@ -5344,7 +5362,7 @@ for batch in BATCH_SIZES:
 <span class="k">def</span><span class="w"> </span><span class="nf">benchmark_inference_models</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""</span>
     <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-        <span class="n">im_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span>
+        <span class="n">im_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">MODEL_ID</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span>
         <span class="n">detections</span> <span class="o">=</span> <span class="n">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="p">[</span><span class="n">frame</span><span class="p">],</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
     <span class="n">im_models</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">im_model</span>
     <span class="n">im_results</span><span class="p">[</span><span class="n">key</span><span class="p">],</span> <span class="n">im_memory_mb</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
@@ -5373,7 +5391,7 @@ im_memory_mb: dict[str, dict[int, float]] = {}
 def benchmark_inference_models(key: str, **load_kwargs) -&gt; None:
     """Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""
     with measure_memory(device="cuda") as mem:
-        im_model = AutoModel.from_pretrained("rfdetr-small", **load_kwargs)
+        im_model = AutoModel.from_pretrained(MODEL_ID, **load_kwargs)
         detections = im_predict(im_model, [frame], CONFIDENCE_THRESHOLD)
     im_models[key] = im_model
     im_results[key], im_memory_mb[key] = {}, {BATCH_SIZES[0]: mem.delta_mb}
@@ -5966,8 +5984,9 @@ Detection, segmentation and keypoint models; the batch is static (<code>dynamic_
 <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#int8">INT8 section of the TensorRT export docs</a> for what stays FP16 and why.</p>
 <p>Nothing here is assumed to be faster or accurate. Both engines below are exported for batch 1, timed the same way, and
 scored on the same COCO subset as Section 7, so the FP16 row is the baseline for the INT8 row. The calibration images are
-held out of the scored images, so a drop from the FP16 row is the quantization itself.</p>
-<p>This section is a quick check on one detection model, so you can measure INT8 on your own GPU: Small at batch 1,
+held out of the scored images, so a drop from the FP16 row is the quantization itself. The last subsection, <em>Batch 1, 4 and 8, end to end</em>,
+repeats the latency with one static FP16 and INT8 engine per batch size.</p>
+<p>This section is a quick check on the model chosen by <code>MODEL_SIZE</code> and <code>TASK</code>, so you can measure INT8 on your own GPU: batch 1,
 calibration on <code>N_CALIB</code> val2017 images held out of the scored images, scoring on a seeded subset of <code>N_EVAL</code> val2017
 images, and the mean of <code>MEASURE_RUNS</code> calls per runtime, FP16 then INT8 rather than interleaved. Expect the direction
 of the docs page's INT8 tables, not their numbers. <a href="#81-benchmark-for-the-docs-tables">Section 8.1</a> is the benchmark
@@ -6415,6 +6434,111 @@ print(f"INT8 speedup at batch 1: default call {default_speedup:.2f}x, CUDA graph
 </div>
 </div>
 </div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a8e1c5d2">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="batch-1-4-and-8-end-to-end">Batch 1, 4 and 8, end to end<a class="anchor-link" href="#batch-1-4-and-8-end-to-end">¶</a></h3><p>The docs page's latency tables across NVIDIA GPUs time the <code>.trt</code> engines end to end at batch 1 and 8. An INT8 engine has a
+static batch, so this cell exports one static FP16 and one static INT8 engine per batch in <code>BATCH_SIZES</code>, the INT8 ones
+calibrated on the same <code>CALIBRATION_DIR</code> as above, and times <code>predict()</code> on <code>batch</code> copies of the sample frame with the
+default call and <code>include_source_image=False</code>: <code>WARMUP_RUNS</code> warmup and <code>MEASURE_RUNS</code> timed calls, and throughput is the
+batch divided by the mean latency. Batch 1 reuses the engines exported above. Run it once per <code>MODEL_SIZE</code> on each GPU to
+reproduce the static <code>.trt</code> FP16 and INT8 rows of those tables; every INT8 build calibrates again, so each takes minutes.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b7f3e9a4">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-36">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trt_batch_engines</span> <span class="o">=</span> <span class="p">{(</span><span class="mi">1</span><span class="p">,</span> <span class="s2">"FP16"</span><span class="p">):</span> <span class="n">trt_fp16_b1_path</span><span class="p">,</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="s2">"INT8"</span><span class="p">):</span> <span class="n">trt_int8_path</span><span class="p">}</span>
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+    <span class="n">trt_batch_engines</span><span class="p">[</span><span class="n">batch</span><span class="p">,</span> <span class="s2">"FP16"</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">"trt"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"trt_fp16_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">trt_batch_engines</span><span class="p">[</span><span class="n">batch</span><span class="p">,</span> <span class="s2">"INT8"</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">"trt"</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch</span><span class="p">,</span>
+        <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span>
+        <span class="n">calibration_data</span><span class="o">=</span><span class="n">CALIBRATION_DIR</span><span class="p">,</span>
+        <span class="n">max_images</span><span class="o">=</span><span class="n">N_CALIB</span><span class="p">,</span>
+        <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"trt_int8_b</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">int8_name</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">trt_batch_engines</span><span class="p">[</span><span class="n">batch</span><span class="p">,</span> <span class="s2">"INT8"</span><span class="p">])</span><span class="o">.</span><span class="n">name</span>
+    <span class="k">assert</span> <span class="n">int8_name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">"_int8.trt"</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Expected an INT8 engine, got </span><span class="si">{</span><span class="n">int8_name</span><span class="si">}</span><span class="s2">"</span>
+
+<span class="n">trt_batch_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">trt_batch_engines</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="n">images_batch</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch</span>
+    <span class="n">predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">trt_batch_results</span><span class="p">[</span><span class="n">batch</span><span class="p">,</span> <span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">images_batch</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> default call batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+        <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+        <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">del</span> <span class="n">predictor</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">trt_batch_results</span><span class="p">[</span><span class="n">batch</span><span class="p">,</span> <span class="n">name</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> img/s)"</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-36">trt_batch_engines = {(1, "FP16"): trt_fp16_b1_path, (1, "INT8"): trt_int8_path}
+for batch in BATCH_SIZES[1:]:
+    trt_batch_engines[batch, "FP16"] = model.export(
+        format="trt", batch_size=batch, output_dir=str(EXPORT_DIR / f"trt_fp16_b{batch}")
+    )
+    trt_batch_engines[batch, "INT8"] = model.export(
+        format="trt",
+        batch_size=batch,
+        quantization="int8",
+        calibration_data=CALIBRATION_DIR,
+        max_images=N_CALIB,
+        output_dir=str(EXPORT_DIR / f"trt_int8_b{batch}"),
+    )
+    int8_name = Path(trt_batch_engines[batch, "INT8"]).name
+    assert int8_name.endswith("_int8.trt"), f"Expected an INT8 engine, got {int8_name}"
+
+trt_batch_results: dict[tuple[int, str], BenchmarkResult] = {}
+for (batch, name), path in trt_batch_engines.items():
+    images_batch = [frame] * batch
+    predictor = RFDETRInference(path, device="cuda")
+    predictor.predict(images_batch, include_source_image=False)
+    trt_batch_results[batch, name] = measure_latency(
+        partial(predictor.predict, images_batch, include_source_image=False),
+        label=f"TensorRT {name} default call batch={batch}",
+        device="cuda",
+        warmup=WARMUP_RUNS,
+        runs=MEASURE_RUNS,
+    )
+    del predictor
+    r = trt_batch_results[batch, name]
+    print(f"  {name}  batch={batch}  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({batch * r.fps:6.1f} img/s)")
+torch.cuda.empty_cache()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=04f5bb6b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
@@ -6477,7 +6601,7 @@ the GPU and the TensorRT version, which are printed with the results; the docs t
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-36">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-37">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6493,7 +6617,7 @@ the GPU and the TensorRT version, which are printed with the results; the docs t
 <span class="n">BENCH_CALIBRATION</span> <span class="o">=</span> <span class="s2">"val2017"</span>  <span class="c1"># "train2017" calibrates as the docs tables do</span>
 <span class="n">BENCH_ROUNDS</span><span class="p">,</span> <span class="n">BENCH_RUNS</span><span class="p">,</span> <span class="n">BENCH_WARMUP</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">50</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-36"># The defaults are a quick run. The tables of the docs use every model, 5000 images, train2017 calibration and 15 x 200.
+<div class="clipboard-copy-txt" id="cell-37"># The defaults are a quick run. The tables of the docs use every model, 5000 images, train2017 calibration and 15 x 200.
 BENCH_MODELS = ("Detection Small",)
 BENCH_AP_IMAGES = N_EVAL
 BENCH_CALIBRATION = "val2017"  # "train2017" calibrates as the docs tables do
@@ -6512,7 +6636,7 @@ BENCH_ROUNDS, BENCH_RUNS, BENCH_WARMUP = 5, 100, 50</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-37">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-38">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6605,7 +6729,7 @@ BENCH_ROUNDS, BENCH_RUNS, BENCH_WARMUP = 5, 100, 50</div>
     <span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">trt</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">, onnxruntime </span><span class="si">{</span><span class="n">ort</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">"</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-37">import itertools
+<div class="clipboard-copy-txt" id="cell-38">import itertools
 import json
 import shutil
 import time
@@ -6713,7 +6837,7 @@ already built; delete <code>int8_bench/engines</code> to build them again.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-38">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-39">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6779,7 +6903,7 @@ already built; delete <code>int8_bench/engines</code> to build them again.</p>
 <span class="n">bench_model</span><span class="o">.</span><span class="n">cache_clear</span><span class="p">()</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-38">BENCH_PRECISIONS = {
+<div class="clipboard-copy-txt" id="cell-39">BENCH_PRECISIONS = {
     "FP16": {"fp16": True},
     "INT8": {
         "quantization": "int8",
@@ -6861,7 +6985,7 @@ CUDA events divided by the batch, so a batch-8 row is the cost of one image.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-39">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-40">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6968,7 +7092,7 @@ CUDA events divided by the batch, so a batch-8 row is the cost of one image.</p>
     <span class="n">bench_latency</span><span class="o">.</span><span class="n">pivot_table</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="p">[</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"mode"</span><span class="p">,</span> <span class="s2">"batch"</span><span class="p">],</span> <span class="n">columns</span><span class="o">=</span><span class="s2">"precision"</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="s2">"ms"</span><span class="p">,</span> <span class="n">sort</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-39">BENCH_TORCH_DTYPES = {
+<div class="clipboard-copy-txt" id="cell-40">BENCH_TORCH_DTYPES = {
     trt.DataType.FLOAT: torch.float32,
     trt.DataType.HALF: torch.float16,
     trt.DataType.INT32: torch.int32,
@@ -7092,7 +7216,7 @@ the one <code>predict()</code> uses, so a box, mask or keypoint is scored as the
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-40">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-41">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7148,7 +7272,7 @@ the one <code>predict()</code> uses, so a box, mask or keypoint is scored as the
 
 <span class="n">bench_accuracy</span> <span class="o">=</span> <span class="p">{</span><span class="n">model_name</span><span class="p">:</span> <span class="n">bench_coco_ap</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span> <span class="k">for</span> <span class="n">model_name</span> <span class="ow">in</span> <span class="n">BENCH_MODELS</span><span class="p">}</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-40">from faster_coco_eval import COCO
+<div class="clipboard-copy-txt" id="cell-41">from faster_coco_eval import COCO
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 from rfdetr.export.benchmark import infer_transforms
@@ -7222,7 +7346,7 @@ launch time that a graph replay removes. AP was scored at batch 1 only. The tabl
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-41">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-42">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7277,7 +7401,7 @@ launch time that a graph replay removes. AP was scored at batch 1 only. The tabl
     <span class="sa">f</span><span class="s2">"calibration </span><span class="si">{</span><span class="n">BENCH_CALIBRATION</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">calibration_names</span><span class="p">)</span><span class="si">}</span><span class="s2"> images), </span><span class="si">{</span><span class="n">BENCH_ROUNDS</span><span class="si">}</span><span class="s2"> rounds of </span><span class="si">{</span><span class="n">BENCH_RUNS</span><span class="si">}</span><span class="s2"> executions"</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-41">ms = bench_latency.set_index(["model", "mode", "batch", "precision"])["ms"]
+<div class="clipboard-copy-txt" id="cell-42">ms = bench_latency.set_index(["model", "mode", "batch", "precision"])["ms"]
 
 
 def bench_row(model_name: str, batch: int, precision: str) -&gt; dict:
@@ -7352,7 +7476,7 @@ print(
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-42">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-43">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7413,7 +7537,7 @@ print(
 <span class="k">for</span> <span class="n">kept</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
     <span class="n">measure_folder</span><span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">".trt engine"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="n">trt_raw_predictor</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="n">kept</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-42">import shutil
+<div class="clipboard-copy-txt" id="cell-43">import shutil
 import time
 
 from tqdm.auto import tqdm
@@ -7476,7 +7600,7 @@ for kept in (True, False):
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="10-results">10. Results<a class="anchor-link" href="#10-results">¶</a></h2><p>The last cell prints a decision table (one row per format and config: batch-1 latency, speed against PyTorch <code>predict()</code>, size, mAP@50:95 and FPS at each batch size) and a detail table with <code>± std</code> and memory growth. Every latency is the end-to-end <code>predict()</code> call, and <code>mAP@50:95</code> is scored on the same artifact that was timed (every <code>inference-models</code> row is scored as well). <code>Memory [MB]</code> is device-memory growth; the batch-4 and batch-8 raw-engine rows can read <code>0.0</code> because the engine sizes its output buffers for the batch-8 profile maximum when it is loaded. Each CUDA Graph row is its own predictor, captured for that batch size; its memory is the device-memory growth of the capture. All <code>inference-models</code> rows are scored.</p>
-<p>The numbers from the last Colab L4 run, with their notes, are kept on the <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#latency-across-nvidia-gpus">TensorRT export page</a> so this notebook stays short. After a rerun, update that page from the printed table. The FP16 and INT8 <code>.trt</code> engines of <a href="#8-tensorrt-int8">Section 8</a> are batch 1 only and are not in this table; the INT8 numbers produced by <a href="#81-benchmark-for-the-docs-tables">Section 8.1</a> are in the <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#int8">TensorRT INT8 section of the docs</a>.</p>
+<p>This notebook times one model (<code>MODEL_SIZE</code> and <code>TASK</code>, Small detection by default) on one GPU. The cross-GPU table for all four detection sizes on the T4, L4, A100 and RTX PRO 6000 is not produced by this notebook in one run; run Section 8 once per <code>MODEL_SIZE</code> on each GPU to reproduce its static <code>.trt</code> FP16 and INT8 rows. It is on the <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#latency-across-nvidia-gpus">TensorRT export page</a>. The static FP16 and INT8 <code>.trt</code> engines of <a href="#8-tensorrt-int8">Section 8</a>, timed there at batch 1, 4 and 8, are not in this table; the INT8 numbers produced by <a href="#81-benchmark-for-the-docs-tables">Section 8.1</a> are in the <a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#int8">TensorRT INT8 section of the docs</a>.</p>
 </div>
 </div>
 </div>
@@ -7489,7 +7613,7 @@ for kept in (True, False):
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-43">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-44">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7603,7 +7727,7 @@ for kept in (True, False):
 <span class="n">decision</span> <span class="o">=</span> <span class="n">headline</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="k">lambda</span> <span class="n">column</span><span class="p">:</span> <span class="n">column</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">value</span><span class="p">:</span> <span class="s2">"—"</span> <span class="k">if</span> <span class="n">pd</span><span class="o">.</span><span class="n">isna</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">))</span>
 <span class="n">display</span><span class="p">(</span><span class="n">decision</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-43">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-44">import pandas as pd
 from IPython.display import display
 
 KEYS = ["Format", "Runtime", "Precision", "Quantization"]
@@ -7731,7 +7855,7 @@ display(decision)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-44">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-45">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7745,7 +7869,7 @@ display(decision)</div>
     <span class="n">decision</span><span class="o">.</span><span class="n">reset_index</span><span class="p">()</span><span class="o">.</span><span class="n">to_markdown</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">disable_numparse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="p">)</span>  <span class="c1"># keep the one-decimal strings as they are</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-44">print(
+<div class="clipboard-copy-txt" id="cell-45">print(
     decision.reset_index().to_markdown(index=False, disable_numparse=True)
 )  # keep the one-decimal strings as they are</div>
 </div>
@@ -7773,7 +7897,7 @@ display(decision)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-45">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-46">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7793,7 +7917,7 @@ display(decision)</div>
     <span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs per row, batches </span><span class="si">{</span><span class="n">BATCH_SIZES</span><span class="si">}</span><span class="s2">, GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-45">numeric = detail.columns.difference(["Format", "Runtime", "Precision", "Quantization", "Batch"])
+<div class="clipboard-copy-txt" id="cell-46">numeric = detail.columns.difference(["Format", "Runtime", "Precision", "Quantization", "Batch"])
 detail_table = detail.copy()
 detail_table[numeric] = detail[numeric].apply(
     lambda column: column.map(lambda value: "—" if pd.isna(value) else f"{value:.1f}")
@@ -7827,7 +7951,7 @@ print(
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-46">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-47">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -7841,7 +7965,7 @@ print(
 <span class="n">folder</span><span class="p">[</span><span class="s2">"Folder [img/s]"</span><span class="p">]</span> <span class="o">=</span> <span class="n">folder</span><span class="p">[</span><span class="s2">"Folder [img/s]"</span><span class="p">]</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">value</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">display</span><span class="p">(</span><span class="n">folder</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-46">folder = pd.DataFrame(folder_rows)
+<div class="clipboard-copy-txt" id="cell-47">folder = pd.DataFrame(folder_rows)
 folder["Folder [img/s]"] = folder["Folder [img/s]"].map(lambda value: f"{value:.1f}")
 display(folder)</div>
 </div>
@@ -7895,7 +8019,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 6, 2026 13:51:09 UTC">2026-11-06 13:51:09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 13:06:30 UTC">2026-11-09 13:06:30</span>
   </span>
 
     
