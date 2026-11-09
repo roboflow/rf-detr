@@ -176,7 +176,7 @@ pre-commit run --all-files
 ### Building Docs
 
 ```bash
-# Full install (matches CI — required for XLarge/2XLarge model pages)
+# Full install (matches CI — required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
 uv pip install -e ".[plus]" --group docs
 
 # Serve locally (live reload)
@@ -286,7 +286,7 @@ uv run twine check --strict dist/*
 - **Default to `RFDETRSmall` / `"rfdetr-small"` in docs and examples.** Use it wherever an example needs a concrete detection model.
 - **Default to `RFDETRNano` / `"rfdetr-nano"` in CI and tests.**
 - **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, CI, or tests — treat as deprecated; substitute `small` in docs/examples and `nano` in CI/tests.
-- **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
+- **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `atto`/`femto`/`pico` and `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
 - **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
 - **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
 
@@ -308,9 +308,9 @@ logger = get_logger()  # Default name: "rf-detr", reads LOG_LEVEL env var
 from tqdm.auto import tqdm  # NOT: from tqdm import tqdm
 ```
 
-**Plus Models (XLarge, 2XLarge):**
+**Plus Models (Atto, Femto, Pico, XLarge, 2XLarge):**
 
-- Requires separate `rfdetr_plus` package (PML 1.0 license)
+- Requires separate `rfdetr_plus` package (PML 1.0 license). Atto, Femto and Pico (PE-Core-T backbone) need `rfdetr_plus>=1.2.0`; the `plus` extra floor stays at 1.1.0, so an older install keeps XLarge/2XLarge and gets an upgrade hint for the PE models. The `try-all-models` CI job smoke-tests both the latest release and `rfdetr_plus<1.2`.
 - When describing licensing in docs or answers, name the license and say what it means in practice; never write a bare license name. Apache 2.0 (the package, Nano–Large detection, every Seg size, Keypoint): commercially usable out of the box, closed-source and self-hosted included, no license fee, no obligation to open-source your code. PML 1.0 (the Plus models listed in the README License section): commercial use is included when deploying on Roboflow; commercial self-hosting requires the Enterprise add-on. Reuse the shared snippets in `docs/snippets/` (`license-rfdetr.md`, `license-yolo-note.md`) instead of rewording them.
 - Import handled lazily via `__getattr__` in `src/rfdetr/platform/models.py`
 - Raises `ImportError` if package not installed

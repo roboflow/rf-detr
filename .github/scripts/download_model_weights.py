@@ -8,9 +8,10 @@
 Purpose:
     Populate the shared CI weight archive without running inference or checkpoint round-trips.
 Scope:
-    Released detection and segmentation sizes, including Plus, and keypoint preview.
+    Released detection and segmentation sizes, including Plus (Atto, Femto, Pico, XLarge, 2XLarge), and keypoint
+    preview.
 Usage:
-    Install rfdetr[plus], set RF_HOME to a fresh directory, then run this script.
+    Install rfdetr[plus] with rfdetr_plus>=1.2.0, set RF_HOME to a fresh directory, then run this script.
 Outputs:
     Downloaded weight files in RF_HOME and progress on stdout.
 Failure:
@@ -28,10 +29,13 @@ def main() -> None:
     # GitHub helper doctests collect this module without installing the model dependencies.
     from rfdetr import (
         RFDETR2XLarge,
+        RFDETRAtto,
+        RFDETRFemto,
         RFDETRKeypointPreview,
         RFDETRLarge,
         RFDETRMedium,
         RFDETRNano,
+        RFDETRPico,
         RFDETRSeg2XLarge,
         RFDETRSegLarge,
         RFDETRSegMedium,
@@ -56,6 +60,9 @@ def main() -> None:
         RFDETRSeg2XLarge,
         partial(RFDETRXLarge, accept_platform_model_license=True),
         partial(RFDETR2XLarge, accept_platform_model_license=True),
+        partial(RFDETRAtto, accept_platform_model_license=True),
+        partial(RFDETRFemto, accept_platform_model_license=True),
+        partial(RFDETRPico, accept_platform_model_license=True),
     ):
         actual_class = model_class.func if isinstance(model_class, partial) else model_class
         print(f"Downloading weights for {actual_class.__name__}", flush=True)

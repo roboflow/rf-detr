@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import importlib.metadata
 import os
 import sys
 import tempfile
@@ -38,11 +39,41 @@ from rfdetr import (
     RFDETRSmall,
 )
 
+
+def _plus_version_tuple() -> tuple[int, ...] | None:
+    """Return the installed ``rfdetr_plus`` release as an integer tuple, or ``None`` when it is not installed.
+
+    Examples:
+        >>> version = _plus_version_tuple()
+        >>> version is None or all(isinstance(part, int) for part in version)
+        True
+    """
+    try:
+        raw = importlib.metadata.version("rfdetr_plus")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    return tuple(int(part) for part in raw.split(".")[:2] if part.isdigit())
+
+
 try:
     from rfdetr import RFDETR2XLarge, RFDETRXLarge
 except ImportError:
     RFDETR2XLarge = None
     RFDETRXLarge = None
+
+# rfdetr_plus 1.2.0 added the PE-Core-T models; the `rfdetr[plus]` floor still admits 1.1.x, which ships only the
+# XLarge models. A release that should have them must not skip them silently.
+_PE_MODELS_MIN_PLUS_VERSION = (1, 2)
+try:
+    from rfdetr import RFDETRAtto, RFDETRFemto, RFDETRPico
+except ImportError as ex:
+    _plus_version = _plus_version_tuple()
+    if _plus_version is not None and _plus_version >= _PE_MODELS_MIN_PLUS_VERSION:
+        raise
+    print(f"[SKIP] Atto/Femto/Pico (rfdetr_plus {_plus_version or 'not installed'}): {ex}")
+    RFDETRAtto = None
+    RFDETRFemto = None
+    RFDETRPico = None
 
 # Explicitly list all models to validate
 MODELS_TO_TEST = [
@@ -66,6 +97,9 @@ if RFDETRXLarge is not None:
     MODELS_TO_TEST.append(partial(RFDETRXLarge, accept_platform_model_license=True))
 if RFDETR2XLarge is not None:
     MODELS_TO_TEST.append(partial(RFDETR2XLarge, accept_platform_model_license=True))
+for _pe_model in (RFDETRAtto, RFDETRFemto, RFDETRPico):
+    if _pe_model is not None:
+        MODELS_TO_TEST.append(partial(_pe_model, accept_platform_model_license=True))
 
 # 1008 = LCM(12, 16) × 21: valid for all patch sizes (PE=63 for det ÷16,
 # PE=84 for seg ÷12). Each model is tested at its default resolution and at
