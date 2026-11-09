@@ -57,7 +57,7 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 ### Detection
 
-<img alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" />
+<img alt="Object detection accuracy vs latency on COCO and RF100-VL: RF-DETR against YOLO11, YOLO26, LW-DETR and D-FINE" src="docs/assets/benchmark-detection.svg" />
 
 <details>
 <summary>See object detection benchmark numbers</summary>
@@ -103,7 +103,7 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 ### Segmentation
 
-<img alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" />
+<img alt="Instance segmentation accuracy vs latency on COCO: RF-DETR-Seg against YOLOv8, YOLOv11 and YOLO26" src="docs/assets/benchmark-segmentation.svg" />
 
 <details>
 <summary>See instance segmentation benchmark numbers</summary>
@@ -138,7 +138,7 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 ### Keypoints
 
-<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/keypoints/kp-map-latency.png" />
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="docs/assets/benchmark-keypoints.svg" />
 
 <details>
 <summary>See keypoint detection benchmark numbers</summary>
