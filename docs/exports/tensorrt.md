@@ -60,9 +60,9 @@ Those ranges decide the engine's accuracy, so use images from the deployment dom
 
 ### Results
 
-The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables), run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The table holds every model.
+The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables), run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The three tabs hold every model.
 
-<!-- COPIES: this table comes from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
+<!-- COPIES: these tables come from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
 
 - **AP** is scored at batch 1 on all 5000 `val2017` images, decoded the way `predict()` decodes. Detection uses box AP, segmentation mask AP, Keypoint Preview keypoint AP. Δ is INT8 minus FP16 in AP points.
 - **Latency** is GPU time per image at batch 1 with a CUDA graph (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved). It is engine-only time, not the end-to-end time of the [latency section](#latency-across-nvidia-gpus) below. Speedup is FP16 ÷ INT8.
@@ -70,21 +70,33 @@ The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-
 - **API:** these tables do **not** go through `RFDETRInference`. Latency calls the raw TensorRT engine (`execute_async_v3`, replayed as a CUDA graph) from Section 8.1 of the cookbook, so it excludes preprocessing, postprocessing and `RFDETRInference` overhead. The run predates the current `RFDETRInference` and was not repeated through it. Treat the speedup ratios and AP deltas as the finding, and the absolute milliseconds as engine-only figures for that machine. The end-to-end `RFDETRInference` figures are in [Latency Across NVIDIA GPUs](#latency-across-nvidia-gpus), which has no INT8 row.
 - **Size** is the engine file at batch 1. INT8 engines are calibrated on the first 128 `train2017` images by file name.
 
-| Model            | AP, FP16 | AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
-| ---------------- | -------- | -------- | ----- | ------- | ------- | ------- | ----------------- |
-| Detection Nano   | 48.07    | 47.57    | −0.50 | 3.653   | 2.923   | 1.25×   | 61 → 37 MB        |
-| Detection Small  | 52.80    | 52.44    | −0.36 | 5.485   | 4.684   | 1.17×   | 65 → 40 MB        |
-| Detection Medium | 54.67    | 54.02    | −0.65 | 6.964   | 5.895   | 1.18×   | 68 → 42 MB        |
-| Detection Large  | 56.53    | 56.26    | −0.27 | 10.795  | 9.418   | 1.15×   | 70 → 48 MB        |
-| Seg Nano         | 40.07    | 39.50    | −0.58 | 5.642   | 5.244   | 1.08×   | 66 → 49 MB        |
-| Seg Small        | 42.89    | 42.22    | −0.67 | 7.186   | 6.508   | 1.10×   | 67 → 44 MB        |
-| Seg Medium       | 45.00    | 44.03    | −0.97 | 9.885   | 9.044   | 1.09×   | 71 → 47 MB        |
-| Seg Large        | 46.38    | 46.03    | −0.35 | 14.309  | 12.982  | 1.10×   | 72 → 52 MB        |
-| Keypoint Preview | 71.72    | 71.11    | −0.61 | 15.303  | 13.921  | 1.10×   | 81 → 60 MB        |
+=== "Detection"
+
+    | Model  | Box AP, FP16 | Box AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
+    | ------ | ------------ | ------------ | ----- | ------- | ------- | ------- | ----------------- |
+    | Nano   | 48.07        | 47.57        | −0.50 | 3.653   | 2.923   | 1.25×   | 61 → 37 MB        |
+    | Small  | 52.80        | 52.44        | −0.36 | 5.485   | 4.684   | 1.17×   | 65 → 40 MB        |
+    | Medium | 54.67        | 54.02        | −0.65 | 6.964   | 5.895   | 1.18×   | 68 → 42 MB        |
+    | Large  | 56.53        | 56.26        | −0.27 | 10.795  | 9.418   | 1.15×   | 70 → 48 MB        |
+
+=== "Segmentation"
+
+    | Model  | Mask AP, FP16 | Mask AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
+    | ------ | ------------- | ------------- | ----- | ------- | ------- | ------- | ----------------- |
+    | Nano   | 40.07         | 39.50         | −0.58 | 5.642   | 5.244   | 1.08×   | 66 → 49 MB        |
+    | Small  | 42.89         | 42.22         | −0.67 | 7.186   | 6.508   | 1.10×   | 67 → 44 MB        |
+    | Medium | 45.00         | 44.03         | −0.97 | 9.885   | 9.044   | 1.09×   | 71 → 47 MB        |
+    | Large  | 46.38         | 46.03         | −0.35 | 14.309  | 12.982  | 1.10×   | 72 → 52 MB        |
+
+=== "Keypoints"
+
+    | Model   | Keypoint AP, FP16 | Keypoint AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
+    | ------- | ----------------- | ----------------- | ----- | ------- | ------- | ------- | ----------------- |
+    | Preview | 71.72             | 71.11             | −0.61 | 15.303  | 13.921  | 1.10×   | 81 → 60 MB        |
 
 What the table supports:
 
-- INT8 is faster than FP16 in every row (1.08× to 1.25× at batch 1), loses at most 0.97 AP points, and the engine is 0.61× to 0.74× the FP16 size.
+- INT8 is faster than FP16 for every model (1.08× to 1.25× at batch 1), loses at most 0.97 AP points, and the engine is 0.61× to 0.74× the FP16 size.
 - The gain is largest for detection Nano, Small and Medium (1.17× to 1.25×), where the backbone attention runs in INT8. Segmentation gains 1.08× to 1.10×; the cause of the weaker segmentation gain was not measured.
 - Batches 4 and 8 give similar speedups (up to 1.41×), and a plain call (no CUDA graph) is within 0.05× of the graph figure. The cookbook prints all of them.
 - The FP16 engine grows with the batch on the T4 (Detection Large: 70 MB at batch 1, 111 MB at batch 8) while the INT8 engine stays within a few MB. Engine size also depends on the GPU and TensorRT version, so use these as ratios.
