@@ -116,9 +116,10 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same `RFDETRInference` calls as the [CUDA cookbook](../../cookbooks/export-cuda/), which times Small only. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
 
-- **Routes:** `inference()` graph = `model.inference()` with fp16 and a captured CUDA graph; `.trt` = a static FP32, FP16 or INT8 engine from `RFDETR.export(format="tensorrt")` loaded by `RFDETRInference`; managed engine = the TensorRT package that `inference-models` selects itself, so its precision is not set here. `no engine` = `inference-models` 0.39.8 selected none (`NoModelPackagesAvailableError`).
+--8<-- "docs/snippets/latency-routes.md"
+
 - **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables.
-- Each cell is `latency at batch 1 (throughput at batch 8)`, for example `5.12 ms (334 img/s)`. Lower latency is better, higher throughput is better, so the two numbers move in opposite directions.
+- Each cell is `latency (throughput)`, for example `5.12 ms (334 img/s)`: latency in ms at **batch 1**, throughput in img/s at **batch 8**. Lower latency is better, higher throughput is better, so the two numbers move in opposite directions.
 
 <!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt FP16). Update all of them together. -->
 
@@ -167,8 +168,8 @@ What the tables support:
 - **At batch 8 a `.trt` engine is the fastest route on 15 of 16 cells:** INT8 on 12, FP16 on 3 (A100 Nano, Small and Medium). The managed engine leads only T4 Large, 99 against 98 img/s.
 - **At batch 1 the routes are close and no route wins everywhere.** The fastest is the INT8 `.trt` engine on 9 of 16 cells, the CUDA graph on 4 (L4 Nano, A100 Nano, Medium and Large), the managed engine on 2 (T4 Small and Large) and the FP16 `.trt` engine on 1 (A100 Small). The CUDA graph is 1.2× to 1.3× slower than the FP16 `.trt` engine on T4 Small to Large.
 - **Batch 1 does not scale with GPU size.** The RTX PRO 6000 is 2.2× to 2.5× faster than the L4 for the FP16 `.trt` engine (Nano: 1.47 against 3.25 ms), yet the A100 is slower than the L4 for Nano (3.16 against 2.78 ms, both CUDA graph). The likely cause is the host share of the call, which was not measured.
-- **Static INT8 gains little end to end.** At batch 1 the INT8 engine is within 11% of the FP16 one, and slower on A100 Nano and Small (3.40 against 3.29 ms, 3.69 against 3.44 ms) and on T4 Large (11.45 against 10.86 ms). The T4 engine-only gains above are 1.17× to 1.25× for Nano to Medium, against 1.02× to 1.05× end to end on the same GPU, because host preprocessing and postprocessing are the same for both engines. At batch 8 the host share is smaller and INT8 is faster on every GPU except the A100 (Nano 924 against 967 img/s, Small 760 against 783, Medium level). Large keeps its attention in FP16 (see [Placement rules](#placement-rules)) but still runs its patch embedding and MLPs in INT8: 4.72 against 5.14 ms on the L4 and 1.92 against 2.08 ms on the RTX PRO 6000.
-- **FP32 is not a serving option.** The FP32 `.trt` engine is 1.7× to 5.2× slower than FP16 at batch 1 and 2.1× to 5.4× at batch 8 across all four GPUs and sizes. Use it only as a numerical reference.
+- **Static INT8 gains little end to end.** At **batch 1** the INT8 engine is within 11% of the FP16 one, and slower on A100 Nano and Small (3.40 against 3.29 ms, 3.69 against 3.44 ms) and on T4 Large (11.45 against 10.86 ms). The T4 engine-only gains above are 1.17× to 1.25× for Nano to Medium, against 1.02× to 1.05× end to end on the same GPU, because host preprocessing and postprocessing are the same for both engines. At **batch 8** the host share is smaller and INT8 is faster on every GPU except the A100 (Nano 924 against 967 img/s, Small 760 against 783, Medium level). Large keeps its attention in FP16 (see [Placement rules](#placement-rules)) but still runs its patch embedding and MLPs in INT8: 4.72 against 5.14 ms on the L4 and 1.92 against 2.08 ms on the RTX PRO 6000.
+- **FP32 is not a serving option.** The FP32 `.trt` engine is 1.7× to 5.2× slower than FP16 at **batch 1** and 2.1× to 5.4× at **batch 8** across all four GPUs and sizes. Use it only as a numerical reference.
 - **Pass an array, not a PIL image.** `predict()` first copies a PIL image into a NumPy array, so pass `np.array(image)` or a file path when latency matters. Most of the time above the engine itself is host preprocessing and postprocessing.
 
 !!! note "Not comparable with other figures"
@@ -223,10 +224,10 @@ The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on 
     | `.trt` engine, INT8            | 1.99 ms (1368 img/s) | 1.91 ms (1231 img/s) | 2.08 ms (1031 img/s) | 2.29 ms (845 img/s) |
     | Managed engine, auto precision | no engine            | no engine            | no engine            | no engine           |
 
-- **Static INT8 does not speed up segmentation end to end.** At batch 1 the INT8 engine is within 10% of the FP16 one and slower on 12 of 16 cells. Only Seg Small and Seg Medium get INT8 attention; Seg Nano and Seg Large keep it FP16 (see [Placement rules](#placement-rules)). So use the FP16 engine.
-- **The FP32 `.trt` engine is 1.9× to 4.6× slower than FP16** at batch 1 and 2.2× to 4.7× at batch 8.
+- **Static INT8 does not speed up segmentation end to end.** At **batch 1** the INT8 engine is within 10% of the FP16 one and slower on 12 of 16 cells. Only Seg Small and Seg Medium get INT8 attention; Seg Nano and Seg Large keep it FP16 (see [Placement rules](#placement-rules)). So use the FP16 engine.
+- **The FP32 `.trt` engine is 1.9× to 4.6× slower than FP16** at **batch 1** and 2.2× to 4.7× at **batch 8**.
 - **At batch 8 a `.trt` engine is the fastest route on every GPU and size.** FP16 leads on 13 of 16 rows; INT8 is ahead by at most 4% on T4 Small, RTX PRO 6000 Small and RTX PRO 6000 Large.
-- **The managed `inference-models` engine is the slowest route.** On the T4 and L4 it is about 2× to 4× the `.trt` engine at batch 1.
+- **The managed `inference-models` engine is the slowest route.** On the T4 and L4 it is about 2× to 4× the `.trt` engine at **batch 1**.
 
 ## Predict with RFDETRInference
 
