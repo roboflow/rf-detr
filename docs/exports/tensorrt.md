@@ -114,14 +114,14 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 ## Latency Across NVIDIA GPUs
 
-The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same `RFDETRInference` calls as the [CUDA cookbook](../../cookbooks/export-cuda/), which times Small only. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
+The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same `RFDETRInference` calls as the [CUDA cookbook](../../cookbooks/export-cuda/), which times one size per run, set by `MODEL_SIZE`. Its Section 8 subsection *Batch 1, 4 and 8, end to end* reproduces the `.trt` FP16 and INT8 rows, with one static engine per batch size. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
 
 --8<-- "docs/snippets/latency-routes.md"
 
 - **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables.
 - Each cell is `latency (throughput)`, for example `5.12 ms (334 img/s)`: latency in ms at **batch 1**, throughput in img/s at **batch 8**. Lower latency is better, higher throughput is better, so the two numbers move in opposite directions.
 
-<!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt FP16). Update all of them together. -->
+<!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt INT8). Update all of them together. -->
 
 === "Tesla T4"
 

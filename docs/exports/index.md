@@ -43,11 +43,11 @@ Which format is fastest depends on the hardware you deploy to. Four per-hardware
 
 All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to end (preprocessing, forward, postprocessing). Compare *within* a row group, never across machines.
 
-<!-- COPIES: the "NVIDIA L4" row repeats docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs" (L4, Small, .trt FP16), and "Fastest route across NVIDIA GPUs" below uses the same source. Update them together. -->
+<!-- COPIES: the "NVIDIA L4" row repeats docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs" (L4, Small, .trt INT8), and "Fastest route across NVIDIA GPUs" below uses the same source. Update them together. -->
 
 | Hardware                             | Fastest route          | Precision | end2end [ms]   | FPS [img/s] | mAP@50:95 [%] | Full table                                                                           |
 | ------------------------------------ | ---------------------- | --------- | -------------- | ----------- | ------------- | ------------------------------------------------------------------------------------ |
-| NVIDIA L4                            | TensorRT `.trt` engine | fp16      | 3.57           | 280         | —             | [TensorRT](tensorrt.md#latency-across-nvidia-gpus)                                   |
+| NVIDIA L4                            | TensorRT `.trt` engine | int8      | 3.45           | 290         | —             | [TensorRT](tensorrt.md#latency-across-nvidia-gpus)                                   |
 | Apple M4 Max (40-core GPU)           | `inference()` inductor | fp16      | 10.3           | 97.4        | 56.4          | [Baseline](#pytorch-baseline), [CoreML](coreml.md#measured-latency-on-apple-silicon) |
 | x86 CPU (Colab, 4 cores / 8 threads) | OpenVINO IR            | fp32      | 373.65 ± 61.10 | 2.7         | 56.5          | [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu)                               |
 
@@ -57,7 +57,7 @@ All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to
 
 ### Fastest route across NVIDIA GPUs
 
-<!-- COPIES: derived from the detection tables in docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs". Update both together; the "NVIDIA L4" row of the table above is the same source (Small, .trt FP16). -->
+<!-- COPIES: derived from the detection tables in docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs". Update both together; the "NVIDIA L4" row of the table above is the same source (Small, .trt INT8). -->
 
 Fastest measured route per GPU and size, with the winning route in brackets. Latency only, TensorRT 10.16.1.11. All routes are in [TensorRT](tensorrt.md#latency-across-nvidia-gpus).
 
