@@ -737,10 +737,12 @@ def predict(
         include_source_image: Store source pixels in each result.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         stream: Yield results on demand instead of collecting them.
-        batch: Maximum batch size. None runs a bare BCHW tensor or an eager image-only list as one batch, an eager
+        batch: Maximum finite-source batch size. None runs a bare BCHW tensor or an eager image-only list as one batch,
+            finite expanded or streamed sources in batches of the model's fixed batch size when it has one, an eager
             directory or glob (or a list of them) in batches of eight, or of an export's smaller ``max_batch_size``,
-            when the model has no fixed batch size, and other expanded or streamed sources one image or frame at a
-            time. An integer bounds every batch.
+            when the model has no fixed batch size, and other finite sources one image or frame at a time. An integer
+            bounds those batches. Live captures and ``.streams`` keep one frame per source in each simultaneous batch,
+            regardless of this setting; the source count must match a fixed runtime batch size.
         vid_stride: Read every Nth video frame.
         stream_buffer: Queue live frames instead of retaining the latest frame.
         prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs. That reads the
@@ -797,12 +799,15 @@ _ROW_KEYS = frozenset({"boxes", "scores", "labels"})
 def _default_batch(images: _PredictionInput, context: PredictionContext, *, stream: bool) -> int:
     """Choose the batch size for an expanded or streamed source when the caller passes ``batch=None``.
 
-    A BCHW tensor already is one batch. An eager directory or glob runs in batches of :data:`_DEFAULT_EAGER_BATCH` on a
-    model or export without a fixed batch size, or of the export's ``max_batch_size`` when that is smaller; its results
-    are collected anyway, so batching costs no latency. Batching raises peak memory (about 35% more resident memory for
-    a Nano ONNX export on the ONNX Runtime CPU provider, with no measured gain in throughput there), so a memory-bound
-    host passes ``batch=1``. Streamed sources keep one image per batch, so the first result arrives after one image,
-    and a compiled snapshot or fixed-batch export keeps it too.
+    A BCHW tensor already is one batch. A compiled snapshot or fixed-batch export runs only its own batch size, so
+    finite expanded sources run in batches of that size, streamed or not; a final batch with fewer images is still
+    refused. Live captures and ``.streams`` preserve simultaneous groups regardless of this size, with one frame per
+    source; their source count must match a fixed runtime batch size. An eager directory or glob runs in batches of
+    :data:`_DEFAULT_EAGER_BATCH` on a model or export without a fixed batch size, or of the export's ``max_batch_size``
+    when that is smaller; its results are collected anyway, so
+    batching costs no latency. Batching raises peak memory (about 35% more resident memory for a Nano ONNX export on the
+    ONNX Runtime CPU provider, with no measured gain in throughput there), so a memory-bound host passes ``batch=1``.
+    Other finite streamed sources keep one image per batch, so the first result arrives after one image.
 
     Args:
         images: The prediction source.
@@ -819,8 +824,10 @@ def _default_batch(images: _PredictionInput, context: PredictionContext, *, stre
     if isinstance(images, torch.Tensor) and images.ndim == 4:
         # Split a BCHW tensor only when the caller bounds the batch size.
         return max(images.shape[0], 1)
-    # A fixed input resolution does not fix the batch axis, so only a fixed batch size keeps one image per batch.
-    if not stream and context.batch_size is None and has_only_finite_images(images):
+    if context.batch_size is not None:
+        # Any other size fails every batch against the compiled or exported batch axis.
+        return context.batch_size
+    if not stream and has_only_finite_images(images):
         if context.max_batch_size is None:
             return _DEFAULT_EAGER_BATCH
         return min(_DEFAULT_EAGER_BATCH, context.max_batch_size)
