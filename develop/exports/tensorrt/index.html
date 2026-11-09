@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-09T13:06:30">
+  <meta property="article:modified_time" content="2026-11-09T18:49:00">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-09T13:06:30",
+    "dateModified": "2026-11-09T18:49:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3368,8 +3368,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>This writes <code>output/rfdetr-small_int8.trt</code> (next to the intermediate <code>output/rfdetr-small.onnx</code>). The export runs the first <code>max_images</code> (default <code>100</code>) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as <code>predict()</code> does, and records each quantized tensor's largest absolute value. For a detection model it makes two more passes: one to measure how wide each backbone LayerNorm output is per channel (so the widest channels can be folded into the weights that read them) and one to measure how much INT8 shifts each backbone MLP layer's mean output (subtracted from the layer's bias); see the <a href="#placement-rules">placement rules</a>.</p>
 <p>Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. <code>calibration_data</code> also accepts a <code>.npy</code> path or an array shaped <code>(N, C, H, W)</code>, already normalized the way <code>predict()</code> normalizes (an integer array of raw pixels is refused). <code>max_images</code> caps only a directory of images; an array or <code>.npy</code> file is used whole. Calibration runs the graph at the export's <code>batch_size</code>, so its host memory grows with the batch.</p>
 <h3 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h3>
-<p>The numbers come from <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a>, run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The table holds every model.</p>
-<!-- COPIES: this table comes from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
+<p>The numbers come from <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a>, run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The three tabs hold every model.</p>
+<!-- COPIES: these tables come from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
 
 <ul>
 <li><strong>AP</strong> is scored at batch 1 on all 5000 <code>val2017</code> images, decoded the way <code>predict()</code> decodes. Detection uses box AP, segmentation mask AP, Keypoint Preview keypoint AP. Δ is INT8 minus FP16 in AP points.</li>
@@ -3378,12 +3378,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>API:</strong> these tables do <strong>not</strong> go through <code>RFDETRInference</code>. Latency calls the raw TensorRT engine (<code>execute_async_v3</code>, replayed as a CUDA graph) from Section 8.1 of the cookbook, so it excludes preprocessing, postprocessing and <code>RFDETRInference</code> overhead. The run predates the current <code>RFDETRInference</code> and was not repeated through it. Treat the speedup ratios and AP deltas as the finding, and the absolute milliseconds as engine-only figures for that machine. The end-to-end <code>RFDETRInference</code> figures are in <a href="#latency-across-nvidia-gpus">Latency Across NVIDIA GPUs</a>, which has no INT8 row.</li>
 <li><strong>Size</strong> is the engine file at batch 1. INT8 engines are calibrated on the first 128 <code>train2017</code> images by file name.</li>
 </ul>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Detection</label><label for="__tabbed_1_2">Segmentation</label><label for="__tabbed_1_3">Keypoints</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
 <table>
 <thead>
 <tr>
 <th>Model</th>
-<th>AP, FP16</th>
-<th>AP, INT8</th>
+<th>Box AP, FP16</th>
+<th>Box AP, INT8</th>
 <th>Δ</th>
 <th>FP16 ms</th>
 <th>INT8 ms</th>
@@ -3393,7 +3396,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </thead>
 <tbody>
 <tr>
-<td>Detection Nano</td>
+<td>Nano</td>
 <td>48.07</td>
 <td>47.57</td>
 <td>−0.50</td>
@@ -3403,7 +3406,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>61 → 37 MB</td>
 </tr>
 <tr>
-<td>Detection Small</td>
+<td>Small</td>
 <td>52.80</td>
 <td>52.44</td>
 <td>−0.36</td>
@@ -3413,7 +3416,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>65 → 40 MB</td>
 </tr>
 <tr>
-<td>Detection Medium</td>
+<td>Medium</td>
 <td>54.67</td>
 <td>54.02</td>
 <td>−0.65</td>
@@ -3423,7 +3426,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>68 → 42 MB</td>
 </tr>
 <tr>
-<td>Detection Large</td>
+<td>Large</td>
 <td>56.53</td>
 <td>56.26</td>
 <td>−0.27</td>
@@ -3432,8 +3435,26 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>1.15×</td>
 <td>70 → 48 MB</td>
 </tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
 <tr>
-<td>Seg Nano</td>
+<th>Model</th>
+<th>Mask AP, FP16</th>
+<th>Mask AP, INT8</th>
+<th>Δ</th>
+<th>FP16 ms</th>
+<th>INT8 ms</th>
+<th>Speedup</th>
+<th>Size, FP16 → INT8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nano</td>
 <td>40.07</td>
 <td>39.50</td>
 <td>−0.58</td>
@@ -3443,7 +3464,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>66 → 49 MB</td>
 </tr>
 <tr>
-<td>Seg Small</td>
+<td>Small</td>
 <td>42.89</td>
 <td>42.22</td>
 <td>−0.67</td>
@@ -3453,7 +3474,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>67 → 44 MB</td>
 </tr>
 <tr>
-<td>Seg Medium</td>
+<td>Medium</td>
 <td>45.00</td>
 <td>44.03</td>
 <td>−0.97</td>
@@ -3463,7 +3484,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>71 → 47 MB</td>
 </tr>
 <tr>
-<td>Seg Large</td>
+<td>Large</td>
 <td>46.38</td>
 <td>46.03</td>
 <td>−0.35</td>
@@ -3472,8 +3493,26 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>1.10×</td>
 <td>72 → 52 MB</td>
 </tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
 <tr>
-<td>Keypoint Preview</td>
+<th>Model</th>
+<th>Keypoint AP, FP16</th>
+<th>Keypoint AP, INT8</th>
+<th>Δ</th>
+<th>FP16 ms</th>
+<th>INT8 ms</th>
+<th>Speedup</th>
+<th>Size, FP16 → INT8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Preview</td>
 <td>71.72</td>
 <td>71.11</td>
 <td>−0.61</td>
@@ -3484,9 +3523,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
+</div>
+</div>
+</div>
 <p>What the table supports:</p>
 <ul>
-<li>INT8 is faster than FP16 in every row (1.08× to 1.25× at batch 1), loses at most 0.97 AP points, and the engine is 0.61× to 0.74× the FP16 size.</li>
+<li>INT8 is faster than FP16 for every model (1.08× to 1.25× at batch 1), loses at most 0.97 AP points, and the engine is 0.61× to 0.74× the FP16 size.</li>
 <li>The gain is largest for detection Nano, Small and Medium (1.17× to 1.25×), where the backbone attention runs in INT8. Segmentation gains 1.08× to 1.10×; the cause of the weaker segmentation gain was not measured.</li>
 <li>Batches 4 and 8 give similar speedups (up to 1.41×), and a plain call (no CUDA graph) is within 0.05× of the graph figure. The cookbook prints all of them.</li>
 <li>The FP16 engine grows with the batch on the T4 (Detection Large: 70 MB at batch 1, 111 MB at batch 8) while the INT8 engine stays within a few MB. Engine size also depends on the GPU and TensorRT version, so use these as ratios.</li>
@@ -3531,7 +3573,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt INT8). Update all of them together. -->
 
-<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Tesla T4</label><label for="__tabbed_1_2">NVIDIA L4</label><label for="__tabbed_1_3">A100</label><label for="__tabbed_1_4">RTX PRO 6000</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Tesla T4</label><label for="__tabbed_2_2">NVIDIA L4</label><label for="__tabbed_2_3">A100</label><label for="__tabbed_2_4">RTX PRO 6000</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <table>
@@ -3753,7 +3795,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The same measurement for the four instance segmentation sizes (<code>RFDETRSeg*</code>) on the same four GPUs, one run per GPU with 20 warmup and 100 timed runs. The A100 here is the 40 GB part, and the RTX PRO 6000 ran PyTorch 2.14.1 with CUDA 13.0; the other GPUs ran PyTorch 2.15.0 with CUDA 13.2. Each call returns masks, so the times include decoding them on the host and are not comparable with the detection tables above. Latency only: no mask AP was scored. Cells and the INT8 speedup read as in the detection tabs above.</p>
 <!-- COPIES: none yet. If these tables are copied elsewhere, list the copy here and in the copy. -->
 
-<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Tesla T4</label><label for="__tabbed_2_2">NVIDIA L4</label><label for="__tabbed_2_3">A100</label><label for="__tabbed_2_4">RTX PRO 6000</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:4"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><input id="__tabbed_3_3" name="__tabbed_3" type="radio" /><input id="__tabbed_3_4" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">Tesla T4</label><label for="__tabbed_3_2">NVIDIA L4</label><label for="__tabbed_3_3">A100</label><label for="__tabbed_3_4">RTX PRO 6000</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <table>
@@ -4117,7 +4159,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 13:06:30 UTC">2026-11-09 13:06:30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 18:49:00 UTC">2026-11-09 18:49:00</span>
   </span>
 
     
