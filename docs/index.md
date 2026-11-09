@@ -126,44 +126,44 @@ PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirror
 
 RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models. It also provides keypoint detection (preview) on COCO person keypoints. For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
 
-### Detection
+=== "Detection"
 
-<img alt="Pareto front — detection accuracy vs latency: RF-DETR-2XL achieves 78.5 COCO AP50 (60.1 AP50:95) at 17.2 ms; RF-DETR-L achieves 75.1 AP50 at 6.8 ms, outperforming YOLO11x at comparable latency" src="assets/benchmark-detection.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
+    <img alt="Pareto front — detection accuracy vs latency: RF-DETR-2XL achieves 78.5 COCO AP50 (60.1 AP50:95) at 17.2 ms; RF-DETR-L achieves 75.1 AP50 at 6.8 ms, outperforming YOLO11x at comparable latency" src="assets/benchmark-detection.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
 
-| Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
-| ------------ | -------------------- | ----------------------- | ----------------------- | -------------------------- | ------------ | ---------- | ---------- |
-| RF-DETR-A    | 49.4                 | 30.5                    | 78.2                    | 48.3                       | 1.0          | 7.4        | 380×380    |
-| RF-DETR-F    | 55.9                 | 37.8                    | 82.5                    | 53.8                       | 1.4          | 7.9        | 384×384    |
-| RF-DETR-P    | 60.2                 | 41.6                    | 84.1                    | 56.0                       | 1.7          | 8.4        | 560×560    |
-| RF-DETR-N    | 67.6                 | 48.4                    | 85.0                    | 57.7                       | 2.3          | 30.5       | 384×384    |
-| RF-DETR-S    | 72.1                 | 53.0                    | 86.7                    | 60.2                       | 3.5          | 32.1       | 512×512    |
-| RF-DETR-M    | 73.6                 | 54.7                    | 87.4                    | 61.2                       | 4.4          | 33.7       | 576×576    |
-| RF-DETR-L    | 75.1                 | 56.5                    | 88.2                    | 62.2                       | 6.8          | 33.9       | 704×704    |
-| RF-DETR-XL   | 77.4                 | 58.6                    | 88.5                    | 62.9                       | 11.5         | 126.4      | 700×700    |
-| RF-DETR-2XL  | 78.5                 | 60.1                    | 89.0                    | 63.2                       | 17.2         | 126.9      | 880×880    |
+    | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+    | ------------ | -------------------- | ----------------------- | ----------------------- | -------------------------- | ------------ | ---------- | ---------- |
+    | RF-DETR-A    | 49.4                 | 30.5                    | 78.2                    | 48.3                       | 1.0          | 7.4        | 380×380    |
+    | RF-DETR-F    | 55.9                 | 37.8                    | 82.5                    | 53.8                       | 1.4          | 7.9        | 384×384    |
+    | RF-DETR-P    | 60.2                 | 41.6                    | 84.1                    | 56.0                       | 1.7          | 8.4        | 560×560    |
+    | RF-DETR-N    | 67.6                 | 48.4                    | 85.0                    | 57.7                       | 2.3          | 30.5       | 384×384    |
+    | RF-DETR-S    | 72.1                 | 53.0                    | 86.7                    | 60.2                       | 3.5          | 32.1       | 512×512    |
+    | RF-DETR-M    | 73.6                 | 54.7                    | 87.4                    | 61.2                       | 4.4          | 33.7       | 576×576    |
+    | RF-DETR-L    | 75.1                 | 56.5                    | 88.2                    | 62.2                       | 6.8          | 33.9       | 704×704    |
+    | RF-DETR-XL   | 77.4                 | 58.6                    | 88.5                    | 62.9                       | 11.5         | 126.4      | 700×700    |
+    | RF-DETR-2XL  | 78.5                 | 60.1                    | 89.0                    | 63.2                       | 17.2         | 126.9      | 880×880    |
 
-### Segmentation
+=== "Segmentation"
 
-<img alt="Pareto front — segmentation accuracy vs latency: RF-DETR-Seg-2XL achieves 73.1 COCO AP50 (49.9 AP50:95) at 21.8 ms; RF-DETR-Seg-L achieves 70.5 AP50 at 8.8 ms" src="assets/benchmark-segmentation.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
+    <img alt="Pareto front — segmentation accuracy vs latency: RF-DETR-Seg-2XL achieves 73.1 COCO AP50 (49.9 AP50:95) at 21.8 ms; RF-DETR-Seg-L achieves 70.5 AP50 at 8.8 ms" src="assets/benchmark-segmentation.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
 
-| Architecture    | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
-| --------------- | -------------------- | ----------------------- | ------------ | ---------- | ---------- |
-| RF-DETR-Seg-N   | 63.0                 | 40.3                    | 3.4          | 33.6       | 312×312    |
-| RF-DETR-Seg-S   | 66.2                 | 43.1                    | 4.4          | 33.7       | 384×384    |
-| RF-DETR-Seg-M   | 68.4                 | 45.3                    | 5.9          | 35.7       | 432×432    |
-| RF-DETR-Seg-L   | 70.5                 | 47.1                    | 8.8          | 36.2       | 504×504    |
-| RF-DETR-Seg-XL  | 72.2                 | 48.8                    | 13.5         | 38.1       | 624×624    |
-| RF-DETR-Seg-2XL | 73.1                 | 49.9                    | 21.8         | 38.6       | 768×768    |
+    | Architecture    | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+    | --------------- | -------------------- | ----------------------- | ------------ | ---------- | ---------- |
+    | RF-DETR-Seg-N   | 63.0                 | 40.3                    | 3.4          | 33.6       | 312×312    |
+    | RF-DETR-Seg-S   | 66.2                 | 43.1                    | 4.4          | 33.7       | 384×384    |
+    | RF-DETR-Seg-M   | 68.4                 | 45.3                    | 5.9          | 35.7       | 432×432    |
+    | RF-DETR-Seg-L   | 70.5                 | 47.1                    | 8.8          | 36.2       | 504×504    |
+    | RF-DETR-Seg-XL  | 72.2                 | 48.8                    | 13.5         | 38.1       | 624×624    |
+    | RF-DETR-Seg-2XL | 73.1                 | 49.9                    | 21.8         | 38.6       | 768×768    |
 
-### Keypoints
+=== "Keypoints"
 
-<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="assets/benchmark-keypoints.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
+    <img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="assets/benchmark-keypoints.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
 
-| Architecture               | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
-| -------------------------- | ----------------------- | ------------ | ---------- | ---------- |
-| RF-DETR Keypoint (Preview) | 71.8                    | 9.7          | 40.7       | 576×576    |
+    | Architecture               | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+    | -------------------------- | ----------------------- | ------------ | ---------- | ---------- |
+    | RF-DETR Keypoint (Preview) | 71.8                    | 9.7          | 40.7       | 576×576    |
 
-> Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric. For the full competitor comparison (YOLO11-pose, YOLO26-pose), see the [Benchmarks](learn/benchmarks.md#keypoints) page.
+    > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric. For the full competitor comparison (YOLO11-pose, YOLO26-pose), see the [Benchmarks](learn/benchmarks.md#results) page.
 
 ## Frequently Asked Questions
 
