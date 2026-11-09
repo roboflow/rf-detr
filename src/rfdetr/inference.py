@@ -246,12 +246,14 @@ class RFDETRInference:
                 and False for native models.
             stream: Yield results lazily. Close the generator on early exit.
             batch: Maximum finite-source batch size. None runs a bare BCHW tensor or an eager image-only list as
-                one batch, other expanded or streamed sources in batches of the fixed batch size of a compiled
+                one batch, finite expanded or streamed sources in batches of the fixed batch size of a compiled
                 snapshot or fixed-batch export, an eager directory or glob in batches of eight (or of a smaller
-                export ``max_batch_size``) when the model or export has no fixed batch size, and other expanded
-                sources one image or frame at a time. An integer bounds every batch,
-                including eager image lists. Each batch must satisfy the runtime limits.
-                Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.
+                export ``max_batch_size``) when the model or export has no fixed batch size, and other finite sources
+                one image or frame at a time. An integer bounds these batches, including eager image lists. Live
+                captures and ``.streams`` keep one frame per source in each simultaneous batch, regardless of this
+                setting; the source count must match a fixed runtime batch size. Each batch must satisfy the runtime
+                limits. Fixed-batch runtimes also reject a short final finite batch. Use batch-one or dynamic-batch
+                runtimes for individual live sources.
             vid_stride: Read every Nth video frame.
             stream_buffer: Queue live frames instead of keeping the latest frame.
 
