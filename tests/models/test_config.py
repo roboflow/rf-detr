@@ -568,6 +568,36 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             _make_train_config(tmp_path, **{field: value})
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("epochs", 0),
+            ("epochs", -1),
+            ("ema_decay", 1.5),
+            ("ema_decay", -0.1),
+        ],
+    )
+    def test_epochs_and_ema_fields_reject_out_of_range_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """``epochs`` must be >= 1 and ``ema_decay`` within [0, 1].
+
+        ``epochs=0`` otherwise fails with a ``ZeroDivisionError`` inside ``configure_optimizers``, and an ``ema_decay``
+        outside [0, 1] otherwise lets the EMA weights diverge to ``inf`` without any error.
+        """
+        with pytest.raises(ValidationError, match=field):
+            _make_train_config(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("epochs", 1),
+            ("ema_decay", 0.0),
+            ("ema_decay", 1.0),
+        ],
+    )
+    def test_epochs_and_ema_fields_accept_boundary_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """The inclusive bounds stay valid: ``ema_decay=1.0`` freezes the EMA."""
+        assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
+
     def test_batch_size_auto_is_accepted(self, tmp_path):
         """batch_size accepts the special 'auto' value."""
         tc = _make_train_config(tmp_path, batch_size="auto")

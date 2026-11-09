@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Segmentation prediction with `RFDETR.predict()` and `RFDETRInference.predict()` no longer copies every full-resolution mask on the device a second time when all detections pass the threshold. Post-processing already drops masks below the score threshold, so decoding now selects mask rows only when it removes some, as with per-class thresholds or a custom post-processor. Returned masks stay independent of the post-processor's tensors. On a Tesla T4, decoding 100 masks at 1920×1080 peaked at 198 MiB less CUDA memory and took 15.8 ms instead of 17.6 ms; this covers mask decoding and the copy to the CPU, not the model forward pass or mask resizing. Predictions are unchanged. ([#1688](https://github.com/roboflow/rf-detr/pull/1688))
 
+### Fixed
+
+- `TrainConfig` rejects `epochs` below 1 and `ema_decay` outside `[0, 1]` when it is built, naming the field. `epochs=0` used to fail with a `ZeroDivisionError` inside `configure_optimizers`, and an `ema_decay` outside `[0, 1]` made the EMA weights diverge to `inf` within a few hundred updates without any error. `ema_decay=1.0` stays valid. ([#NNNN](https://github.com/roboflow/rf-detr/pull/NNNN))
+
 ## [1.12.0] — 2026-11-05
 
 ### Added
