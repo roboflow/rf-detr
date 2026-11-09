@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Segmentation prediction with `RFDETR.predict()` and `RFDETRInference.predict()` no longer copies every full-resolution mask on the device a second time when all detections pass the threshold. Post-processing already drops masks below the score threshold, so decoding now selects mask rows only when it removes some, as with per-class thresholds or a custom post-processor. Returned masks stay independent of the post-processor's tensors. On a Tesla T4, decoding 100 masks at 1920×1080 peaked at 198 MiB less CUDA memory and took 15.8 ms instead of 17.6 ms; this covers mask decoding and the copy to the CPU, not the model forward pass or mask resizing. Predictions are unchanged. ([#1688](https://github.com/roboflow/rf-detr/pull/1688))
 
+### Fixed
+
+- `RFDETRInference.predict()` without `batch` now predicts a directory, glob, video or stream in batches of the fixed batch size of a predictor from `RFDETR.inference(batch_size=N)` or of a fixed-batch export, streamed or not. It used one image per batch, so any `N` above one failed on the first batch with `Batch size mismatch` unless the caller passed `batch=N`. A final batch with fewer than `N` images is still refused, not padded.
+
 ## [1.12.0] — 2026-11-05
 
 ### Added
