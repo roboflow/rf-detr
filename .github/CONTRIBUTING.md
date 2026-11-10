@@ -411,15 +411,15 @@ RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the 
 
 > [!NOTE]
 >
-> Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the XLarge and 2XLarge model pages. Without it, the build will fail on those reference pages.
+> Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the Atto, Femto, Pico, XLarge and 2XLarge model pages (Atto, Femto and Pico need `rfdetr_plus>=1.2.0`). Without it, the build will fail on those reference pages.
 
 ### Install Documentation Dependencies
 
 ```bash
-# Full docs build (matches CI — required for XLarge/2XLarge model pages)
-uv pip install -e ".[plus]" --group docs
+# Full docs build (required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
+uv pip install -e ".[plus]" "rfdetr_plus>=1.2.0" --group docs
 
-# Minimal install (skip plus models — XLarge/2XLarge pages will error)
+# Minimal install (skip plus models — the Plus model pages will error)
 uv sync --group docs
 ```
 
