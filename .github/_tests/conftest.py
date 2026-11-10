@@ -42,3 +42,19 @@ def injector() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(scope="session")
+def install_flags() -> ModuleType:
+    """The probe-flag check script, loaded by path like ``injector``.
+
+    Examples:
+        >>> install_flags  # doctest: +SKIP
+        pytest fixture; loads .github/scripts/check_install_flags.py by path.
+    """
+    script = REPO_ROOT / ".github" / "scripts" / "check_install_flags.py"
+    spec = importlib.util.spec_from_file_location("check_install_flags", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

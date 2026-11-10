@@ -5,8 +5,9 @@
 # .github/_tests instead, and this job runs both those tests and the doctests in the
 # scripts themselves (`--doctest-plus` from pyproject.toml collects them).
 #
-# Only the pytest stack is installed - the scripts import nothing beyond the standard
-# library, so pulling in torch for them would cost minutes and prove nothing.
+# Only the `tests` dependency group is installed - the scripts import nothing beyond the
+# standard library and packages that group declares (`packaging`, and `tomli` on Python 3.10),
+# so pulling in torch for them would cost minutes and prove nothing.
 
 name: Test GitHub Scripts
 
