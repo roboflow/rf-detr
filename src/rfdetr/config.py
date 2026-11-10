@@ -1268,9 +1268,11 @@ class TrainConfig(BaseConfig):
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
-    epochs: int = 100
+    # ge=1: ``epochs=0`` otherwise surfaces as a ZeroDivisionError inside ``configure_optimizers``.
+    epochs: int = Field(default=100, ge=1)
     resume: PathLikeStr | None = None
-    ema_decay: float = 0.993
+    # ``decay * ema + (1 - decay) * weight`` only averages for decay in [0, 1]; outside it the EMA weights diverge.
+    ema_decay: float = Field(default=0.993, ge=0.0, le=1.0)
     ema_tau: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
     skip_best_epochs: int = Field(default=0, ge=0)
