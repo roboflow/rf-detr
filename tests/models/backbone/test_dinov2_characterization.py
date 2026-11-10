@@ -116,7 +116,12 @@ _NO_TRANSFORMERS_CHILD = textwrap.dedent(
     import numpy as np
     import torch
 
-    from rfdetr import RFDETRNano
+    try:
+        from rfdetr import RFDETRNano
+    except ModuleNotFoundError as exc:
+        if exc.name == "transformers":
+            print("blocked-transformers-during-import")
+        raise
 
     checkpoint_path = sys.argv[1]
     model = RFDETRNano(pretrain_weights=None, device="cpu")
@@ -449,18 +454,62 @@ class TestHubWeightsLoad:
 class TestCorePathWithoutTransformers:
     """The core path (import, build, predict, checkpoint round trip) runs with ``transformers`` unimportable."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="transformers is still imported on the core path; the backbone rewrite removes it",
-    )
     def test_core_path_runs_with_transformers_blocked(self, tmp_path: Path) -> None:
         """A child process that cannot import ``transformers`` builds Nano, predicts and reloads a saved checkpoint.
 
         The checkpoint is written to a temporary directory and loaded from there, so nothing is downloaded. Today the
-        child fails at ``import rfdetr``; the parent then fails the return-code assertion, which the strict expected
-        failure records.
+        child fails at ``import rfdetr``; only that known import failure is expected. A successful child signals that
+        this temporary expectation must be removed.
         """
         result = _run_child(_NO_TRANSFORMERS_CHILD, str(tmp_path / "checkpoint.pth"))
 
+        if (
+            result.returncode != 0
+            and result.stdout.strip() == "blocked-transformers-during-import"
+            and "from transformers import AutoBackbone" in result.stderr
+            and result.stderr.rstrip().endswith(
+                "ModuleNotFoundError: import of transformers halted; None in sys.modules"
+            )
+        ):
+            pytest.xfail("transformers is still imported on the core path; the backbone rewrite removes it")
         assert result.returncode == 0, result.stderr[-4000:]
+        pytest.fail("The core path no longer imports transformers; remove the expected-failure check.")
+
+    def test_known_import_failure_is_expected(self, tmp_path: Path, mocker: Any) -> None:
+        """Only the known blocked Transformers import is recorded as an expected failure."""
+        stderr = (
+            "from transformers import AutoBackbone\n"
+            "ModuleNotFoundError: import of transformers halted; None in sys.modules\n"
+        )
+        mocker.patch(
+            f"{__name__}._run_child",
+            return_value=subprocess.CompletedProcess([], 1, "blocked-transformers-during-import\n", stderr),
+        )
+
+        with pytest.raises(pytest.xfail.Exception):
+            self.test_core_path_runs_with_transformers_blocked(tmp_path)
+
+    def test_unrelated_child_failure_is_not_expected(self, tmp_path: Path, mocker: Any) -> None:
+        """A later prediction or checkpoint failure remains a test failure."""
+        mocker.patch(f"{__name__}._run_child", return_value=subprocess.CompletedProcess([], 1, "", "prediction failed"))
+
+        with pytest.raises(AssertionError, match="prediction failed"):
+            self.test_core_path_runs_with_transformers_blocked(tmp_path)
+
+    def test_later_identical_import_failure_is_not_expected(self, tmp_path: Path, mocker: Any) -> None:
+        """The same import error during a later phase remains a test failure."""
+        stderr = (
+            "from transformers import AutoBackbone\n"
+            "ModuleNotFoundError: import of transformers halted; None in sys.modules\n"
+        )
+        mocker.patch(f"{__name__}._run_child", return_value=subprocess.CompletedProcess([], 1, "", stderr))
+
+        with pytest.raises(AssertionError, match="ModuleNotFoundError"):
+            self.test_core_path_runs_with_transformers_blocked(tmp_path)
+
+    def test_success_requires_removing_the_expected_failure(self, tmp_path: Path, mocker: Any) -> None:
+        """A successful child flags the obsolete expected failure for removal."""
+        mocker.patch(f"{__name__}._run_child", return_value=subprocess.CompletedProcess([], 0, "", ""))
+
+        with pytest.raises(pytest.fail.Exception, match="remove the expected-failure check"):
+            self.test_core_path_runs_with_transformers_blocked(tmp_path)
