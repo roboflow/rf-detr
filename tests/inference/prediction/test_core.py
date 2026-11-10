@@ -479,13 +479,25 @@ class TestPredictSourceData:
         expected = np.zeros((4, 5, 3), dtype=np.uint8)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            detections = _DummyRFDETR().predict(tensor)
+            actual = core._tensor_to_source_array(tensor)
+
         assert caught == []
-        assert "source_image" in detections.metadata
-        actual = detections.metadata["source_image"]
         assert actual.shape == expected.shape
         assert actual.dtype == expected.dtype
         assert actual.tobytes() == expected.tobytes()
+
+    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+    def test_predict_rejects_nan_before_forward(self, device: str, mocker: MockerFixture) -> None:
+        """Reject an image with a NaN on either input device before running the model."""
+        tensor = torch.zeros((3, 4, 5), device=device)
+        tensor[0, 0, 0] = torch.nan
+        model = _DummyRFDETR()
+        forward = mocker.spy(model.model.model, "forward")
+
+        with pytest.raises(ValueError, match="below 0 or NaN"):
+            model.predict(tensor)
+
+        forward.assert_not_called()
 
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""
