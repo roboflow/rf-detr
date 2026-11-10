@@ -10,7 +10,7 @@ import torch
 
 from rfdetr.config import RFDETRNanoConfig
 from rfdetr.inference import _adapt_input_conv, _build_model_context
-from rfdetr.utilities.package import is_installed
+from tests._markers import _requires_peft
 
 
 @pytest.fixture(autouse=True)
@@ -56,10 +56,6 @@ class TestAdaptInputConv:
 
         assert adapted_weight.shape == expected_shape
         torch.testing.assert_close(adapted_weight, expected_weight)
-
-
-#: Skip a test node that needs ``peft`` for ``backbone_lora``.
-_requires_peft = pytest.mark.skipif(not is_installed("peft"), reason="backbone_lora requires the optional peft package")
 
 
 @_requires_peft

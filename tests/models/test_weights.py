@@ -23,10 +23,8 @@ from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
 from rfdetr.models.weights import _slice_query_param_per_group, _warn_on_partial_load, apply_lora, load_pretrain_weights
 from rfdetr.training.module_model import RFDETRModelModule
-from rfdetr.utilities.imports import _IS_PEFT_INSTALLED
 from rfdetr.utilities.reproducibility import seed_all
-
-_requires_peft = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installed; `pip install rfdetr[lora]`")
+from tests._markers import _requires_peft
 
 #: ``num_classes`` default of ``RFDETRBaseConfig``; an explicit value equal to it must still count as explicit.
 _DEFAULT_NUM_CLASSES = RFDETRBaseConfig.model_fields["num_classes"].default
