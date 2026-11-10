@@ -22,6 +22,7 @@ import tempfile
 from functools import partial
 
 import torch
+from PIL import Image
 from tqdm.auto import tqdm
 
 import rfdetr as _rfdetr
@@ -58,6 +59,8 @@ def _plus_version_tuple() -> tuple[int, ...] | None:
 try:
     from rfdetr import RFDETR2XLarge, RFDETRXLarge
 except ImportError:
+    if _plus_version_tuple() is not None:
+        raise
     RFDETR2XLarge = None
     RFDETRXLarge = None
 
@@ -304,6 +307,8 @@ def main() -> None:
                 # nano-sized pretrained COCO models at default resolution only.
                 if "nano" in base_name.lower() and res is None:
                     _test_coco_class_name_mapping(model_instance)
+                elif res is None and actual_cls in (RFDETRAtto, RFDETRFemto, RFDETRPico):
+                    model_instance.predict(Image.new("RGB", (640, 640), color=(128, 128, 128)))
 
                 succeeded += 1
             except Exception as ex:
