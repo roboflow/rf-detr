@@ -581,7 +581,7 @@ class TestTrainConfigT42PromotedFields:
         """``epochs`` must be >= 1 and ``ema_decay`` within [0, 1].
 
         ``epochs=0`` otherwise fails with a ``ZeroDivisionError`` inside ``configure_optimizers``, and an ``ema_decay``
-        outside [0, 1] otherwise lets the EMA weights diverge to ``inf`` without any error.
+        outside [0, 1] can otherwise make the EMA weights diverge without any error.
         """
         with pytest.raises(ValidationError, match=field):
             _make_train_config(tmp_path, **{field: value})
@@ -595,7 +595,7 @@ class TestTrainConfigT42PromotedFields:
         ],
     )
     def test_epochs_and_ema_fields_accept_boundary_values(self, tmp_path: Path, field: str, value: float) -> None:
-        """The inclusive bounds stay valid: ``ema_decay=1.0`` freezes the EMA."""
+        """The inclusive bounds remain valid for epochs and EMA decay."""
         assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
 
     def test_batch_size_auto_is_accepted(self, tmp_path):
