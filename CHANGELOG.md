@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Prediction rejects floating NumPy arrays and PyTorch tensors containing NaN with a range error before running the model, including when the original pixels are retained in result metadata.
 
 - `RFDETRInference.predict()` without `batch` now predicts a directory, glob or recorded video in batches of the fixed batch size of a predictor from `RFDETR.inference(batch_size=N)` or of a fixed-batch export, with either `stream=True` or `stream=False`. It used one image per batch, so any `N` above one failed on the first batch with `Batch size mismatch` unless the caller passed `batch=N`. A final batch with fewer than `N` images is still refused, not padded. Live captures and `.streams` manifests keep one frame per source in each simultaneous batch, regardless of `batch`; their source count must match the runtime's fixed batch size.
+- `TrainConfig` rejects `epochs` below 1 and `ema_decay` outside `[0, 1]` when it is built, naming the field. `epochs=0` used to fail with a `ZeroDivisionError` inside `configure_optimizers`, and an `ema_decay` outside `[0, 1]` could produce invalid averaging coefficients and make EMA weights diverge without any error. `ema_decay=1.0` stays valid. ([#1699](https://github.com/roboflow/rf-detr/pull/1699))
 
 ## [1.12.0] — 2026-11-05
 
