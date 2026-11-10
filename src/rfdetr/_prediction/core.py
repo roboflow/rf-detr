@@ -1100,7 +1100,9 @@ def _prepare_batch(
             if include_source_image:
                 source_array = np.array(img)
                 if source_array.dtype != np.uint8:
-                    source_array = (source_array * 255).clip(0, 255).astype(np.uint8)
+                    # Defer invalid pixels to the range checks below, even when NumPy is set to raise on a cast.
+                    with np.errstate(invalid="ignore"):
+                        source_array = (source_array * 255).clip(0, 255).astype(np.uint8)
                 source_images.append(source_array)
             uint8_array = isinstance(img, np.ndarray) and img.dtype == np.uint8
             if isinstance(img, np.ndarray) and any(stride < 0 for stride in img.strides):
@@ -1140,7 +1142,8 @@ def _prepare_batch(
         elif include_source_image and img.dim() == 3:
             # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
             # validation below raises the public shape error instead of an internal RuntimeError.
-            source_images.append(_tensor_to_source_array(img))
+            with np.errstate(invalid="ignore"):
+                source_images.append(_tensor_to_source_array(img))
 
         # img.dim() != 3 is checked alongside the channel count (not just deferred as a message
         # detail) because `h, w = img_tensor.shape[1:]` a few lines down unpacks exactly 2 values --
@@ -1152,7 +1155,8 @@ def _prepare_batch(
         pending_checks.append(
             (
                 False if range_known_valid else (img > 1).any(),
-                False if range_known_valid else (img < 0).any(),
+                # A NaN fails the lower-bound comparison, so the same reduction catches it.
+                True if range_known_valid else (img >= 0).all(),
                 invalid_shape,
                 tuple(img.shape),
             )
@@ -1191,17 +1195,16 @@ def _prepare_batch(
 
     # Force the range-check results to Python bools only now, after every image's conversion,
     # range-check kernels, and transfer have all been queued (see the comment where
-    # pending_checks is built). Same nested per-image, per-condition order as the original inline
-    # checks (image 0's "above 1", then "below 0", then its shape check; then image 1's, ...), so
-    # which of the three messages a given multi-image, multi-violation input raises is unchanged.
-    for invalid_high, invalid_low, invalid_shape, img_shape in pending_checks:
+    # pending_checks is built). Within each image, check the upper bound first, then the lower
+    # bound and NaN, then the shape, before considering the next image.
+    for invalid_high, valid_low, invalid_shape, img_shape in pending_checks:
         if invalid_high:
             raise ValueError(
                 "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
             )
-        if invalid_low:
+        if not valid_low:
             raise ValueError(
-                "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
+                "Image has pixel values below 0 or NaN. Please ensure the image is normalized (scaled to [0, 1]).",
             )
         if invalid_shape:
             raise ValueError(

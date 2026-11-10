@@ -1123,13 +1123,14 @@ class TestPredictNegativeStrideNumpy:
 
 @pytest.fixture
 def forbid_range_scan(mocker: MockerFixture) -> None:
-    """Make any pixel-range scan (``Tensor.any``) fail the test.
+    """Make any pixel-range reduction fail the test.
 
     ``_normalization_tensors`` checks its std with ``Tensor.any()`` whenever its cache is cold, so it is replaced to
     isolate the image-range scans, whatever ran before the test.
     """
     mocker.patch("rfdetr._prediction.core._normalization_tensors", return_value=_UNIT_NORMALIZATION)
     mocker.patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan"))
+    mocker.patch.object(torch.Tensor, "all", side_effect=AssertionError("unexpected range scan"))
 
 
 class TestPredictPixelRangeValidation:
@@ -1147,12 +1148,32 @@ class TestPredictPixelRangeValidation:
         with pytest.raises(ValueError, match="pixel values above 1"):
             model.predict(img)
 
+    @pytest.mark.parametrize("as_tensor", [False, True])
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    def test_nan_pixels_raise_before_forward(self, as_tensor: bool, include_source_image: bool) -> None:
+        """NaN pixels raise a range error even when NumPy invalid operations are configured to raise."""
+        model = _DummyRFDETR()
+        array = np.full((8, 8, 3), 0.5, dtype=np.float32)
+        array[0, 0, 0] = np.nan
+        image = torch.from_numpy(array).permute(2, 0, 1) if as_tensor else array
+        seen: list[torch.Tensor] = []
+
+        with (
+            model.model.model.register_forward_pre_hook(_record_model_inputs(seen)),
+            np.errstate(invalid="raise"),
+            pytest.raises(ValueError, match="NaN"),
+        ):
+            model.predict(image, include_source_image=include_source_image)
+
+        assert not seen
+
     def test_valid_images_do_not_raise(self) -> None:
-        """A batch of in-range tensors must not raise, deferred check included."""
+        """A batch of in-range tensors including both endpoints is accepted."""
         model = _DummyRFDETR()
         img = torch.full((3, 8, 8), 0.5)
+        img[0, 0, :2] = torch.tensor([0.0, 1.0])
 
-        model.predict([img, img])  # must not raise
+        model.predict([img, img])
 
     @pytest.mark.parametrize(
         "image",
