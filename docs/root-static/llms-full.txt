@@ -34,7 +34,7 @@ uv add rfdetr
 
 For Atto/Femto/Pico (rfdetr_plus>=1.2.0) and XLarge/2XLarge models (PML 1.0: commercial use included on Roboflow; commercial self-hosting requires the Enterprise add-on):
 ```bash
-pip install "rfdetr[plus]"
+pip install "rfdetr[plus]" "rfdetr_plus>=1.2.0"
 ```
 
 ---

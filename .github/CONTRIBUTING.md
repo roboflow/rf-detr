@@ -416,8 +416,8 @@ RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the 
 ### Install Documentation Dependencies
 
 ```bash
-# Full docs build (matches CI — required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
-uv pip install -e ".[plus]" --group docs
+# Full docs build (required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
+uv pip install -e ".[plus]" "rfdetr_plus>=1.2.0" --group docs
 
 # Minimal install (skip plus models — the Plus model pages will error)
 uv sync --group docs

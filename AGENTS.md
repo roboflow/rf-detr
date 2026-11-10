@@ -176,8 +176,8 @@ pre-commit run --all-files
 ### Building Docs
 
 ```bash
-# Full install (matches CI — required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
-uv pip install -e ".[plus]" --group docs
+# Full install (required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
+uv pip install -e ".[plus]" "rfdetr_plus>=1.2.0" --group docs
 
 # Serve locally (live reload)
 uv run mkdocs serve
