@@ -797,6 +797,37 @@ class TestBuildMatchingData:
         assert result[0]["matches"][0] == 1
         assert result[0]["total_gt"] == 1
 
+    @pytest.mark.parametrize("strided_side", ["predictions", "targets", "both"])
+    def test_segmentation_matches_noncontiguous_masks(self, monkeypatch: pytest.MonkeyPatch, strided_side: str) -> None:
+        """Strided masks yield the same ordered matches across chunk boundaries."""
+        monkeypatch.setattr("rfdetr.evaluation.matching._MASK_IOU_CHUNK", 1)
+        gt_masks = torch.zeros((2, 6, 5), dtype=torch.bool)
+        gt_masks[0, :2, :3] = True
+        gt_masks[1, 3:5, 2:] = True
+        false_positive = _bool_mask(6, 5, slice(4, 6), slice(0, 2))
+        pred_masks = torch.cat((gt_masks, false_positive))
+        if strided_side in ("predictions", "both"):
+            pred_masks = pred_masks.transpose(1, 2).contiguous().transpose(1, 2)
+            assert not pred_masks.is_contiguous()
+        if strided_side in ("targets", "both"):
+            gt_masks = gt_masks.transpose(1, 2).contiguous().transpose(1, 2)
+            assert not gt_masks.is_contiguous()
+
+        pred = self._make_pred(
+            [[0, 0, 3, 2], [2, 3, 5, 5], [0, 4, 2, 6]],
+            [0.7, 0.95, 0.8],
+            [0, 0, 0],
+        )
+        target = self._make_target([[0, 0, 3, 2], [2, 3, 5, 5]], [0, 0])
+        pred["masks"] = pred_masks
+        target["masks"] = gt_masks
+
+        result = build_matching_data([pred], [target], iou_type="segm")[0]
+
+        assert result["matches"].tolist() == [1, 0, 1]
+        assert result["ignore"].tolist() == [False, False, False]
+        assert result["total_gt"] == 2
+
     def test_segmentation_missing_masks_raises_value_error(self) -> None:
         """iou_type='segm' without masks must raise ValueError."""
         pred = self._make_pred([[0, 0, 10, 10]], [0.9], [0])
