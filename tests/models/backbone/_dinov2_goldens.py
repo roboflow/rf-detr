@@ -12,9 +12,9 @@ committed files. Regenerate the files only for a deliberate behaviour change:
 
 ```bash python -m tests.models.backbone._dinov2_goldens ```
 
-Key lists, shapes and random-number-generator digests compare exactly. Tensor values compare with ``atol=1e-6``, because
-CPU random-number kernels may round differently across architectures. Each file records the platform and torch version
-that produced it.
+Key lists, shapes and random-number-generator digests compare exactly. Tensor values compare with ``rtol=1e-5`` and
+``atol=1e-6``, because CPU kernels (random numbers, interpolation, matmul) may round differently across architectures
+and torch builds. Each file records the platform and torch version that produced it.
 """
 
 from __future__ import annotations

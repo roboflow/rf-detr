@@ -50,8 +50,13 @@ from tests.models.backbone._dinov2_goldens import (
     tiny_config,
 )
 
-#: Exact float tolerance agreed for golden tensors: values may differ in the last bits across CPU architectures.
-_GOLDEN_TOLERANCE = {"rtol": 0.0, "atol": 1e-6}
+#: Float tolerance for golden tensors. The goldens come from macOS arm64, while CI runs Linux x86 (and other CPUs),
+#: whose kernels round differently: bicubic position-embedding interpolation and matmul accumulation order change the
+#: last bits. A pure ``atol=1e-6`` was too tight: for a feature value near 0.86 (one float32 ULP = 6e-8) it allows only
+#: ~17 ULP, and CI run 42868524910 (ubuntu, py3.12) missed it by 1.3e-8 on 1 of 192 elements in the resized case. The
+#: ``rtol`` term scales with magnitude, so the same budget (~170 ULP at ``rtol=1e-5``) holds for large and small
+#: values, and stays a 1e-5 relative budget: tight enough to catch a changed weight, scale or interpolation.
+_GOLDEN_TOLERANCE = {"rtol": 1e-5, "atol": 1e-6}
 
 #: Hub revision of ``facebook/dinov2-small`` whose ``model.safetensors`` keys match the backbone exactly.
 _DINOV2_SMALL_SHA = "ed25f3a31f01632728cabb09d1542f84ab7b0056"
