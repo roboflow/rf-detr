@@ -30,7 +30,7 @@ The defaults are batch size 1 and float32, compiled with TorchScript, captured a
 
 ## Unreleased: `transformers` is no longer a core dependency
 
-`pip install rfdetr` no longer installs `transformers`, `tokenizers`, `huggingface_hub` or `safetensors`. Importing `rfdetr`, building released models, predicting, training from RF-DETR weights and loading checkpoints never needed them. `rfdetr[train]` and `rfdetr[lora]` still install all four through `peft`.
+`pip install rfdetr` no longer installs `transformers`, `tokenizers`, `huggingface_hub` or `safetensors`. Importing `rfdetr`, building released models, predicting, training from RF-DETR weights and loading non-LoRA checkpoints do not need them. Loading a LoRA checkpoint requires `peft`, available through `rfdetr[lora]`. `rfdetr[train]` and `rfdetr[lora]` still install all four through `peft`.
 
 Install the packages yourself if any of these applies:
 
@@ -38,7 +38,7 @@ Install the packages yourself if any of these applies:
 - You build a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, which download DINOv2 weights from the Hugging Face Hub: `pip install huggingface_hub safetensors`.
 - You build a non-windowed DINOv2 backbone (`DinoV2(use_windowed_attn=False)`): `pip install transformers`.
 
-Without them, each case raises an `ImportError` with the install command.
+Without the required packages, the two backbone cases raise an `ImportError` with the install command.
 
 The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are now plain `torch.nn.Module` subclasses. `from_pretrained`, `save_pretrained`, `push_to_hub` and `isinstance` checks against `transformers` classes no longer apply to them, and their outputs are dataclasses read by attribute, not by index.
 
