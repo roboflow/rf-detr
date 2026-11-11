@@ -25,8 +25,11 @@ from rfdetr.utilities.imports import (
     _IS_ALBUMENTATIONS_INSTALLED,
     _IS_FASTER_COCO_EVAL_INSTALLED,
     _IS_HOTCOCO_INSTALLED,
+    _IS_HUGGINGFACE_HUB_INSTALLED,
     _IS_KORNIA_INSTALLED,
+    _IS_PEFT_INSTALLED,
     _IS_PYCOCOTOOLS_INSTALLED,
+    _IS_SAFETENSORS_INSTALLED,
     _IS_TORCH_XLA_INSTALLED,
     _IS_UFCOCO_INSTALLED,
     _IS_VERNIER_INSTALLED,
@@ -57,6 +60,19 @@ _requires_torch_xla = pytest.mark.skipif(
     not _IS_TORCH_XLA_INSTALLED,
     reason="torch_xla not installed; skip XLA device tests",
 )
+
+#: Skip a test node that needs the Hugging Face Hub client, such as a DINOv2 backbone weight download.
+_requires_huggingface_hub = pytest.mark.skipif(
+    not _IS_HUGGINGFACE_HUB_INSTALLED, reason="huggingface_hub not installed; skip Hugging Face Hub tests"
+)
+
+#: Skip a test node that reads or writes ``.safetensors`` files, such as the DINOv2 backbone weights.
+_requires_safetensors = pytest.mark.skipif(
+    not _IS_SAFETENSORS_INSTALLED, reason="safetensors not installed; skip safetensors tests"
+)
+
+#: Skip a test node that applies LoRA adapters, which need the optional ``peft`` package (``rfdetr[lora]``).
+_requires_peft = pytest.mark.skipif(not _IS_PEFT_INSTALLED, reason="peft not installed; `pip install rfdetr[lora]`")
 
 #: Skip a test node that needs the ``onnx`` package (graph construction, export, checker).
 _requires_onnx = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX tests")

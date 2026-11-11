@@ -4212,6 +4212,24 @@ class TestNanoInt8Plan:
         """
         return quantize.plan_int8(onnx.load(str(nano_onnx)))
 
+    @pytest.mark.parametrize("region", quantize._QUANTIZED_REGIONS)
+    def test_every_quantized_region_names_a_node(self, nano_onnx: Path, region: str) -> None:
+        """Each quantized-region prefix matches at least one node name of the Nano export.
+
+        The prefixes come from module attribute paths, so a renamed backbone or decoder module leaves a region empty and
+        the INT8 planner quantizes nothing there.
+        """
+        assert any(node.name.startswith(region) for node in onnx.load(str(nano_onnx)).graph.node)
+
+    def test_backbone_encoder_matmul_count(self, nano_onnx: Path) -> None:
+        """The Nano backbone encoder exports 96 ``MatMul`` nodes: 12 blocks of 6 projections and 2 attention products.
+
+        A backbone rewrite that should leave the graph unchanged must keep this count, and the INT8 plan with it.
+        """
+        nodes = onnx.load(str(nano_onnx)).graph.node
+
+        assert sum(n.op_type == "MatMul" and n.name.startswith(quantize._BACKBONE_ENCODER) for n in nodes) == 96
+
     def test_attention_blocks_left_fp16_are_counted(self, monkeypatch: pytest.MonkeyPatch, nano_onnx: Path) -> None:
         """The info log reports INT8 attention in 9 of 12 Nano backbone blocks."""
         messages: list[str] = []

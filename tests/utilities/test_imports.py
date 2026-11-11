@@ -20,8 +20,9 @@ from rfdetr.utilities import imports as utilities_imports
 
 _PYPROJECT_TEXT = Path(__file__).resolve().parents[2].joinpath("pyproject.toml").read_text(encoding="utf-8")
 
-#: Probed packages that no pyproject extra declares, because users or CI install them by hand.
-_UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer"})
+#: Probed packages that no pyproject extra declares: users or CI install them by hand, or (``huggingface_hub`` and
+#: ``safetensors``) they arrive through ``transformers`` and gate the DINOv2 hub weight tests.
+_UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer", "huggingface_hub", "safetensors"})
 
 #: Probed import names whose distribution is spelled differently, so pyproject.toml declares the distribution.
 _DISTRIBUTION_NAMES = {"cv2": "opencv-python"}
