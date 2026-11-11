@@ -115,6 +115,21 @@ class TestLoadDinov2HubWeights:
 
         torch.testing.assert_close(meta_backbone.state_dict(), tiny_weights, rtol=0.0, atol=0.0)
 
+    def test_loaded_parameters_stay_trainable(
+        self, mocker: Any, tmp_path: Path, tiny_weights: dict[str, torch.Tensor], meta_backbone: Any
+    ) -> None:
+        """Parameters assigned from the file still require gradients.
+
+        The load replaces each parameter with the file's tensor; if the replacement dropped ``requires_grad``, a model
+        built from hub weights would train with a frozen backbone and no error.
+        """
+        path = _save_weights(tiny_weights, tmp_path / "model.safetensors")
+        mocker.patch("huggingface_hub.hf_hub_download", autospec=True, return_value=str(path))
+
+        _load_dinov2_hub_weights(meta_backbone, "facebook/dinov2-small")
+
+        assert all(param.requires_grad for param in meta_backbone.parameters())
+
     def test_downloads_the_pinned_revision(
         self, mocker: Any, tmp_path: Path, tiny_weights: dict[str, torch.Tensor], meta_backbone: Any
     ) -> None:
