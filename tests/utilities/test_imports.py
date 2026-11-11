@@ -21,7 +21,8 @@ from rfdetr.utilities import imports as utilities_imports
 _PYPROJECT_TEXT = Path(__file__).resolve().parents[2].joinpath("pyproject.toml").read_text(encoding="utf-8")
 
 #: Probed packages that no pyproject extra declares: users or CI install them by hand, or (``huggingface_hub`` and
-#: ``safetensors``) they arrive through ``transformers`` and gate the DINOv2 hub weight tests.
+#: ``safetensors``) they arrive through ``peft`` in the ``train`` and ``lora`` extras and gate the DINOv2 hub weight
+#: tests.
 _UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer", "huggingface_hub", "safetensors"})
 
 #: Probed import names whose distribution is spelled differently, so pyproject.toml declares the distribution.

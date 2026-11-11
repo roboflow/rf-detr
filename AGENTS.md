@@ -74,14 +74,13 @@ uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backe
 
 See `pyproject.toml` for complete dependency specifications:
 
-- **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
+- **Core:** PyTorch, torchvision, supervision, pydantic, pyDeprecate. `transformers` is not a core dependency: core code must not import it at module scope (the non-windowed DINOv2 backbone imports it lazily); `[train]` and `[lora]` install it through `peft`
 - **Optional:** `[data]` (WebDataset streaming reader), `[train]` (minimal training loop dependencies, including the COCO evaluation backends selectable via `TrainConfig.eval_backend`), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
 
 - PyTorch: >=2.2.0, \<3.0.0
-- Transformers: >=5.0.0, \<6.0.0
 
 ## Testing
 
