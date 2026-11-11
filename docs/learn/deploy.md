@@ -8,8 +8,8 @@ description: Deploy fine-tuned RF-DETR detection and segmentation models to Robo
 
     - Deploy fine-tuned RF-DETR models to Roboflow with a single `deploy_to_roboflow()` call
     - Supports both detection and segmentation model deployment
-    - Run deployed models via Roboflow Inference on cloud, edge hardware, or NVIDIA Jetson
-    - Model weights are cached locally after the first inference run for fast subsequent predictions
+    - Roboflow serves deployed models in the cloud, on edge hardware, or on NVIDIA Jetson
+    - Run the same fine-tuned checkpoint locally with `RFDETRInference`
 
 You can deploy a fine-tuned RF-DETR model to Roboflow.
 
@@ -20,9 +20,9 @@ To deploy your model to Roboflow, run:
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRNano
+    from rfdetr import RFDETRSmall
 
-    x = RFDETRNano(pretrain_weights="<path/to/pretrain/weights/dir>")
+    x = RFDETRSmall(pretrain_weights="<path/to/pretrain/weights/dir>")
     x.deploy_to_roboflow(
         workspace="<your-workspace>",
         project_id="<your-project-id>",
@@ -33,9 +33,9 @@ To deploy your model to Roboflow, run:
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegMedium
+    from rfdetr import RFDETRSegSmall
 
-    x = RFDETRSegMedium(pretrain_weights="<path/to/pretrain/weights/dir>")
+    x = RFDETRSegSmall(pretrain_weights="<path/to/pretrain/weights/dir>")
     x.deploy_to_roboflow(
         workspace="<your-workspace>",
         project_id="<your-project-id>",
@@ -48,66 +48,15 @@ Above, set your Roboflow Workspace ID, the ID of the project to which you want t
 - [Learn how to find your Workspace and Project ID.](https://docs.roboflow.com/developer/authentication/workspace-and-project-ids)
 - [Learn how to find your API key.](https://docs.roboflow.com/developer/authentication/find-your-roboflow-api-key)
 
-You can then run your model with Roboflow Inference:
+Roboflow then serves your model for multi-step computer vision applications in the cloud and on your own hardware, including NVIDIA Jetson.
 
-=== "Object Detection"
+To run the same fine-tuned checkpoint locally, load it with `RFDETRInference`:
 
-    ```python
-    import supervision as sv
-    from inference import get_model
-    from PIL import Image
-    from io import BytesIO
-    import requests
+```python
+from rfdetr import RFDETRInference
 
-    url = "https://media.roboflow.com/dog.jpeg"
-    image = Image.open(BytesIO(requests.get(url).content))
+predictor = RFDETRInference("<path/to/checkpoint.pth>")
+detections = predictor.predict("https://media.roboflow.com/dog.jpeg", threshold=0.5)
+```
 
-    model = get_model("rfdetr-large")  # replace with your Roboflow model ID
-
-    predictions = model.infer(image, confidence=0.5)[0]
-
-    detections = sv.Detections.from_inference(predictions)
-
-    labels = [prediction.class_name for prediction in predictions.predictions]
-
-    annotated_image = image.copy()
-    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-
-    sv.plot_image(annotated_image)
-    ```
-
-=== "Image Segmentation"
-
-    ```python
-    import supervision as sv
-    from inference import get_model
-    from PIL import Image
-    from io import BytesIO
-    import requests
-
-    url = "https://media.roboflow.com/dog.jpeg"
-    image = Image.open(BytesIO(requests.get(url).content))
-
-    model = get_model("rfdetr-seg-small")  # replace with your Roboflow model ID
-
-    predictions = model.infer(image, confidence=0.5)[0]
-
-    detections = sv.Detections.from_inference(predictions)
-
-    labels = [prediction.class_name for prediction in predictions.predictions]
-
-    annotated_image = image.copy()
-    annotated_image = sv.MaskAnnotator().annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-
-    sv.plot_image(annotated_image)
-    ```
-
-Above, replace `rfdetr-large` with the your Roboflow model ID. You can find this ID from the "Models" list in your Roboflow dashboard:
-
-![](https://media.roboflow.com/rfdetr/models-list.png)
-
-When you first run this model, your model weights will be cached for local use with Inference.
-
-You will then see the results from your fine-tuned model.
+See [Run Inference](inference.md) for compiled predictors, exported models, and runtime options.

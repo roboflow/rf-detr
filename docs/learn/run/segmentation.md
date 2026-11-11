@@ -10,53 +10,33 @@ RF-DETR is a real-time transformer architecture for instance segmentation, built
 
 RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Every RF-DETR-Seg size, including XLarge and 2XLarge, is part of the core `rfdetr` package under Apache 2.0, so it's commercially usable out of the box: you can ship it in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. No `rfdetr[plus]` install is needed.
 
-| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
-| :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-|  N   |    `RFDETRSegNano`    | `rfdetr-seg-nano`       |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   | Apache 2.0 |
-|  S   |   `RFDETRSegSmall`    | `rfdetr-seg-small`      |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   | Apache 2.0 |
-|  M   |   `RFDETRSegMedium`   | `rfdetr-seg-medium`     |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   | Apache 2.0 |
-|  L   |   `RFDETRSegLarge`    | `rfdetr-seg-large`      |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   | Apache 2.0 |
-|  XL  |   `RFDETRSegXLarge`   | `rfdetr-seg-xlarge`     |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   | Apache 2.0 |
-| 2XL  |  `RFDETRSeg2XLarge`   | `rfdetr-seg-2xlarge`    |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   | Apache 2.0 |
+| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
+| :--: | :-------------------: | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+|  N   |    `RFDETRSegNano`    |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   | Apache 2.0 |
+|  S   |   `RFDETRSegSmall`    |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   | Apache 2.0 |
+|  M   |   `RFDETRSegMedium`   |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   | Apache 2.0 |
+|  L   |   `RFDETRSegLarge`    |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   | Apache 2.0 |
+|  XL  |   `RFDETRSegXLarge`   |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   | Apache 2.0 |
+| 2XL  |  `RFDETRSeg2XLarge`   |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   | Apache 2.0 |
 
 ## Run on an Image
 
-Perform inference on an image using either the `rfdetr` package or the `inference` package. To use a different model size, select the corresponding class or alias from the table above.
+Perform inference on an image with the `rfdetr` package. To use a different model size, select the corresponding class from the table above.
 
-=== "rfdetr"
+```python
+import supervision as sv
+from rfdetr import RFDETRSegSmall
+from rfdetr.assets.coco_classes import COCO_CLASSES
 
-    ```python
-    import supervision as sv
-    from rfdetr import RFDETRSegMedium
-    from rfdetr.assets.coco_classes import COCO_CLASSES
+model = RFDETRSegSmall()
 
-    model = RFDETRSegMedium()
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
-    detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
+labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-    labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
-
-    annotated_image = sv.MaskAnnotator().annotate(detections.metadata["source_image"], detections)
-    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-    ```
-
-=== "inference"
-
-    ```python
-    import requests
-    import supervision as sv
-    from PIL import Image
-    from inference import get_model
-
-    model = get_model("rfdetr-seg-medium")
-
-    image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
-    predictions = model.infer(image, confidence=0.5)[0]
-    detections = sv.Detections.from_inference(predictions)
-
-    annotated_image = sv.MaskAnnotator().annotate(image, detections)
-    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
-    ```
+annotated_image = sv.MaskAnnotator().annotate(detections.metadata["source_image"], detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+```
 
 !!! note "Using COCO classes vs. fine-tuned model classes"
 
@@ -93,7 +73,7 @@ detections = predictor.predict("image.jpg")
 
 An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
 
-PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. Inductor compiles with `torch.compile` on a device supported by the installed PyTorch version and its operators; it does not require CUDA. `dtype="float16"` also requires FP16 support on that device. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but later processes may reuse its disk cache. Inductor compiles with `torch.compile` on a device supported by the installed PyTorch version and its operators; it does not require CUDA. `dtype="float16"` also requires FP16 support on that device:
 
 ```python
 predictor = model.inference(compile_backend="inductor", batch_size=1, dtype="float16")
