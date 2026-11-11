@@ -16,7 +16,6 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
     WindowedDinov2WithRegistersModel,
-    _find_pruneable_heads_and_indices,
     _fold_layer_scales,
     _get_aligned_output_features_output_indices,
 )
@@ -246,7 +245,7 @@ def test_buggy_reshape_silent_corruption_for_nonsquare():
 
 
 # ---------------------------------------------------------------------------
-# Tests for locally-copied utility functions (removed from transformers v5 public API)
+# Tests for locally-copied utility functions
 # ---------------------------------------------------------------------------
 
 
@@ -289,38 +288,6 @@ class TestGetAlignedOutputFeaturesOutputIndices:
         assert indices == [1, 2]
 
 
-class TestFindPruneableHeadsAndIndices:
-    """Tests for the local copy of find_pruneable_heads_and_indices."""
-
-    def test_no_pruning_returns_full_index(self):
-        """Pruning no heads keeps every row index and reports no pruned heads."""
-        heads, index = _find_pruneable_heads_and_indices(set(), n_heads=4, head_size=3, already_pruned_heads=set())
-        assert len(heads) == 0
-        assert len(index) == 12  # 4 * 3, nothing masked
-
-    @pytest.mark.parametrize(
-        "head_to_prune, expected_index",
-        [
-            pytest.param({0}, list(range(3, 12)), id="prune-first-head"),
-            pytest.param({3}, list(range(9)), id="prune-last-head"),
-        ],
-    )
-    def test_prune_single_head_removes_correct_rows(self, head_to_prune, expected_index):
-        """Pruning one head removes exactly its head_size rows (remaining 4*3 - 3 = 9)."""
-        heads, index = _find_pruneable_heads_and_indices(
-            head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set()
-        )
-        assert heads == head_to_prune
-        assert len(index) == 9
-        assert index.tolist() == expected_index
-
-    def test_already_pruned_head_adjusts_offset(self):
-        """Pruning head 1 after head 0 was already pruned offsets the index, removing 3 more rows."""
-        heads, index = _find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
-        assert 1 in heads
-        assert len(index) == 9  # 4*3 - 3 pruned
-
-
 # ---------------------------------------------------------------------------
 # Smoke tests for WindowedDinov2WithRegistersBackbone
 # ---------------------------------------------------------------------------
@@ -338,7 +305,6 @@ def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
         hidden_size=32,
         num_hidden_layers=1,
         num_attention_heads=2,
-        intermediate_size=64,
         patch_size=16,
         image_size=64,
         num_register_tokens=0,
@@ -349,7 +315,7 @@ def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
 
 
 class TestWindowedDinov2WithRegistersBackbone:
-    """Smoke tests that guard against _init_transformers_backbone() API regressions."""
+    """Smoke tests for the stage attributes and output the backbone sets up from its config."""
 
     @pytest.mark.parametrize("attr", ["stage_names", "out_features"])
     def test_instantiation_sets_list_attribute(self, attr):
