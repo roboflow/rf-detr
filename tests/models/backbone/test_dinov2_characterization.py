@@ -5,11 +5,11 @@
 # ------------------------------------------------------------------------
 """Characterization tests that pin the DINOv2 backbone's current behaviour.
 
-The backbone classes inherit from ``transformers`` base classes that add hidden behaviour: weight initialization order,
-the ``from_pretrained`` hub load on the meta device, gradient checkpointing set up from a config flag, tracing-aware
-size casts and output validation. These tests record that behaviour on today's code, so replacing the base classes can
-be checked against it without changing a test. Golden values come from ``_dinov2_goldens.py``, which documents how to
-regenerate them.
+The backbone classes used to inherit from ``transformers`` base classes that added hidden behaviour: weight
+initialization order, the ``from_pretrained`` hub load on the meta device, gradient checkpointing set up from a config
+flag, tracing-aware size casts and output validation. These tests recorded that behaviour before the base classes were
+replaced by local code, and keep the local code to it. Golden values come from ``_dinov2_goldens.py``, which documents
+how to regenerate them.
 """
 
 from __future__ import annotations
@@ -121,12 +121,7 @@ _NO_TRANSFORMERS_CHILD = textwrap.dedent(
     import numpy as np
     import torch
 
-    try:
-        from rfdetr import RFDETRNano
-    except ModuleNotFoundError as exc:
-        if exc.name == "transformers":
-            print("blocked-transformers-during-import")
-        raise
+    from rfdetr import RFDETRNano
 
     checkpoint_path = sys.argv[1]
     model = RFDETRNano(pretrain_weights=None, device="cpu")
@@ -139,6 +134,24 @@ _NO_TRANSFORMERS_CHILD = textwrap.dedent(
         if module is not None and (name == "transformers" or name.startswith("transformers."))
     )
     assert not leaked, leaked
+    """
+)
+
+#: Child process for the hub path without its optional packages: ``transformers`` and ``huggingface_hub`` are blocked
+#: as in a core-only install, and a patch-14 Nano model that would load DINOv2 hub weights is built.
+_BLOCKED_HUB_CHILD = textwrap.dedent(
+    """
+    import sys
+
+    sys.modules["transformers"] = None
+    sys.modules["huggingface_hub"] = None
+
+    from rfdetr.config import RFDETRNanoConfig
+    from rfdetr.models.lwdetr import build_model_from_config
+
+    build_model_from_config(
+        RFDETRNanoConfig(pretrain_weights=None, patch_size=14, positional_encoding_size=37, resolution=392)
+    )
     """
 )
 
@@ -462,59 +475,20 @@ class TestCorePathWithoutTransformers:
     def test_core_path_runs_with_transformers_blocked(self, tmp_path: Path) -> None:
         """A child process that cannot import ``transformers`` builds Nano, predicts and reloads a saved checkpoint.
 
-        The checkpoint is written to a temporary directory and loaded from there, so nothing is downloaded. Today the
-        child fails at ``import rfdetr``; only that known import failure is expected. A successful child signals that
-        this temporary expectation must be removed.
+        The checkpoint is written to a temporary directory and loaded from there, so nothing is downloaded. The child
+        also asserts that no ``transformers`` module was loaded along the way.
         """
         result = _run_child(_NO_TRANSFORMERS_CHILD, str(tmp_path / "checkpoint.pth"))
 
-        if (
-            result.returncode != 0
-            and result.stdout.strip() == "blocked-transformers-during-import"
-            and "from transformers import AutoBackbone" in result.stderr
-            and result.stderr.rstrip().endswith(
-                "ModuleNotFoundError: import of transformers halted; None in sys.modules"
-            )
-        ):
-            pytest.xfail("transformers is still imported on the core path; the backbone rewrite removes it")
         assert result.returncode == 0, result.stderr[-4000:]
-        pytest.fail("The core path no longer imports transformers; remove the expected-failure check.")
 
-    def test_known_import_failure_is_expected(self, tmp_path: Path, mocker: Any) -> None:
-        """Only the known blocked Transformers import is recorded as an expected failure."""
-        stderr = (
-            "from transformers import AutoBackbone\n"
-            "ModuleNotFoundError: import of transformers halted; None in sys.modules\n"
-        )
-        mocker.patch(
-            f"{__name__}._run_child",
-            return_value=subprocess.CompletedProcess([], 1, "blocked-transformers-during-import\n", stderr),
-        )
+    def test_hub_path_without_packages_raises_install_hint(self) -> None:
+        """Building a model that loads DINOv2 hub weights, without ``huggingface_hub``, names the packages to install.
 
-        with pytest.raises(pytest.xfail.Exception):
-            self.test_core_path_runs_with_transformers_blocked(tmp_path)
+        Only patch-14 configs with ``pretrain_weights=None`` reach the hub, so a core-only install meets this error
+        there and nowhere else; it must name the trigger and the fix rather than a bare missing module.
+        """
+        result = _run_child(_BLOCKED_HUB_CHILD)
 
-    def test_unrelated_child_failure_is_not_expected(self, tmp_path: Path, mocker: Any) -> None:
-        """A later prediction or checkpoint failure remains a test failure."""
-        mocker.patch(f"{__name__}._run_child", return_value=subprocess.CompletedProcess([], 1, "", "prediction failed"))
-
-        with pytest.raises(AssertionError, match="prediction failed"):
-            self.test_core_path_runs_with_transformers_blocked(tmp_path)
-
-    def test_later_identical_import_failure_is_not_expected(self, tmp_path: Path, mocker: Any) -> None:
-        """The same import error during a later phase remains a test failure."""
-        stderr = (
-            "from transformers import AutoBackbone\n"
-            "ModuleNotFoundError: import of transformers halted; None in sys.modules\n"
-        )
-        mocker.patch(f"{__name__}._run_child", return_value=subprocess.CompletedProcess([], 1, "", stderr))
-
-        with pytest.raises(AssertionError, match="ModuleNotFoundError"):
-            self.test_core_path_runs_with_transformers_blocked(tmp_path)
-
-    def test_success_requires_removing_the_expected_failure(self, tmp_path: Path, mocker: Any) -> None:
-        """A successful child flags the obsolete expected failure for removal."""
-        mocker.patch(f"{__name__}._run_child", return_value=subprocess.CompletedProcess([], 0, "", ""))
-
-        with pytest.raises(pytest.fail.Exception, match="remove the expected-failure check"):
-            self.test_core_path_runs_with_transformers_blocked(tmp_path)
+        assert result.returncode != 0
+        assert "pip install huggingface_hub safetensors" in result.stderr, result.stderr[-4000:]

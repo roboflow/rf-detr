@@ -728,7 +728,6 @@ def apply_lora(nn_model: LWDETR) -> None:
     """
     try:
         from peft import LoraConfig, PeftModel, get_peft_model
-        from transformers import PreTrainedModel
     except ImportError as exc:
         raise ImportError(
             "LoRA requires the 'peft' dependency. "
@@ -756,8 +755,8 @@ def apply_lora(nn_model: LWDETR) -> None:
             "register_tokens",
         ],
     )
-    # PEFT's type signature requires a PreTrainedModel, but DinoV2 is a compatible nn.Module
+    # PEFT's type signature requires a transformers PreTrainedModel, but DinoV2 is a compatible nn.Module
     # wrapper at runtime. Cast both sides of this dynamic wrapper boundary instead of relying
     # on an environment-sensitive ignore for PEFT's evolving type annotations.
-    peft_encoder = get_peft_model(cast(PreTrainedModel, backbone.encoder), lora_config)
+    peft_encoder = get_peft_model(cast(Any, backbone.encoder), lora_config)
     backbone.encoder = cast(DinoV2, peft_encoder)

@@ -17,7 +17,6 @@ from torch import nn
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.models import build_model
-from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersBackbone
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.training.param_groups import (
@@ -29,19 +28,15 @@ from rfdetr.training.param_groups import (
 
 
 @pytest.fixture
-def nano_model_and_args(monkeypatch: pytest.MonkeyPatch) -> tuple[LWDETR, Any]:
+def nano_model_and_args() -> tuple[LWDETR, Any]:
     """Build an RF-DETR Nano LWDETR and the argument namespace the grouping helpers read.
 
-    Pretrained weights are skipped so the fixture needs no network.
+    Pretrained weights are skipped, and Nano's patch-16 backbone never loads DINOv2 hub weights, so the fixture needs
+    no network.
 
     Examples:
-        >>> nano_model_and_args(pytest.MonkeyPatch())  # doctest: +SKIP
+        >>> nano_model_and_args()  # doctest: +SKIP
     """
-    monkeypatch.setattr(
-        WindowedDinov2WithRegistersBackbone,
-        "from_pretrained",
-        classmethod(lambda cls, name, config: cls(config)),
-    )
     args = _namespace_from_configs(
         RFDETRNanoConfig(num_classes=3, pretrain_weights=None),
         TrainConfig(dataset_dir=".", output_dir="."),

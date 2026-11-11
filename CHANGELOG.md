@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `import rfdetr`, building a model, prediction and checkpoint loading no longer import `transformers`; `transformers` stays a dependency in this release. The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are plain `torch.nn.Module` subclasses instead of Hugging Face `PreTrainedModel` subclasses, so `from_pretrained`, `save_pretrained`, `push_to_hub` and `transformers` `isinstance` checks no longer apply to them; their outputs are dataclasses read by attribute; `WindowedDinov2WithRegistersConfig` rejects keywords it does not use; and the unused `WindowedDinov2WithRegistersForImageClassification` and head-pruning methods are removed. State-dict keys, initialization for a fixed seed, and outputs are unchanged.
+
+    - Loading DINOv2 hub weights (only for a patch-14 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs) reads `model.safetensors` at a pinned commit through `huggingface_hub`, and raises if the file's keys differ from the backbone's instead of randomly initializing the missing ones. Without `huggingface_hub` and `safetensors` it raises an `ImportError` that names them.
+    - A non-windowed `DinoV2(use_windowed_attn=False)` imports `transformers` when it is built, and raises an `ImportError` with the install command if `transformers` is missing.
+
 - Segmentation prediction with `RFDETR.predict()` and `RFDETRInference.predict()` no longer copies every full-resolution mask on the device a second time when all detections pass the threshold. Post-processing already drops masks below the score threshold, so decoding now selects mask rows only when it removes some, as with per-class thresholds or a custom post-processor. Returned masks stay independent of the post-processor's tensors. On a Tesla T4, decoding 100 masks at 1920×1080 peaked at 198 MiB less CUDA memory and took 15.8 ms instead of 17.6 ms; this covers mask decoding and the copy to the CPU, not the model forward pass or mask resizing. Predictions are unchanged. ([#1688](https://github.com/roboflow/rf-detr/pull/1688))
 
 ### Fixed

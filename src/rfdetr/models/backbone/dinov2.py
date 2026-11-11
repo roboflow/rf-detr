@@ -15,7 +15,6 @@ from typing import Any, cast
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoBackbone
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersBackbone,
@@ -24,6 +23,72 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+#: Hub commits whose ``model.safetensors`` keys match the windowed backbone exactly. They are the ``main`` commits the
+#: weights were verified at, so a cache filled from ``main`` before the pin still serves them offline. A repository
+#: missing here loads its ``main`` branch.
+_DINOV2_HUB_REVISIONS = {
+    "facebook/dinov2-small": "ed25f3a31f01632728cabb09d1542f84ab7b0056",
+    "facebook/dinov2-base": "f9e44c814b77203eaa57a6bdbbd535f21ede1415",
+    "facebook/dinov2-with-registers-small": "0d9846e56b43a21fa46d7f3f5070f0506a5795a9",
+}
+
+#: Install hint raised when the hub weight loader's optional packages are missing.
+_HUB_WEIGHTS_INSTALL_HINT = (
+    "Loading DINOv2 weights from the Hugging Face Hub needs `huggingface_hub` and `safetensors`. They are used only "
+    "when a patch-14 DINOv2 backbone with 37 positional encodings is built with `pretrain_weights=None` (for example "
+    "the deprecated RF-DETR Base configs). Install them with `pip install huggingface_hub safetensors`, or "
+    '`pip install "rfdetr[train]"`, or pass RF-DETR `pretrain_weights`.'
+)
+
+
+def _load_dinov2_hub_weights(encoder: nn.Module, repo_id: str) -> None:
+    """Load a DINOv2 hub checkpoint into a windowed backbone, replacing every parameter.
+
+    The file is ``model.safetensors`` at the pinned commit of ``repo_id`` (``main`` for an unpinned repository),
+    fetched through the Hugging Face cache, so ``HF_HOME``, ``HF_HUB_CACHE``, ``HF_HUB_OFFLINE``, ``HF_ENDPOINT`` and
+    ``HF_TOKEN`` apply. The load is strict and assigns the file's tensors, so the encoder may be built on the meta
+    device.
+
+    Args:
+        encoder: Backbone whose state-dict keys match the checkpoint.
+        repo_id: Hub repository, such as ``"facebook/dinov2-small"``.
+
+    Raises:
+        ImportError: If ``huggingface_hub`` or ``safetensors`` is not installed.
+        RuntimeError: If the checkpoint's keys or shapes differ from the encoder's.
+    """
+    try:
+        from huggingface_hub import hf_hub_download  # optional dependency, only for hub weights
+        from safetensors.torch import load_file  # optional dependency, only for hub weights
+    except ImportError as error:
+        raise ImportError(_HUB_WEIGHTS_INSTALL_HINT) from error
+
+    revision = _DINOV2_HUB_REVISIONS.get(repo_id)
+    if revision is None:
+        logger.info(f"No pinned revision for {repo_id}; loading its weights from the main branch.")
+    weights_path = hf_hub_download(repo_id, "model.safetensors", revision=revision)
+    encoder.load_state_dict(load_file(weights_path), strict=True, assign=True)
+
+
+def _auto_backbone_class() -> Any:
+    """Return ``transformers.AutoBackbone``, which builds the non-windowed DINOv2 backbones.
+
+    Returns:
+        The ``AutoBackbone`` class.
+
+    Raises:
+        ImportError: If ``transformers`` is not installed.
+    """
+    try:
+        from transformers import AutoBackbone  # optional dependency, only for non-windowed backbones
+    except ImportError as error:
+        raise ImportError(
+            "A non-windowed DINOv2 backbone (`use_windowed_attn=False`) is built with `transformers`. "
+            "Install it with `pip install transformers`."
+        ) from error
+    return AutoBackbone
+
 
 size_to_width = {
     "tiny": 192,
@@ -134,7 +199,7 @@ class DinoV2(nn.Module):
                     "drop_path_rate > 0.0 is not supported for non-windowed DinoV2 backbones."
                     " drop_path will be ignored."
                 )
-            self.encoder = AutoBackbone.from_pretrained(  # type: ignore[no-untyped-call]
+            self.encoder = _auto_backbone_class().from_pretrained(
                 name,
                 out_features=[f"stage{i}" for i in out_feature_indexes],
                 return_dict=False,
@@ -200,14 +265,15 @@ class DinoV2(nn.Module):
                     num_register_tokens=0,
                     gradient_checkpointing=gradient_checkpointing,
                 )
-            self.encoder = (
-                WindowedDinov2WithRegistersBackbone.from_pretrained(
-                    name,
-                    config=windowed_dino_config,
-                )
-                if load_dinov2_weights
-                else WindowedDinov2WithRegistersBackbone(windowed_dino_config)
-            )
+            if load_dinov2_weights:
+                # Build on the meta device: no random initialization runs, so the generator is left as it was for
+                # the decoder and heads built next, and the hub weights then replace every parameter.
+                with torch.device("meta"):
+                    encoder = WindowedDinov2WithRegistersBackbone(windowed_dino_config)
+                _load_dinov2_hub_weights(encoder, name)
+                self.encoder = encoder.eval()
+            else:
+                self.encoder = WindowedDinov2WithRegistersBackbone(windowed_dino_config)
 
         self._out_feature_channels = [size_to_width[size]] * len(out_feature_indexes)
         self._export = False

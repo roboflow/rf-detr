@@ -13,16 +13,15 @@ change to `compute_window_block_indexes` is a deliberate, visible decision rathe
 
 import copy
 import logging
+import sys
 
 import pytest
 import torch
-from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2, compute_window_block_indexes
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
-    WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
 )
@@ -112,8 +111,8 @@ class TestWindowBlockIndexesReachesEncoderConfig:
     from `Backbone.__init__` into `DinoV2(...)` (previously silently dropped). `out_feature_indexes=[12]` is used below
     (rather than a multi-stage default) to keep construction weightless/offline: `load_dinov2_weights=False` builds the
     windowed encoder directly instead of downloading a checkpoint, but the local `dinov2_configs/*.json` files pin a
-    single-stage `out_indices: [12]` that a multi-stage `out_feature_indexes` override would leave stale, tripping
-    transformers' `verify_out_features_out_indices` — an unrelated, pre-existing config bug in `DinoV2.__init__`, not
+    single-stage `out_indices: [12]` that a multi-stage `out_feature_indexes` override would leave stale, tripping the
+    config's `verify_out_features_out_indices` — an unrelated, pre-existing config bug in `DinoV2.__init__`, not
     something these tests are meant to cover.
     """
 
@@ -293,7 +292,7 @@ class TestSkippedDinov2WeightsWarning:
         must still run and no skipped-weights warning may appear. The hub call is the network boundary, so it is
         replaced.
         """
-        hub = mocker.patch.object(WindowedDinov2WithRegistersBackbone, "from_pretrained", return_value=nn.Identity())
+        hub = mocker.patch("rfdetr.models.backbone.dinov2._load_dinov2_hub_weights", autospec=True)
 
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
             DinoV2(
@@ -327,3 +326,18 @@ class TestSkippedDinov2WeightsWarning:
             build_model_from_config(RFDETRNanoConfig(pretrain_weights=pretrain_weights))
 
         assert len(self._skipped_weights_messages(caplog)) == expected_count
+
+
+class TestNonWindowedBackboneWithoutTransformers:
+    """The non-windowed DINOv2 backbone still comes from ``transformers``, imported only when it is built."""
+
+    def test_missing_transformers_raises_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Building a non-windowed backbone without ``transformers`` raises ``ImportError`` with the install command.
+
+        ``transformers`` is no longer imported with ``rfdetr``, so this path is the one place a missing package
+        surfaces; the error must say what to install instead of a bare module-not-found.
+        """
+        monkeypatch.setitem(sys.modules, "transformers", None)
+
+        with pytest.raises(ImportError, match="pip install transformers"):
+            DinoV2(size="small", use_windowed_attn=False)
