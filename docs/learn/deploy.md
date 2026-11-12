@@ -50,6 +50,8 @@ Above, set your Roboflow Workspace ID, the ID of the project to which you want t
 
 Roboflow then serves your model for multi-step computer vision applications in the cloud and on your own hardware, including NVIDIA Jetson.
 
+To run inference on the deployed model in the cloud, follow the [Serverless Cloud API guide](https://docs.roboflow.com/deployment/roboflow-cloud/serverless-api), using your project's model ID and version.
+
 To run the same fine-tuned checkpoint locally, load it with `RFDETRInference`:
 
 ```python
