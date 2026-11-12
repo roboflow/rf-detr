@@ -163,19 +163,17 @@ class TestBackboneLevelMask:
         """
         return F.interpolate(mask[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
 
-    def test_unpadded_matches_interpolation(self) -> None:
-        """The zeros shortcut equals what interpolating the all-False mask produces."""
-        mask = torch.zeros(2, 64, 64, dtype=torch.bool)
-        feat = torch.rand(2, 8, 16, 16)
-        flagged = NestedTensor(torch.rand(2, 3, 64, 64), mask, True)
-        assert torch.equal(Backbone._level_mask(flagged, feat), self._interpolated(mask, feat))
+    @pytest.mark.parametrize("no_padding", [True, False])
+    def test_all_false_mask_matches_interpolation(self, no_padding: bool) -> None:
+        """An all-False mask gives the interpolation result whether or not the no-padding shortcut flag is set.
 
-    def test_unflagged_all_false_mask_takes_the_interpolation(self) -> None:
-        """Without the flag the mask is still read, and the result is unchanged."""
+        Flagged: the zeros shortcut equals what interpolating the all-False mask produces. Unflagged: the mask is still
+        read and the result is unchanged.
+        """
         mask = torch.zeros(2, 64, 64, dtype=torch.bool)
         feat = torch.rand(2, 8, 16, 16)
-        unflagged = NestedTensor(torch.rand(2, 3, 64, 64), mask, False)
-        assert torch.equal(Backbone._level_mask(unflagged, feat), self._interpolated(mask, feat))
+        nested = NestedTensor(torch.rand(2, 3, 64, 64), mask, no_padding)
+        assert torch.equal(Backbone._level_mask(nested, feat), self._interpolated(mask, feat))
 
     def test_padded_mask_is_preserved(self) -> None:
         """Real padding must survive downsampling rather than be zeroed away."""

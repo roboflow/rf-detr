@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -40,13 +42,10 @@ def _levels(channels: int, count: int, height: int = 4, width: int = 4) -> list[
 class TestGetNorm:
     """``get_norm`` resolves a norm spec (``None``, empty string, or a name) to a module or ``None``."""
 
-    def test_none_returns_none(self) -> None:
-        """A ``None`` spec means no normalization layer at all."""
-        assert get_norm(None, 8) is None
-
-    def test_empty_string_returns_none(self) -> None:
-        """An empty string spec is treated the same as ``None``."""
-        assert get_norm("", 8) is None
+    @pytest.mark.parametrize("spec", [None, ""])
+    def test_empty_spec_returns_none(self, spec: str | None) -> None:
+        """A ``None`` or empty-string spec means no normalization layer at all."""
+        assert get_norm(spec, 8) is None
 
     def test_ln_returns_layernorm_instance(self) -> None:
         """The ``"LN"`` name resolves to this module's channels-first ``LayerNorm``."""
@@ -80,20 +79,19 @@ class TestGetActivation:
 class TestConvX:
     """``ConvX`` picks its normalization layer from the ``layer_norm``/``rms_norm`` flags."""
 
-    def test_default_uses_batchnorm(self) -> None:
-        """With both flags left at their defaults, the norm layer is ``BatchNorm2d``."""
-        conv = ConvX(4, 8)
-        assert isinstance(conv.bn, nn.BatchNorm2d)
-
-    def test_layer_norm_flag_uses_custom_layernorm(self) -> None:
-        """``layer_norm=True`` selects this module's channels-first ``LayerNorm``."""
-        conv = ConvX(4, 8, layer_norm=True)
-        assert isinstance(conv.bn, LayerNorm)
-
-    def test_rms_norm_flag_uses_rmsnorm(self) -> None:
-        """``rms_norm=True`` takes priority and selects ``nn.RMSNorm``."""
-        conv = ConvX(4, 8, rms_norm=True)
-        assert isinstance(conv.bn, nn.RMSNorm)
+    @pytest.mark.parametrize(
+        ("norm_kwargs", "expected_type"),
+        [
+            pytest.param({}, nn.BatchNorm2d, id="default-batchnorm"),
+            pytest.param({"layer_norm": True}, LayerNorm, id="layer-norm-flag"),
+            pytest.param({"rms_norm": True}, nn.RMSNorm, id="rms-norm-flag"),
+        ],
+    )
+    def test_norm_flags_select_norm_layer(self, norm_kwargs: dict[str, Any], expected_type: type[nn.Module]) -> None:
+        """Defaults give ``BatchNorm2d``, ``layer_norm=True`` this module's ``LayerNorm``, ``rms_norm=True``
+        ``RMSNorm``."""
+        conv = ConvX(4, 8, **norm_kwargs)
+        assert isinstance(conv.bn, expected_type)
 
     def test_forward_produces_expected_output_channels_and_spatial_size(self) -> None:
         """A stride-2 convolution halves spatial size and remaps to ``out_planes`` channels."""
@@ -105,19 +103,19 @@ class TestConvX:
 class TestBottleneck:
     """``Bottleneck`` adds its residual only when input and output channel counts match."""
 
-    def test_adds_residual_when_channels_match(self) -> None:
-        """Equal in/out channels with ``shortcut=True`` enables the residual add."""
-        block = Bottleneck(8, 8, shortcut=True)
-        assert block.add is True
+    @pytest.mark.parametrize(
+        ("out_channels", "expected_add"),
+        [
+            (8, True),  # equal in/out channels with shortcut=True enables the residual add
+            (16, False),  # differing in/out channels disable the residual add even with shortcut=True
+        ],
+    )
+    def test_residual_only_when_channels_match(self, out_channels: int, expected_add: bool) -> None:
+        """The residual add is enabled only for equal channels, and the output has ``out_channels`` channels."""
+        block = Bottleneck(8, out_channels, shortcut=True)
+        assert block.add is expected_add
         out = block(torch.rand(1, 8, 4, 4))
-        assert out.shape == (1, 8, 4, 4)
-
-    def test_skips_residual_when_channels_differ(self) -> None:
-        """Differing in/out channels disable the residual add even with ``shortcut=True``."""
-        block = Bottleneck(8, 16, shortcut=True)
-        assert block.add is False
-        out = block(torch.rand(1, 8, 4, 4))
-        assert out.shape == (1, 16, 4, 4)
+        assert out.shape == (1, out_channels, 4, 4)
 
 
 class TestC2f:
@@ -133,23 +131,19 @@ class TestC2f:
 class TestMultiScaleProjectorInit:
     """Each supported ``scale_factors`` entry builds a distinct per-level sampling path."""
 
-    def test_scale_4_upsamples_spatial_size_by_four_and_quarters_channels(self) -> None:
-        """The 4x branch chains two transpose convolutions, matching the C2f fan-in it feeds."""
-        proj = MultiScaleProjector(in_channels=[64], out_channels=8, scale_factors=[4.0], num_blocks=1)
+    @pytest.mark.parametrize(
+        ("scale", "expected_shape"),
+        [
+            (4.0, (2, 8, 16, 16)),  # two chained transpose convolutions, matching the C2f fan-in they feed
+            (2.0, (2, 8, 8, 8)),  # a single transpose convolution
+            (0.5, (2, 8, 2, 2)),  # a strided ConvX that halves spatial size without changing channels
+        ],
+    )
+    def test_scale_factor_resamples_spatial_size(self, scale: float, expected_shape: tuple[int, ...]) -> None:
+        """A 4x/2x scale upsamples and a 0.5x scale downsamples the 4x4 input to the expected output shape."""
+        proj = MultiScaleProjector(in_channels=[64], out_channels=8, scale_factors=[scale], num_blocks=1)
         out = proj([torch.rand(2, 64, 4, 4)])
-        assert out[0].shape == (2, 8, 16, 16)
-
-    def test_scale_2_upsamples_spatial_size_by_two_and_halves_channels(self) -> None:
-        """The 2x branch chains a single transpose convolution."""
-        proj = MultiScaleProjector(in_channels=[64], out_channels=8, scale_factors=[2.0], num_blocks=1)
-        out = proj([torch.rand(2, 64, 4, 4)])
-        assert out[0].shape == (2, 8, 8, 8)
-
-    def test_scale_0_5_downsamples_spatial_size_by_two_and_keeps_channels(self) -> None:
-        """The 0.5x branch is a strided ``ConvX`` that halves spatial size without changing channels."""
-        proj = MultiScaleProjector(in_channels=[64], out_channels=8, scale_factors=[0.5], num_blocks=1)
-        out = proj([torch.rand(2, 64, 4, 4)])
-        assert out[0].shape == (2, 8, 2, 2)
+        assert out[0].shape == expected_shape
 
     def test_unsupported_scale_factor_raises_not_implemented_error(self) -> None:
         """A scale factor outside the documented set is rejected at construction time."""
@@ -255,13 +249,7 @@ class TestMultiScaleProjectorExtraPoolMarker:
         construction (an inner loop) instead of the whole scale (the outer loop), leaving an empty ``stages_sampling``
         entry that crashed ``forward()`` with ``IndexError`` on ``feat_fuse_list[0]``.
         """
-        in_channels = [8, 16]
-        projector = MultiScaleProjector(
-            in_channels=in_channels,
-            out_channels=4,
-            scale_factors=[1.0, 0.25],
-            num_blocks=1,
-        )
+        projector = MultiScaleProjector(in_channels=[8, 16], out_channels=4, scale_factors=[1.0, 0.25], num_blocks=1)
 
         assert len(projector.stages) == 1
         assert len(projector.stages_sampling) == 1
@@ -275,10 +263,7 @@ class TestMultiScaleProjectorExtraPoolMarker:
         """
         in_channels = [8, 16]
         projector = MultiScaleProjector(
-            in_channels=in_channels,
-            out_channels=4,
-            scale_factors=[1.0, 0.25],
-            num_blocks=1,
+            in_channels=in_channels, out_channels=4, scale_factors=[1.0, 0.25], num_blocks=1
         )
         features = [torch.arange(c * 8 * 8, dtype=torch.float32).reshape(1, c, 8, 8) for c in in_channels]
 

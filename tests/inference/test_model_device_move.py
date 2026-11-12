@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest import mock
 
 import pytest
 import torch
@@ -52,7 +52,7 @@ class TestMoveModelContextUnderInferenceMode:
 
         assert not any(p.is_inference() for p in ctx.model.parameters())
 
-    def test_move_still_materializes_on_target_device(self) -> None:
+    def test_move_materializes_on_target_device(self) -> None:
         """The inference-mode guard must not suppress the device move itself."""
         ctx = SimpleNamespace(device=torch.device("meta"), model=nn.Linear(2, 2))
 
@@ -168,27 +168,26 @@ class TestMoveModelContextIndexNormalization:
     actually changes device.
     """
 
-    def test_second_call_skips_redundant_move_when_target_has_no_index(self) -> None:
+    def test_second_call_skips_redundant_move_when_target_has_no_index(self, mocker) -> None:
         """A second call with an index-less target must not re-trigger ``.to()`` once already placed."""
+        mocker.patch("torch.cuda.current_device", return_value=0)
         module = _CountingDeviceModule(initial_device=torch.device("cpu"))
         ctx = SimpleNamespace(device=torch.device("cuda"), model=module)
+        _move_model_context_to_device(ctx)
+        assert module.to_call_count == 1
+        assert next(module.parameters()).device == torch.device("cuda", 0)
 
-        with mock.patch("torch.cuda.current_device", return_value=0):
-            _move_model_context_to_device(ctx)
-            assert module.to_call_count == 1
-            assert next(module.parameters()).device == torch.device("cuda", 0)
-
-            _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
 
         assert module.to_call_count == 1
 
-    def test_explicit_index_mismatch_still_triggers_move(self) -> None:
+    def test_explicit_index_mismatch_still_triggers_move(self, mocker) -> None:
         """An explicit different cuda index (multi-GPU) must still trigger a real move."""
+        mocker.patch("torch.cuda.current_device", return_value=0)
         module = _CountingDeviceModule(initial_device=torch.device("cuda", 0))
         ctx = SimpleNamespace(device=torch.device("cuda", 1), model=module)
 
-        with mock.patch("torch.cuda.current_device", return_value=0):
-            _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
 
         assert module.to_call_count == 1
         assert next(module.parameters()).device == torch.device("cuda", 1)
@@ -202,33 +201,33 @@ class TestMoveModelContextCudaIndexMemoisation:
     the whole model back and forth on every ``predict()`` — no corruption, just a silent throughput cliff.
     """
 
-    def test_resolved_index_is_recorded_on_the_context(self) -> None:
+    def test_resolved_index_is_recorded_on_the_context(self, mocker) -> None:
         """The index-less target must be replaced by the concrete device the first move resolved."""
+        mocker.patch("torch.cuda.current_device", return_value=0)
         ctx = SimpleNamespace(device=torch.device("cuda"), model=_CountingDeviceModule(torch.device("cpu")))
 
-        with mock.patch("torch.cuda.current_device", return_value=0):
-            _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
 
         assert ctx.device == torch.device("cuda", 0)
 
-    def test_current_device_is_read_only_once_across_calls(self) -> None:
+    def test_current_device_is_read_only_once_across_calls(self, mocker) -> None:
         """A later call must reuse the recorded device instead of consulting its own thread's selection again."""
+        mock_current_device = mocker.patch("torch.cuda.current_device", side_effect=[0, 1])
         ctx = SimpleNamespace(device=torch.device("cuda"), model=_CountingDeviceModule(torch.device("cpu")))
 
-        with mock.patch("torch.cuda.current_device", side_effect=[0, 1]) as mock_current_device:
-            _move_model_context_to_device(ctx)
-            _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
 
         assert mock_current_device.call_count == 1
 
-    def test_second_call_with_another_thread_selection_does_not_move_again(self) -> None:
+    def test_second_call_with_another_thread_selection_does_not_move_again(self, mocker) -> None:
         """A caller whose own ``current_device()`` is a different GPU must not bounce the weights onto it."""
+        mocker.patch("torch.cuda.current_device", side_effect=[0, 1])
         module = _CountingDeviceModule(initial_device=torch.device("cpu"))
         ctx = SimpleNamespace(device=torch.device("cuda"), model=module)
 
-        with mock.patch("torch.cuda.current_device", side_effect=[0, 1]):
-            _move_model_context_to_device(ctx)
-            _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
+        _move_model_context_to_device(ctx)
 
         assert module.to_call_count == 1
 
@@ -321,6 +320,38 @@ class _SlowCountingDeviceModule(_CountingDeviceModule):
         return self
 
 
+def _race_moves(
+    ctx: SimpleNamespace, count: int = 4, on_return: Callable[[], None] | None = None
+) -> list[BaseException]:
+    """Move *ctx* from *count* threads released together; return the exceptions they raised.
+
+    *on_return* runs in each thread right after its move returns.
+
+    Examples:
+        >>> ctx = SimpleNamespace(device=torch.device("meta"), model=_CountingDeviceModule(torch.device("cpu")))
+        >>> _race_moves(ctx, count=2), ctx.model.to_call_count
+        ([], 1)
+    """
+    barrier = threading.Barrier(count)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait()
+            _move_model_context_to_device(ctx)
+            if on_return is not None:
+                on_return()
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return errors
+
+
 class _RaiseOnceDeviceModule(_CountingDeviceModule):
     """Counting stand-in whose first ``.to()`` call raises; every later call performs the move normally.
 
@@ -370,23 +401,9 @@ class TestMoveModelContextConcurrency:
         """Four threads racing on a cold model trigger a single ``.to()``, and none returns before it has finished."""
         module = _SlowCountingDeviceModule(initial_device=torch.device("cpu"))
         ctx = SimpleNamespace(device=torch.device("meta"), model=module)
-        barrier = threading.Barrier(4)
         returned_early: list[bool] = []
-        errors: list[BaseException] = []
 
-        def worker() -> None:
-            try:
-                barrier.wait()
-                _move_model_context_to_device(ctx)
-                returned_early.append(not module.completed)
-            except BaseException as exc:
-                errors.append(exc)
-
-        threads = [threading.Thread(target=worker) for _ in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        errors = _race_moves(ctx, on_return=lambda: returned_early.append(not module.completed))
 
         assert not errors
         assert len(returned_early) == 4
@@ -403,22 +420,7 @@ class TestMoveModelContextConcurrency:
         """
         module = _SlowCountingDeviceModule(initial_device=torch.device("cpu"))
         ctx = SimpleNamespace(device=torch.device("meta"), model=module)
-        barrier = threading.Barrier(4)
-        errors: list[BaseException] = []
-
-        def worker() -> None:
-            try:
-                barrier.wait()
-                _move_model_context_to_device(ctx)
-            except BaseException as exc:
-                errors.append(exc)
-
-        threads = [threading.Thread(target=worker) for _ in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-
+        errors = _race_moves(ctx)
         assert not errors
         assert module.to_call_count == 1
 

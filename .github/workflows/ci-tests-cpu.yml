@@ -28,8 +28,9 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    # Real CPU training tests take longer on macOS; the 3.10 row reached 98% before the 25-minute cap.
-    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 30 || 25 }}
+    # Real CPU training tests take longer on macOS; the 3.10 row reached 98% before the 25-minute cap, and later 89%
+    # before the 30-minute one on a runner about 30% slower than usual.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos-') && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +63,7 @@ jobs:
         # [coreml] added on macOS only (coremltools is a macOS-only dependency).
         run: |
           # The data extra installs webdataset for the streaming half of tests/datasets/test_webdataset.py behind
-          # the webdataset_only skipif; without it those tests silently skip and only the packer stays covered.
+          # the _requires_webdataset skipif; without it those tests silently skip and only the packer stays covered.
           EXTRAS="train,augment,cli,visual,data"
           if [ "${{ runner.os }}" = "macOS" ]; then
             EXTRAS="$EXTRAS,coreml"

@@ -135,12 +135,31 @@ def _assert_results_equal(actual: list[dict[str, Any]], expected: list[dict[str,
         np.testing.assert_allclose(a["per_class_f1"], e["per_class_f1"])
 
 
+def _class_data(
+    scores: list[float], matches: list[int], total_gt: int, ignore: list[bool] | None = None, dtype: Any = None
+) -> dict[str, Any]:
+    """Build one class's matching data for sweep_confidence_thresholds; ``ignore`` defaults to all-False.
+
+    Examples:
+        >>> data = _class_data([0.9, 0.4], [1, 0], total_gt=1)
+        >>> data["ignore"].tolist(), data["total_gt"]
+        ([False, False], 1)
+    """
+    return {
+        "scores": np.array(scores, dtype=dtype),
+        "matches": np.array(matches),
+        "ignore": np.array(ignore if ignore is not None else [False] * len(scores), dtype=bool),
+        "total_gt": total_gt,
+    }
+
+
 class TestSweepConfidenceThresholdsMatchesReference:
     """sweep_confidence_thresholds must return numerically identical results to the O(T*N) reference it replaced, across
     random data, empty classes, all-ignored classes, and threshold/score ties."""
 
     @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
-    def test_matches_reference_on_random_data(self, seed: int) -> None:
+    def test_random_data(self, seed: int) -> None:
+        """Random multi-class data with tied scores and ignored detections matches the reference at 101 thresholds."""
         per_class_data = _random_per_class_data(seed=seed, num_classes=5, max_detections=40)
         classes_with_gt = [k for k, d in enumerate(per_class_data) if d["total_gt"] > 0]
         conf_thresholds = np.linspace(0, 1, 101)
@@ -150,19 +169,43 @@ class TestSweepConfidenceThresholdsMatchesReference:
 
         _assert_results_equal(actual, expected)
 
-    def test_matches_reference_with_no_detections_in_any_class(self) -> None:
-        per_class_data = [
-            {"scores": np.array([]), "matches": np.array([]), "ignore": np.array([], dtype=bool), "total_gt": 0}
-            for _ in range(3)
-        ]
-        conf_thresholds = [0.0, 0.5, 1.0]
+    @pytest.mark.parametrize(
+        ("per_class_data", "conf_thresholds", "classes_with_gt"),
+        [
+            pytest.param(
+                [_class_data([], [], 0) for _ in range(3)], [0.0, 0.5, 1.0], [], id="no-detections-in-any-class"
+            ),
+            pytest.param(
+                [_class_data([0.3, 0.3, 0.7, 0.7, 1.0], [1, 0, 1, 1, 0], 3)],
+                [0.0, 0.3, 0.7, 1.0],
+                [0],
+                id="scores-exactly-on-thresholds",
+            ),
+            pytest.param(
+                [_class_data([0.9, np.nan, 0.4, np.nan, 0.6], [1, 1, 0, 0, 1], 2)],
+                np.linspace(0, 1, 11),
+                [0],
+                id="mixed-nan-and-real-scores",
+            ),
+            pytest.param(
+                [_class_data([np.inf, -np.inf, 0.5], [1, 0, 1], 2)], [-1.0, 0.0, 0.5, 1.0], [0], id="infinite-scores"
+            ),
+        ],
+    )
+    def test_edge_case_data(
+        self, per_class_data: list[dict[str, Any]], conf_thresholds: Iterable[float], classes_with_gt: list[int]
+    ) -> None:
+        """Edge-case score distributions give the same sweep as the reference.
 
-        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[])
-        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[])
+        Covers: no detections, scores equal to a threshold (inclusive ``>=``), NaN mixed with real scores (stresses
+        searchsorted against argsort's NaN placement), and +/-inf scores, which must follow the finite-score path.
+        """
+        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt)
+        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt)
 
         _assert_results_equal(actual, expected)
 
-    def test_matches_reference_with_empty_per_class_data(self) -> None:
+    def test_empty_per_class_data(self) -> None:
         """Zero classes -- degrades to an empty result list, one entry per threshold, with no per-class loop body ever
         executing."""
         per_class_data: list[dict[str, Any]] = []
@@ -174,11 +217,9 @@ class TestSweepConfidenceThresholdsMatchesReference:
         _assert_results_equal(actual, expected)
         assert [r["per_class_prec"].tolist() for r in actual] == [[], [], []]
 
-    def test_matches_reference_with_empty_conf_thresholds(self) -> None:
+    def test_empty_conf_thresholds(self) -> None:
         """Zero thresholds -- degrades to an empty result list regardless of how much detection data is present."""
-        per_class_data = [
-            {"scores": np.array([0.9]), "matches": np.array([1]), "ignore": np.array([False]), "total_gt": 1}
-        ]
+        per_class_data = [_class_data([0.9], [1], 1)]
         conf_thresholds: list[float] = []
 
         actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
@@ -187,15 +228,9 @@ class TestSweepConfidenceThresholdsMatchesReference:
         _assert_results_equal(actual, expected)
         assert actual == []
 
-    def test_matches_reference_when_every_detection_is_ignored(self) -> None:
-        per_class_data = [
-            {
-                "scores": np.array([0.9, 0.6, 0.3]),
-                "matches": np.array([1, 0, 1]),
-                "ignore": np.array([True, True, True]),
-                "total_gt": 2,
-            }
-        ]
+    def test_every_detection_ignored(self) -> None:
+        """A class whose detections are all ignored matches the reference and yields zero precision."""
+        per_class_data = [_class_data([0.9, 0.6, 0.3], [1, 0, 1], 2, ignore=[True, True, True])]
         conf_thresholds = np.linspace(0, 1, 11)
 
         actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
@@ -204,39 +239,14 @@ class TestSweepConfidenceThresholdsMatchesReference:
         _assert_results_equal(actual, expected)
         assert actual[0]["macro_precision"] == 0.0  # tp+fp==0 when everything is ignored
 
-    def test_matches_reference_with_scores_exactly_on_threshold_boundaries(self) -> None:
-        """`scores >= conf_thresh` is inclusive; a detection scored exactly at a threshold must count as above it in
-        both implementations, and thresholds are chosen to land exactly on scores."""
-        per_class_data = [
-            {
-                "scores": np.array([0.3, 0.3, 0.7, 0.7, 1.0]),
-                "matches": np.array([1, 0, 1, 1, 0]),
-                "ignore": np.array([False, False, False, False, False]),
-                "total_gt": 3,
-            }
-        ]
-        conf_thresholds = [0.0, 0.3, 0.7, 1.0]
-
-        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
-        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
-
-        _assert_results_equal(actual, expected)
-
-    def test_matches_reference_with_nan_scores(self) -> None:
+    def test_nan_scores(self) -> None:
         """A NaN score fails `scores >= conf_thresh` for every threshold, so the O(T*N) reference always excludes it.
 
         `np.argsort` sorts NaN to the end of ascending order, which would put it in the "above every threshold" suffix
         if not masked out the same way `ignore` is -- this regresses `macro_f1` from 0.0 to 1.0 for the exact case below
         if the mask is dropped.
         """
-        per_class_data = [
-            {
-                "scores": np.array([np.nan]),
-                "matches": np.array([1]),
-                "ignore": np.array([False]),
-                "total_gt": 1,
-            }
-        ]
+        per_class_data = [_class_data([np.nan], [1], 1)]
         conf_thresholds = [0.5]
 
         actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
@@ -245,55 +255,12 @@ class TestSweepConfidenceThresholdsMatchesReference:
         _assert_results_equal(actual, expected)
         assert actual[0]["macro_f1"] == 0.0
 
-    def test_matches_reference_with_mixed_nan_and_real_scores(self) -> None:
-        """A class with both real and NaN scores together -- the case that actually stresses `searchsorted` against
-        `argsort`'s (numpy-unspecified) placement of NaN at the sort tail, unlike the all-NaN case above."""
-        per_class_data = [
-            {
-                "scores": np.array([0.9, np.nan, 0.4, np.nan, 0.6]),
-                "matches": np.array([1, 1, 0, 0, 1]),
-                "ignore": np.array([False, False, False, False, False]),
-                "total_gt": 2,
-            }
-        ]
-        conf_thresholds = np.linspace(0, 1, 11)
-
-        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
-        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
-
-        _assert_results_equal(actual, expected)
-
-    def test_matches_reference_with_infinite_scores(self) -> None:
-        """`inf >= threshold` is True for every finite threshold; `-inf >= threshold` is True only at `-inf` itself --
-        both must be reachable through the same sort + searchsorted path as finite scores."""
-        per_class_data = [
-            {
-                "scores": np.array([np.inf, -np.inf, 0.5]),
-                "matches": np.array([1, 0, 1]),
-                "ignore": np.array([False, False, False]),
-                "total_gt": 2,
-            }
-        ]
-        conf_thresholds = [-1.0, 0.0, 0.5, 1.0]
-
-        actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
-        expected = _reference_sweep(per_class_data, conf_thresholds, classes_with_gt=[0])
-
-        _assert_results_equal(actual, expected)
-
-    def test_matches_reference_with_generator_conf_thresholds(self) -> None:
+    def test_generator_conf_thresholds(self) -> None:
         """conf_thresholds is documented as any iterable, including a one-shot generator -- pins that
         sweep_confidence_thresholds materializes it exactly once instead of consuming it partway through (e.g. once to
         measure its length, again to iterate results), which would silently return fewer thresholds than requested for a
         genuinely single-pass iterable."""
-        per_class_data = [
-            {
-                "scores": np.array([0.9, 0.4]),
-                "matches": np.array([1, 0]),
-                "ignore": np.array([False, False]),
-                "total_gt": 1,
-            }
-        ]
+        per_class_data = [_class_data([0.9, 0.4], [1, 0], 1)]
         thresholds_list = [0.0, 0.5, 1.0]
 
         actual = sweep_confidence_thresholds(per_class_data, (t for t in thresholds_list), classes_with_gt=[0])
@@ -301,17 +268,10 @@ class TestSweepConfidenceThresholdsMatchesReference:
         assert len(actual) == len(thresholds_list)
         assert [r["confidence_threshold"] for r in actual] == pytest.approx(thresholds_list)
 
-    def test_matches_reference_with_unsorted_conf_thresholds(self) -> None:
+    def test_unsorted_conf_thresholds(self) -> None:
         """Each threshold's searchsorted lookup is independent of the others -- pins that an unsorted, descending
         conf_thresholds input is handled correctly and that output order follows input order."""
-        per_class_data = [
-            {
-                "scores": np.array([0.9, 0.4, 0.2]),
-                "matches": np.array([1, 0, 1]),
-                "ignore": np.array([False, False, False]),
-                "total_gt": 2,
-            }
-        ]
+        per_class_data = [_class_data([0.9, 0.4, 0.2], [1, 0, 1], 2)]
         conf_thresholds = [0.3, 1.2, -0.1, 0.31]
 
         actual = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt=[0])
@@ -321,19 +281,13 @@ class TestSweepConfidenceThresholdsMatchesReference:
         assert [r["confidence_threshold"] for r in actual] == pytest.approx(conf_thresholds)
 
 
-class TestSweepConfidenceThresholdsBasicCorrectness:
+class TestSweepConfidenceThresholdsHandComputed:
     """A few hand-computed cases pin the actual precision/recall/F1 values, independent of the reference-equivalence
     tests above (which would pass even if both implementations shared the same bug)."""
 
     def test_all_correct_detections_gives_perfect_scores(self) -> None:
-        per_class_data = [
-            {
-                "scores": np.array([0.9, 0.8]),
-                "matches": np.array([1, 1]),
-                "ignore": np.array([False, False]),
-                "total_gt": 2,
-            }
-        ]
+        """Every detection a TP and all GT found -- precision, recall and F1 are all 1.0."""
+        per_class_data = [_class_data([0.9, 0.8], [1, 1], 2)]
 
         result = sweep_confidence_thresholds(per_class_data, [0.5], classes_with_gt=[0])[0]
 
@@ -342,14 +296,8 @@ class TestSweepConfidenceThresholdsBasicCorrectness:
         assert result["macro_f1"] == pytest.approx(1.0)
 
     def test_raising_threshold_above_a_false_positives_score_removes_it(self) -> None:
-        per_class_data = [
-            {
-                "scores": np.array([0.9, 0.4]),  # 0.9 is a TP, 0.4 is a FP
-                "matches": np.array([1, 0]),
-                "ignore": np.array([False, False]),
-                "total_gt": 1,
-            }
-        ]
+        """Raising the threshold past a FP's score lifts precision from 0.5 to 1.0 while recall stays 1.0."""
+        per_class_data = [_class_data([0.9, 0.4], [1, 0], 1)]  # 0.9 is a TP, 0.4 is a FP
 
         low_thresh = sweep_confidence_thresholds(per_class_data, [0.0], classes_with_gt=[0])[0]
         high_thresh = sweep_confidence_thresholds(per_class_data, [0.5], classes_with_gt=[0])[0]
@@ -362,14 +310,7 @@ class TestSweepConfidenceThresholdsBasicCorrectness:
         """The three zero-denominator guards are textually identical between sweep_confidence_thresholds and
         _reference_sweep, so the equivalence tests above are structurally blind to a bug shared by both -- this pins the
         tp=0, fp>0 case against its actual, hand-computed expected value."""
-        per_class_data = [
-            {
-                "scores": np.array([0.9]),
-                "matches": np.array([0]),
-                "ignore": np.array([False]),
-                "total_gt": 1,
-            }
-        ]
+        per_class_data = [_class_data([0.9], [0], 1)]
 
         result = sweep_confidence_thresholds(per_class_data, [0.5], classes_with_gt=[0])[0]
 
@@ -386,14 +327,7 @@ class TestSweepConfidenceThresholdsBasicCorrectness:
         which is below ``float64(0.7)`` once promoted, so the detection is excluded here even though the legacy value-
         based comparison would have included it.
         """
-        per_class_data = [
-            {
-                "scores": np.array([0.7], dtype=np.float32),
-                "matches": np.array([1]),
-                "ignore": np.array([False]),
-                "total_gt": 1,
-            }
-        ]
+        per_class_data = [_class_data([0.7], [1], 1, dtype=np.float32)]
 
         result = sweep_confidence_thresholds(per_class_data, [0.7], classes_with_gt=[0])[0]
 

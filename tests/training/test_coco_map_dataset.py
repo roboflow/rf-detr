@@ -8,10 +8,10 @@
 import copy
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torchmetrics.detection.helpers import CocoBackend
 
 from rfdetr.training import coco_map
@@ -170,11 +170,11 @@ class TestHotcocoArrayIngest:
             torch.testing.assert_close(observed[key], expected[key], rtol=0, atol=0, equal_nan=True, msg=key)
 
     @pytest.mark.parametrize("iou_type", _IOU_TYPES)
-    def test_matches_the_annotation_dict_path(self, iou_type: Any) -> None:
+    def test_matches_the_annotation_dict_path(self, iou_type: Any, mocker: MockerFixture) -> None:
         """Every metric must equal hotcoco's own result over the TorchMetrics dictionaries the array path replaces."""
         dict_path = _updated_metric("hotcoco", iou_type)
-        with patch.object(dict_path, "_loads_detections_from_array", return_value=False):
-            expected = dict_path.compute()
+        mocker.patch.object(dict_path, "_loads_detections_from_array", return_value=False)
+        expected = dict_path.compute()
 
         observed = _updated_metric("hotcoco", iou_type).compute()
 
@@ -191,12 +191,12 @@ class TestHotcocoArrayIngest:
 
         assert [annotation["bbox"] for annotation in coco_preds.load_anns(sorted(coco_preds.get_ann_ids()))] == expected
 
-    def test_builds_no_annotation_dicts(self) -> None:
+    def test_builds_no_annotation_dicts(self, mocker: MockerFixture) -> None:
         """A box-and-mask state must reach hotcoco without TorchMetrics' per-annotation COCO dictionaries."""
         metric = _updated_metric("hotcoco", ("bbox", "segm"))
+        get_coco_format = mocker.patch.object(CocoBackend, "_get_coco_format")
 
-        with patch.object(CocoBackend, "_get_coco_format") as get_coco_format:
-            metric.compute()
+        metric.compute()
 
         get_coco_format.assert_not_called()
 
@@ -251,28 +251,32 @@ class TestHotcocoCapabilityCheck:
         """
         return SimpleNamespace(COCO=type("COCO", (), symbols), COCOeval=object, mask=object)
 
-    def test_stale_release_is_refused_as_too_old(self) -> None:
+    def test_stale_release_is_refused_as_too_old(self, mocker: MockerFixture) -> None:
         """A release without a symbol the batch path calls must raise an upgrade hint, not a missing-package one."""
-        with (
-            patch.object(coco_map, "_hotcoco", return_value=self._stale_package()),
-            patch("importlib.metadata.version", return_value="1.0.1"),
-            pytest.raises(ImportError, match=r"hotcoco 1\.0\.1 is too old.*pip install -U 'rfdetr\[train\]'"),
-        ):
+        mocker.patch.object(coco_map, "_hotcoco", return_value=self._stale_package())
+        mocker.patch("importlib.metadata.version", return_value="1.0.1")
+
+        with pytest.raises(ImportError) as exc_info:
             _HotCocoBackend()
 
-    def test_streaming_backend_also_requires_streaming_eval(self) -> None:
+        assert "hotcoco 1.0.1 is too old" in str(exc_info.value)
+        assert "pip install -U 'rfdetr[train]'" in str(exc_info.value)
+
+    def test_streaming_backend_also_requires_streaming_eval(self, mocker: MockerFixture) -> None:
         """The streaming backend must refuse a release that has every batch-path symbol but no ``StreamingEval``."""
         package = self._stale_package(**dict.fromkeys(name.split(".")[-1] for name in _HotCocoBackend.required_symbols))
 
-        with (
-            patch.object(coco_map, "_hotcoco", return_value=package),
-            pytest.raises(ImportError, match=r"lacks hotcoco\.StreamingEval\."),
-        ):
+        mocker.patch.object(coco_map, "_hotcoco", return_value=package)
+
+        with pytest.raises(ImportError) as exc_info:
             _HotCocoStreamingBackend()
 
-    def test_batch_backend_accepts_a_release_without_streaming_eval(self) -> None:
+        assert "lacks hotcoco.StreamingEval" in str(exc_info.value)
+
+    def test_batch_backend_accepts_a_release_without_streaming_eval(self, mocker: MockerFixture) -> None:
         """The batch backend must not demand ``StreamingEval``, which only the streaming backend calls."""
         package = self._stale_package(**dict.fromkeys(name.split(".")[-1] for name in _HotCocoBackend.required_symbols))
 
-        with patch.object(coco_map, "_hotcoco", return_value=package):
-            _HotCocoBackend()
+        mocker.patch.object(coco_map, "_hotcoco", return_value=package)
+
+        _HotCocoBackend()

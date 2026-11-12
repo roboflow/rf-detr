@@ -7,14 +7,14 @@
 
 from __future__ import annotations
 
-import re
-from collections.abc import Iterator
 from typing import Any, Literal
 
 import pytest
 import torch
 from torch import Tensor, nn
 
+from rfdetr.config import RFDETRNanoConfig
+from rfdetr.inference import _build_model_context
 from rfdetr.models import backbone as backbone_pkg
 from rfdetr.models.backbone import Joiner, build_backbone, register_backbone
 from rfdetr.models.backbone.backbone import Backbone
@@ -98,25 +98,21 @@ def _build(encoder: str, **overrides: Any) -> Joiner:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_registry() -> Iterator[None]:
+def _isolated_registry(mocker) -> None:
     """Restore the module-level registry after every test so registrations never leak.
 
     Examples:
         Fixture execution is managed by pytest, so this example cannot run standalone.
         >>> _isolated_registry()  # doctest: +SKIP
     """
-    saved = dict(backbone_pkg._BACKBONE_REGISTRY)
-    try:
-        yield
-    finally:
-        backbone_pkg._BACKBONE_REGISTRY.clear()
-        backbone_pkg._BACKBONE_REGISTRY.update(saved)
+    mocker.patch.dict(backbone_pkg._BACKBONE_REGISTRY)
 
 
 class TestRegisterBackbone:
     """``register_backbone`` validation and idempotence."""
 
     def test_registered_class_builds_the_backbone(self) -> None:
+        """``build_backbone`` returns a Joiner wrapping the registered Backbone subclass and its encoder."""
         register_backbone("toy_encoder", _ToyBackbone)
 
         joiner = _build("toy_encoder")
@@ -126,6 +122,7 @@ class TestRegisterBackbone:
         assert isinstance(joiner[0].encoder, _ToyEncoder)
 
     def test_encoder_receives_the_build_arguments(self) -> None:
+        """The registered backbone's ``_build_encoder`` receives the build arguments, including per-call overrides."""
         register_backbone("toy_encoder", _ToyBackbone)
 
         _build("toy_encoder", window_block_indexes=[0, 1], drop_path=0.1, gradient_checkpointing=True)
@@ -159,12 +156,14 @@ class TestRegisterBackbone:
         assert tuple(poss[0].shape) == (2, 16, 16, 16)
 
     def test_re_registering_the_same_class_is_a_no_op(self) -> None:
+        """Registering the same class under the same name twice is accepted and leaves the registry unchanged."""
         register_backbone("toy_encoder", _ToyBackbone)
         register_backbone("toy_encoder", _ToyBackbone)
 
         assert backbone_pkg._BACKBONE_REGISTRY["toy_encoder"] is _ToyBackbone
 
     def test_conflicting_registration_raises(self) -> None:
+        """Registering a different class under an already-registered name raises ValueError."""
         register_backbone("toy_encoder", _ToyBackbone)
 
         class _OtherBackbone(_ToyBackbone):
@@ -181,6 +180,7 @@ class TestRegisterBackbone:
         ],
     )
     def test_non_backbone_class_raises(self, backbone_cls: Any) -> None:
+        """Anything that is not a Backbone subclass (a plain Module class or an instance) raises TypeError."""
         with pytest.raises(TypeError, match="Backbone subclass"):
             register_backbone("toy_encoder", backbone_cls)
 
@@ -195,6 +195,7 @@ class TestUnregisteredEncoders:
     """Encoders without a registration keep the DINOv2 path unchanged."""
 
     def test_dinov2_name_builds_core_backbone(self) -> None:
+        """A DINOv2 encoder name still builds the core Backbone with a DinoV2 encoder, whatever else is registered."""
         register_backbone("toy_encoder", _ToyBackbone)
 
         joiner = _build(
@@ -205,33 +206,28 @@ class TestUnregisteredEncoders:
         assert isinstance(joiner[0].encoder, DinoV2)
 
     def test_unknown_non_dinov2_name_names_the_registered_encoders(self) -> None:
+        """An unknown, non-DINOv2 encoder name raises ValueError listing exactly the registered encoders."""
         register_backbone("toy_encoder", _ToyBackbone)
         # Exactly the registry's contents: an installed extension package (e.g. rfdetr_plus) adds its own encoders.
         registered = ", ".join(sorted(backbone_pkg._BACKBONE_REGISTRY))
         assert "toy_encoder" in backbone_pkg._BACKBONE_REGISTRY
 
-        with pytest.raises(
-            ValueError,
-            match=rf"^Unknown encoder 'not_a_registered_encoder': .*\(registered: {re.escape(registered)}\)\.",
-        ):
+        with pytest.raises(ValueError) as exc_info:
             _build("not_a_registered_encoder")
 
+        message = str(exc_info.value)
+        assert message.startswith("Unknown encoder 'not_a_registered_encoder': ")
+        assert f"(registered: {registered})." in message
+
     @pytest.mark.parametrize("force_no_pretrain", [False, True])
-    def test_dinov2_encoder_receives_the_backbone_arguments(
-        self, monkeypatch: pytest.MonkeyPatch, force_no_pretrain: bool
-    ) -> None:
+    def test_dinov2_encoder_receives_the_backbone_arguments(self, mocker, force_no_pretrain: bool) -> None:
         """Pins Backbone -> DinoV2 argument forwarding, which moved into Backbone._build_encoder.
 
         ``force_no_pretrain=True`` must reach DinoV2 as ``load_dinov2_weights=False`` even when the caller asked for
         upstream weights; otherwise every shipping DINOv2 model would fetch them again.
         """
-        from unittest.mock import MagicMock
-
-        import rfdetr.models.backbone.backbone as backbone_module
-
-        encoder = MagicMock(_out_feature_channels=[384])
-        dinov2 = MagicMock(return_value=encoder)
-        monkeypatch.setattr(backbone_module, "DinoV2", dinov2)
+        encoder = mocker.MagicMock(_out_feature_channels=[384])
+        dinov2 = mocker.patch("rfdetr.models.backbone.backbone.DinoV2", return_value=encoder)
 
         _build(
             "dinov2_registers_windowed_small",
@@ -266,10 +262,10 @@ class TestUnregisteredEncoders:
 class TestForceNoPretrain:
     """``force_no_pretrain`` stops every encoder, registered or DINOv2, from fetching upstream weights."""
 
-    @pytest.mark.parametrize(
-        ("force", "expected"), [pytest.param(False, True, id="default"), pytest.param(True, False, id="forced")]
-    )
+    @pytest.mark.parametrize(("force", "expected"), [(False, True), (True, False)])
     def test_force_no_pretrain_overrides_load_dinov2_weights(self, force: bool, expected: bool) -> None:
+        """A registered encoder is told to load pretrained weights unless ``force_no_pretrain`` overrides the
+        request."""
         register_backbone("toy_encoder", _ToyBackbone)
 
         _build("toy_encoder", load_dinov2_weights=True, force_no_pretrain=force)
@@ -281,9 +277,7 @@ class TestChannelAdaptation:
     """``num_channels != 3`` adapts DINOv2's patch embedding, which a registered encoder does not have."""
 
     def test_registered_encoder_with_extra_channels_raises(self) -> None:
-        from rfdetr.config import RFDETRNanoConfig
-        from rfdetr.inference import _build_model_context
-
+        """Building a registered (non-DINOv2) encoder with ``num_channels=4`` raises a ValueError naming the encoder."""
         register_backbone("toy_encoder", _ToyBackbone)
 
         class _ToyConfig(RFDETRNanoConfig):

@@ -23,9 +23,11 @@ from rfdetr.config import (
     SegmentationTrainConfig,
     TrainConfig,
 )
+from rfdetr.detr import ModelContext, _build_model_context
 from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import LWDETR, build_criterion_and_postprocessors, build_model
 from rfdetr.models.postprocess import PostProcess
+from rfdetr.training.module_model import RFDETRModelModule
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,29 +48,28 @@ def _make_ns(mc=None, tc=None):
 
 
 # ---------------------------------------------------------------------------
-# build_model characterization
+# build_model
 # ---------------------------------------------------------------------------
 
 
-class TestBuildModelCharacterization:
+class TestBuildModel:
     """Pin current build_model() behaviour for the standard code path."""
 
     def test_returns_lwdetr_instance(self) -> None:
-        ns = _make_ns()
-        model = build_model(ns)
+        """The default namespace builds an ``LWDETR`` model."""
+        model = build_model(_make_ns())
         assert isinstance(model, LWDETR)
 
     def test_num_classes_plus_one(self) -> None:
         """build_model applies the +1 background class convention."""
         mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        model = build_model(ns)
+        model = build_model(_make_ns(mc=mc))
         assert model.class_embed.out_features == 6
 
     def test_num_queries_forwarded(self) -> None:
+        """The config's ``num_queries`` reaches the model."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        model = build_model(ns)
+        model = build_model(_make_ns(mc=mc))
         assert model.num_queries == mc.num_queries
 
     @pytest.mark.parametrize(
@@ -80,31 +81,31 @@ class TestBuildModelCharacterization:
         ],
     )
     def test_num_queries_per_config_variant(self, config_class, expected_queries) -> None:
+        """Each variant config builds a model with its own default query count."""
         mc = config_class(pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        model = build_model(ns)
+        model = build_model(_make_ns(mc=mc))
         assert model.num_queries == expected_queries
 
     def test_segmentation_head_none_for_detection(self) -> None:
-        ns = _make_ns()
-        model = build_model(ns)
+        """A detection config builds no segmentation head."""
+        model = build_model(_make_ns())
         assert model.segmentation_head is None
 
     def test_segmentation_head_present_for_seg_config(self) -> None:
+        """A segmentation config builds a segmentation head."""
         mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        model = build_model(ns)
+        model = build_model(_make_ns(mc=mc))
         assert model.segmentation_head is not None
 
     def test_aux_loss_enabled_by_default(self) -> None:
-        ns = _make_ns()
-        model = build_model(ns)
+        """Auxiliary decoder losses are on by default."""
+        model = build_model(_make_ns())
         assert model.aux_loss is True
 
     def test_group_detr_forwarded(self) -> None:
+        """The config's ``group_detr`` reaches the model."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        model = build_model(ns)
+        model = build_model(_make_ns(mc=mc))
         assert model.group_detr == mc.group_detr
 
     def test_num_feature_levels_set_on_args(self) -> None:
@@ -124,100 +125,93 @@ class TestBuildModelCharacterization:
     def test_param_count_in_expected_range(self, config_class, expected_param_count_range) -> None:
         """Sanity check that the model has a plausible number of parameters."""
         mc = config_class(num_classes=80, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        model = build_model(ns)
+        model = build_model(_make_ns(mc=mc))
         total = sum(p.numel() for p in model.parameters())
         low, high = expected_param_count_range
         assert low <= total <= high, f"Expected param count in [{low}, {high}], got {total}"
 
-    def test_encoder_only_returns_triple(self) -> None:
-        """When encoder_only=True, build_model returns (encoder, None, None)."""
+    @pytest.mark.parametrize("flag", ["encoder_only", "backbone_only"])
+    def test_encoder_or_backbone_only_returns_triple(self, flag: str) -> None:
+        """When encoder_only/backbone_only is set, build_model returns (module, None, None)."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
-        ns.encoder_only = True
+        setattr(ns, flag, True)
         result = build_model(ns)
         assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
         assert len(result) == 3
-        encoder, second, third = result
+        module, second, third = result
         assert second is None
         assert third is None
-        assert encoder is not None
-
-    def test_backbone_only_returns_triple(self) -> None:
-        """When backbone_only=True, build_model returns (backbone, None, None)."""
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        ns.backbone_only = True
-        result = build_model(ns)
-        assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
-        assert len(result) == 3
-        backbone, second, third = result
-        assert second is None
-        assert third is None
-        assert backbone is not None
+        assert module is not None
 
 
 # ---------------------------------------------------------------------------
-# build_criterion_and_postprocessors characterization
+# build_criterion_and_postprocessors
 # ---------------------------------------------------------------------------
 
 
-class TestBuildCriterionCharacterization:
+@pytest.fixture
+def seg_criterion() -> SetCriterion:
+    """Criterion built from the segmentation Nano config and its matching train config."""
+    mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
+    tc = SegmentationTrainConfig(dataset_dir="/tmp")
+    criterion, _ = build_criterion_and_postprocessors(_make_ns(mc=mc, tc=tc))
+    return criterion
+
+
+class TestBuildCriterion:
     """Pin current build_criterion_and_postprocessors() behaviour."""
 
     def test_returns_criterion_and_postprocess(self) -> None:
-        ns = _make_ns()
-        criterion, postprocess = build_criterion_and_postprocessors(ns)
+        """The builder returns a ``(SetCriterion, PostProcess)`` pair."""
+        criterion, postprocess = build_criterion_and_postprocessors(_make_ns())
         assert isinstance(criterion, SetCriterion)
         assert isinstance(postprocess, PostProcess)
 
     def test_detection_losses_list(self) -> None:
         """Detection-only config has exactly ['labels', 'boxes', 'cardinality']."""
-        ns = _make_ns()
-        criterion, _ = build_criterion_and_postprocessors(ns)
+        criterion, _ = build_criterion_and_postprocessors(_make_ns())
         assert criterion.losses == ["labels", "boxes", "cardinality"]
 
-    def test_segmentation_losses_include_masks(self) -> None:
-        mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        tc = SegmentationTrainConfig(dataset_dir="/tmp")
-        ns = _make_ns(mc=mc, tc=tc)
-        criterion, _ = build_criterion_and_postprocessors(ns)
-        assert "masks" in criterion.losses
+    def test_segmentation_losses_include_masks(self, seg_criterion: SetCriterion) -> None:
+        """A segmentation config adds the 'masks' loss."""
+        assert "masks" in seg_criterion.losses
 
-    def test_num_select_forwarded_to_postprocess(self) -> None:
-        mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        _, postprocess = build_criterion_and_postprocessors(ns)
-        assert postprocess.num_select == 100
+    @pytest.mark.parametrize(
+        "config_class, expected_num_select",
+        [
+            pytest.param(RFDETRSegNanoConfig, 100, id="seg_nano"),
+            pytest.param(RFDETRNanoConfig, 300, id="nano"),
+        ],
+    )
+    def test_num_select_forwarded_to_postprocess(self, config_class, expected_num_select) -> None:
+        """The variant's ``num_select`` default reaches PostProcess."""
+        mc = config_class(pretrain_weights=None, device="cpu")
+        _, postprocess = build_criterion_and_postprocessors(_make_ns(mc=mc))
+        assert postprocess.num_select == expected_num_select
 
-    def test_num_select_default_for_base(self) -> None:
+    @pytest.mark.parametrize(
+        "loss_key, coef_attr",
+        [
+            pytest.param("loss_ce", "cls_loss_coef", id="ce"),
+            pytest.param("loss_bbox", "bbox_loss_coef", id="bbox"),
+            pytest.param("loss_giou", "giou_loss_coef", id="giou"),
+        ],
+    )
+    def test_weight_dict_holds_namespace_coefficient(self, loss_key: str, coef_attr: str) -> None:
+        """Each base loss is present in weight_dict with the coefficient from the namespace."""
         ns = _make_ns()
-        _, postprocess = build_criterion_and_postprocessors(ns)
-        assert postprocess.num_select == 300
-
-    def test_weight_dict_contains_base_losses(self) -> None:
-        ns = _make_ns()
         criterion, _ = build_criterion_and_postprocessors(ns)
-        assert "loss_ce" in criterion.weight_dict
-        assert "loss_bbox" in criterion.weight_dict
-        assert "loss_giou" in criterion.weight_dict
+        assert loss_key in criterion.weight_dict
+        assert criterion.weight_dict[loss_key] == getattr(ns, coef_attr)
 
-    def test_weight_dict_values_match_namespace(self) -> None:
-        ns = _make_ns()
-        criterion, _ = build_criterion_and_postprocessors(ns)
-        assert criterion.weight_dict["loss_ce"] == ns.cls_loss_coef
-        assert criterion.weight_dict["loss_bbox"] == ns.bbox_loss_coef
-        assert criterion.weight_dict["loss_giou"] == ns.giou_loss_coef
+    @pytest.mark.parametrize("loss_key", ["loss_mask_ce", "loss_mask_dice"])
+    def test_segmentation_weight_dict_contains_mask_losses(self, seg_criterion: SetCriterion, loss_key: str) -> None:
+        """A segmentation config adds the mask losses to weight_dict."""
+        assert loss_key in seg_criterion.weight_dict
 
-    def test_segmentation_weight_dict_contains_mask_losses(self) -> None:
-        mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        tc = SegmentationTrainConfig(dataset_dir="/tmp")
-        ns = _make_ns(mc=mc, tc=tc)
-        criterion, _ = build_criterion_and_postprocessors(ns)
-        assert "loss_mask_ce" in criterion.weight_dict
-        assert "loss_mask_dice" in criterion.weight_dict
-
-    def test_aux_loss_expands_weight_dict(self) -> None:
+    @pytest.mark.parametrize("loss_key", ["loss_ce_0", "loss_ce_1"])
+    def test_aux_loss_expands_weight_dict(self, loss_key: str) -> None:
         """With aux_loss=True and 3 dec_layers, weight_dict has aux entries _0 and _1.
 
         Uses ``RFDETRSmallConfig`` rather than the nano default because the assertion counts aux entries, which is
@@ -227,230 +221,205 @@ class TestBuildCriterionCharacterization:
         ns = _make_ns(mc=mc)
         assert ns.aux_loss is True
         criterion, _ = build_criterion_and_postprocessors(ns)
-        # dec_layers=3 -> 2 aux layers (0 and 1)
-        assert "loss_ce_0" in criterion.weight_dict
-        assert "loss_ce_1" in criterion.weight_dict
+        assert loss_key in criterion.weight_dict
 
-    def test_two_stage_adds_enc_losses(self) -> None:
+    @pytest.mark.parametrize("loss_key", ["loss_ce_enc", "loss_bbox_enc", "loss_giou_enc"])
+    def test_two_stage_adds_enc_losses(self, loss_key: str) -> None:
         """With two_stage=True, weight_dict has '_enc' suffix entries."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         assert ns.two_stage is True
         criterion, _ = build_criterion_and_postprocessors(ns)
-        assert "loss_ce_enc" in criterion.weight_dict
-        assert "loss_bbox_enc" in criterion.weight_dict
-        assert "loss_giou_enc" in criterion.weight_dict
+        assert loss_key in criterion.weight_dict
 
     def test_criterion_num_classes_plus_one(self) -> None:
+        """The criterion applies the +1 background class convention."""
         mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        criterion, _ = build_criterion_and_postprocessors(ns)
+        criterion, _ = build_criterion_and_postprocessors(_make_ns(mc=mc))
         assert criterion.num_classes == 6
 
     def test_focal_alpha_forwarded(self) -> None:
-        ns = _make_ns()
-        criterion, _ = build_criterion_and_postprocessors(ns)
+        """The default focal alpha (0.25) reaches the criterion."""
+        criterion, _ = build_criterion_and_postprocessors(_make_ns())
         assert criterion.focal_alpha == pytest.approx(0.25)
 
     def test_group_detr_forwarded_to_criterion(self) -> None:
+        """The config's ``group_detr`` reaches the criterion."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        criterion, _ = build_criterion_and_postprocessors(ns)
+        criterion, _ = build_criterion_and_postprocessors(_make_ns(mc=mc))
         assert criterion.group_detr == mc.group_detr
 
-    def test_segmentation_criterion_has_mask_point_sample_ratio(self) -> None:
-        mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        tc = SegmentationTrainConfig(dataset_dir="/tmp")
-        ns = _make_ns(mc=mc, tc=tc)
-        criterion, _ = build_criterion_and_postprocessors(ns)
-        assert criterion.mask_point_sample_ratio == 16
+    def test_segmentation_criterion_has_mask_point_sample_ratio(self, seg_criterion: SetCriterion) -> None:
+        """A segmentation criterion samples mask points at ratio 16."""
+        assert seg_criterion.mask_point_sample_ratio == 16
 
     def test_ia_bce_loss_forwarded(self) -> None:
+        """The config's ``ia_bce_loss`` reaches the criterion."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ns = _make_ns(mc=mc)
-        criterion, _ = build_criterion_and_postprocessors(ns)
+        criterion, _ = build_criterion_and_postprocessors(_make_ns(mc=mc))
         assert criterion.ia_bce_loss == mc.ia_bce_loss
 
 
 # ---------------------------------------------------------------------------
-# _build_model_context characterization
+# _build_model_context
 # ---------------------------------------------------------------------------
 
 
-class TestBuildModelContextCharacterization:
+@pytest.fixture
+def nano_ctx() -> ModelContext:
+    """Model context built from a CPU Nano config without pretrained weights."""
+    return _build_model_context(RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu"))
+
+
+@pytest.fixture
+def seg_nano_ctx() -> ModelContext:
+    """Model context built from a CPU segmentation Nano config without pretrained weights."""
+    return _build_model_context(RFDETRSegNanoConfig(pretrain_weights=None, device="cpu"))
+
+
+class TestBuildModelContext:
     """Pin current _build_model_context() behaviour.
 
-    _build_model_context is the inference-path factory used by RFDETR.get_model(). It has zero test coverage today.
+    _build_model_context is the inference-path factory used by RFDETR.get_model().
     """
 
-    def test_returns_model_context(self) -> None:
-        from rfdetr.detr import ModelContext, _build_model_context
+    def test_returns_model_context(self, nano_ctx: ModelContext) -> None:
+        """The factory returns a ``ModelContext``."""
+        assert isinstance(nano_ctx, ModelContext)
 
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert isinstance(ctx, ModelContext)
+    def test_model_is_lwdetr(self, nano_ctx: ModelContext) -> None:
+        """The context holds an ``LWDETR`` model."""
+        assert isinstance(nano_ctx.model, LWDETR)
 
-    def test_model_is_lwdetr(self) -> None:
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert isinstance(ctx.model, LWDETR)
-
-    def test_postprocess_is_postprocess(self) -> None:
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert isinstance(ctx.postprocess, PostProcess)
+    def test_postprocess_is_postprocess(self, nano_ctx: ModelContext) -> None:
+        """The context holds a ``PostProcess``."""
+        assert isinstance(nano_ctx.postprocess, PostProcess)
 
     def test_resolution_from_config(self) -> None:
-        from rfdetr.detr import _build_model_context
-
+        """The context resolution equals the config resolution."""
         mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.resolution == mc.resolution
+        assert _build_model_context(mc).resolution == mc.resolution
 
-    def test_device_from_config(self) -> None:
-        from rfdetr.detr import _build_model_context
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(torch.device("cpu"), id="torch-device"),
+        ],
+    )
+    def test_device_from_config(self, device) -> None:
+        """A device given as a string or a ``torch.device`` resolves to ``torch.device("cpu")``."""
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device=device)
+        assert _build_model_context(mc).device == torch.device("cpu")
 
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.device == torch.device("cpu")
+    def test_class_names_none_without_pretrain(self, nano_ctx: ModelContext) -> None:
+        """Without pretrained weights there are no class names."""
+        assert nano_ctx.class_names is None
 
-    def test_torch_device_cpu_from_config(self) -> None:
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device=torch.device("cpu"))
-        ctx = _build_model_context(mc)
-        assert ctx.device == torch.device("cpu")
-
-    def test_class_names_none_without_pretrain(self) -> None:
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.class_names is None
-
-    def test_num_select_on_postprocess(self) -> None:
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.postprocess.num_select == 100
+    def test_num_select_on_postprocess(self, seg_nano_ctx: ModelContext) -> None:
+        """The segmentation variant's ``num_select`` reaches PostProcess."""
+        assert seg_nano_ctx.postprocess.num_select == 100
 
     def test_keypoint_preview_postprocess_has_keypoint_schema(self) -> None:
-        from rfdetr.detr import _build_model_context
-
+        """The keypoint preview config yields a PostProcess with the person keypoint schema."""
         mc = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.postprocess.num_keypoints_per_class == [17]
+        assert _build_model_context(mc).postprocess.num_keypoints_per_class == [17]
 
-    def test_args_namespace_attached(self) -> None:
-        from rfdetr.detr import _build_model_context
+    def test_args_namespace_attached(self, nano_ctx: ModelContext) -> None:
+        """The context carries the built args namespace."""
+        assert hasattr(nano_ctx.args, "num_classes")
+        assert hasattr(nano_ctx.args, "num_select")
 
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert hasattr(ctx.args, "num_classes")
-        assert hasattr(ctx.args, "num_select")
+    def test_inference_model_initially_none(self, nano_ctx: ModelContext) -> None:
+        """No optimized inference model exists until one is requested."""
+        assert nano_ctx.inference_model is None
 
-    def test_inference_model_initially_none(self) -> None:
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.inference_model is None
-
-    def test_args_dataset_dir_does_not_leak_cwd(self) -> None:
+    def test_args_dataset_dir_does_not_leak_cwd(self, nano_ctx: ModelContext) -> None:
         """The serialized namespace must not embed the caller's realpathed CWD as dataset_dir."""
-        from rfdetr.detr import _build_model_context
+        assert nano_ctx.args.dataset_dir is None
 
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.args.dataset_dir is None
-
-    def test_args_output_dir_does_not_leak_cwd(self) -> None:
+    def test_args_output_dir_does_not_leak_cwd(self, nano_ctx: ModelContext) -> None:
         """The serialized namespace must keep a relative output_dir, not the caller's realpathed CWD."""
-        from rfdetr.detr import _build_model_context
+        assert nano_ctx.args.output_dir == "output"
 
-        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.args.output_dir == "output"
-
-    def test_predict_postprocess_always_upsamples_masks_regardless_of_eval_flag(self) -> None:
+    def test_predict_postprocess_always_upsamples_masks_regardless_of_eval_flag(
+        self, seg_nano_ctx: ModelContext
+    ) -> None:
         """RFDETR.predict's PostProcess must always upsample masks to full image resolution.
 
         TrainConfig.eval_masks_head_resolution is a validation-only cost-saving knob; it must never leak into the
         inference/predict path via ``_build_model_context``'s internal dummy ``TrainConfig`` — deployment predictions
         always report at native image resolution regardless of how the checkpoint was trained.
         """
-        from rfdetr.detr import _build_model_context
-
-        mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
-        ctx = _build_model_context(mc)
-        assert ctx.postprocess.upsample_masks_to_image_size is True
+        assert seg_nano_ctx.postprocess.upsample_masks_to_image_size is True
 
 
 # ---------------------------------------------------------------------------
-# RFDETRModelModule.__init__ characterization
+# RFDETRModelModule.__init__
 # ---------------------------------------------------------------------------
 
 
-class TestRFDETRModelModuleInitCharacterization:
+def _make_module(mc=None, tc=None) -> RFDETRModelModule:
+    """Build a real ``RFDETRModelModule`` (Nano, 5 classes, CPU, no pretrained weights) unless configs are given.
+
+    Examples:
+        >>> _make_module().criterion.num_classes
+        6
+    """
+    mc = mc or RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
+    tc = tc or TrainConfig(dataset_dir="/tmp")
+    return RFDETRModelModule(mc, tc)
+
+
+class TestRFDETRModelModuleInit:
     """Pin RFDETRModelModule.__init__() structural outputs.
 
     The existing test_module_model.py tests the init via mocked build_model and build_namespace. These tests exercise
     the REAL init path (no mocks) to characterize what a freshly built module looks like.
     """
 
-    def _make_module(self, mc=None, tc=None):
-        from rfdetr.training.module_model import RFDETRModelModule
-
-        mc = mc or RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
-        tc = tc or TrainConfig(dataset_dir="/tmp")
-        return RFDETRModelModule(mc, tc)
-
     def test_model_attribute_is_lwdetr(self) -> None:
-        module = self._make_module()
-        # model could be wrapped by torch.compile, so check the underlying type
+        """The module's model is an ``LWDETR`` (possibly wrapped by torch.compile)."""
+        module = _make_module()
         underlying = getattr(module.model, "_orig_mod", module.model)
         assert isinstance(underlying, LWDETR)
 
     def test_criterion_is_set_criterion(self) -> None:
-        module = self._make_module()
-        assert isinstance(module.criterion, SetCriterion)
+        """The module builds a ``SetCriterion``."""
+        assert isinstance(_make_module().criterion, SetCriterion)
 
     def test_postprocess_is_postprocess(self) -> None:
-        module = self._make_module()
-        assert isinstance(module.postprocess, PostProcess)
+        """The module builds a ``PostProcess``."""
+        assert isinstance(_make_module().postprocess, PostProcess)
 
     def test_strict_loading_false(self) -> None:
         """strict_loading=False allows partial state-dict loading."""
-        module = self._make_module()
-        assert module.strict_loading is False
+        assert _make_module().strict_loading is False
 
     def test_configs_stored(self) -> None:
+        """The module keeps the exact model and train config objects it was given."""
         mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
         tc = TrainConfig(dataset_dir="/tmp")
-        module = self._make_module(mc=mc, tc=tc)
+        module = _make_module(mc=mc, tc=tc)
         assert module.model_config is mc
         assert module.train_config is tc
 
     def test_criterion_num_classes_matches_model(self) -> None:
         """Criterion and model must agree on num_classes (both use +1 convention)."""
-        mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
-        module = self._make_module(mc=mc)
+        module = _make_module()
         underlying = getattr(module.model, "_orig_mod", module.model)
         assert module.criterion.num_classes == underlying.class_embed.out_features
 
     def test_postprocess_num_select_matches_config(self) -> None:
+        """PostProcess ``num_select`` follows the model config."""
         mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
-        module = self._make_module(mc=mc, tc=tc)
+        module = _make_module(mc=mc, tc=tc)
         assert module.postprocess.num_select == mc.num_select
 
     def test_segmentation_criterion_with_seg_config(self) -> None:
+        """A segmentation config adds the 'masks' loss to the module's criterion."""
         mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
-        module = self._make_module(mc=mc, tc=tc)
+        module = _make_module(mc=mc, tc=tc)
         assert "masks" in module.criterion.losses

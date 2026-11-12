@@ -53,8 +53,10 @@ def test_out_of_range_background_class_is_rejected(background_class_id: int) -> 
 
 def test_non_matrix_scores_are_rejected() -> None:
     """The layout helper rejects a score tensor without query and class axes."""
-    with pytest.raises(ValueError, match=r"shape \(Q, C\)"):
+    with pytest.raises(ValueError) as exc_info:
         _exclude_background_class(np.ones(2, dtype=np.float32), None)
+
+    assert "shape (Q, C)" in str(exc_info.value)
 
 
 @pytest.mark.parametrize(

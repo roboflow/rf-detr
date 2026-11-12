@@ -287,9 +287,11 @@ class TestMeasureMemory:
         """
         monkeypatch.setitem(sys.modules, "psutil", None)
 
-        with pytest.raises(ImportError, match=r"pip install 'rfdetr\[visual\]'"):
+        with pytest.raises(ImportError) as exc_info:
             with measure_memory():
                 pass
+
+        assert "pip install 'rfdetr[visual]'" in str(exc_info.value)
 
     def test_cuda_reads_device_bytes_in_use_with_synchronization(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The CUDA path derives bytes-in-use from ``mem_get_info`` and synchronizes before reading.
@@ -534,7 +536,7 @@ class TestVisualizeDetections:
             class_id=np.array([1]),
         )
 
-    def test_smoke_runs_without_raising(
+    def test_annotates_and_displays_valid_detections(
         self, monkeypatch: pytest.MonkeyPatch, image: Image.Image, detections: sv.Detections
     ) -> None:
         """Annotating and displaying valid detections completes without raising."""
@@ -557,25 +559,18 @@ class TestVisualizeDetections:
         assert label_annotator.call_args.kwargs["labels"] == [expected_label]
         plot_image.assert_called_once()
 
-    def test_missing_class_id_raises(self, image: Image.Image) -> None:
-        """Detections without a ``class_id`` array cannot be labeled, so the call is rejected up front."""
-        detections = sv.Detections(
-            xyxy=np.array([[5.0, 5.0, 30.0, 30.0]], dtype=np.float32),
-            confidence=np.array([0.9]),
-        )
+    @pytest.mark.parametrize("missing", ["class_id", "confidence"])
+    def test_missing_labelling_array_raises(self, missing: str, image: Image.Image) -> None:
+        """Detections without a ``class_id`` or ``confidence`` array cannot be labeled, so the call is rejected up
+        front."""
+        arrays = {"confidence": np.array([0.9]), "class_id": np.array([1])}
+        del arrays[missing]
+        detections = sv.Detections(xyxy=np.array([[5.0, 5.0, 30.0, 30.0]], dtype=np.float32), **arrays)
 
-        with pytest.raises(ValueError, match="class_id and detections.confidence"):
+        with pytest.raises(ValueError) as exc_info:
             visualize_detections(detections, image)
 
-    def test_missing_confidence_raises(self, image: Image.Image) -> None:
-        """Detections without a ``confidence`` array cannot be labeled, so the call is rejected up front."""
-        detections = sv.Detections(
-            xyxy=np.array([[5.0, 5.0, 30.0, 30.0]], dtype=np.float32),
-            class_id=np.array([1]),
-        )
-
-        with pytest.raises(ValueError, match="class_id and detections.confidence"):
-            visualize_detections(detections, image)
+        assert "class_id and detections.confidence" in str(exc_info.value)
 
     def test_saves_annotated_image_when_save_path_given(
         self,

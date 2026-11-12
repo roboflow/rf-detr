@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import pytest
 import torch
+from torch import nn
 
-from rfdetr.models.transformer import TransformerDecoderLayer
+from rfdetr.models.transformer import Transformer, TransformerDecoderLayer
 
 #: Patch target of the shared eager-CUDA gate every decoder rewrite consults.
 EAGER_CUDA = "rfdetr.models.transformer._eager_cuda"
@@ -55,6 +56,47 @@ def decoder_layer(
         group_detr=group_detr,
         num_feature_levels=2,
     ).train()
+
+
+def single_level_two_stage_transformer(
+    hidden_dim: int, num_queries: int, num_classes: int = 2, **kwargs: object
+) -> Transformer:
+    """Build a one-level, one-layer two-stage ``Transformer`` with plain ``nn.Linear`` encoder heads.
+
+    Args:
+        hidden_dim: Model width.
+        num_queries: Number of queries selected by the two-stage top-k.
+        num_classes: Output width of the encoder class head.
+        **kwargs: Extra ``Transformer`` keyword arguments, e.g. ``dual_projector_kp_only=True``.
+
+    Returns:
+        A ``Transformer`` whose ``enc_out_class_embed``/``enc_out_bbox_embed`` each hold one linear head.
+
+    Examples:
+        >>> transformer = single_level_two_stage_transformer(16, 3)
+        >>> transformer.enc_out_class_embed[0].out_features, transformer.enc_out_bbox_embed[0].out_features
+        (2, 4)
+        >>> single_level_two_stage_transformer(16, 3, num_classes=5).enc_out_class_embed[0].out_features
+        5
+    """
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+        **kwargs,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, num_classes)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    return transformer
 
 
 def record_apply_calls(monkeypatch: pytest.MonkeyPatch, function: type[torch.autograd.Function]) -> list[tuple]:

@@ -10,7 +10,7 @@ import torch
 
 from rfdetr.config import RFDETRNanoConfig
 from rfdetr.inference import _adapt_input_conv, _build_model_context
-from rfdetr.utilities.package import is_installed
+from tests._markers import _requires_peft
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +20,8 @@ def reset_random_seeds():
 
 
 class TestAdaptInputConv:
+    """``_adapt_input_conv`` reshapes a 3-channel conv weight to any requested channel count."""
+
     @pytest.mark.parametrize(
         ("num_channels", "expected_shape", "expected_builder"),
         [
@@ -56,7 +58,7 @@ class TestAdaptInputConv:
         torch.testing.assert_close(adapted_weight, expected_weight)
 
 
-@pytest.mark.skipif(not is_installed("peft"), reason="backbone_lora requires the optional peft package")
+@_requires_peft
 class TestBuildModelContextLoraChannels:
     """``_build_model_context`` adapts DINOv2's patch embedding even when LoRA has wrapped the encoder."""
 

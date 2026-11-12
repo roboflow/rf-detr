@@ -78,6 +78,14 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     [:octicons-arrow-right-24: Tutorial](learn/train/index.md)
 
+- **Export Models**
+
+    ---
+
+    Export to ONNX, TensorRT, OpenVINO, Core ML, TFLite and more, and run the exports with `RFDETRInference`.
+
+    [:octicons-arrow-right-24: Tutorial](exports/index.md)
+
 </div>
 
 ## Tutorials
@@ -128,7 +136,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 ### Detection
 
-<img alt="Pareto front — detection accuracy vs latency: RF-DETR-2XL achieves 78.5 COCO AP50 (60.1 AP50:95) at 17.2 ms; RF-DETR-L achieves 75.1 AP50 at 6.8 ms, outperforming YOLO11x at comparable latency" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" width="840" height="630" style="max-width: 840px; height: auto;" />
+<img alt="Pareto front — detection accuracy vs latency: RF-DETR-2XL achieves 78.5 COCO AP50 (60.1 AP50:95) at 17.2 ms; RF-DETR-L achieves 75.1 AP50 at 6.8 ms, outperforming YOLO11x at comparable latency" src="assets/benchmark-detection.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
 
 | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | ------------ | -------------------- | ----------------------- | ----------------------- | -------------------------- | ------------ | ---------- | ---------- |
@@ -144,7 +152,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 ### Segmentation
 
-<img alt="Pareto front — segmentation accuracy vs latency: RF-DETR-Seg-2XL achieves 73.1 COCO AP50 (49.9 AP50:95) at 21.8 ms; RF-DETR-Seg-L achieves 70.5 AP50 at 8.8 ms" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" width="840" height="630" style="max-width: 840px; height: auto;" />
+<img alt="Pareto front — segmentation accuracy vs latency: RF-DETR-Seg-2XL achieves 73.1 COCO AP50 (49.9 AP50:95) at 21.8 ms; RF-DETR-Seg-L achieves 70.5 AP50 at 8.8 ms" src="assets/benchmark-segmentation.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
 
 | Architecture    | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | --------------- | -------------------- | ----------------------- | ------------ | ---------- | ---------- |
@@ -157,7 +165,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 ### Keypoints
 
-<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="assets/keypoints/kp-map-latency.png" width="840" height="630" style="max-width: 840px; height: auto;" />
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="assets/benchmark-keypoints.svg" width="840" height="630" style="max-width: 840px; height: auto;" />
 
 | Architecture               | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | -------------------------- | ----------------------- | ------------ | ---------- | ---------- |

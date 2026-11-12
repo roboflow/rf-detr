@@ -3,10 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
+"""Tests for the pretrained-weights registry and the model cache directory resolution."""
 
 import os
-from unittest.mock import patch
 
 import pytest
 
@@ -70,7 +69,7 @@ class TestGetModelCacheDir:
 
 
 def test_from_filename_found():
-    """Test from_filename with valid filename."""
+    """from_filename returns the registered asset, with its filename and a download URL, for a known filename."""
     asset = ModelWeights.from_filename("rf-detr-base.pth")
 
     assert asset is not None
@@ -81,13 +80,13 @@ def test_from_filename_found():
 
 
 def test_from_filename_not_found():
-    """Test from_filename with invalid filename."""
+    """from_filename returns None for a filename that is not registered."""
     asset = ModelWeights.from_filename("nonexistent-model.pth")
     assert asset is None
 
 
 def test_get_url():
-    """Test get_url class method."""
+    """get_url returns the download URL string for a known filename."""
     url = ModelWeights.get_url("rf-detr-base.pth")
 
     assert url is not None
@@ -97,26 +96,20 @@ def test_get_url():
 
 
 def test_get_url_not_found():
-    """Test get_url with invalid filename."""
+    """get_url returns None for a filename that is not registered."""
     url = ModelWeights.get_url("nonexistent-model.pth")
     assert url is None
 
 
 def test_get_md5():
-    """Test get_md5 class method."""
+    """get_md5 returns either None (hash not yet computed) or a 32-character lowercase-hex digest string."""
     md5 = ModelWeights.get_md5("rf-detr-base.pth")
 
-    # MD5 may be None if not yet computed
-    assert md5 is None or isinstance(md5, str)
-
-    # If MD5 exists, verify format
-    if md5 is not None:
-        assert len(md5) == 32
-        assert all(c in "0123456789abcdef" for c in md5.lower())
+    assert md5 is None or (len(md5) == 32 and set(md5.lower()) <= set("0123456789abcdef"))
 
 
 def test_list_models():
-    """Test list_models returns all model filenames."""
+    """list_models returns a non-empty list of filename strings that includes the base and large checkpoints."""
     models = ModelWeights.list_models()
 
     assert isinstance(models, list)
@@ -130,43 +123,43 @@ def test_list_models():
 
 @pytest.mark.parametrize("asset", [pytest.param(a, id=a.filename) for a in ModelWeights])
 def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
-    """Test that all assets have valid URLs."""
+    """Every registered asset has an http(s) URL of plausible length."""
     assert asset.url.startswith("http")
     assert len(asset.url) > 20  # Reasonable minimum URL length
 
 
 @pytest.mark.parametrize("asset", [pytest.param(a, id=a.filename) for a in ModelWeights])
 def test_all_assets_have_valid_filenames(asset: ModelWeightAsset) -> None:
-    """Test that all assets have valid filenames."""
+    """Every registered asset has a non-empty filename ending in a checkpoint extension (.pth or .pt)."""
     assert len(asset.filename) > 0
     assert asset.filename.endswith((".pth", ".pt"))
 
 
 def test_filenames_are_unique():
-    """Test that all filenames are unique (prevent accidental duplicates)."""
+    """No two registered assets share a filename, which would shadow one of them in lookups."""
     filenames = [asset.filename for asset in ModelWeights]
     assert len(filenames) == len(set(filenames)), "Duplicate filenames detected"
 
 
 def test_model_weight_asset_optional_md5():
-    """Test that MD5 hash is optional (important for new models)."""
+    """ModelWeightAsset can be built without an MD5 hash, which defaults to None (new models have none yet)."""
     asset = ModelWeightAsset(filename="test-model.pth", url="https://example.com/test-model.pth")
 
     assert asset.md5_hash is None, "MD5 hash should be optional"
 
 
 def test_model_weights_inherits_from_base():
-    """Test inheritance for compile-time safety contract."""
+    """ModelWeights subclasses ModelWeightsBase, the compile-time safety contract for the registry."""
     assert issubclass(ModelWeights, ModelWeightsBase), (
         "ModelWeights must inherit from ModelWeightsBase for compatibility"
     )
 
 
-@patch("rfdetr.detr.RFDETR.__init__", return_value=None)
-def test_rfdetr_large_deprecated_emits_future_warning(_mock_0) -> None:
+def test_rfdetr_large_deprecated_emits_future_warning(mocker) -> None:
     """RFDETRLargeDeprecated emits FutureWarning on instantiation via the pyDeprecate class decorator."""
     from rfdetr.variants import RFDETRLargeDeprecated
 
+    mocker.patch("rfdetr.detr.RFDETR.__init__", return_value=None)
     # The proxy uses num_warns=1; reset counter so this test is order-independent
     # regardless of whether another test already triggered the warning in this session.
     RFDETRLargeDeprecated._cfg.warned = 0

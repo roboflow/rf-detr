@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for rfdetr.utilities.console — Rich console helpers for callbacks."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -152,7 +152,11 @@ class TestHasProgressBar:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+#: Skip a test node that needs ``rich``.
+_requires_rich = pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+
+
+@_requires_rich
 class TestGetRichConsole:
     """_get_rich_console returns the PTL RichProgressBar console or a fresh one."""
 
@@ -207,7 +211,7 @@ class TestGetRichConsole:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+@_requires_rich
 class TestBuildSummaryRenderable:
     """_build_summary_renderable returns a Rich Group for console.print()."""
 
@@ -311,18 +315,16 @@ class TestBuildSummaryRenderable:
 class TestRenderSummaryTables:
     """_render_summary_tables delegates to console.print when Rich available."""
 
-    @pytest.mark.skipif(not _IS_RICH_AVAILABLE, reason="Rich not installed")
+    @_requires_rich
     def test_calls_console_print_once(self) -> None:
         """console.print called exactly once with the Group renderable."""
         console = MagicMock(name="console")
         _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_called_once()
 
-    @patch("rfdetr.utilities.console._IS_RICH_AVAILABLE", False)
-    def test_no_op_when_rich_unavailable(
-        self,
-    ) -> None:
+    def test_no_op_when_rich_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No call made when Rich not installed."""
+        monkeypatch.setattr("rfdetr.utilities.console._IS_RICH_AVAILABLE", False)
         console = MagicMock(name="console")
         _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_not_called()

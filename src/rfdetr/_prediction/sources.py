@@ -221,6 +221,28 @@ def is_expanded_source(source: _PredictionInput) -> bool:
     return False
 
 
+def has_only_finite_images(source: _PredictionInput) -> bool:
+    """Report whether a source holds no live input: image files, directories, globs and in-memory images.
+
+    Reading such a source one batch early changes nothing a caller can observe, so its next batch can be decoded while
+    the current one runs. A video found inside a directory or glob is a finite file, so reading its frames early is
+    harmless too. Cameras, live URLs, screens, videos named directly and manifests (whose entries may be live) return
+    ``False``: a live frame read a batch early would be older than the one the serial loop reads.
+
+    Examples:
+        >>> has_only_finite_images([np.zeros((4, 4, 3), dtype=np.uint8)]), has_only_finite_images(0)
+        (True, False)
+    """
+    if isinstance(source, (list, tuple)):
+        return all(has_only_finite_images(item) for item in source)
+    if isinstance(source, (int, np.integer)):
+        return False
+    if isinstance(source, (str, os.PathLike)):
+        _, kind = _classify_source(os.fspath(source))
+        return kind in (_SourceKind.IMAGE, _SourceKind.DIRECTORY, _SourceKind.GLOB)
+    return True
+
+
 def iter_source_batches(
     source: _PredictionInput,
     *,

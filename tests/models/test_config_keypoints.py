@@ -17,7 +17,11 @@ from rfdetr.config import (
 
 
 def test_keypoint_config_defaults() -> None:
-    """Default model/train keypoint configuration values should match the preview contract."""
+    """Default model/train keypoint configuration values should match the preview contract.
+
+    ``keypoint_nll_loss_coef`` defaults to 1.0 (a 0.5 default dampening OKS@75 oscillation was reverted to align with
+    the other keypoint loss terms), so this guards against silently reintroducing it.
+    """
     model = RFDETRKeypointPreviewConfig()
     train = KeypointTrainConfig(dataset_dir="/tmp")
 
@@ -76,16 +80,6 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
     assert namespace.keypoint_nll_loss_coef == pytest.approx(4.5)
 
 
-def test_keypoint_nll_loss_coef_default_restored_to_1_0() -> None:
-    """keypoint_nll_loss_coef must default to 1.0 after the 0.5 revert.
-
-    The 0.5 default was introduced to dampen OKS@75 oscillation.  It was later reverted to 1.0 to align with all other
-    keypoint loss terms (l1, findable, visible).  This test guards against silent regressions.
-    """
-    train = KeypointTrainConfig(dataset_dir="/tmp")
-    assert train.keypoint_nll_loss_coef == pytest.approx(1.0)
-
-
 def test_segmentation_train_config_cls_loss_coef_default() -> None:
     """SegmentationTrainConfig.cls_loss_coef must default to 1.0, not the erroneous 5.0.
 
@@ -97,16 +91,19 @@ def test_segmentation_train_config_cls_loss_coef_default() -> None:
     assert tc.cls_loss_coef == pytest.approx(1.0)
 
 
-def test_unknown_keypoint_fields_are_not_public_config_fields() -> None:
-    """Private keypoint implementation fields are not accepted as public model config."""
+@pytest.mark.parametrize(
+    ("config_class", "kwargs"),
+    [
+        pytest.param(RFDETRBaseConfig, {"num_classes": 1, "keypoint_private_hidden_dim": 256}, id="model-config"),
+        # KeypointTrainConfig uses extra="forbid": unknown kwargs raise instead of being silently dropped.
+        pytest.param(
+            KeypointTrainConfig,
+            {"dataset_dir": "/tmp", "keypoint_private_hidden_dim": 256, "keypoint_private_loss_coef": 1.0},
+            id="train-config",
+        ),
+    ],
+)
+def test_unknown_keypoint_fields_are_not_public_config_fields(config_class, kwargs) -> None:
+    """Private keypoint implementation fields are not accepted as public model or train config."""
     with pytest.raises(ValueError, match="Unknown parameter"):
-        RFDETRBaseConfig(num_classes=1, keypoint_private_hidden_dim=256)
-
-    # KeypointTrainConfig (a TrainConfig subclass) uses extra="forbid", so unknown
-    # kwargs raise with a helpful message rather than being silently dropped.
-    with pytest.raises(ValueError, match="Unknown parameter"):
-        KeypointTrainConfig(
-            dataset_dir="/tmp",
-            keypoint_private_hidden_dim=256,
-            keypoint_private_loss_coef=1.0,
-        )
+        config_class(**kwargs)

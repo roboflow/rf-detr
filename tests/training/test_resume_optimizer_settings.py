@@ -16,10 +16,11 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torch.optim.lr_scheduler import (
     ChainedScheduler,
     CosineAnnealingLR,
@@ -129,17 +130,32 @@ def rf_detr_caplog(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyP
     return caplog
 
 
+@pytest.fixture
+def mock_build_trainer(mocker: MockerFixture) -> MagicMock:
+    """Patch the Lightning training stack and return the ``build_trainer`` mock, so ``RFDETR.train()`` stops at fit.
+
+    Examples:
+        >>> mock_build_trainer  # doctest: +SKIP
+        A pytest fixture; it needs pytest-mock's mocker.
+    """
+    mocker.patch("rfdetr.training.RFDETRModelModule")
+    mocker.patch("rfdetr.training.RFDETRDataModule")
+    return mocker.patch("rfdetr.training.build_trainer")
+
+
 class TestResolveResumedParamGroupSettings:
     """Defaults, then the checkpoint's recorded ``args``, then what the caller set."""
 
     @pytest.mark.parametrize("setting", _PARAM_GROUP_SETTINGS)
-    def test_unset_setting_takes_the_checkpoint_value(self, setting: str) -> None:
+    def test_unset_setting_takes_checkpoint_value(self, setting: str) -> None:
+        """An unset setting takes the checkpoint's recorded value."""
         config = TrainConfig(dataset_dir="data")
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {setting: _CHECKPOINT_VALUE}})
         assert getattr(resolved, setting) == _CHECKPOINT_VALUE
 
     @pytest.mark.parametrize("setting", _PARAM_GROUP_SETTINGS)
-    def test_explicit_setting_wins_over_the_checkpoint(self, setting: str) -> None:
+    def test_explicit_setting_wins_over_checkpoint(self, setting: str) -> None:
+        """An explicitly passed setting is kept over the checkpoint's recorded value."""
         config = TrainConfig(dataset_dir="data", **{setting: _EXPLICIT_VALUE})
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {setting: _CHECKPOINT_VALUE}})
         assert getattr(resolved, setting) == _EXPLICIT_VALUE
@@ -152,21 +168,25 @@ class TestResolveResumedParamGroupSettings:
         assert getattr(resolved, setting) == TrainConfig.model_fields[setting].default
 
     def test_restored_setting_is_not_marked_explicit(self) -> None:
+        """A value restored from the checkpoint does not count as explicitly set on the config."""
         config = TrainConfig(dataset_dir="data")
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {"lr": _CHECKPOINT_VALUE}})
         assert "lr" not in resolved.model_fields_set
 
-    def test_setting_missing_from_the_checkpoint_keeps_its_default(self) -> None:
+    def test_setting_missing_from_checkpoint_keeps_its_default(self) -> None:
+        """A setting absent from the recorded ``args`` keeps its config default."""
         config = TrainConfig(dataset_dir="data")
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {"args": {"lr": _CHECKPOINT_VALUE}})
         assert resolved.weight_decay == TrainConfig.model_fields["weight_decay"].default
 
-    def test_explicit_setting_equal_to_the_checkpoint_is_no_override(self) -> None:
+    def test_explicit_setting_equal_to_checkpoint_is_no_override(self) -> None:
+        """An explicit value equal to the checkpoint's is not reported as an override."""
         config = TrainConfig(dataset_dir="data", lr=5e-5)
         _, _, overridden = _resolve_resumed_param_group_settings(config, {"args": {"lr": 5e-5}})
         assert overridden == {}
 
-    def test_checkpoint_without_recorded_settings_leaves_the_config_alone(self) -> None:
+    def test_checkpoint_without_recorded_settings_leaves_config_alone(self) -> None:
+        """A checkpoint without recorded ``args`` returns the very same config."""
         config = TrainConfig(dataset_dir="data", lr=1e-5)
         resolved, _, _ = _resolve_resumed_param_group_settings(config, {})
         assert resolved is config
@@ -308,24 +328,25 @@ class TestChainedSchedulerResume:
 class TestResolveResumedOptimizerSettings:
     """``RFDETR.train()`` resolves the settings from the ``resume`` file before anything records the config."""
 
-    def test_fills_unset_settings_from_the_checkpoint(self, tmp_path: Path) -> None:
+    def test_fills_unset_settings_from_checkpoint(self, tmp_path: Path) -> None:
+        """An unset setting is filled from the ``resume`` file's recorded ``args``."""
         resume = _write_checkpoint(tmp_path / "last.ckpt", {"lr_encoder": _CHECKPOINT_VALUE})
         config = TrainConfig(dataset_dir="data", resume=str(resume))
         assert _resolve_resumed_optimizer_settings(config).lr_encoder == _CHECKPOINT_VALUE
 
-    def test_checkpoint_without_optimizer_state_leaves_the_config_alone(self, tmp_path: Path) -> None:
+    def test_checkpoint_without_optimizer_state_leaves_config_alone(self, tmp_path: Path) -> None:
         """A lightweight ``.pth`` restarts the optimizer from the config, so nothing is taken from it."""
         resume = _write_checkpoint(tmp_path / "last_ema.pth", {"lr": _CHECKPOINT_VALUE}, optimizer_state=False)
         config = TrainConfig(dataset_dir="data", resume=str(resume))
         assert _resolve_resumed_optimizer_settings(config) is config
 
     @pytest.mark.parametrize("resume", ["missing.ckpt", "last"])
-    def test_resume_naming_no_file_leaves_the_config_alone(self, tmp_path: Path, resume: str) -> None:
+    def test_resume_naming_no_file_leaves_config_alone(self, tmp_path: Path, resume: str) -> None:
         """Lightning resolves a sentinel such as ``"last"`` itself, and the module resolves the settings then."""
         config = TrainConfig(dataset_dir="data", resume=str(tmp_path / resume))
         assert _resolve_resumed_optimizer_settings(config) is config
 
-    def test_checkpoint_that_is_not_a_mapping_leaves_the_config_alone(self, tmp_path: Path) -> None:
+    def test_checkpoint_that_is_not_a_mapping_leaves_config_alone(self, tmp_path: Path) -> None:
         """A weights-only ``torch.load`` also reads a bare tensor; Lightning reports the unusable file itself."""
         resume = tmp_path / "weights.pth"
         torch.save(torch.zeros(3), resume)
@@ -333,9 +354,12 @@ class TestResolveResumedOptimizerSettings:
         assert _resolve_resumed_optimizer_settings(config) is config
 
     @pytest.mark.parametrize("content", ["pickle-only", "truncated"])
-    def test_checkpoint_unreadable_weights_only_leaves_the_config_alone(self, tmp_path: Path, content: str) -> None:
-        """Nothing is unpickled beyond what a weights-only ``torch.load`` allows, and a broken file is left to
-        Lightning; a pre-Lightning ``.pth``, for one, holds argparse objects."""
+    def test_checkpoint_unreadable_weights_only_leaves_config_alone(self, tmp_path: Path, content: str) -> None:
+        """A checkpoint a weights-only ``torch.load`` cannot read leaves the config alone and is left to Lightning.
+
+        Nothing is unpickled beyond what a weights-only load allows; a pre-Lightning ``.pth``, for one, holds argparse
+        objects.
+        """
         resume = tmp_path / "checkpoint.pth"
         if content == "pickle-only":
             torch.save(
@@ -351,19 +375,16 @@ class TestResolveResumedOptimizerSettings:
         config = TrainConfig(dataset_dir="data", resume=str(resume))
         assert _resolve_resumed_optimizer_settings(config) is config
 
-    def test_training_config_written_before_fit_records_checkpoint_settings(self, tmp_path: Path) -> None:
+    def test_training_config_written_before_fit_records_checkpoint_settings(
+        self, tmp_path: Path, mock_build_trainer: MagicMock
+    ) -> None:
         """A resumed run interrupted inside ``trainer.fit`` leaves only the start-of-run ``training_config.json``."""
         resume = _write_checkpoint(tmp_path / "last.ckpt", {"lr_encoder": _CHECKPOINT_VALUE})
-        with (
-            patch("rfdetr.training.RFDETRModelModule"),
-            patch("rfdetr.training.RFDETRDataModule"),
-            patch("rfdetr.training.build_trainer") as build_trainer,
-        ):
-            build_trainer.return_value.fit.side_effect = KeyboardInterrupt
-            with pytest.raises(KeyboardInterrupt):
-                RFDETRNano(pretrain_weights=None, num_classes=3, device="cpu").train(
-                    dataset_dir=str(tmp_path), output_dir=str(tmp_path / "output"), resume=str(resume), device="cpu"
-                )
+        mock_build_trainer.return_value.fit.side_effect = KeyboardInterrupt
+        with pytest.raises(KeyboardInterrupt):
+            RFDETRNano(pretrain_weights=None, num_classes=3, device="cpu").train(
+                dataset_dir=str(tmp_path), output_dir=str(tmp_path / "output"), resume=str(resume), device="cpu"
+            )
         recorded = json.loads((tmp_path / "output" / "training_config.json").read_text())["train_config"]
         assert recorded["lr_encoder"] == _CHECKPOINT_VALUE
 
@@ -371,7 +392,8 @@ class TestResolveResumedOptimizerSettings:
 class TestAdoptResumedParamGroupSettings:
     """``RFDETRModelModule.on_load_checkpoint`` resolves the same order from the checkpoint Lightning loads."""
 
-    def test_unset_setting_takes_the_checkpoint_value(self) -> None:
+    def test_unset_setting_takes_checkpoint_value(self) -> None:
+        """An unset setting takes the checkpoint's recorded ``args`` value on the module."""
         module = _adopt(TrainConfig(dataset_dir="data"), {"lr_encoder": _CHECKPOINT_VALUE})
         assert module.train_config.lr_encoder == _CHECKPOINT_VALUE
 
@@ -426,32 +448,41 @@ class TestAdoptResumedParamGroupSettings:
     def test_restarts_groups_without_a_base_only_for_a_learning_rate_change(
         self, explicit: dict[str, float], args: dict[str, float] | None, restarts: bool
     ) -> None:
-        """Restarting is the only way to apply a new lr to a group saved without ``initial_lr``, and it loses the
-        reductions of an older ``ReduceLROnPlateau`` checkpoint."""
+        """Groups without a base restart only for an lr change, the one case that cannot be rescaled from a base.
+
+        Restarting is the only way to apply a new lr to a group saved without ``initial_lr``, and it loses the
+        reductions of an older ``ReduceLROnPlateau`` checkpoint.
+        """
         module = _adopt(TrainConfig(dataset_dir="data", **explicit), args)
         assert module._restarts_groups_without_base is restarts
 
-    def test_names_the_explicit_settings_to_reapply(self) -> None:
-        """Only the groups these feed are put back; the others keep what the checkpoint's optimizer holds."""
+    def test_names_explicit_settings_to_reapply(self) -> None:
+        """Only the explicitly passed settings are named for re-application, in config order.
+
+        Only the groups these feed are put back; the others keep what the checkpoint's optimizer holds.
+        """
         module = _adopt(TrainConfig(dataset_dir="data", weight_decay=5e-4, lr=1e-5), {"lr_encoder": _CHECKPOINT_VALUE})
         assert module._reapplied_param_group_settings == ["lr", "weight_decay"]
 
-    def test_other_ranks_resolve_the_same_settings(self) -> None:
+    def test_other_ranks_resolve_same_settings(self) -> None:
         """Every DDP rank must build the same optimizer; only the logging is limited to rank zero."""
         module = _adopt(TrainConfig(dataset_dir="data", lr=1e-5), {"lr_encoder": _CHECKPOINT_VALUE}, global_rank=1)
         assert (module.train_config.lr_encoder, module._reapplied_param_group_settings) == (_CHECKPOINT_VALUE, ["lr"])
 
     def test_logs_restored_and_overridden_settings(self, rf_detr_caplog: pytest.LogCaptureFixture) -> None:
+        """The log names settings restored from the checkpoint and those overridden explicitly."""
         _adopt(TrainConfig(dataset_dir="data", lr=1e-5), {"lr": 5e-5, "lr_encoder": 3e-4})
         assert "lr_encoder=0.0003 from the checkpoint; lr=1e-05 (was 5e-05) set explicitly" in rf_detr_caplog.text
 
-    def test_explicit_setting_equal_to_the_checkpoint_is_not_logged_as_set(
+    def test_explicit_setting_equal_to_checkpoint_is_not_logged_as_set(
         self, rf_detr_caplog: pytest.LogCaptureFixture
     ) -> None:
+        """An explicit value equal to the checkpoint's is not logged as set explicitly."""
         _adopt(TrainConfig(dataset_dir="data", lr=5e-5), {"lr": 5e-5, "lr_encoder": 3e-4})
         assert "set explicitly" not in rf_detr_caplog.text
 
     def test_logs_nothing_off_rank_zero(self, rf_detr_caplog: pytest.LogCaptureFixture) -> None:
+        """Ranks other than zero log nothing about the resolved settings."""
         _adopt(TrainConfig(dataset_dir="data", lr=1e-5), {"lr": 5e-5, "lr_encoder": 3e-4}, global_rank=1)
         assert rf_detr_caplog.text == ""
 
@@ -473,9 +504,8 @@ class TestAdoptResumedParamGroupSettings:
         _adopt(TrainConfig(dataset_dir="data", **explicit), None)
         assert any(record.levelno == logging.WARNING for record in rf_detr_caplog.records) is warns
 
-    def test_warning_names_the_settings_that_take_their_defaults(
-        self, rf_detr_caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_warning_names_settings_that_take_their_defaults(self, rf_detr_caplog: pytest.LogCaptureFixture) -> None:
+        """The warning for a checkpoint without ``args`` lists the settings falling back to defaults."""
         _adopt(TrainConfig(dataset_dir="data", lr=1e-5), None)
         assert (
             "lr_encoder, lr_vit_layer_decay, lr_component_decay, weight_decay use their defaults" in rf_detr_caplog.text
@@ -567,12 +597,14 @@ def _restored_optimizer(
 class TestApplyConfiguredParamGroupSettings:
     """After Lightning restores a checkpoint, each group takes the configured settings and keeps its progress."""
 
-    def test_configured_lr_becomes_the_schedule_base(self) -> None:
+    def test_configured_lr_becomes_schedule_base(self) -> None:
+        """The configured lr replaces each scheduler's base learning rate."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="lambda", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)])
         assert scheduler.base_lrs == [0.01, 0.02]
 
-    def test_configured_lr_becomes_the_group_initial_lr(self) -> None:
+    def test_configured_lr_becomes_group_initial_lr(self) -> None:
+        """The configured lr replaces each group's ``initial_lr``."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="lambda", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)])
         assert [group["initial_lr"] for group in optimizer.param_groups] == [0.01, 0.02]
@@ -583,7 +615,8 @@ class TestApplyConfiguredParamGroupSettings:
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)])
         assert [group["lr"] for group in optimizer.param_groups] == pytest.approx([0.0025, 0.005])
 
-    def test_next_scheduler_step_follows_the_configured_base(self) -> None:
+    def test_next_scheduler_step_follows_configured_base(self) -> None:
+        """The scheduler step after the resume follows the configured base."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="lambda", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)])
         optimizer.step()
@@ -591,11 +624,13 @@ class TestApplyConfiguredParamGroupSettings:
         assert [group["lr"] for group in optimizer.param_groups] == pytest.approx([0.00125, 0.0025])
 
     def test_nested_warmup_scheduler_bases_follow(self) -> None:
+        """Both members of a warmup ``SequentialLR`` take the configured base learning rates."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="warmup", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)])
         assert [nested.base_lrs for nested in scheduler._schedulers] == [[0.01, 0.02], [0.01, 0.02]]
 
-    def test_warmup_reaches_the_configured_lr(self) -> None:
+    def test_warmup_reaches_configured_lr(self) -> None:
+        """A warmup resumed mid-ramp ends at the configured lr, not the saved one."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="warmup", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)])
         for _ in range(4):
@@ -619,8 +654,11 @@ class TestApplyConfiguredParamGroupSettings:
     def test_group_without_a_recorded_base_restarts_only_when_asked(
         self, restart_without_base: bool, expected_lrs: list[float]
     ) -> None:
-        """``ReduceLROnPlateau`` checkpoints written before this fix record no ``initial_lr`` to scale from; two
-        reductions by half were taken."""
+        """A group saved without ``initial_lr`` is rescaled to a new lr only when a restart is requested.
+
+        ``ReduceLROnPlateau`` checkpoints written before this fix record no ``initial_lr`` to scale from; two reductions
+        by half were taken.
+        """
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="plateau", steps=3)
         for group in optimizer.param_groups:
             del group["initial_lr"]
@@ -629,58 +667,78 @@ class TestApplyConfiguredParamGroupSettings:
         )
         assert [group["lr"] for group in optimizer.param_groups] == pytest.approx(expected_lrs)
 
-    def test_group_kept_without_a_recorded_base_is_reported(self, rf_detr_caplog: pytest.LogCaptureFixture) -> None:
-        """An ``lr`` equal to the checkpoint's record leaves a group without ``initial_lr`` at its saved rate."""
+    @pytest.mark.parametrize(
+        ("drop_base", "configured", "restart_without_base", "message", "reported"),
+        [
+            pytest.param(
+                True,
+                [(0.1, 1e-4), (0.2, 1e-4)],
+                False,
+                "2 resumed parameter groups were saved without the learning rate they started from and no",
+                True,
+                id="kept-without-base",
+            ),
+            pytest.param(
+                False, [(0.1, 1e-4), (0.2, 1e-4)], False, "saved without the learning rate", False, id="base-recorded"
+            ),
+            pytest.param(
+                True,
+                [(0.01, 1e-4), (0.02, 1e-4)],
+                True,
+                "2 resumed parameter groups were saved without the learning rate they started from",
+                True,
+                id="restarted-without-base",
+            ),
+        ],
+    )
+    def test_groups_without_recorded_base_are_reported(
+        self,
+        rf_detr_caplog: pytest.LogCaptureFixture,
+        drop_base: bool,
+        configured: list[tuple[float, float]],
+        restart_without_base: bool,
+        message: str,
+        reported: bool,
+    ) -> None:
+        """Groups saved without ``initial_lr`` are logged when kept or restarted, and not when the base is recorded."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="plateau", steps=3)
-        for group in optimizer.param_groups:
-            del group["initial_lr"]
+        if drop_base:
+            for group in optimizer.param_groups:
+                del group["initial_lr"]
         _apply_configured_param_group_settings(
-            optimizer, scheduler, [(0.1, 1e-4), (0.2, 1e-4)], restart_without_base=False
+            optimizer, scheduler, configured, restart_without_base=restart_without_base
         )
-        assert "2 resumed parameter groups were saved without the learning rate they started from and no" in (
-            rf_detr_caplog.text
-        )
+        assert (message in rf_detr_caplog.text) is reported
 
-    def test_group_with_a_recorded_base_is_not_reported_as_kept(self, rf_detr_caplog: pytest.LogCaptureFixture) -> None:
-        optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="plateau", steps=3)
-        _apply_configured_param_group_settings(optimizer, scheduler, [(0.1, 1e-4), (0.2, 1e-4)])
-        assert "saved without the learning rate" not in rf_detr_caplog.text
-
-    def test_group_without_a_recorded_base_is_reported(self, rf_detr_caplog: pytest.LogCaptureFixture) -> None:
-        optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="plateau", steps=3)
-        for group in optimizer.param_groups:
-            del group["initial_lr"]
-        _apply_configured_param_group_settings(
-            optimizer, scheduler, [(0.01, 1e-4), (0.02, 1e-4)], restart_without_base=True
-        )
-        assert (
-            "2 resumed parameter groups were saved without the learning rate they started from" in rf_detr_caplog.text
-        )
-
-    def test_zero_restored_base_takes_the_configured_lr(self) -> None:
+    def test_zero_restored_base_takes_configured_lr(self) -> None:
         """No schedule progress can be read off a group that trained at zero, so it starts at its configured lr."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.0], scheduler_kind="lambda", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.1, 1e-4), (0.02, 1e-4)])
         assert optimizer.param_groups[1]["lr"] == 0.02
 
-    def test_configured_weight_decay_replaces_the_restored_one(self) -> None:
+    def test_configured_weight_decay_replaces_restored_one(self) -> None:
+        """The configured weight decay replaces the restored one in every group."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="lambda", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.1, 5e-4), (0.2, 0.0)])
         assert [group["weight_decay"] for group in optimizer.param_groups] == [5e-4, 0.0]
 
     def test_unchanged_settings_leave_every_group_alone(self) -> None:
+        """Settings equal to the restored ones change no group."""
         optimizer, scheduler = _restored_optimizer([0.1, 0.2], scheduler_kind="lambda", steps=2)
         assert _apply_configured_param_group_settings(optimizer, scheduler, [(0.1, 1e-4), (0.2, 1e-4)]) == 0
 
-    def test_cosine_floor_is_kept_when_the_base_changes(self) -> None:
+    def test_cosine_floor_is_kept_when_base_changes(self) -> None:
         """Half-way down a cosine to ``eta_min=0.01`` from 0.1 is 0.055; from 0.05 it is 0.03, not 0.055 / 2."""
         optimizer, scheduler = _restored_optimizer([0.1], scheduler_kind="cosine", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, 1e-4)])
         assert optimizer.param_groups[0]["lr"] == pytest.approx(0.03)
 
-    def test_cosine_continues_on_the_curve_of_the_configured_base(self) -> None:
-        """One step after the resume is the third of a fresh run at the configured base; the fourth would end both
-        curves at ``eta_min`` and prove nothing."""
+    def test_cosine_continues_on_curve_of_configured_base(self) -> None:
+        """After a resume the cosine continues on the curve of a fresh run at the configured base.
+
+        One step after the resume is the third of the fresh run; the fourth would end both curves at ``eta_min`` and
+        prove nothing.
+        """
         optimizer, scheduler = _restored_optimizer([0.1], scheduler_kind="cosine", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, 1e-4)])
         fresh_optimizer, fresh_scheduler = _build_optimizer_and_scheduler([0.05], 1e-4, "cosine")
@@ -697,21 +755,25 @@ class TestApplyConfiguredParamGroupSettings:
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.04, 1e-4)])
         assert optimizer.param_groups[0]["lr"] == 0.02
 
-    def test_plateau_floor_never_lifts_the_rate_above_a_base_below_it(self) -> None:
+    def test_plateau_floor_never_lifts_rate_above_a_base_below_it(self) -> None:
         """A fresh plateau never raises the rate, so a base under ``min_lr`` stays where it was set."""
         optimizer, scheduler = _restored_optimizer([0.1], scheduler_kind="plateau-floor", steps=3)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.01, 1e-4)])
         assert optimizer.param_groups[0]["lr"] == 0.01
 
-    def test_plateau_reductions_above_the_floor_scale_with_the_base(self) -> None:
+    def test_plateau_reductions_above_floor_scale_with_base(self) -> None:
+        """Reductions above ``min_lr`` scale proportionally with the new base."""
         optimizer, scheduler = _restored_optimizer([0.1], scheduler_kind="plateau-floor", steps=3)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.2, 1e-4)])
         assert optimizer.param_groups[0]["lr"] == pytest.approx(0.05)
 
     @pytest.mark.parametrize("steps", [3, 4])
-    def test_cosine_behind_a_warmup_continues_on_the_curve_of_the_configured_base(self, steps: int) -> None:
-        """An explicit cosine with ``warmup_epochs > 0`` is always wrapped in a ``SequentialLR``; its ``eta_min`` is the
-        floor once the warmup is over."""
+    def test_cosine_behind_a_warmup_continues_on_curve_of_configured_base(self, steps: int) -> None:
+        """A cosine behind a warmup continues on the curve of a fresh run at the configured base.
+
+        An explicit cosine with ``warmup_epochs > 0`` is always wrapped in a ``SequentialLR``; its ``eta_min`` is the
+        floor once the warmup is over.
+        """
         optimizer, scheduler = _restored_optimizer([0.1], scheduler_kind="cosine-warmup", steps=steps)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, 1e-4)])
         fresh_optimizer, fresh_scheduler = _build_optimizer_and_scheduler([0.05], 1e-4, "cosine-warmup")
@@ -722,14 +784,14 @@ class TestApplyConfiguredParamGroupSettings:
         scheduler.step()
         assert optimizer.param_groups[0]["lr"] == pytest.approx(fresh_optimizer.param_groups[0]["lr"])
 
-    def test_cosine_during_the_warmup_scales_with_the_base(self) -> None:
+    def test_cosine_during_warmup_scales_with_base(self) -> None:
         """Before the milestone the warmup ramp sets the rate, and it scales with its base."""
         optimizer, scheduler = _restored_optimizer([0.1], scheduler_kind="cosine-warmup", steps=1)
         before = optimizer.param_groups[0]["lr"]
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, 1e-4)])
         assert optimizer.param_groups[0]["lr"] == pytest.approx(before / 2)
 
-    def test_group_based_at_the_cosine_floor_takes_the_proportional_rescale(self) -> None:
+    def test_group_based_at_cosine_floor_takes_proportional_rescale(self) -> None:
         """A base equal to ``eta_min`` leaves no distance to scale, which would divide by zero."""
         optimizer, scheduler = _restored_optimizer([0.01], scheduler_kind="cosine", steps=2)
         _apply_configured_param_group_settings(optimizer, scheduler, [(0.05, 1e-4)])
@@ -797,52 +859,58 @@ def _masked_nano_settings(
 class TestConfiguredSettingsFedBy:
     """Only the groups an explicit setting feeds take the configured value; the others keep the restored one."""
 
-    def test_lr_encoder_feeds_only_the_encoder_learning_rates(
+    def test_lr_encoder_feeds_only_encoder_learning_rates(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
+        """``lr_encoder`` feeds the encoder groups' learning rates and no other group's."""
         masked, is_encoder = _masked_nano_settings(["lr_encoder"], *nano_model_and_args)
         assert [lr is not None for lr, _ in masked] == is_encoder
 
     def test_lr_encoder_feeds_no_weight_decay(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
+        """``lr_encoder`` feeds no group's weight decay."""
         masked, _ = _masked_nano_settings(["lr_encoder"], *nano_model_and_args)
         assert {weight_decay for _, weight_decay in masked} == {None}
 
     def test_weight_decay_feeds_no_learning_rate(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
+        """``weight_decay`` feeds no group's learning rate."""
         masked, _ = _masked_nano_settings(["weight_decay"], *nano_model_and_args)
         assert {lr for lr, _ in masked} == {None}
 
-    def test_weight_decay_skips_the_parameters_exempt_from_it(
+    def test_weight_decay_skips_parameters_exempt_from_it(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
         """Biases and norms of the encoder have a weight decay of zero whatever ``weight_decay`` is."""
         masked, is_encoder = _masked_nano_settings(["weight_decay"], *nano_model_and_args)
         assert any(weight_decay is None for (_, weight_decay), encoder in zip(masked, is_encoder) if encoder)
 
-    def test_lr_feeds_the_groups_built_from_it(
-        self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
-    ) -> None:
+    def test_lr_feeds_groups_built_from_it(self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]) -> None:
+        """``lr`` feeds every non-encoder group's learning rate."""
         masked, is_encoder = _masked_nano_settings(["lr"], *nano_model_and_args)
         assert all(lr is not None for (lr, _), encoder in zip(masked, is_encoder) if not encoder)
 
-    def test_lr_does_not_feed_the_encoder(self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]) -> None:
+    def test_lr_does_not_feed_encoder(self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]) -> None:
+        """``lr`` feeds no encoder group's learning rate."""
         masked, is_encoder = _masked_nano_settings(["lr"], *nano_model_and_args)
         assert all(lr is None for (lr, _), encoder in zip(masked, is_encoder) if encoder)
 
-    def test_weight_decay_feeds_the_groups_that_inherit_it(
+    def test_weight_decay_feeds_groups_that_inherit_it(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
-        """The head and decoder groups carry no ``weight_decay`` of their own; the optimizer's default is the
-        setting."""
+        """Non-encoder groups are fed by ``weight_decay``.
+
+        The head and decoder groups carry no ``weight_decay`` of their own; the optimizer's default is the setting.
+        """
         masked, is_encoder = _masked_nano_settings(["weight_decay"], *nano_model_and_args)
         assert all(weight_decay is not None for (_, weight_decay), encoder in zip(masked, is_encoder) if not encoder)
 
     def test_no_explicit_setting_feeds_nothing(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
+        """Without explicit settings no group's learning rate or weight decay is fed."""
         masked, _ = _masked_nano_settings([], *nano_model_and_args)
         assert set(masked) == {(None, None)}
 
@@ -858,7 +926,7 @@ class TestConfiguredSettingsFedBy:
         optimizer = torch.optim.AdamW([{"params": [moved, still]}], lr=1e-3, weight_decay=1e-4)
         assert _configured_settings_fed_by(["lr_encoder"], [(1e-3, 1e-4)], optimizer, args, build) == [(1e-3, None)]
 
-    def test_group_inheriting_the_weight_decay_is_fed_when_any_of_its_parameters_is(self) -> None:
+    def test_group_inheriting_weight_decay_is_fed_when_any_of_its_parameters_is(self) -> None:
         """One member inherits ``weight_decay``, the other has a weight decay of its own."""
         inheriting, own = torch.nn.Parameter(torch.zeros(1)), torch.nn.Parameter(torch.zeros(1))
         args = SimpleNamespace(lr=1e-4, weight_decay=1e-4)
@@ -870,9 +938,10 @@ class TestConfiguredSettingsFedBy:
         optimizer = torch.optim.AdamW([{"params": [inheriting, own]}], lr=1e-4, weight_decay=1e-4)
         assert _configured_settings_fed_by(["weight_decay"], [(1e-4, 1e-4)], optimizer, args, build) == [(None, 1e-4)]
 
-    def test_leaves_the_namespace_it_probes_with_untouched(
+    def test_leaves_namespace_it_probes_with_untouched(
         self, nano_model_and_args: tuple[torch.nn.Module, SimpleNamespace]
     ) -> None:
+        """Probing the groups leaves the caller's namespace unchanged."""
         model, args = nano_model_and_args
         before = {name: getattr(args, name) for name in _PARAM_GROUP_SETTINGS}
         _masked_nano_settings(list(_PARAM_GROUP_SETTINGS), model, args)
@@ -1011,11 +1080,14 @@ def resumed_training_config(training_runs: tuple[Path, Path]) -> dict[str, Any]:
 class TestResumeWithChangedSettings:
     """The issue's scenario: stop a run, change ``lr``, resume from ``last.ckpt``."""
 
-    def test_schedule_follows_the_explicit_lr_and_the_restored_lr_encoder(
+    def test_schedule_follows_explicit_lr_and_restored_lr_encoder(
         self, last_ckpts: tuple[dict[str, Any], dict[str, Any]]
     ) -> None:
-        """Groups trained at ``lr`` (and the decoder's ``lr * lr_component_decay``) move to the new ``lr``; the
-        backbone's, built from the unchanged ``lr_encoder``, stay where they were."""
+        """Resumed base learning rates follow the explicit ``lr`` for its groups and keep the restored ``lr_encoder``.
+
+        Groups trained at ``lr`` (and the decoder's ``lr * lr_component_decay``) move to the new ``lr``; the backbone's,
+        built from the unchanged ``lr_encoder``, stay where they were.
+        """
         first, resumed = last_ckpts
         component_decay = TrainConfig.model_fields["lr_component_decay"].default
         new_base = {
@@ -1025,7 +1097,7 @@ class TestResumeWithChangedSettings:
         expected = [new_base.get(base, base) for base in first["lr_schedulers"][0]["base_lrs"]]
         assert resumed["lr_schedulers"][0]["base_lrs"] == expected
 
-    def test_explicit_weight_decay_applies_where_the_group_decays(
+    def test_explicit_weight_decay_applies_where_group_decays(
         self, last_ckpts: tuple[dict[str, Any], dict[str, Any]]
     ) -> None:
         """Parameters exempt from weight decay (biases, norms) keep zero."""
@@ -1040,7 +1112,7 @@ class TestResumeWithChangedSettings:
         """The issue's own checkpoint, after the upgrade: ``args`` already say the new ``lr``."""
         assert stale_args_resumed_ckpt["lr_schedulers"][0]["base_lrs"][0] == _RESUMED_RUN["lr"]
 
-    def test_omitted_setting_keeps_the_optimizer_value_over_stale_recorded_args(
+    def test_omitted_setting_keeps_optimizer_value_over_stale_recorded_args(
         self, last_ckpts: tuple[dict[str, Any], dict[str, Any]], stale_omitted_setting_ckpt: dict[str, Any]
     ) -> None:
         """Only ``weight_decay`` is passed, so no learning rate moves, whatever ``args`` says about ``lr_encoder``."""
@@ -1050,10 +1122,12 @@ class TestResumeWithChangedSettings:
 
     @pytest.mark.parametrize("setting", ["lr", "lr_encoder", "weight_decay"])
     def test_training_config_records_what_ran(self, resumed_training_config: dict[str, Any], setting: str) -> None:
+        """``training_config.json`` records the resumed run's effective setting."""
         assert resumed_training_config[setting] == {**_FIRST_RUN, **_RESUMED_RUN}[setting]
 
     @pytest.mark.parametrize("setting", ["lr", "lr_encoder", "weight_decay"])
     def test_checkpoint_args_record_what_ran(
         self, last_ckpts: tuple[dict[str, Any], dict[str, Any]], setting: str
     ) -> None:
+        """The resumed ``last.ckpt`` ``args`` record the resumed run's effective setting."""
         assert last_ckpts[1]["args"][setting] == {**_FIRST_RUN, **_RESUMED_RUN}[setting]

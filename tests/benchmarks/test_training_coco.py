@@ -22,13 +22,32 @@ from rfdetr.utilities.reproducibility import seed_all
 
 
 def _to_float(value: float | torch.Tensor) -> float:
+    """Convert a Python number or a one-element tensor to ``float``.
+
+    Examples:
+        >>> _to_float(torch.tensor(0.5)), _to_float(2)
+        (0.5, 2.0)
+    """
     return float(value.item()) if isinstance(value, torch.Tensor) else float(value)
 
 
-def _build_subset_annotations(
-    payload: dict,
-    image_ids: list[int],
-) -> dict:
+def _build_subset_annotations(payload: dict, image_ids: list[int]) -> dict:
+    """Restrict a COCO keypoint payload to ``image_ids``, keeping non-crowd person annotations that have keypoints.
+
+    Examples:
+        >>> payload = {
+        ...     "images": [{"id": 1}, {"id": 2}],
+        ...     "annotations": [
+        ...         {"image_id": 1, "num_keypoints": 3},
+        ...         {"image_id": 1, "num_keypoints": 0},
+        ...         {"image_id": 2, "num_keypoints": 5},
+        ...     ],
+        ...     "categories": [{"id": 1}, {"id": 2}],
+        ... }
+        >>> subset = _build_subset_annotations(payload, [1])
+        >>> len(subset["images"]), len(subset["annotations"]), len(subset["categories"])
+        (1, 1, 1)
+    """
     image_id_set = set(image_ids)
     images = [image for image in payload["images"] if int(image["id"]) in image_id_set]
     annotations = [
@@ -56,6 +75,14 @@ def _build_coco_keypoint_subset_from_val(
     train_images: int,
     val_images: int,
 ) -> Path:
+    """Copy the first ``train_images`` + ``val_images`` keypoint images of a val set into a COCO-style train/val tree.
+
+    The live doctest is skipped because the helper needs the downloaded COCO val2017 images.
+
+    Examples:
+        >>> _build_coco_keypoint_subset_from_val.__name__  # doctest: +SKIP
+        '_build_coco_keypoint_subset_from_val'
+    """
     with annotations_path.open(encoding="utf-8") as file:
         payload = json.load(file)
 
@@ -159,12 +186,7 @@ def test_keypoint_training_subset_reports_loss_and_metric(
         clearml=False,
     )
     model = RFDETRKeypointPreview()
-    datamodule = _build_subset_datamodule(
-        model,
-        train_config,
-        train_subset_size=8,
-        val_subset_size=4,
-    )
+    datamodule = _build_subset_datamodule(model, train_config, train_subset_size=8, val_subset_size=4)
 
     module = RFDETRModelModule(model.model_config, train_config)
     module.model.load_state_dict(model.model.model.state_dict())

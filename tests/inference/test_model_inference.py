@@ -7,7 +7,7 @@
 
 import threading
 import weakref
-from collections.abc import Generator
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -16,13 +16,15 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr import detr as detr_module
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
-
-from .helpers import _DummyRFDETR
+from rfdetr.models.heads.segmentation import SegmentationHead
+from tests._markers import _requires_two_cuda_devices
+from tests.inference.helpers import _DummyRFDETR
 
 
 class _FakeModel(torch.nn.Module):
@@ -59,6 +61,68 @@ class _TupleModule(torch.nn.Module):
             >>> _TupleModule().export() is None
             True
         """
+
+
+class _DeterministicModeProbe(torch.nn.Module):
+    """Module that records whether deterministic algorithms are on each time its forward pass runs."""
+
+    def __init__(self) -> None:
+        """Start with no recorded calls."""
+        super().__init__()
+        self.seen: list[bool] = []
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        """Record the mode and return ``value`` unchanged.
+
+        Examples:
+            >>> probe = _DeterministicModeProbe()
+            >>> probe(torch.zeros(1)).tolist(), len(probe.seen)
+            ([0.0], 1)
+        """
+        self.seen.append(torch.are_deterministic_algorithms_enabled())
+        return value
+
+
+class _FailingModule(torch.nn.Module):
+    """Module whose forward pass always raises, as a model that cannot be traced does."""
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        """Raise ``RuntimeError``.
+
+        Examples:
+            >>> _FailingModule()(torch.zeros(1))
+            Traceback (most recent call last):
+            ...
+            RuntimeError: cannot trace
+        """
+        raise RuntimeError("cannot trace")
+
+
+class _BlockingModule(torch.nn.Module):
+    """Module whose forward pass signals that it runs, then waits a short while for another event.
+
+    The timeout keeps a failed synchronization from leaving the tracing thread blocked indefinitely.
+    """
+
+    def __init__(self, running: threading.Event, wait_for: threading.Event) -> None:
+        """Keep the event to set when the forward pass starts and the one to wait for."""
+        super().__init__()
+        self.running = running
+        self.wait_for = wait_for
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        """Set ``running``, wait for ``wait_for`` and return ``value`` unchanged.
+
+        Examples:
+            >>> done = threading.Event()
+            >>> done.set()
+            >>> module = _BlockingModule(threading.Event(), done)
+            >>> module(torch.zeros(1)).tolist(), module.running.is_set()
+            ([0.0], True)
+        """
+        self.running.set()
+        assert self.wait_for.wait(timeout=10), "trace was not released"
+        return value
 
 
 def _tensor_leaves(value: Any) -> list[torch.Tensor]:
@@ -186,15 +250,15 @@ class TestModelInferenceCudaDeviceContext:
         assert original.linear.weight.device.type == "cpu"
         assert source.model.device == target
 
-    def test_nullcontext_used_for_cpu_device(self) -> None:
+    def test_nullcontext_used_for_cpu_device(self, mocker: MockerFixture) -> None:
         """A CPU factory does not initialize a CUDA device context."""
         source = _FakeRFDETR()
-        with patch("torch.cuda.device") as device_context:
-            source.inference(compile=False)
+        device_context = mocker.patch("torch.cuda.device")
+        source.inference(compile=False)
         device_context.assert_not_called()
 
     @pytest.mark.gpu
-    def test_cold_cuda_source_stays_on_cpu_and_snapshot_fixes_device_index(self) -> None:
+    def test_cold_cuda_source_stays_on_cpu_and_snapshot_fixes_device_index(self, mocker: MockerFixture) -> None:
         """A deferred CUDA source stays on CPU while its predictor owns a concrete CUDA device."""
         source = _FakeRFDETR()
         source.model.device = torch.device("cuda")
@@ -214,8 +278,121 @@ class TestModelInferenceCudaDeviceContext:
         assert source.model.device == torch.device("cuda")
         assert source.model.inference_model is None
         # The device stays explicit even if a later call observes another current CUDA device.
-        with patch("torch.cuda.current_device", return_value=expected_device.index + 1):
-            assert snapshot.model.device == expected_device
+        mocker.patch("torch.cuda.current_device", return_value=expected_device.index + 1)
+        assert snapshot.model.device == expected_device
+
+
+class TestTraceForPrediction:
+    """Tracing preserves process-wide deterministic settings."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_deterministic_mode(self) -> Iterator[None]:
+        """Put the process-wide deterministic settings back after each test, so no later test inherits them."""
+        import torch._inductor.config as inductor_config
+
+        enabled = torch.are_deterministic_algorithms_enabled()
+        warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+        inductor_deterministic = getattr(inductor_config, "deterministic", None)
+        yield
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+        if inductor_deterministic is not None:
+            inductor_config.deterministic = inductor_deterministic
+
+    def test_trace_preserves_deterministic_mode_during_forward(self) -> None:
+        """Tracing must not disable deterministic enforcement for other process threads."""
+        torch.use_deterministic_algorithms(True)
+        probe = _DeterministicModeProbe()
+
+        detr_module._trace_for_prediction(probe, torch.zeros(1))
+
+        assert set(probe.seen) == {True}
+
+    def test_trace_does_not_require_inductor_deterministic_option(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Tracing works on supported PyTorch versions without Inductor's private option."""
+        import torch._inductor.config as inductor_config
+
+        torch.use_deterministic_algorithms(True)
+        monkeypatch.delattr(inductor_config, "deterministic", raising=False)
+
+        traced = detr_module._trace_for_prediction(torch.nn.Identity(), torch.zeros(1))
+
+        assert torch.equal(traced(torch.ones(1)), torch.ones(1))
+        assert not hasattr(inductor_config, "deterministic")
+
+    @pytest.mark.parametrize(
+        ("enabled", "warn_only"),
+        [
+            pytest.param(True, True, id="warn-only"),
+            pytest.param(True, False, id="strict"),
+            pytest.param(False, False, id="off"),
+        ],
+    )
+    def test_restores_the_callers_mode(self, enabled: bool, warn_only: bool) -> None:
+        """After the trace, deterministic algorithms are back in the mode the caller had, warn-only flag included."""
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+
+        detr_module._trace_for_prediction(_DeterministicModeProbe(), torch.zeros(1))
+
+        assert (
+            torch.are_deterministic_algorithms_enabled(),
+            torch.is_deterministic_algorithms_warn_only_enabled(),
+        ) == (
+            enabled,
+            warn_only,
+        )
+
+    def test_restores_the_callers_mode_when_tracing_fails(self) -> None:
+        """A model that cannot be traced still leaves deterministic algorithms on for the caller."""
+        torch.use_deterministic_algorithms(True)
+
+        with pytest.raises(RuntimeError, match="cannot trace"):
+            detr_module._trace_for_prediction(_FailingModule(), torch.zeros(1))
+
+        assert torch.are_deterministic_algorithms_enabled()
+
+    def test_keeps_inductors_own_deterministic_setting(self) -> None:
+        """Tracing leaves Inductor's optional deterministic setting unchanged."""
+        import torch._inductor.config as inductor_config
+
+        torch.use_deterministic_algorithms(True)
+        before = getattr(inductor_config, "deterministic", None)
+
+        detr_module._trace_for_prediction(_DeterministicModeProbe(), torch.zeros(1))
+
+        assert getattr(inductor_config, "deterministic", None) == before
+
+    def test_external_mode_change_during_trace_is_not_overwritten(self) -> None:
+        """A concurrent caller's mode change survives the trace."""
+        torch.use_deterministic_algorithms(True)
+        recording = threading.Event()
+        release = threading.Event()
+
+        def trace() -> None:
+            detr_module._trace_for_prediction(_BlockingModule(recording, release), torch.zeros(1))
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker = executor.submit(trace)
+            try:
+                assert recording.wait(timeout=10)
+                assert torch.are_deterministic_algorithms_enabled()
+                torch.use_deterministic_algorithms(False)
+            finally:
+                release.set()
+            worker.result(timeout=10)
+
+        assert not torch.are_deterministic_algorithms_enabled()
+
+    def test_native_prediction_upsample_matches_export_head(self) -> None:
+        """The snapshot's native resize preserves the exported segmentation head's output."""
+        head = SegmentationHead(in_dim=4, num_blocks=1).eval()
+        spatial = torch.randn(1, 4, 3, 3)
+        queries = [torch.randn(1, 2, 4)]
+        expected = head.forward_export(spatial, queries, (24, 24))
+        head._native_prediction_upsample = True
+
+        actual = head.forward_export(spatial, queries, (24, 24))
+
+        torch.testing.assert_close(actual[0], expected[0], rtol=0, atol=0)
 
 
 class TestModelInferenceCompile:
@@ -275,23 +452,7 @@ class TestModelInferenceCompile:
         assert torch.equal(second[0], second_input + 1)
         assert torch.equal(second[1], second_input * 2)
 
-    @pytest.fixture
-    def nondeterministic_algorithms(self) -> Generator[None, None, None]:
-        """Turn deterministic algorithms off for one test, restoring the previous mode afterwards.
-
-        The autouse ``reset_random_seeds`` fixture enables them, which routes CUDA ``F.interpolate`` through a
-        decomposition that fails under ``torch.jit.trace`` (its sizes become CPU tensors).
-        """
-        enabled = torch.are_deterministic_algorithms_enabled()
-        warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
-        torch.use_deterministic_algorithms(False)
-        try:
-            yield
-        finally:
-            torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
-
     @pytest.mark.gpu
-    @pytest.mark.usefixtures("nondeterministic_algorithms")
     @pytest.mark.parametrize(
         "model_class",
         [pytest.param(RFDETRNano, id="detection"), pytest.param(RFDETRSegNano, id="segmentation")],
@@ -303,7 +464,7 @@ class TestModelInferenceCompile:
     def test_cudagraph_predict_matches_torchscript_backend(
         self, model_class: type[RFDETR], dtype: torch.dtype, tolerance: float
     ) -> None:
-        """The cudagraph backend gives predict() the same raw predictions as the default TorchScript backend.
+        """The cudagraph backend gives predict() the same raw predictions as the TorchScript backend.
 
         Elsewhere only the parameter-free ``_TupleModule`` is captured; this runs a real detector through ``predict()``,
         including its tuple-to-dict mapping of the cloned graph outputs. Raw predictions are compared because a top-k
@@ -313,7 +474,7 @@ class TestModelInferenceCompile:
         """
         model = model_class(pretrain_weights=None, device="cuda")
         image = torch.rand(3, 480, 640)
-        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype)
+        torchscript = model.inference(compile=True, batch_size=1, dtype=dtype, compile_backend="torchscript")
         with patch.object(
             torchscript._native_model.model, "postprocess", wraps=torchscript._native_model.model.postprocess
         ) as torchscript_postprocess:
@@ -409,12 +570,12 @@ class TestModelInferenceCompile:
         assert original.training is True
         assert source.model.inference_model is None
 
-    def test_compile_true_sets_compiled_flags(self) -> None:
+    def test_compile_true_sets_compiled_flags(self, mocker: MockerFixture) -> None:
         """_optimized_has_been_compiled=True and _optimized_batch_size should be set after compile=True."""
         rfdetr = _FakeRFDETR()
 
-        with patch("torch.jit.trace", side_effect=lambda module, _input: module):
-            predictor = rfdetr.inference(compile=True, batch_size=4)
+        mocker.patch("torch.jit.trace", side_effect=lambda module, _input: module)
+        predictor = rfdetr.inference(compile=True, batch_size=4)
 
         assert predictor._native_model._optimized_has_been_compiled is True
         assert predictor._native_model._optimized_batch_size == 4
@@ -474,7 +635,7 @@ class TestModelInferenceCompile:
 
         with (
             patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', or 'inductor'"),
+            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', 'inductor' or None"),
         ):
             rfdetr.inference(compile=True, compile_backend="unknown")  # type: ignore[arg-type]
 
@@ -1047,7 +1208,7 @@ class TestCudaGraphInferenceModel:
         assert torch.equal(torch.cat(outputs, dim=1), torch.stack([inputs + 1, inputs * 2]).to(device))
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    @_requires_two_cuda_devices
     def test_capture_on_second_device_replays_the_callers_input(self) -> None:
         """A graph captured on cuda:1 after one on cuda:0 must compute on the caller's input, not the dummy.
 

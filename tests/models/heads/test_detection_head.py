@@ -22,6 +22,28 @@ from torch import nn
 from rfdetr.models.lwdetr import LWDETR, _resize_linear
 
 
+def _mock_transformer(hidden_dim: int = 4) -> MagicMock:
+    """Build a MagicMock transformer exposing the attributes LWDETR reads at construction.
+
+    Args:
+        hidden_dim: Value of ``d_model``.
+
+    Returns:
+        A MagicMock transformer whose decoder has ``bbox_embed=None``.
+
+    Examples:
+        >>> _mock_transformer(hidden_dim=8).d_model
+        8
+        >>> _mock_transformer().decoder.bbox_embed is None
+        True
+    """
+    transformer = MagicMock()
+    transformer.d_model = hidden_dim
+    transformer.decoder = MagicMock()
+    transformer.decoder.bbox_embed = None
+    return transformer
+
+
 def _make_minimal_lwdetr(num_classes: int = 91, two_stage: bool = False) -> LWDETR:
     """Construct the smallest viable LWDETR without loading pretrained weights.
 
@@ -40,15 +62,9 @@ def _make_minimal_lwdetr(num_classes: int = 91, two_stage: bool = False) -> LWDE
         >>> isinstance(model, LWDETR)
         True
     """
-    hidden_dim = 4
-    backbone = MagicMock()
-    transformer = MagicMock()
-    transformer.d_model = hidden_dim
-    transformer.decoder = MagicMock()
-    transformer.decoder.bbox_embed = None
     return LWDETR(
-        backbone=backbone,
-        transformer=transformer,
+        backbone=MagicMock(),
+        transformer=_mock_transformer(),
         segmentation_head=None,
         num_classes=num_classes,
         num_queries=2,
@@ -76,17 +92,12 @@ def _make_keypoint_lwdetr(num_classes: int, num_keypoints_per_class: list[int]) 
         >>> model.class_embed.out_features
         3
     """
-    hidden_dim = 4
-    backbone = MagicMock()
-    transformer = MagicMock()
-    transformer.d_model = hidden_dim
-    transformer.decoder = MagicMock()
-    transformer.decoder.bbox_embed = None
+    transformer = _mock_transformer()
     transformer.decoder.num_keypoints_per_class = num_keypoints_per_class
     transformer.decoder.keypoint_class_mask = torch.zeros(1, 1, dtype=torch.bool)
     transformer.num_keypoints_per_class = num_keypoints_per_class
     model = LWDETR(
-        backbone=backbone,
+        backbone=MagicMock(),
         transformer=transformer,
         segmentation_head=None,
         num_classes=num_classes,
@@ -127,21 +138,21 @@ def _keypoint_tensor(num_keypoints_per_class: list[int], batch: int = 1, seq: in
 class TestResizeLinear:
     """Unit tests for _resize_linear() — verifies out_features, weight shape, and bias shape."""
 
-    def test_shrink_out_features(self) -> None:
-        """Shrink: out_features equals the requested smaller class count."""
-        result = _resize_linear(nn.Linear(256, 91), 8)
-        assert result.out_features == 8, f"Expected out_features=8, got {result.out_features}"
-        assert result.weight.shape == (8, 256), f"Expected weight (8, 256), got {result.weight.shape}"
-        assert result.bias is not None
-        assert result.bias.shape == (8,), f"Expected bias (8,), got {result.bias.shape}"
+    @pytest.mark.parametrize(
+        ("in_out", "new_out"),
+        [
+            (91, 8),  # shrink: truncate to the requested smaller class count
+            (10, 25),  # expand: tile up to the requested larger class count
+        ],
+    )
+    def test_resizes_out_features_weight_and_bias(self, in_out: int, new_out: int) -> None:
+        """out_features, weight shape and bias shape all equal the requested class count after shrink or expand."""
+        result = _resize_linear(nn.Linear(256, in_out), new_out)
 
-    def test_expand_out_features(self) -> None:
-        """Expand: out_features equals the requested larger class count via tiling."""
-        result = _resize_linear(nn.Linear(256, 10), 25)
-        assert result.out_features == 25, f"Expected out_features=25, got {result.out_features}"
-        assert result.weight.shape == (25, 256), f"Expected weight (25, 256), got {result.weight.shape}"
+        assert result.out_features == new_out, f"Expected out_features={new_out}, got {result.out_features}"
+        assert result.weight.shape == (new_out, 256), f"Expected weight ({new_out}, 256), got {result.weight.shape}"
         assert result.bias is not None
-        assert result.bias.shape == (25,), f"Expected bias (25,), got {result.bias.shape}"
+        assert result.bias.shape == (new_out,), f"Expected bias ({new_out},), got {result.bias.shape}"
 
     def test_same_size_preserves_values(self) -> None:
         """Same size: shapes and weight/bias values are preserved exactly."""
@@ -154,7 +165,7 @@ class TestResizeLinear:
         assert torch.allclose(result.weight.data, linear.weight.data)
         assert torch.allclose(result.bias.data, linear.bias.data)
 
-    def test_no_bias_returns_no_bias(self) -> None:
+    def test_no_bias_stays_none(self) -> None:
         """Bias=False input: returned module has bias=None and out_features is correct."""
         linear = nn.Linear(256, 91, bias=False)
         result = _resize_linear(linear, 8)
@@ -211,16 +222,16 @@ class TestReinitializeDetectionHead:
 class TestAggregateKeypointClassLogits:
     """Regression tests for LWDETR._aggregate_keypoint_class_logits().
 
-    Guards against a spurious warning that fired when num_keypoints_per_class exactly covered all
-    foreground classes: class_embed.out_features includes background (+1), so len(schema)==num_classes
-    always satisfied schema_len < detection_num_classes, triggering the warning incorrectly.
+    Guards against a spurious warning that fired when num_keypoints_per_class exactly covered all foreground classes:
+    class_embed.out_features includes background (+1), so len(schema)==num_classes always satisfied
+    schema_len < detection_num_classes, triggering the warning incorrectly.
 
-    Uses _kp_zero_pad_warned as a proxy for whether the warning fired — the rf-detr logger uses
-    propagate=False which prevents standard caplog capture.
+    Uses _kp_zero_pad_warned as a proxy for whether the warning fired — the rf-detr logger uses propagate=False which
+    prevents standard caplog capture.
     """
 
     @pytest.mark.parametrize(
-        "num_classes,num_keypoints_per_class",
+        ("num_classes", "num_keypoints_per_class"),
         [
             pytest.param(1, [17], id="coco-person-1class"),
             pytest.param(2, [17, 4], id="basketball-2class"),
@@ -228,9 +239,7 @@ class TestAggregateKeypointClassLogits:
         ],
     )
     def test_no_warning_when_schema_covers_all_foreground_classes(
-        self,
-        num_classes: int,
-        num_keypoints_per_class: list[int],
+        self, num_classes: int, num_keypoints_per_class: list[int]
     ) -> None:
         """No warning when num_keypoints_per_class covers exactly all foreground detection classes.
 

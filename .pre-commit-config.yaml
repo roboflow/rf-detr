@@ -27,7 +27,7 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: v3.9.9 # using tag; previously pinned SHA when tags were not persistent
+    rev: v3.9.10 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
         files: \.(ya?ml|toml)$
@@ -35,7 +35,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.10
+    rev: v0.17.3
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
@@ -104,7 +104,7 @@ repos:
         # test_tensorrt_int8 keeps one module-level importorskip("onnx"), because its parametrized cases build ONNX nodes at
         # collection time; moving them behind local imports is a follow-up.
         exclude: >-
-          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/test_tensorrt_int8)\.py$
+          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/tensorrt/test_tensorrt_int8)\.py$
 
       - id: mypy
         name: mypy

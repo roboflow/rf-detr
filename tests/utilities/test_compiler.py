@@ -6,7 +6,7 @@
 """Tests for rfdetr.utilities.compiler — version-compatible compile, trace and CUDA autocast predicates."""
 
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -43,13 +43,14 @@ class TestIsCompiling:
         """Returns False on plain eager execution with no monkeypatching involved."""
         assert is_compiling() is False
 
-    @patch.object(torch.compiler, "is_compiling", new=lambda: True, create=True)
-    def test_uses_public_predicate_when_available(self) -> None:
+    def test_uses_public_predicate_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Reflects torch.compiler.is_compiling when that public predicate is present.
 
         PyTorch >=2.3 exposes the public predicate directly on torch.compiler; when it is present, is_compiling must
         defer to it rather than touching the legacy Dynamo API.
         """
+        monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True, raising=False)
+
         assert is_compiling() is True
 
     def test_falls_back_to_dynamo_predicate_when_public_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,14 +85,15 @@ def test_is_tracing_returns_true_inside_a_jit_trace() -> None:
 class TestCudaAutocastDtype:
     """cuda_autocast_dtype reports CUDA autocast's compute dtype, or None when it is off."""
 
-    @patch.object(torch, "is_autocast_enabled", new=lambda *args: True)
-    @patch.object(torch, "get_autocast_dtype", new=lambda device: torch.bfloat16, create=True)
-    def test_returns_the_compute_dtype_when_enabled(self) -> None:
+    def test_returns_the_compute_dtype_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns the dtype from ``torch.get_autocast_dtype("cuda")`` while CUDA autocast is on.
 
         This is the path every current torch takes; the CUDA graph runner keys captures on it and the decoder emits its
         folded casts in it.
         """
+        monkeypatch.setattr(torch, "is_autocast_enabled", lambda *args: True)
+        monkeypatch.setattr(torch, "get_autocast_dtype", lambda device: torch.bfloat16, raising=False)
+
         assert cuda_autocast_dtype() == torch.bfloat16
 
     def test_falls_back_to_the_torch_2_2_api(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,10 +124,16 @@ def _sum_variadic(*tensors: torch.Tensor) -> torch.Tensor:
     return torch.stack(tensors).sum(0)
 
 
+#: Skip a test node that compiles with TorchScript, which predict() stops using on Python 3.14.
+_requires_torchscript = pytest.mark.skipif(
+    sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+"
+)
+
+
 class TestScriptOrEager:
     """script_or_eager compiles where TorchScript works and returns the eager function where it cannot."""
 
-    @pytest.mark.skipif(sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+")
+    @_requires_torchscript
     def test_returns_script_function_when_scripting_succeeds(self) -> None:
         """A scriptable function comes back as a TorchScript function before Python 3.14.
 
@@ -160,7 +168,7 @@ class TestScriptOrEager:
 
         assert script_or_eager(batch_dice_loss) is batch_dice_loss
 
-    @pytest.mark.skipif(sys.version_info >= (3, 14), reason="TorchScript is not used on Python 3.14+")
+    @_requires_torchscript
     def test_returns_eager_function_when_frontend_rejects_source(self) -> None:
         """A TorchScript frontend error falls back to the eager function instead of propagating.
 

@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for keypoint losses in SetCriterion."""
 
+import pytest
 import torch
 
 from rfdetr.models.criterion import SetCriterion
@@ -41,9 +42,10 @@ def _make_outputs(
     }
 
 
-def test_loss_keypoints_list_of_dicts_targets() -> None:
-    """Keypoint loss should consume list-of-dicts targets used by public training."""
-    criterion = SetCriterion(
+@pytest.fixture
+def person_criterion() -> SetCriterion:
+    """Keypoint-only criterion for the person-only ``[17]`` schema."""
+    return SetCriterion(
         num_classes=2,
         matcher=_MatcherStub(),
         weight_dict={},
@@ -51,6 +53,10 @@ def test_loss_keypoints_list_of_dicts_targets() -> None:
         losses=["keypoints"],
         num_keypoints_per_class=[17],
     )
+
+
+def test_loss_keypoints_list_of_dicts_targets(person_criterion: SetCriterion) -> None:
+    """Keypoint loss should consume list-of-dicts targets used by public training."""
     outputs = _make_outputs(batch_size=1, num_queries=1, num_keypoints=17)
     targets = [
         {
@@ -66,7 +72,7 @@ def test_loss_keypoints_list_of_dicts_targets() -> None:
         }
     ]
 
-    losses = criterion(outputs, targets)
+    losses = person_criterion(outputs, targets)
 
     assert "loss_keypoints_l1" in losses
     assert "loss_keypoints_findable" in losses
@@ -75,16 +81,8 @@ def test_loss_keypoints_list_of_dicts_targets() -> None:
     assert all(torch.isfinite(value) for value in losses.values())
 
 
-def test_loss_keypoints_empty_targets() -> None:
+def test_loss_keypoints_empty_targets(person_criterion: SetCriterion) -> None:
     """Empty target batches should produce finite zero-valued keypoint losses."""
-    criterion = SetCriterion(
-        num_classes=2,
-        matcher=_MatcherStub(),
-        weight_dict={},
-        focal_alpha=0.25,
-        losses=["keypoints"],
-        num_keypoints_per_class=[17],
-    )
     outputs = _make_outputs(batch_size=1, num_queries=1, num_keypoints=17)
     targets = [
         {
@@ -94,7 +92,7 @@ def test_loss_keypoints_empty_targets() -> None:
         }
     ]
 
-    losses = criterion(outputs, targets)
+    losses = person_criterion(outputs, targets)
 
     assert losses["loss_keypoints_l1"].item() == 0.0
     assert losses["loss_keypoints_findable"].item() == 0.0
@@ -102,16 +100,8 @@ def test_loss_keypoints_empty_targets() -> None:
     assert losses["loss_keypoints_nll"].item() == 0.0
 
 
-def test_loss_keypoints_person_schema_shape() -> None:
+def test_loss_keypoints_person_schema_shape(person_criterion: SetCriterion) -> None:
     """Person-only schema `[17]` should be consumed without shape mismatches."""
-    criterion = SetCriterion(
-        num_classes=2,
-        matcher=_MatcherStub(),
-        weight_dict={},
-        focal_alpha=0.25,
-        losses=["keypoints"],
-        num_keypoints_per_class=[17],
-    )
     outputs = _make_outputs(batch_size=2, num_queries=2, num_keypoints=17)
     targets = [
         {
@@ -126,7 +116,7 @@ def test_loss_keypoints_person_schema_shape() -> None:
         },
     ]
 
-    losses = criterion(outputs, targets)
+    losses = person_criterion(outputs, targets)
 
     assert losses["loss_keypoints_l1"].ndim == 0
     assert losses["loss_keypoints_findable"].ndim == 0

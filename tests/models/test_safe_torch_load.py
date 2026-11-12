@@ -19,66 +19,6 @@ import torch
 
 from rfdetr.utilities.io import _safe_torch_load
 
-# ---------------------------------------------------------------------------
-# Fixtures / helpers
-# ---------------------------------------------------------------------------
-
-
-def _write_tensor_only_checkpoint(path: Path) -> None:
-    """Save a checkpoint containing only tensors and plain dicts to *path*.
-
-    Examples:
-        >>> from tempfile import TemporaryDirectory
-        >>> with TemporaryDirectory() as tmp:
-        ...     path = Path(tmp) / "ckpt.pth"
-        ...     _write_tensor_only_checkpoint(path)
-        ...     path.exists()
-        True
-    """
-    ckpt = {"model": {"weight": torch.tensor([1.0, 2.0]), "bias": torch.tensor([0.0])}}
-    torch.save(ckpt, path)
-
-
-def _write_namespace_checkpoint(path: Path) -> None:
-    """Save a checkpoint with an ``argparse.Namespace`` args value to *path*.
-
-    Examples:
-        >>> from tempfile import TemporaryDirectory
-        >>> with TemporaryDirectory() as tmp:
-        ...     path = Path(tmp) / "ckpt.pth"
-        ...     _write_namespace_checkpoint(path)
-        ...     path.exists()
-        True
-
-
-
-    Legacy RF-DETR engine.py checkpoints embed a Namespace; strict ``weights_only=True`` (without safe globals) would
-    reject these.
-    """
-    ckpt = {
-        "model": {"weight": torch.tensor([1.0])},
-        "args": argparse.Namespace(pretrain_weights="rf-detr-small.pth", num_classes=80),
-    }
-    torch.save(ckpt, path)
-
-
-def _write_simple_namespace_checkpoint(path: Path) -> None:
-    """Save a checkpoint with a ``types.SimpleNamespace`` to *path*.
-
-    Examples:
-        >>> from tempfile import TemporaryDirectory
-        >>> with TemporaryDirectory() as tmp:
-        ...     path = Path(tmp) / "ckpt.pth"
-        ...     _write_simple_namespace_checkpoint(path)
-        ...     path.exists()
-        True
-    """
-    ckpt = {
-        "model": {"weight": torch.tensor([1.0])},
-        "args": SimpleNamespace(pretrain_weights="rf-detr-small.pth"),
-    }
-    torch.save(ckpt, path)
-
 
 class _ArbitraryObject:
     """Module-level object that torch.save can pickle but weights_only=True rejects.
@@ -90,123 +30,93 @@ class _ArbitraryObject:
     value = 42
 
 
-def _write_arbitrary_pickle_checkpoint(path: Path) -> None:
-    """Save a checkpoint that embeds an arbitrary class (requires pickle).
+@pytest.fixture
+def tensor_checkpoint(tmp_path: Path) -> Path:
+    """Save a checkpoint containing only tensors and plain dicts and return its path.
 
     Examples:
-        >>> from tempfile import TemporaryDirectory
-        >>> with TemporaryDirectory() as tmp:
-        ...     path = Path(tmp) / "ckpt.pth"
-        ...     _write_arbitrary_pickle_checkpoint(path)
-        ...     path.exists()
-        True
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> tensor_checkpoint(None)  # doctest: +SKIP
     """
-    ckpt = {"model": {"weight": torch.tensor([1.0])}, "extra": _ArbitraryObject()}
-    torch.save(ckpt, path)
+    path = tmp_path / "ckpt.pth"
+    torch.save({"model": {"weight": torch.tensor([1.0, 2.0]), "bias": torch.tensor([0.0])}}, path)
+    return path
 
 
-# ---------------------------------------------------------------------------
-# Safe path (weights_only=True)
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def pickle_checkpoint(tmp_path: Path) -> Path:
+    """Save a checkpoint that embeds an arbitrary class (requires pickle) and return its path.
+
+    Examples:
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> pickle_checkpoint(None)  # doctest: +SKIP
+    """
+    path = tmp_path / "ckpt.pth"
+    torch.save({"model": {"weight": torch.tensor([1.0])}, "extra": _ArbitraryObject()}, path)
+    return path
 
 
 class TestSafeTorchLoadSafePath:
     """Tensor-only checkpoints load without trust=True."""
 
-    def test_tensor_only_checkpoint_loads(self, tmp_path: Path) -> None:
-        """Pure-tensor checkpoint succeeds on the first safe-load attempt."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_tensor_only_checkpoint(ckpt_path)
-
-        result = _safe_torch_load(ckpt_path)
+    @pytest.mark.parametrize("path_type", [Path, str])
+    def test_tensor_only_checkpoint_loads(self, tensor_checkpoint: Path, path_type: type) -> None:
+        """Pure-tensor checkpoint succeeds on the first safe-load attempt for ``Path`` and ``str`` paths."""
+        result = _safe_torch_load(path_type(tensor_checkpoint))
 
         assert "model" in result
         assert torch.allclose(result["model"]["weight"], torch.tensor([1.0, 2.0]))
 
-    def test_accepts_pathlib_path(self, tmp_path: Path) -> None:
-        """Helper accepts a :class:`pathlib.Path` argument without error."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_tensor_only_checkpoint(ckpt_path)
-
-        result = _safe_torch_load(ckpt_path)
-
-        assert "model" in result
-
-    def test_accepts_string_path(self, tmp_path: Path) -> None:
-        """Helper accepts a :class:`str` path argument without error."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_tensor_only_checkpoint(ckpt_path)
-
-        result = _safe_torch_load(str(ckpt_path))
-
-        assert "model" in result
-
-
-# ---------------------------------------------------------------------------
-# Safe-globals fallback (legacy Namespace checkpoints)
-# ---------------------------------------------------------------------------
-
 
 class TestSafeTorchLoadSafeGlobals:
-    """Checkpoints with argparse.Namespace / SimpleNamespace load without trust=True."""
+    """Checkpoints with argparse.Namespace / SimpleNamespace load without trust=True.
 
-    def test_argparse_namespace_loads_without_trust(self, tmp_path: Path) -> None:
-        """argparse.Namespace checkpoint succeeds via the safe-globals retry."""
+    Legacy RF-DETR engine.py checkpoints embed a Namespace; strict ``weights_only=True`` (without safe globals) would
+    reject these.
+    """
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            pytest.param(argparse.Namespace(pretrain_weights="rf-detr-small.pth", num_classes=80), id="argparse"),
+            pytest.param(SimpleNamespace(pretrain_weights="rf-detr-small.pth", num_classes=80), id="simple"),
+        ],
+    )
+    def test_namespace_args_load_without_trust(self, tmp_path: Path, args: object) -> None:
+        """A checkpoint whose ``args`` is a namespace loads via the safe-globals retry with its fields intact."""
         ckpt_path = tmp_path / "ckpt.pth"
-        _write_namespace_checkpoint(ckpt_path)
+        torch.save({"model": {"weight": torch.tensor([1.0])}, "args": args}, ckpt_path)
 
         result = _safe_torch_load(ckpt_path)
 
-        assert isinstance(result["args"], argparse.Namespace)
-        assert result["args"].num_classes == 80
-
-    def test_simple_namespace_loads_without_trust(self, tmp_path: Path) -> None:
-        """SimpleNamespace checkpoint succeeds via the safe-globals retry."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_simple_namespace_checkpoint(ckpt_path)
-
-        result = _safe_torch_load(ckpt_path)
-
-        assert isinstance(result["args"], SimpleNamespace)
-
-
-# ---------------------------------------------------------------------------
-# Arbitrary pickle — trust=False must raise, trust=True must succeed
-# ---------------------------------------------------------------------------
+        assert type(result["args"]) is type(args)
+        assert vars(result["args"]) == vars(args)
 
 
 class TestSafeTorchLoadTrustGate:
     """Arbitrary-pickle checkpoints require explicit trust=True."""
 
-    def test_arbitrary_pickle_raises_without_trust(self, tmp_path: Path) -> None:
-        """Checkpoint with unknown Python object raises RuntimeError when trust=False."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_arbitrary_pickle_checkpoint(ckpt_path)
+    @pytest.mark.parametrize(
+        "trust_kwargs",
+        [pytest.param({"trust": False}, id="explicit_false"), pytest.param({}, id="default")],
+    )
+    def test_arbitrary_pickle_raises_without_trust(self, pickle_checkpoint: Path, trust_kwargs: dict) -> None:
+        """A checkpoint with an unknown Python object raises RuntimeError when trust is False or omitted."""
+        with pytest.raises(RuntimeError) as exc_info:
+            _safe_torch_load(pickle_checkpoint, **trust_kwargs)
+        assert "trust_checkpoint=True" in str(exc_info.value)
 
-        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
-            _safe_torch_load(ckpt_path, trust=False)
-
-    def test_arbitrary_pickle_raises_by_default(self, tmp_path: Path) -> None:
-        """Checkpoint with unknown Python object raises RuntimeError when trust omitted (default=False)."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_arbitrary_pickle_checkpoint(ckpt_path)
-
-        with pytest.raises(RuntimeError, match="trust_checkpoint=True"):
-            _safe_torch_load(ckpt_path)
-
-    def test_arbitrary_pickle_succeeds_with_trust(self, tmp_path: Path) -> None:
-        """Checkpoint with unknown Python object loads when trust=True."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_arbitrary_pickle_checkpoint(ckpt_path)
-
-        result = _safe_torch_load(ckpt_path, trust=True)
+    def test_arbitrary_pickle_succeeds_with_trust(self, pickle_checkpoint: Path) -> None:
+        """A checkpoint with an unknown Python object loads when trust=True."""
+        result = _safe_torch_load(pickle_checkpoint, trust=True)
 
         assert "model" in result
 
-    def test_trust_true_emits_warning(self, tmp_path: Path) -> None:
+    def test_trust_true_emits_warning(self, pickle_checkpoint: Path) -> None:
         """Trust=True triggers a UserWarning about unsafe loading."""
-        ckpt_path = tmp_path / "ckpt.pth"
-        _write_arbitrary_pickle_checkpoint(ckpt_path)
+        with pytest.warns(UserWarning) as record:
+            _safe_torch_load(pickle_checkpoint, trust=True)
 
-        with pytest.warns(UserWarning, match="weights_only=False"):
-            _safe_torch_load(ckpt_path, trust=True)
+        assert any("weights_only=False" in str(warning.message) for warning in record)

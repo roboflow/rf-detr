@@ -244,9 +244,9 @@ Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to 
 
 Some tests are parametrized over `REGISTRY`, so they pick your format up the moment you register it: in `tests/export/test_registry.py`, the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead; in `tests/export/test_export.py`, the check that an exporter handed a graph directly runs `check_dependencies` before `_convert`. Everything else is a hand-written case — add your format to the configuration-type list and to the per-format lists in `tests/export/test_export.py` (`TestExportDependencyCheck` for its missing package, `TestExportWarningLocation` if constructing it warns, `TestExportRejectsBeforeForwardPass` for each setting it validates), and write `tests/export/test_myformat_export.py` for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.
 
-Add a per-format adapter test class in `tests/export/test_runtime_adapter_contract.py`, following `TestONNXRuntimeAdapter`, to exercise device selection, metadata-to-output mapping, and output ownership through `load_runtime()` and `runtime.run()`.
+Add a per-format adapter test class in `tests/export/runtime/test_runtime_adapter_contract.py`, following `TestONNXRuntimeAdapter`, to exercise device selection, metadata-to-output mapping, and output ownership through `load_runtime()` and `runtime.run()`.
 
-Most of those need no real model: build a throwaway `ExportGraph` around a `MagicMock` the way `tests/export/test_executorch_export.py` does, and only the parity test has to trace anything.
+Most of those need no real model: build a throwaway `ExportGraph` around a `MagicMock` the way `tests/export/executorch/test_executorch_export.py` does, and only the parity test has to trace anything.
 
 ## Patterns worth copying
 

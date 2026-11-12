@@ -120,7 +120,13 @@ def _poll_until_trained(workspace: str, project: str, version: str, api_key: str
     return response
 
 
-@pytest.mark.skipif(not all([_API_KEY, _WORKSPACE, _PROJECT]), reason=_MISSING_ENV_REASON)
+#: Skip a test node that deploys to Roboflow when its credentials are not set in the environment.
+_requires_roboflow_credentials = pytest.mark.skipif(
+    not all([_API_KEY, _WORKSPACE, _PROJECT]), reason=_MISSING_ENV_REASON
+)
+
+
+@_requires_roboflow_credentials
 @pytest.mark.integration
 @pytest.mark.e2e_roboflow
 class TestDeployToRoboflowEndToEnd:

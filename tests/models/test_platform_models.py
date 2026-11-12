@@ -104,8 +104,10 @@ class TestMissingPeModelAccess:
         """Asking an old rfdetr_plus for a PE model raises the upgrade hint, not a bare AttributeError."""
         module = _load_platform_models(monkeypatch, _XLARGE_SYMBOLS)
 
-        with pytest.raises(ImportError, match="predates it"):
+        with pytest.raises(ImportError) as raised:
             getattr(module, symbol)
+
+        assert "predates it" in str(raised.value)
 
     def test_upgrade_hint_chains_the_failed_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The upgrade hint carries the swallowed import error as its cause.
@@ -116,7 +118,8 @@ class TestMissingPeModelAccess:
         cause = ImportError("broken dependency")
         module = _load_platform_models(monkeypatch, _XLARGE_SYMBOLS, pe_error=cause)
 
-        with pytest.raises(ImportError, match="predates it") as raised:
+        with pytest.raises(ImportError) as raised:
             module.RFDETRAtto
 
+        assert "predates it" in str(raised.value)
         assert raised.value.__cause__ is cause

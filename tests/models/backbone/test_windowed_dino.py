@@ -3,17 +3,20 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Tests for the windowed-attention DINOv2 encoder: window partitioning, attention switching, and local utilities."""
+
 import pytest
 import torch
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     Dinov2WithRegistersAttention,
+    Dinov2WithRegistersLayerScale,
     Dinov2WithRegistersSdpaAttention,
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
     WindowedDinov2WithRegistersModel,
-    _find_pruneable_heads_and_indices,
+    _fold_layer_scales,
     _get_aligned_output_features_output_indices,
 )
 
@@ -242,7 +245,7 @@ def test_buggy_reshape_silent_corruption_for_nonsquare():
 
 
 # ---------------------------------------------------------------------------
-# Tests for locally-copied utility functions (removed from transformers v5 public API)
+# Tests for locally-copied utility functions
 # ---------------------------------------------------------------------------
 
 
@@ -250,24 +253,28 @@ class TestGetAlignedOutputFeaturesOutputIndices:
     """Tests for the local copy of get_aligned_output_features_output_indices."""
 
     def test_both_none_returns_last_stage(self):
+        """With neither argument given, only the last stage is selected."""
         stage_names = ["stage1", "stage2", "stage3"]
         features, indices = _get_aligned_output_features_output_indices(None, None, stage_names)
         assert features == ["stage3"]
         assert indices == [2]
 
     def test_only_out_features_derives_indices(self):
+        """Indices are derived from the requested feature names."""
         stage_names = ["stem", "layer1", "layer2", "layer3"]
         features, indices = _get_aligned_output_features_output_indices(["layer1", "layer3"], None, stage_names)
         assert features == ["layer1", "layer3"]
         assert indices == [1, 3]
 
     def test_only_out_indices_derives_features(self):
+        """Feature names are derived from the requested indices."""
         stage_names = ["stem", "layer1", "layer2", "layer3"]
         features, indices = _get_aligned_output_features_output_indices(None, [0, 2], stage_names)
         assert features == ["stem", "layer2"]
         assert indices == [0, 2]
 
     def test_both_provided_returns_as_is(self):
+        """When both features and indices are given they are returned unchanged."""
         stage_names = ["stem", "layer1", "layer2"]
         features, indices = _get_aligned_output_features_output_indices(["layer1"], [1], stage_names)
         assert features == ["layer1"]
@@ -279,38 +286,6 @@ class TestGetAlignedOutputFeaturesOutputIndices:
         _, indices = _get_aligned_output_features_output_indices(None, (1, 2), stage_names)
         assert isinstance(indices, list)
         assert indices == [1, 2]
-
-
-class TestFindPruneableHeadsAndIndices:
-    """Tests for the local copy of find_pruneable_heads_and_indices."""
-
-    def test_no_pruning_returns_full_index(self):
-        heads, index = _find_pruneable_heads_and_indices(set(), n_heads=4, head_size=3, already_pruned_heads=set())
-        assert len(heads) == 0
-        assert len(index) == 12  # 4 * 3, nothing masked
-
-    @pytest.mark.parametrize(
-        "head_to_prune, expected_index",
-        [
-            pytest.param({0}, list(range(3, 12)), id="prune-first-head"),
-            pytest.param({3}, list(range(9)), id="prune-last-head"),
-        ],
-    )
-    def test_prune_single_head_removes_correct_rows(self, head_to_prune, expected_index):
-        # Head N masked → N*head_size indices removed; remaining = n_heads*head_size - head_size = 9
-        heads, index = _find_pruneable_heads_and_indices(
-            head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set()
-        )
-        assert heads == head_to_prune
-        assert len(index) == 9
-        assert index.tolist() == expected_index
-
-    def test_already_pruned_head_adjusts_offset(self):
-        # Head 0 was already pruned. Now pruning head 1 (which is now effective head 0
-        # after offset adjustment) should remove 3 more indices from the effective mask.
-        heads, index = _find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
-        assert 1 in heads
-        assert len(index) == 9  # 4*3 - 3 pruned
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +305,6 @@ def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
         hidden_size=32,
         num_hidden_layers=1,
         num_attention_heads=2,
-        intermediate_size=64,
         patch_size=16,
         image_size=64,
         num_register_tokens=0,
@@ -341,16 +315,11 @@ def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
 
 
 class TestWindowedDinov2WithRegistersBackbone:
-    """Smoke tests that guard against _init_transformers_backbone() API regressions."""
+    """Smoke tests for the stage attributes and output the backbone sets up from its config."""
 
-    @pytest.mark.parametrize(
-        "attr",
-        [
-            pytest.param("stage_names", id="stage_names"),
-            pytest.param("out_features", id="out_features"),
-        ],
-    )
+    @pytest.mark.parametrize("attr", ["stage_names", "out_features"])
     def test_instantiation_sets_list_attribute(self, attr):
+        """Instantiation sets ``stage_names`` and ``out_features`` as non-empty lists."""
         config = _minimal_backbone_config()
         backbone = WindowedDinov2WithRegistersBackbone(config)
         assert hasattr(backbone, attr)
@@ -358,6 +327,7 @@ class TestWindowedDinov2WithRegistersBackbone:
         assert len(getattr(backbone, attr)) > 0
 
     def test_forward_returns_backbone_output(self):
+        """Forward returns one feature map per requested output feature."""
         config = _minimal_backbone_config()
         backbone = WindowedDinov2WithRegistersBackbone(config)
         backbone.eval()
@@ -409,47 +379,68 @@ class TestSetAttnImplementation:
         for layer in model.encoder.layer:
             assert type(layer.attention) is expected_cls
 
-    def test_invalid_implementation_raises(self):
-        """Passing an unknown key raises ValueError with a clear message."""
+    @pytest.mark.parametrize("implementation", ["flash_attention_2", "flash_attn"])
+    def test_invalid_implementation_raises(self, implementation: str):
+        """Passing an unknown key raises ValueError with a clear message, before touching any layer."""
         config = _minimal_backbone_config()
         model = WindowedDinov2WithRegistersModel(config)
 
         with pytest.raises(ValueError, match="Unknown attn_implementation"):
-            model.set_attn_implementation("flash_attention_2")
+            model.set_attn_implementation(implementation)
 
 
-@pytest.mark.parametrize(
-    "h, w, num_windows, should_raise",
-    [
-        pytest.param(64, 64, 2, False, id="valid-square"),
-        pytest.param(64, 96, 2, False, id="valid-rectangular"),
-        pytest.param(32, 32, 1, False, id="num_windows-1-valid"),
-        pytest.param(33, 64, 2, True, id="h-not-divisible"),
-        pytest.param(64, 33, 2, True, id="w-not-divisible"),
-        pytest.param(33, 33, 2, True, id="both-not-divisible"),
-    ],
-)
-def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should_raise: bool) -> None:
-    """WindowedDinov2WithRegistersEmbeddings raises ValueError for incompatible dims.
+def _embeddings_and_pixels(
+    h: int, w: int, num_windows: int
+) -> tuple[WindowedDinov2WithRegistersEmbeddings, torch.Tensor]:
+    """Return window embeddings (patch_size 16) and a random ``(1, 3, h, w)`` input for them.
 
-    Both H and W must be divisible by patch_size * num_windows.  The check must survive Python's -O flag (assert would
-    be silently stripped).
+    Examples:
+        >>> model, pixels = _embeddings_and_pixels(32, 32, 1)
+        >>> tuple(pixels.shape)
+        (1, 3, 32, 32)
     """
-    patch_size = 16
     config = WindowedDinov2WithRegistersConfig(
         hidden_size=32,
-        patch_size=patch_size,
+        patch_size=16,
         num_windows=num_windows,
         image_size=max(h, w),
         num_register_tokens=0,
     )
-    model = WindowedDinov2WithRegistersEmbeddings(config)
-    pixel_values = torch.randn(1, 3, h, w)
-    if should_raise:
-        with pytest.raises(ValueError, match="divisible"):
-            model(pixel_values)
-    else:
-        model(pixel_values)  # must not raise
+    return WindowedDinov2WithRegistersEmbeddings(config), torch.randn(1, 3, h, w)
+
+
+@pytest.mark.parametrize(
+    "h, w, num_windows",
+    [
+        (64, 64, 2),  # valid square
+        (64, 96, 2),  # valid rectangular
+        (32, 32, 1),  # single window
+    ],
+)
+def test_forward_accepts_divisible_spatial_dims(h: int, w: int, num_windows: int) -> None:
+    """WindowedDinov2WithRegistersEmbeddings accepts H and W divisible by patch_size * num_windows."""
+    model, pixel_values = _embeddings_and_pixels(h, w, num_windows)
+
+    model(pixel_values)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "h, w, num_windows",
+    [
+        (33, 64, 2),  # H not divisible
+        (64, 33, 2),  # W not divisible
+        (33, 33, 2),  # both not divisible
+    ],
+)
+def test_forward_rejects_indivisible_spatial_dims(h: int, w: int, num_windows: int) -> None:
+    """WindowedDinov2WithRegistersEmbeddings raises ValueError when H or W is not divisible by patch_size * num_windows.
+
+    The check must survive Python's -O flag (assert would be silently stripped).
+    """
+    model, pixel_values = _embeddings_and_pixels(h, w, num_windows)
+
+    with pytest.raises(ValueError, match="divisible"):
+        model(pixel_values)
 
 
 def _make_small_model() -> WindowedDinov2WithRegistersModel:
@@ -478,13 +469,7 @@ class TestSetAttnImplementationPreservesWeights:
     silently discarding all trained q/k/v/output weights.
     """
 
-    @pytest.mark.parametrize(
-        "from_impl, to_impl",
-        [
-            pytest.param("sdpa", "eager", id="sdpa_to_eager"),
-            pytest.param("eager", "sdpa", id="eager_to_sdpa"),
-        ],
-    )
+    @pytest.mark.parametrize("from_impl, to_impl", [("sdpa", "eager"), ("eager", "sdpa")])
     def test_query_weight_preserved_after_switch(self, from_impl: str, to_impl: str) -> None:
         """After switching implementation the query weight tensor must be unchanged."""
         model = _make_small_model()
@@ -549,8 +534,38 @@ class TestSetAttnImplementationPreservesWeights:
             assert isinstance(layer.attention, Dinov2WithRegistersAttention)
             assert not isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
 
-    def test_invalid_implementation_raises_value_error(self) -> None:
-        """An unknown implementation name must raise ValueError before touching any layer."""
-        model = _make_small_model()
-        with pytest.raises(ValueError, match="Unknown attn_implementation"):
-            model.set_attn_implementation("flash_attn")
+
+class TestFoldLayerScales:
+    """Folding each LayerScale into the Linear that feeds it keeps the backbone's output."""
+
+    @pytest.mark.parametrize("use_swiglu_ffn", [False, True])
+    @pytest.mark.parametrize("num_windows", [1, 2])
+    def test_folded_backbone_matches_and_has_no_layer_scales(self, use_swiglu_ffn: bool, num_windows: int) -> None:
+        """Outputs agree to float rounding, and every LayerScale is gone, for both MLP kinds and windowed attention."""
+        torch.manual_seed(0)
+        config = _minimal_backbone_config(
+            num_hidden_layers=2, use_swiglu_ffn=use_swiglu_ffn, num_windows=num_windows, window_block_indexes=[0]
+        )
+        model = WindowedDinov2WithRegistersModel(config).eval()
+        with torch.no_grad():
+            for module in model.modules():
+                if isinstance(module, Dinov2WithRegistersLayerScale):
+                    module.lambda1.uniform_(0.5, 1.5)
+        pixel_values = torch.randn(2, 3, 64, 64)
+        with torch.no_grad():
+            expected = model(pixel_values).last_hidden_state
+
+            folded = _fold_layer_scales(model)
+            actual = model(pixel_values).last_hidden_state
+
+        assert folded == 4
+        assert not any(isinstance(module, Dinov2WithRegistersLayerScale) for module in model.modules())
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+
+    def test_module_without_layer_scales_is_unchanged(self) -> None:
+        """A module holding no DINOv2 layer folds nothing."""
+        module = torch.nn.Linear(4, 4)
+        weight = module.weight.detach().clone()
+
+        assert _fold_layer_scales(module) == 0
+        assert torch.equal(module.weight, weight)

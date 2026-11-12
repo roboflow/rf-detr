@@ -102,6 +102,12 @@ class TestResolveOutputNames:
             resolve_output_names(_make_model_config(), backbone_only=True, backbone=None)
 
 
+#: Skip a test node that checks the fallback taken when CUDA is requested but absent.
+_requires_no_cuda = pytest.mark.skipif(
+    torch.cuda.is_available(), reason="exercises the CUDA-requested-but-unavailable fallback"
+)
+
+
 class TestPrepareExportGraph:
     """Building the traceable graph every format is handed."""
 
@@ -137,7 +143,7 @@ class TestPrepareExportGraph:
 
         assert graph.input_tensors.device.type == "cpu"
 
-    @pytest.mark.skipif(torch.cuda.is_available(), reason="exercises the CUDA-requested-but-unavailable fallback")
+    @_requires_no_cuda
     def test_falls_back_to_cpu_when_cuda_is_requested_but_absent(self) -> None:
         """Requesting CUDA on a machine without it falls back to CPU (with a warning) instead of raising.
 
@@ -187,6 +193,7 @@ class TestExportShapeFreeze:
     """Non-DINOv2 encoders opt in to the export-shape freeze through ``set_export_shape``."""
 
     def test_set_export_shape_is_called_with_the_export_shape(self) -> None:
+        """set_export_shape is called with the export shape."""
         model = _DetectorWithEncoderStub()
 
         prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
@@ -218,6 +225,7 @@ class TestExportShapeFreezeThroughWrappers:
     """A wrapper that forwards attributes must not freeze the wrapped encoder a second time."""
 
     def test_forwarding_wrapper_does_not_repeat_the_freeze(self) -> None:
+        """A forwarding wrapper around the encoder does not repeat the shape freeze."""
         model = _DetectorWithEncoderStub()
         encoder = model.backbone[0].encoder
         model.backbone[0].encoder = _ForwardingWrapperStub(encoder)

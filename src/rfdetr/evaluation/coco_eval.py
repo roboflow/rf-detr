@@ -306,24 +306,37 @@ def _xyxy_to_xywh(boxes: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     return boxes
 
 
-def _weighted_mean_coco_stats(stats: list[np.ndarray[Any, Any]], weights: list[int]) -> np.ndarray[Any, Any]:
-    """Compute category-weighted mean COCO stats, ignoring unavailable ``-1`` values."""
-    if not stats:
-        return np.full((10,), -1.0, dtype=np.float32)
+def _summarize_keypoint_groups(evals: list[COCOeval]) -> np.ndarray[Any, Any]:
+    """Summarize accumulated keypoint groups as one COCO evaluation.
 
-    max_len = max(len(item) for item in stats)
-    aggregated = np.full((max_len,), -1.0, dtype=np.float32)
-    for stat_idx in range(max_len):
-        numerator = 0.0
-        denominator = 0
-        for stat, weight in zip(stats, weights):
-            if len(stat) <= stat_idx or stat[stat_idx] < 0:
-                continue
-            numerator += float(stat[stat_idx]) * weight
-            denominator += weight
-        if denominator > 0:
-            aggregated[stat_idx] = numerator / denominator
-    return aggregated
+    COCO's summary averages only values above ``-1``, so a category with no scorable ground truth for a stat stays out
+    of that stat's mean, whichever group holds it.
+
+    Args:
+        evals: One accumulated evaluator per group, all with the same IoU, recall, area and ``maxDets`` settings.
+
+    Returns:
+        The keypoint stats over every group's categories, with ``-1`` where no category has a value.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> params = SimpleNamespace(
+        ...     iouType="keypoints", iouThrs=np.array([0.5, 0.75]), areaRngLbl=["all", "medium", "large"], maxDets=[20]
+        ... )
+        >>> def group(*category_values):
+        ...     precision = np.array(category_values)[None, None, :, None, None] * np.ones((2, 1, 1, 3, 1))
+        ...     return SimpleNamespace(params=params, eval={"precision": precision, "recall": precision[:, 0]})
+        >>> float(_summarize_keypoint_groups([group(1.0, -1.0), group(0.0)])[0])
+        0.5
+    """
+    merged = copy.copy(evals[0])
+    # precision is [iou, recall, category, area, max_dets] and recall is [iou, category, area, max_dets].
+    merged.eval = {
+        "precision": np.concatenate([coco_eval.eval["precision"] for coco_eval in evals], axis=2),
+        "recall": np.concatenate([coco_eval.eval["recall"] for coco_eval in evals], axis=1),
+    }
+    patched_pycocotools_summarize(merged, log_summary=False)
+    return np.asarray(merged.stats)
 
 
 def _log_keypoint_stats(stats: np.ndarray[Any, Any]) -> None:
@@ -510,10 +523,8 @@ class CocoEvaluator:
             coco_eval.evaluate()
 
     def _evaluate_grouped_keypoints(self, grouped_eval: _GroupedKeypointCOCOeval) -> None:
-        """Run keypoint evaluation per keypoint-count group and aggregate stats."""
+        """Run keypoint evaluation per keypoint-count group and summarize the groups together."""
         grouped_eval.evals = []
-        group_stats: list[np.ndarray[Any, Any]] = []
-        group_weights: list[int] = []
         all_results = self.coco_results["keypoints"]
         img_ids = list(np.unique(self.img_ids))
 
@@ -530,10 +541,8 @@ class CocoEvaluator:
             self._evaluate_grouped_keypoint_results(group_coco_eval, group_gt, group_results, img_ids)
             _accumulate_and_summarize(group_coco_eval, log_summary=False)
             grouped_eval.evals.append(group_coco_eval)
-            group_stats.append(np.asarray(getattr(group_coco_eval, "stats"), dtype=np.float32))
-            group_weights.append(len(group.category_ids))
 
-        grouped_eval.stats = _weighted_mean_coco_stats(group_stats, group_weights)
+        grouped_eval.stats = _summarize_keypoint_groups(grouped_eval.evals)
 
     @staticmethod
     def _evaluate_grouped_keypoint_results(

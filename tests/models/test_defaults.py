@@ -19,8 +19,7 @@ import pytest
 
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
 
-#: Expected default value for every ``ModelDefaults`` field, keyed by field name. Mirrors the field
-#: declarations in ``src/rfdetr/models/_defaults.py`` so a drift in either place fails this test.
+#: Expected default value for every ``ModelDefaults`` field, keyed by name. Mirrors ``rfdetr/models/_defaults.py``.
 _EXPECTED_DEFAULTS: dict[str, object] = {
     "drop_mode": "standard",
     "drop_schedule": "constant",
@@ -71,9 +70,9 @@ class TestModelDefaultsFieldValues:
     def test_default_field_values_match_expected_constants(self) -> None:
         """A freshly constructed ``ModelDefaults`` matches the full expected default mapping.
 
-        Guards against silent drift: a renamed field, a changed default, or a newly added field
-        left out of ``_EXPECTED_DEFAULTS`` all fail this single dict comparison, instead of surfacing
-        later as an unrelated model-construction test failure far from the actual cause.
+        Guards against silent drift: a renamed field, a changed default, or a newly added field left out of
+        ``_EXPECTED_DEFAULTS`` all fail this single dict comparison, instead of surfacing later as an unrelated
+        model-construction test failure far from the actual cause.
         """
         defaults = ModelDefaults()
 
@@ -120,13 +119,9 @@ class TestModelDefaultsImmutability:
     def test_setting_an_undeclared_attribute_raises_type_error(self) -> None:
         """Assigning an attribute the dataclass never declared is also rejected, not silently accepted.
 
-        The frozen dataclass's generated ``__setattr__`` intercepts every assignment before ``slots=True`` would
-        otherwise raise ``AttributeError`` for an undeclared name. Which exception surfaces for an *undeclared* name
-        is CPython-version-dependent: pre-3.13 has a stale-``cls``-reference bug in the generated ``__setattr__`` that
-        raises plain ``TypeError`` instead of the intended ``dataclasses.FrozenInstanceError``; 3.13+ fixes it, so the
-        undeclared-name path raises ``FrozenInstanceError`` just like the declared-field path above. Both are accepted
-        here so the test passes across this project's whole supported range (Python 3.10-3.14); either way, the
-        assignment must not silently grow an instance dict on ``ModelDefaults``.
+        The exception is CPython-version-dependent: before 3.13 a stale-``cls`` bug in the frozen dataclass's generated
+        ``__setattr__`` raises plain ``TypeError``; 3.13+ raises ``FrozenInstanceError`` as for a declared field. Both
+        are accepted so the test passes on Python 3.10-3.14; either way, no attribute may be silently added.
         """
         defaults = ModelDefaults()
 

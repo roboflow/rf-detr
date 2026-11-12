@@ -26,7 +26,7 @@ Note:
     Raw outputs can legitimately differ from eager PyTorch when the two-stage encoder ranking has
     near-tied scores: fp32 rounding differences between runtimes can swap which queries ``torch.topk``
     selects. This is not a conversion error, and it is why the end-to-end parity tests in
-    ``tests/export/test_coreml_export.py`` check that the ranking is well separated before comparing.
+    ``tests/export/coreml/test_coreml_export.py`` check that the ranking is well separated before comparing.
     ``coreml_precision="float16"`` narrows that fp32 safety margin further and makes a rank swap more
     likely, not less — see the "Raw tensors can differ more than the precision suggests" note under
     Native CoreML Export in ``docs/exports/coreml.md``.
@@ -328,7 +328,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             summary = f"CoreML op registry gaps: {dict(coverage)}"
             logger.error(summary)
             raise NotImplementedError(
-                f"{summary}. Fix these ops before convert (see tests/export/test_coreml_op_coverage.py)."
+                f"{summary}. Fix these ops before convert (see tests/export/coreml/test_coreml_op_coverage.py)."
             )
 
     def _build_mlmodel(self, graph: ExportGraph, compute_precision: ct_precision, api: _CoreMLApi) -> Any:

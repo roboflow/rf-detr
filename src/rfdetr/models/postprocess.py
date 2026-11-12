@@ -56,22 +56,31 @@ class PostProcess(nn.Module):
                 original image size so normalized boxes and keypoints are returned in source-image pixel coordinates.
             score_threshold: Optional confidence threshold already known to the caller. Detections scoring at or
                 below it are dropped before masks are resized, so the upsample only runs on detections the caller
-                keeps. Only the segmentation path acts on it: the keypoint path rewrites scores after selection
-                (uncertainty fusion), so filtering on the pre-fusion scores would not match the caller's own filter,
-                and the box-only path has no per-detection work worth skipping. ``None`` (the default) keeps every
-                selected detection, which is what evaluation relies on.
+                keeps. The keypoint path ignores it: it rewrites scores after selection (uncertainty fusion), so
+                filtering on the pre-fusion scores would not match the caller's own filter. The box-only path acts
+                on it for CPU outputs, where it sorts only the scores above the threshold instead of every
+                query/class pair; on an accelerator the full sort is cheap and every selected row is kept. ``None``
+                (the default) keeps every selected detection, which is what evaluation relies on.
 
         Returns:
             One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
             pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
             ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``. With
-            ``score_threshold`` set, segmentation dictionaries hold only the detections above it — fewer rows,
-            never different ones.
+            ``score_threshold`` set, segmentation dictionaries, and box-only dictionaries computed on the CPU, hold
+            only the detections above it — fewer rows, never different ones.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks")
         out_keypoints = outputs.get("pred_keypoints")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
+
+        if (
+            score_threshold is not None
+            and out_masks is None
+            and out_keypoints is None
+            and out_logits.device.type == "cpu"
+        ):
+            return self._postprocess_boxes_above_threshold(out_logits, out_bbox, target_sizes, score_threshold)
 
         scores, labels, topk_boxes = self._select_topk(out_logits)
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
@@ -142,6 +151,47 @@ class PostProcess(nn.Module):
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
         return scores, labels, topk_boxes
+
+    def _postprocess_boxes_above_threshold(
+        self,
+        out_logits: torch.Tensor,
+        out_bbox: torch.Tensor,
+        target_sizes: torch.Tensor,
+        score_threshold: float,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Build box-only results holding the top-k rows that score above ``score_threshold``.
+
+        The rows, their order and their values equal :meth:`_select_topk` followed by ``scores > score_threshold``.
+        That full path sorts every query/class pair (27,300 for 300 queries and 91 classes), which dominates
+        post-processing on the CPU, while a typical image keeps a few dozen rows.
+
+        Args:
+            out_logits: Classification logits with shape ``(B, Q, C)``.
+            out_bbox: Normalized ``cxcywh`` boxes with shape ``(B, Q, 4)``.
+            target_sizes: Per-image ``(height, width)`` tensor with shape ``(B, 2)``.
+            score_threshold: Rows scoring at or below it are dropped.
+
+        Returns:
+            One result dict per image containing scores, labels, and boxes, with a per-image row count.
+        """
+        prob = out_logits.sigmoid().view(out_logits.shape[0], -1)
+        num_classes = out_logits.shape[2]
+        num_to_select = min(self.num_select, prob.shape[1])
+        results = []
+        for i in range(prob.shape[0]):
+            prob_i = prob[i]
+            candidates = (prob_i > score_threshold).nonzero(as_tuple=True)[0]
+            if candidates.numel() > num_to_select:
+                # More rows pass than the top-k keeps, so the full sort decides which survive; all of them pass.
+                order = torch.argsort(prob_i, descending=True, stable=True)[:num_to_select]
+            else:
+                # Every candidate outscores every other row, and `nonzero` lists them by ascending index, so a stable
+                # sort of the candidates alone gives the full sort's order: descending score, then ascending index.
+                order = candidates[torch.argsort(prob_i[candidates], descending=True, stable=True)]
+            query = (order // num_classes).unsqueeze(0)
+            boxes = self._gather_and_scale_boxes(out_bbox[i : i + 1], query, target_sizes[i : i + 1])[0]
+            results.append({"scores": prob_i[order], "labels": order % num_classes, "boxes": boxes})
+        return results
 
     @staticmethod
     def _gather_and_scale_boxes(

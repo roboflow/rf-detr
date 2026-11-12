@@ -5,38 +5,38 @@
 # ------------------------------------------------------------------------
 """Characterization tests for _build_train_resize_config."""
 
+import json
+
 import pytest
 
 from rfdetr.datasets.coco import _build_train_resize_config
+
+#: Every scale-count / squareness combination the builder distinguishes.
+_SCALE_SQUARE_CASES = [
+    pytest.param([640], True, id="square-single"),
+    pytest.param([480, 640], True, id="square-multi"),
+    pytest.param([640], False, id="nonsquare-single"),
+    pytest.param([480, 640], False, id="nonsquare-multi"),
+]
+
+
+_SQUARE_SCALES = [pytest.param([640], id="square-single"), pytest.param([480, 640], id="square-multi")]
+_NONSQUARE_SCALES = [pytest.param([640], id="nonsquare-single"), pytest.param([480, 640], id="nonsquare-multi")]
 
 
 class TestBuildTrainResizeConfigStructure:
     """Top-level structure is always a single-element list wrapping a OneOf."""
 
-    @pytest.mark.parametrize(
-        "scales,square",
-        [
-            pytest.param([640], True, id="square-single"),
-            pytest.param([480, 640], True, id="square-multi"),
-            pytest.param([640], False, id="nonsquare-single"),
-            pytest.param([480, 640], False, id="nonsquare-multi"),
-        ],
-    )
+    @pytest.mark.parametrize("scales,square", _SCALE_SQUARE_CASES)
     def test_returns_single_element_list(self, scales, square):
+        """The builder returns a one-element list for every scale and squareness combination."""
         result = _build_train_resize_config(scales, square=square)
         assert isinstance(result, list)
         assert len(result) == 1
 
-    @pytest.mark.parametrize(
-        "scales,square",
-        [
-            pytest.param([640], True, id="square-single"),
-            pytest.param([480, 640], True, id="square-multi"),
-            pytest.param([640], False, id="nonsquare-single"),
-            pytest.param([480, 640], False, id="nonsquare-multi"),
-        ],
-    )
+    @pytest.mark.parametrize("scales,square", _SCALE_SQUARE_CASES)
     def test_top_level_is_oneof_with_two_branches(self, scales, square):
+        """The single entry is a OneOf holding exactly the direct-resize and crop branches."""
         result = _build_train_resize_config(scales, square=square)
         entry = result[0]
         assert "OneOf" in entry
@@ -44,150 +44,74 @@ class TestBuildTrainResizeConfigStructure:
         assert len(oneof["transforms"]) == 2
 
 
-class TestBuildTrainResizeConfigSquareSingleScale:
-    """Square=True, single scale — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
+class TestBuildTrainResizeConfigOptionB:
+    """Option B is SmallestMaxSize jitter followed by one RandomSizedCrop per target scale, for every combination."""
 
-    @pytest.mark.parametrize("scale", [640, 480])
-    def test_option_a_is_oneof_wrapping_single_resize(self, scale):
-        result = _build_train_resize_config([scale], square=True)
-        option_a = result[0]["OneOf"]["transforms"][0]
-        assert option_a == {
-            "OneOf": {
-                "transforms": [{"Resize": {"height": scale, "width": scale}}],
-            }
-        }
-
-    def test_option_b_is_sequential_with_oneof_crop(self):
-        result = _build_train_resize_config([640], square=True)
+    @pytest.mark.parametrize("scales,square", _SCALE_SQUARE_CASES)
+    def test_option_b_is_sequential_with_oneof_crop(self, scales, square):
+        """Option B resizes each crop directly to its target scale, with no extra longest-side cap step."""
+        result = _build_train_resize_config(scales, square=square)
         option_b = result[0]["OneOf"]["transforms"][1]
+        crops = [
+            {"RandomSizedCrop": {"min_max_height": [384, 600], "height": scale, "width": scale}} for scale in scales
+        ]
         assert option_b == {
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {
-                        "OneOf": {
-                            "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
-                            ],
-                        }
-                    },
+                    {"OneOf": {"transforms": crops}},
                 ]
             }
         }
 
 
-class TestBuildTrainResizeConfigSquareMultiScale:
-    """Square=True, multiple scales — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
+class TestBuildTrainResizeConfigSquareOptionA:
+    """Square=True — Option A is a OneOf of plain square Resize transforms, one per scale."""
 
-    def test_option_a_is_oneof_of_resizes(self):
-        result = _build_train_resize_config([480, 640], square=True)
+    @pytest.mark.parametrize(
+        "scales",
+        [
+            pytest.param([640], id="single-640"),
+            pytest.param([480], id="single-480"),
+            pytest.param([480, 640], id="two-scales"),
+            pytest.param([384, 512, 640], id="three-scales"),
+        ],
+    )
+    def test_option_a_is_oneof_of_resizes(self, scales):
+        """Option A holds one square Resize per requested scale."""
+        result = _build_train_resize_config(scales, square=True)
         option_a = result[0]["OneOf"]["transforms"][0]
-        assert option_a == {
-            "OneOf": {
-                "transforms": [
-                    {"Resize": {"height": 480, "width": 480}},
-                    {"Resize": {"height": 640, "width": 640}},
-                ],
-            }
-        }
-
-    def test_option_b_is_sequential_with_oneof_crop(self):
-        result = _build_train_resize_config([480, 640], square=True)
-        option_b = result[0]["OneOf"]["transforms"][1]
-        assert option_b == {
-            "Sequential": {
-                "transforms": [
-                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {
-                        "OneOf": {
-                            "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 480, "width": 480}},
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
-                            ],
-                        }
-                    },
-                ]
-            }
-        }
-
-    def test_three_scales_produce_three_resize_options(self):
-        result = _build_train_resize_config([384, 512, 640], square=True)
-        option_a = result[0]["OneOf"]["transforms"][0]
-        assert len(option_a["OneOf"]["transforms"]) == 3
+        assert option_a == {"OneOf": {"transforms": [{"Resize": {"height": s, "width": s}} for s in scales]}}
 
 
-class TestBuildTrainResizeConfigNonSquareSingleScale:
-    """Square=False, single scale — SmallestMaxSize uses scalar, default cap 1333."""
+class TestBuildTrainResizeConfigNonSquareOptionA:
+    """Square=False — Option A is SmallestMaxSize (scalar for one scale, list for several) then a 1333 long-side cap."""
 
-    def test_option_a_uses_scalar_size(self):
-        result = _build_train_resize_config([640], square=False)
+    @pytest.mark.parametrize(
+        "scales,expected_size",
+        [
+            pytest.param([640], 640, id="single-scale-uses-scalar"),
+            pytest.param([480, 640], [480, 640], id="multi-scale-uses-list"),
+        ],
+    )
+    def test_option_a_size_form(self, scales, expected_size):
+        """Option A passes a scalar size for one scale and the list itself for several, with the default cap."""
+        result = _build_train_resize_config(scales, square=False)
         option_a = result[0]["OneOf"]["transforms"][0]
         assert option_a == {
             "Sequential": {
                 "transforms": [
-                    {"SmallestMaxSize": {"max_size": 640}},
+                    {"SmallestMaxSize": {"max_size": expected_size}},
                     {"CappedLongestMaxSize": {"max_size": 1333}},
-                ]
-            }
-        }
-
-    def test_option_b_uses_scalar_size(self):
-        result = _build_train_resize_config([640], square=False)
-        option_b = result[0]["OneOf"]["transforms"][1]
-        assert option_b == {
-            "Sequential": {
-                "transforms": [
-                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {
-                        "OneOf": {
-                            "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
-                            ]
-                        }
-                    },
                 ]
             }
         }
 
     def test_custom_max_size(self):
+        """A custom ``max_size`` replaces the default 1333 long-side cap in Option A."""
         result = _build_train_resize_config([640], square=False, max_size=800)
         option_a = result[0]["OneOf"]["transforms"][0]
         assert option_a["Sequential"]["transforms"][1] == {"CappedLongestMaxSize": {"max_size": 800}}
-
-
-class TestBuildTrainResizeConfigNonSquareMultiScale:
-    """Square=False, multiple scales — SmallestMaxSize uses list directly."""
-
-    def test_option_a_uses_list_size(self):
-        result = _build_train_resize_config([480, 640], square=False)
-        option_a = result[0]["OneOf"]["transforms"][0]
-        assert option_a == {
-            "Sequential": {
-                "transforms": [
-                    {"SmallestMaxSize": {"max_size": [480, 640]}},
-                    {"CappedLongestMaxSize": {"max_size": 1333}},
-                ]
-            }
-        }
-
-    def test_option_b_uses_list_size(self):
-        result = _build_train_resize_config([480, 640], square=False)
-        option_b = result[0]["OneOf"]["transforms"][1]
-        assert option_b == {
-            "Sequential": {
-                "transforms": [
-                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {
-                        "OneOf": {
-                            "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 480, "width": 480}},
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
-                            ]
-                        }
-                    },
-                ]
-            }
-        }
 
     def test_custom_max_size_applies_to_option_a_only(self):
         """max_size caps option_a's long side; option_b now resizes the crop directly to the target (no cap step)."""
@@ -212,11 +136,7 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
     """
 
     @pytest.mark.parametrize(
-        "scales",
-        [
-            pytest.param([640], id="nonsquare-single"),
-            pytest.param([480, 640], id="nonsquare-multi"),
-        ],
+        "scales", [pytest.param([640], id="nonsquare-single"), pytest.param([480, 640], id="nonsquare-multi")]
     )
     def test_option_b_crop_step_uses_random_sized_crop(self, scales):
         """Non-square option_b crop must use RandomSizedCrop, never fixed RandomCrop (issue #1018)."""
@@ -229,11 +149,7 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
         )
 
     @pytest.mark.parametrize(
-        "scales",
-        [
-            pytest.param([640], id="nonsquare-single"),
-            pytest.param([480, 640], id="nonsquare-multi"),
-        ],
+        "scales", [pytest.param([640], id="nonsquare-single"), pytest.param([480, 640], id="nonsquare-multi")]
     )
     def test_option_b_crop_uses_full_scale_jitter_range(self, scales):
         """RandomSizedCrop min_max_height matches SmallestMaxSize range [384, 600] for full zoom-out diversity."""
@@ -243,15 +159,11 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
         assert all(entry["RandomSizedCrop"]["min_max_height"] == [384, 600] for entry in crop_variants)
 
     @pytest.mark.parametrize(
-        "scales,square",
-        [
-            pytest.param([640], True, id="square-single"),
-            pytest.param([480, 640], True, id="square-multi"),
-        ],
+        "scales", [pytest.param([640], id="square-single"), pytest.param([480, 640], id="square-multi")]
     )
-    def test_square_option_b_unchanged(self, scales, square):
+    def test_square_option_b_unchanged(self, scales):
         """Square path must still use RandomSizedCrop parameterized by scale."""
-        result = _build_train_resize_config(scales, square=square)
+        result = _build_train_resize_config(scales, square=True)
         option_b = result[0]["OneOf"]["transforms"][1]
         inner_transforms = option_b["Sequential"]["transforms"][1]["OneOf"]["transforms"]
         for entry in inner_transforms:
@@ -262,26 +174,16 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
 class TestBuildTrainResizeConfigScaleJitter:
     """scale_jitter=False drops Option B so only the direct-resize branch (Option A) runs."""
 
-    @pytest.mark.parametrize(
-        "square",
-        [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
-    )
+    @pytest.mark.parametrize("square", [True, False])
     def test_scale_jitter_false_drops_crop_branch(self, square):
         """No RandomSizedCrop anywhere in result when scale jitter is disabled."""
-        import json
-
         result = _build_train_resize_config([480, 640], square=square, scale_jitter=False)
         assert len(result) == 1
         assert "RandomSizedCrop" not in json.dumps(result)
 
-    @pytest.mark.parametrize(
-        "square",
-        [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
-    )
+    @pytest.mark.parametrize("square", [True, False])
     def test_scale_jitter_true_produces_one_of_with_crop(self, square):
         """Default (scale_jitter=True) outer entry is a two-branch OneOf wrapping option_b with crop."""
-        import json
-
         result = _build_train_resize_config([480, 640], square=square, scale_jitter=True)
         assert len(result) == 1
         assert "OneOf" in result[0]

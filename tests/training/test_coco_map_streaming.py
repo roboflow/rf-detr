@@ -9,18 +9,17 @@ import copy
 import logging
 import pickle
 from typing import Any
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _warn_streaming_fallback
-from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED
+from tests._markers import _requires_hotcoco
 from tests.training.callbacks.test_coco_eval_callback import _make_pl_module, _make_trainer
 
-_requires_hotcoco = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco is not installed")
 # The two ways a metric gets copied mid-epoch: Lightning's spawn/checkpoint plumbing pickles it, EMA set-up deep-copies.
 _ROUND_TRIPS = [
     pytest.param(lambda metric: pickle.loads(pickle.dumps(metric)), id="pickle"),
@@ -64,7 +63,7 @@ def _disc_records(predicted: int, annotated: int) -> tuple[list[dict[str, Any]],
 class TestStreamConstruction:
     """The metric opens its streams through the backend's ``open_stream`` seam, never through a package directly."""
 
-    def test_opens_one_stream_per_iou_type_through_the_backend(self) -> None:
+    def test_opens_one_stream_per_iou_type_through_the_backend(self, mocker: MockerFixture) -> None:
         """Each IoU type's stream comes from ``open_stream``, so a backend owns which package streams.
 
         A streaming backend for another package then needs to override one method instead of the metric's lifecycle.
@@ -73,8 +72,9 @@ class TestStreamConstruction:
         metric = OnePassCocoMeanAveragePrecision(iou_type=("bbox", "segm"), backend="hotcoco_streaming", num_classes=2)
         backend = metric._coco_backend
 
-        with patch.object(backend, "open_stream", wraps=backend.open_stream) as open_stream:
-            metric.update(predictions, targets)
+        open_stream = mocker.patch.object(backend, "open_stream", wraps=backend.open_stream)
+
+        metric.update(predictions, targets)
 
         assert [call.args[1] for call in open_stream.call_args_list] == ["bbox", "segm"]
 
@@ -265,8 +265,10 @@ def test_float_detection_labels_in_a_later_batch_name_their_epoch_wide_sample() 
     metric.update(predictions[:1], targets[:1])
     predictions[1]["labels"] = predictions[1]["labels"].float()
 
-    with pytest.raises(ValueError, match=r"sample 1 \(expected integer labels"):
+    with pytest.raises(ValueError) as exc_info:
         metric.update(predictions[1:2], targets[1:2])
+
+    assert "sample 1 (expected integer labels" in str(exc_info.value)
 
 
 @_requires_hotcoco

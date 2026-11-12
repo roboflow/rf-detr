@@ -13,7 +13,7 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.tensors import NestedTensor
 
 
-def test_lwdetr_default_detection_forward_after_backbone_change() -> None:
+def test_default_detection_forward_accepts_backbone_tuple() -> None:
     """LWDETR should accept the backbone tuple and wrap a 4-D input as unpadded."""
     batch_size = 2
     num_queries = 3

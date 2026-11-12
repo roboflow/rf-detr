@@ -58,7 +58,7 @@ EXPECTED_MODEL_CLASS = {
 def _load(name: str) -> dict:
     """Parse a config file by stem name and return its dict.
 
-    >>> _load("rfdetr_small")["model"]["train_config"]["class_path"]  # doctest: +SKIP
+    >>> _load("rfdetr_small")["model"]["train_config"]["class_path"]
     'rfdetr.config.TrainConfig'
     """
     return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
@@ -73,7 +73,7 @@ class TestConfigFilesExist:
     """Every expected YAML config file must be present on disk."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_config_file_exists(self, name):
+    def test_config_file_exists(self, name: str) -> None:
         """configs/{name}.yaml must exist."""
         assert (CONFIGS_DIR / f"{name}.yaml").exists(), f"Missing config file: {name}.yaml"
 
@@ -87,7 +87,7 @@ class TestConfigFilesValidYAML:
     """Each file must be parseable as YAML and produce a mapping."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_config_is_valid_yaml(self, name):
+    def test_config_is_valid_yaml(self, name: str) -> None:
         """yaml.safe_load must succeed and return a dict."""
         data = _load(name)
         assert isinstance(data, dict), f"{name}.yaml did not parse to a dict"
@@ -102,19 +102,15 @@ class TestConfigStructure:
     """Each YAML must have a model section with model_config and train_config."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_has_model_section(self, name):
+    def test_has_model_section(self, name: str) -> None:
         """Top-level 'model' key must be present."""
         assert "model" in _load(name), f"{name}.yaml missing 'model' section"
 
+    @pytest.mark.parametrize("key", ["model_config", "train_config"])
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_has_model_config(self, name):
-        """model.model_config must be present."""
-        assert "model_config" in _load(name)["model"], f"{name}.yaml missing model.model_config"
-
-    @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_has_train_config(self, name):
-        """model.train_config must be present."""
-        assert "train_config" in _load(name)["model"], f"{name}.yaml missing model.train_config"
+    def test_model_section_has_key(self, name: str, key: str) -> None:
+        """The model section must contain both 'model_config' and 'train_config'."""
+        assert key in _load(name)["model"], f"{name}.yaml missing model.{key}"
 
 
 # ---------------------------------------------------------------------------
@@ -123,25 +119,21 @@ class TestConfigStructure:
 
 
 class TestConfigClassPaths:
-    """model_config class_path must match the expected model variant."""
+    """model_config and train_config class_path must match the expected model variant."""
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
-    def test_model_config_class_path(self, name):
+    def test_model_config_class_path(self, name: str) -> None:
         """model.model_config.class_path must match the variant."""
         got = _load(name)["model"]["model_config"]["class_path"]
         want = EXPECTED_MODEL_CLASS[name]
         assert got == want, f"{name}.yaml: expected class_path {want!r}, got {got!r}"
 
-    @pytest.mark.parametrize("name", SEGMENTATION_CONFIGS)
-    def test_seg_uses_segmentation_train_config(self, name):
-        """Segmentation configs must use SegmentationTrainConfig."""
+    @pytest.mark.parametrize(
+        ("name", "want"),
+        [(name, "rfdetr.config.SegmentationTrainConfig") for name in SEGMENTATION_CONFIGS]
+        + [(name, "rfdetr.config.TrainConfig") for name in DETECTION_CONFIGS],
+    )
+    def test_train_config_class_path(self, name: str, want: str) -> None:
+        """Segmentation configs must use SegmentationTrainConfig; detection configs TrainConfig (not a subclass)."""
         got = _load(name)["model"]["train_config"]["class_path"]
-        assert got == "rfdetr.config.SegmentationTrainConfig", (
-            f"{name}.yaml: train_config must use SegmentationTrainConfig, got {got!r}"
-        )
-
-    @pytest.mark.parametrize("name", DETECTION_CONFIGS)
-    def test_det_uses_train_config(self, name):
-        """Detection configs must use TrainConfig (not a subclass)."""
-        got = _load(name)["model"]["train_config"]["class_path"]
-        assert got == "rfdetr.config.TrainConfig", f"{name}.yaml: train_config must use TrainConfig, got {got!r}"
+        assert got == want, f"{name}.yaml: train_config must use {want}, got {got!r}"

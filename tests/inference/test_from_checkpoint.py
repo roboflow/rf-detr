@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES, _CHECKPOINT_PLUS_STEM_ENTRIES, RFDETR
@@ -207,6 +208,12 @@ class TestFromCheckpointDictArgs:
 # ---------------------------------------------------------------------------
 
 
+#: Skip a test node that checks the guard raised when ``rfdetr_plus`` is missing.
+_requires_no_rfdetr_plus = pytest.mark.skipif(
+    _IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active"
+)
+
+
 class TestFromCheckpointEdgeCases:
     """Edge-case handling in from_checkpoint."""
 
@@ -220,38 +227,44 @@ class TestFromCheckpointEdgeCases:
         with pytest.raises((OSError, IsADirectoryError)):
             RFDETR.from_checkpoint(tmp_path)
 
-    def test_characterization_unknown_pretrain_weights_raises_value_error(self, tmp_path: Path) -> None:
+    def test_characterization_unknown_pretrain_weights_raises_value_error(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """Unrecognised pretrain_weights name raises a descriptive ValueError."""
         ckpt = _ns("/my/custom/finetuned.pth")
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ValueError, match="Could not infer model class"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ValueError, match="Could not infer model class"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
-    def test_filename_fallback_unrecognized_name_raises_value_error(self, tmp_path: Path) -> None:
+    def test_filename_fallback_unrecognized_name_raises_value_error(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """ValueError fires via filename-fallback path when filename has no known model token."""
         ckpt = {"args": {"pretrain_weights": "none", "num_classes": 80}}
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ValueError, match="Could not infer model class"):
-                RFDETR.from_checkpoint(tmp_path / "finetuned.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ValueError, match="Could not infer model class"):
+            RFDETR.from_checkpoint(tmp_path / "finetuned.pth")
 
-    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
-    def test_filename_fallback_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
+    @_requires_no_rfdetr_plus
+    def test_filename_fallback_xlarge_without_plus_raises_import_error(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """ImportError fires via filename-fallback path when rfdetr_plus is absent."""
         ckpt = {"args": {"pretrain_weights": "none", "num_classes": 80}}
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ImportError):
-                RFDETR.from_checkpoint(tmp_path / "rf-detr-xlarge-starter.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ImportError):
+            RFDETR.from_checkpoint(tmp_path / "rf-detr-xlarge-starter.pth")
 
-    def test_missing_args_key_names_where_the_settings_are(self, tmp_path: Path) -> None:
+    def test_missing_args_key_names_where_the_settings_are(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A checkpoint recording no ``args`` is refused with the same guidance whatever its extension.
 
         The refusal used to require a ``pytorch-lightning_version`` key as well, which every rfdetr ``.pth`` writes and
         no converted ``.ckpt`` does, so files in between fell through to a bare ``KeyError: 'args'``.
         """
         ckpt = {"model": {}}
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ValueError, match="training_config.json"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ValueError, match="training_config.json"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
     def test_converted_legacy_checkpoint_is_refused_with_guidance(self, tmp_path: Path) -> None:
         """``convert_legacy_checkpoint`` output stores args under ``hyper_parameters``, so it names no model.
@@ -267,12 +280,12 @@ class TestFromCheckpointEdgeCases:
         with pytest.raises(ValueError, match="training_config.json"):
             RFDETR.from_checkpoint(converted)
 
-    def test_lightning_ckpt_without_args_points_at_training_config(self, tmp_path: Path) -> None:
+    def test_lightning_ckpt_without_args_points_at_training_config(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A ``.ckpt`` from 1.11.0 or earlier records no model; the error names where its settings are (#1552)."""
         ckpt = {"state_dict": {"model.class_embed.weight": torch.zeros(4, 8)}, "pytorch-lightning_version": "2.6.6"}
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ValueError, match="training_config.json"):
-                RFDETR.from_checkpoint(tmp_path / "last.ckpt")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ValueError, match="training_config.json"):
+            RFDETR.from_checkpoint(tmp_path / "last.ckpt")
 
     def test_characterization_callable_on_subclass(self, tmp_path: Path) -> None:
         """from_checkpoint can be called on a concrete subclass (RFDETRSmall)."""
@@ -372,14 +385,16 @@ class TestFromCheckpointEdgeCases:
         assert call_kwargs["num_classes"] == 1
         assert call_kwargs["pretrain_weights"] == str(tmp_path / "checkpoint_best_total.pth")
 
-    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
-    def test_characterization_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
+    @_requires_no_rfdetr_plus
+    def test_characterization_xlarge_without_plus_raises_import_error(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """Xlarge checkpoint without rfdetr_plus raises ImportError instead of wrong class."""
         for weights in ("rf-detr-xlarge.pth", "rf-detr-xxlarge.pth"):
             ckpt = _ns(weights)
-            with patch("rfdetr.detr.torch.load", return_value=ckpt):
-                with pytest.raises(ImportError):
-                    RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+            mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+            with pytest.raises(ImportError):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
     def test_trust_gate_rejects_custom_class_by_default(self, tmp_path: Path) -> None:
         """from_checkpoint raises RuntimeError for custom-class checkpoints without trust_checkpoint=True.
@@ -577,17 +592,19 @@ class TestFromCheckpointModelName:
         mock_cls.assert_called_once()
         assert result is mock_cls.return_value
 
-    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
+    @_requires_no_rfdetr_plus
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
-    def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path, model_name: str) -> None:
+    def test_plus_model_name_without_plus_raises_import_error(
+        self, tmp_path: Path, model_name: str, mocker: MockerFixture
+    ) -> None:
         """Plus checkpoints using model_name raise install guidance without rfdetr_plus."""
         ckpt = {
             "args": {"pretrain_weights": "", "num_classes": 80},
             "model_name": model_name,
         }
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ImportError, match="rfdetr_plus package"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ImportError, match="rfdetr_plus package"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
 
 # ---------------------------------------------------------------------------
@@ -1248,6 +1265,118 @@ class TestFromCheckpointStrippedBestTotal:
 
 
 # ---------------------------------------------------------------------------
+# Bare filenames resolve against the working directory, not the model cache
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointBareFilename:
+    """``from_checkpoint`` must load its weights from the same file it read the metadata from."""
+
+    @pytest.fixture
+    def cache_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Enter an empty working directory and point the model cache at another empty directory."""
+        working_dir = tmp_path / "cwd"
+        cache = tmp_path / "cache"
+        working_dir.mkdir()
+        cache.mkdir()
+        monkeypatch.chdir(working_dir)
+        monkeypatch.setenv("RF_HOME", str(cache))
+        return cache
+
+    @staticmethod
+    def _checkpoint(class_names: list[str]) -> dict:
+        """Build a real Nano checkpoint with random weights.
+
+        Examples:
+            >>> TestFromCheckpointBareFilename._checkpoint(["a"])["args"]["class_names"]
+            ['a']
+        """
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=len(class_names))
+        return {
+            "model": model.model.model.state_dict(),
+            "args": {"class_names": class_names},
+            "model_name": "RFDETRNano",
+            "model_config": model.model_config.model_dump(),
+        }
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["run.pth", pytest.param(Path("run.pth"), id="bare-path"), "./run.pth"],
+    )
+    def test_loads_file_from_working_directory(self, cache_dir: Path, spelling: str | Path) -> None:
+        """A checkpoint in the working directory loads, however its relative path is spelled."""
+        checkpoint = self._checkpoint(["a", "b", "c"])
+        torch.save(checkpoint, "run.pth")
+
+        loaded = RFDETR.from_checkpoint(spelling, device="cpu")
+
+        assert loaded.class_names == ["a", "b", "c"]
+        assert Path(loaded.model_config.pretrain_weights).parent.resolve() == Path.cwd().resolve()
+        assert list(cache_dir.iterdir()) == [], "nothing must be read from or written to the model cache"
+
+    @pytest.mark.parametrize("name", ["run.pth", "rf-detr-nano.pth"])
+    def test_same_named_file_in_cache_is_not_loaded(self, cache_dir: Path, name: str) -> None:
+        """A different file of the same name in the model cache must not replace the requested weights."""
+        local = self._checkpoint(["a", "b", "c"])
+        cached = {
+            **local,
+            "model": {**local["model"], "class_embed.weight": local["model"]["class_embed.weight"] + 1.0},
+            "args": {"class_names": ["x", "y", "z"]},
+        }
+        torch.save(local, name)
+        torch.save(cached, cache_dir / name)
+
+        loaded = RFDETR.from_checkpoint(name, device="cpu")
+
+        weight = loaded.model.model.state_dict()["class_embed.weight"]
+        assert torch.equal(weight, local["model"]["class_embed.weight"]), "weights must come from the working directory"
+        assert loaded.class_names == ["a", "b", "c"]
+
+    def test_published_name_in_working_directory_is_not_downloaded(
+        self, cache_dir: Path, mocker: MockerFixture
+    ) -> None:
+        """A published filename found only in the working directory must load that file, with no download."""
+        local = self._checkpoint(["a", "b", "c"])
+        torch.save(local, "rf-detr-nano.pth")
+        download = mocker.patch(
+            "rfdetr.assets.model_weights._download_file",
+            side_effect=AssertionError("must not download a file that is in the working directory"),
+        )
+
+        loaded = RFDETR.from_checkpoint("rf-detr-nano.pth", device="cpu")
+
+        download.assert_not_called()
+        weight = loaded.model.model.state_dict()["class_embed.weight"]
+        assert torch.equal(weight, local["model"]["class_embed.weight"]), "weights must come from the working directory"
+        assert loaded.class_names == ["a", "b", "c"]
+        assert list(cache_dir.iterdir()) == [], "nothing must be read from or written to the model cache"
+
+    def test_file_only_in_cache_raises(self, cache_dir: Path) -> None:
+        """``from_checkpoint`` takes a path, so a name missing from the working directory is an error."""
+        torch.save(self._checkpoint(["x", "y", "z"]), cache_dir / "run.pth")
+
+        with pytest.raises(FileNotFoundError, match=r"run\.pth"):
+            RFDETR.from_checkpoint("run.pth", device="cpu")
+
+    def test_reload_failure_preserves_published_named_checkpoint(self, cache_dir: Path, mocker: MockerFixture) -> None:
+        """A failed second read must not replace the checkpoint with published weights."""
+        checkpoint = self._checkpoint(["a", "b", "c"])
+        path = Path("rf-detr-nano.pth")
+        torch.save(checkpoint, path)
+        original = path.read_bytes()
+        mocker.patch("rfdetr.utilities.io._safe_torch_load", side_effect=[checkpoint, OSError("second read failed")])
+        download = mocker.patch(
+            "rfdetr.assets.model_weights._download_file", side_effect=AssertionError("must not download")
+        )
+
+        with pytest.raises(OSError, match="second read failed"):
+            RFDETR.from_checkpoint(path, device="cpu")
+
+        download.assert_not_called()
+        assert path.read_bytes() == original
+
+
+# ---------------------------------------------------------------------------
 # PE-Core-T plus models (RFDETRAtto / RFDETRFemto / RFDETRPico)
 # ---------------------------------------------------------------------------
 
@@ -1299,12 +1428,14 @@ class TestFromCheckpointPEPlusModels:
         return fakes
 
     @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
-    def test_model_name_resolves_the_plus_class(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
+    def test_model_name_resolves_the_plus_class(
+        self, monkeypatch, platform_models, tmp_path: Path, model_name, mocker: MockerFixture
+    ) -> None:
         fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
         ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
 
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         fakes[model_name].assert_called_once()
         assert result is fakes[model_name].return_value
@@ -1318,12 +1449,12 @@ class TestFromCheckpointPEPlusModels:
         ],
     )
     def test_pretrain_weights_name_resolves_the_plus_class(
-        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str, mocker: MockerFixture
     ) -> None:
         fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
 
-        with patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights)):
-            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights))
+        result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         assert result is fakes[expected].return_value
 
@@ -1378,39 +1509,41 @@ class TestFromCheckpointPEPlusModels:
 
     @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
     def test_older_plus_model_name_raises_upgrade_hint(
-        self, monkeypatch, platform_models, tmp_path: Path, model_name: str
+        self, monkeypatch, platform_models, tmp_path: Path, model_name: str, mocker: MockerFixture
     ) -> None:
         self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
         ckpt = {"args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80}, "model_name": model_name}
 
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ImportError, match="predates it"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ImportError, match="predates it"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
     def test_older_plus_pretrain_weights_name_raises_upgrade_hint(
-        self, monkeypatch, platform_models, tmp_path: Path
+        self, monkeypatch, platform_models, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
 
-        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth")):
-            with pytest.raises(ImportError, match="predates it"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth"))
+        with pytest.raises(ImportError, match="predates it"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
     def test_older_plus_upgrade_hint_chains_the_missing_symbol_error(
-        self, monkeypatch, platform_models, tmp_path: Path
+        self, monkeypatch, platform_models, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """The upgrade hint keeps the lookup error that explains why the PE model is missing."""
         self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
         ckpt = {"args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80}, "model_name": "RFDETRAtto"}
 
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ImportError, match="predates it") as raised:
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ImportError, match="predates it") as raised:
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         assert isinstance(raised.value.__cause__, ImportError)
         assert "RFDETRAtto" in str(raised.value.__cause__)
 
-    def test_upgrade_hint_chains_a_broken_pe_import(self, monkeypatch, platform_models, tmp_path: Path) -> None:
+    def test_upgrade_hint_chains_a_broken_pe_import(
+        self, monkeypatch, platform_models, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         """A PE import that failed for another reason stays reachable through the upgrade hint's cause chain.
 
         Without it, a broken rfdetr_plus dependency reads as an outdated install and the real failure is lost.
@@ -1419,18 +1552,20 @@ class TestFromCheckpointPEPlusModels:
         monkeypatch.setattr(platform_models, "_PLUS_PE_IMPORT_ERROR", broken)
         self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
 
-        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth")):
-            with pytest.raises(ImportError, match="predates it") as raised:
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth"))
+        with pytest.raises(ImportError, match="predates it") as raised:
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         assert raised.value.__cause__.__cause__ is broken
 
-    def test_older_plus_still_resolves_xlarge(self, monkeypatch, platform_models, tmp_path: Path) -> None:
+    def test_older_plus_still_resolves_xlarge(
+        self, monkeypatch, platform_models, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
         fakes = self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
         ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRXLarge"}
 
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         assert result is fakes["RFDETRXLarge"].return_value
 
@@ -1443,24 +1578,24 @@ class TestFromCheckpointPEPlusModels:
         ],
     )
     def test_release_stems_win_over_other_names_in_the_path(
-        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str, mocker: MockerFixture
     ) -> None:
         fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
 
-        with patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights)):
-            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights))
+        result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         assert result is fakes[expected].return_value
 
     def test_older_plus_stem_does_not_fall_back_to_a_core_size_word(
-        self, monkeypatch, platform_models, tmp_path: Path
+        self, monkeypatch, platform_models, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """``rf-detr-pico-small-ft.pth`` contains "small"; with an old plus it must not resolve to RFDETRSmall."""
         self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
 
-        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-pico-small-ft.pth")):
-            with pytest.raises(ImportError, match="RFDETRPico is not available"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-pico-small-ft.pth"))
+        with pytest.raises(ImportError, match="RFDETRPico is not available"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
     @pytest.fixture
     def broken_plus_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1495,13 +1630,13 @@ class TestFromCheckpointPEPlusModels:
 
     @pytest.mark.parametrize("model_name", ["RFDETRAtto", "RFDETRXLarge"])
     def test_broken_plus_import_is_raised_for_plus_checkpoints(
-        self, broken_plus_import, tmp_path: Path, model_name: str
+        self, broken_plus_import, tmp_path: Path, model_name: str, mocker: MockerFixture
     ) -> None:
         ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
 
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ImportError, match="failed to import") as excinfo:
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ImportError, match="failed to import") as excinfo:
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
         assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
         assert excinfo.value.__cause__.name == "timm"
@@ -1527,15 +1662,17 @@ class TestFromCheckpointPEPlusModels:
         assert len(messages) == 1, messages
 
     @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
-    def test_without_plus_raises_install_hint(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
+    def test_without_plus_raises_install_hint(
+        self, monkeypatch, platform_models, tmp_path: Path, model_name, mocker: MockerFixture
+    ) -> None:
         import rfdetr.platform
 
         monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", False)
         ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
 
-        with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ImportError, match="rfdetr_plus package"):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+        mocker.patch("rfdetr.detr.torch.load", return_value=ckpt)
+        with pytest.raises(ImportError, match="rfdetr_plus package"):
+            RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
 
 class TestPlusExportsSingleSource:

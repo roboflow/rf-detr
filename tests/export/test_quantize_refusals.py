@@ -26,6 +26,7 @@ from unittest import mock
 import numpy as np
 import pytest
 from numpy.typing import NDArray
+from pytest_mock import MockerFixture
 
 from rfdetr.detr import RFDETR
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
@@ -43,7 +44,7 @@ _REFUSED = [
     pytest.param(attrgetter("empty_dir"), "No calibration images found", id="empty-directory"),
     pytest.param(attrgetter("text_only_dir"), "No calibration images found", id="directory-without-images"),
     pytest.param(attrgetter("sidecar_only_dir"), "No calibration images found", id="directory-of-image-lookalikes"),
-    pytest.param(attrgetter("text_file"), r"must be a \.npy array", id="non-npy-file"),
+    pytest.param(attrgetter("text_file"), "must be a .npy array", id="non-npy-file"),
     pytest.param(attrgetter("rank3"), "must be rank 4", id="rank-3-array"),
     pytest.param(attrgetter("raw_pixels"), "must be floating point", id="integer-array"),
     pytest.param(attrgetter("no_samples"), "at least one image", id="empty-array"),
@@ -152,19 +153,17 @@ def rfdetr_stub() -> Any:
 
 
 @pytest.fixture
-def forward_pass() -> Any:
+def forward_pass(mocker: MockerFixture) -> mock.MagicMock:
     """Patch ``prepare_export_graph`` to raise :class:`_ForwardPassReachedError`, and return the patch.
 
     The host check is stubbed out for both formats: the point is the order of the refusals, not which packages the test
     machine has. ``metadata_from_model`` is stubbed too: the mocked ``RFDETR`` has no class names for it to read.
     """
-    with (
-        mock.patch("rfdetr.export.prepare.prepare_export_graph", side_effect=_ForwardPassReachedError) as prepare,
-        mock.patch("rfdetr.export._runtime.metadata.metadata_from_model"),
-        mock.patch.object(OnnxExporter, "check_dependencies"),
-        mock.patch.object(OpenVINOExporter, "check_dependencies"),
-    ):
-        yield prepare
+    prepare = mocker.patch("rfdetr.export.prepare.prepare_export_graph", side_effect=_ForwardPassReachedError)
+    mocker.patch("rfdetr.export._runtime.metadata.metadata_from_model")
+    mocker.patch.object(OnnxExporter, "check_dependencies")
+    mocker.patch.object(OpenVINOExporter, "check_dependencies")
+    return prepare
 
 
 class TestCheckCalibrationData:
@@ -173,8 +172,9 @@ class TestCheckCalibrationData:
     @pytest.mark.parametrize(("select", "message"), _REFUSED)
     def test_refuses_input_that_cannot_calibrate(self, layout: CalibrationLayout, select: Any, message: str) -> None:
         """Each unusable input is named, so the caller knows which part of it to fix."""
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(ValueError) as exc_info:
             check_calibration_data(select(layout))
+        assert message in str(exc_info.value)
 
     @pytest.mark.parametrize("select", _ACCEPTED)
     def test_accepts_input_that_can_calibrate(self, layout: CalibrationLayout, select: Any) -> None:
@@ -202,8 +202,9 @@ class TestExporterConstructionRefuses:
         There is no graph at this point -- construction takes the configuration only -- so nothing can have been traced.
         """
         config = config_class(output_dir=tmp_path, quantization="int8", calibration_data=select(layout))
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(ValueError) as exc_info:
             exporter_class(config)
+        assert message in str(exc_info.value)
 
     @pytest.mark.parametrize(("exporter_class", "config_class", "format_name"), _EXPORTERS)
     @pytest.mark.parametrize("select", _ACCEPTED)
@@ -276,13 +277,14 @@ class TestExportRefusesBeforeForwardPass:
         ``prepare_export_graph`` is the full forward pass through the detector; it is patched to raise if reached, so a
         ``ValueError`` carrying *message* can only have come from an earlier stage.
         """
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(ValueError) as exc_info:
             rfdetr_stub.export(
                 format=format_name,
                 output_dir=str(tmp_path / "out"),
                 quantization="int8",
                 calibration_data=select(layout),
             )
+        assert message in str(exc_info.value)
         forward_pass.assert_not_called()
 
     @pytest.mark.parametrize(("exporter_class", "config_class", "format_name"), _EXPORTERS)

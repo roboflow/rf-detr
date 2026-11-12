@@ -32,9 +32,9 @@ For uv projects:
 uv add rfdetr
 ```
 
-For XLarge/2XLarge models (PML 1.0: commercial use included on Roboflow; commercial self-hosting requires the Enterprise add-on):
+For Atto/Femto/Pico (rfdetr_plus>=1.2.0) and XLarge/2XLarge models (PML 1.0: commercial use included on Roboflow; commercial self-hosting requires the Enterprise add-on):
 ```bash
-pip install "rfdetr[plus]"
+pip install "rfdetr[plus]" "rfdetr_plus>=1.2.0"
 ```
 
 ---
@@ -50,6 +50,9 @@ print(detections)
 ```
 
 **Available detection model classes:**
+- `RFDETRAtto` — 1.0 ms, 49.4 AP50 (30.5 AP50:95), 7.4M params, 380×380 (requires rfdetr[plus], rfdetr_plus>=1.2.0)
+- `RFDETRFemto` — 1.4 ms, 55.9 AP50 (37.8 AP50:95), 7.9M params, 384×384 (requires rfdetr[plus], rfdetr_plus>=1.2.0)
+- `RFDETRPico` — 1.7 ms, 60.2 AP50 (41.6 AP50:95), 8.4M params, 560×560 (requires rfdetr[plus], rfdetr_plus>=1.2.0)
 - `RFDETRNano` — 2.3 ms, 67.6 AP50, 30.5M params, 384×384
 - `RFDETRSmall` — 3.5 ms, 72.1 AP50, 32.1M params, 512×512
 - `RFDETRMedium` — 4.4 ms, 73.6 AP50, 33.7M params, 576×576
@@ -100,8 +103,6 @@ key_points = model.predict("image.jpg", threshold=0.5)
 - `RFDETRKeypointPreview` — 9.7 ms, 71.8 AP50:95, 40.7M params, 576×576
 
 Keypoint detection is a preview feature. The model is pretrained on COCO person keypoints and predicts 17 body keypoints per detected person, in addition to bounding boxes. Accuracy is reported as OKS-based AP50:95, the standard COCO keypoint metric.
-
-The keypoint model is available in the `rfdetr` package only; it is not yet available via the `inference` package.
 
 ---
 
@@ -334,7 +335,7 @@ Instantiate a model and call model.train() with your dataset directory in COCO J
 Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU. For TensorRT, use model.export(format='tensorrt') (requires pip install rfdetr[trt] and a CUDA GPU), which builds a .trt engine in-process via the TensorRT Python API.
 
 **Which RF-DETR model size should I use?**
-RF-DETR-Nano (2.3 ms, 67.6 AP50) is best for edge/real-time. RF-DETR-Large (6.8 ms, 56.5 AP50:95) is best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency budget allows.
+RF-DETR-Nano (2.3 ms, 67.6 AP50) is the fastest Apache 2.0 model for edge/real-time; RF-DETR-Atto, Femto and Pico (1.0–1.7 ms, rfdetr[plus], PML 1.0) trade accuracy for even lower latency. RF-DETR-Large (6.8 ms, 56.5 AP50:95) is best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency budget allows.
 
 Checkpoint note: current RFDETRLarge defaults to rf-detr-large-2026.pth. The older rf-detr-large.pth checkpoint is a legacy Large release kept for backward compatibility and has been superseded by the current release.
 

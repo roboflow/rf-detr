@@ -162,7 +162,11 @@ An empty collection of sources is quiet; an empty location is loud. A text or CS
 
 ## Batching and frame stride
 
-Use `batch` to set the number of finite images or frames per forward pass. The default, `batch=None`, runs a BCHW tensor or a list of images as one forward pass and predicts other expanded sources one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass. RF-DETR predicts the final partial batch when the source length is not divisible by `batch`. An inference-compiled model may require the batch size used during compilation.
+Use `batch` to set the number of finite images or recorded video frames per forward pass. The default, `batch=None`, runs a BCHW tensor or a list of images as one forward pass. On a model without a fixed batch size, an eager directory or glob uses batches of eight (or a smaller export `max_batch_size`), and other finite expanded or streamed inputs use one image or frame at a time. Pass an integer to split a BCHW tensor or a list of images into smaller batches and bound the memory of each pass.
+
+A predictor from `model.inference(batch_size=N)` or an export with a fixed batch size accepts only batches of `N`. For finite expanded sources, such as directories, globs and recorded videos, `batch=None` uses `N` with either `stream=True` or `stream=False`. RF-DETR predicts a final partial batch when the source length is not divisible by `batch`, except when the runtime requires a fixed batch size: it rejects a final batch with fewer than `N` images and does not pad it.
+
+Live captures and `.streams` manifests preserve simultaneous batches with one frame per source, regardless of `batch`. They do not accumulate consecutive frames to fill a batch. A fixed-batch runtime therefore requires the number of concurrent sources to equal `N`: a single camera, RTSP stream or screen capture needs a batch-one or dynamic-batch runtime, and a `.streams` manifest needs exactly `N` sources.
 
 Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. For live sources, the latest-frame policy can still skip frames when prediction is slower than capture.
 

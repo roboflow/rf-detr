@@ -10,7 +10,6 @@ import threading
 import time
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -96,6 +95,24 @@ class TestDownloadLock:
                 pass
 
 
+def _urlretrieve_writing(content: bytes):
+    """Return a ``urlretrieve`` stand-in that writes ``content`` to the destination path.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     dest = str(Path(d) / "a.zip")
+        ...     _urlretrieve_writing(b"x")("http://example.com/a.zip", dest) == (dest, {})
+        True
+    """
+
+    def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
+        Path(dest).write_bytes(content)
+        return dest, {}
+
+    return fake_urlretrieve
+
+
 class TestDownloadAndExtract:
     """Coverage for the ZIP download-and-extract helper."""
 
@@ -113,18 +130,15 @@ class TestDownloadAndExtract:
                 zf.writestr(name, content)
         return buf.getvalue()
 
-    def test_path_traversal_raises_runtime_error(self, tmp_path: Path) -> None:
+    def test_path_traversal_raises_runtime_error(self, tmp_path: Path, mocker) -> None:
         """A ZIP entry escaping dest_dir must raise RuntimeError (path-traversal guard)."""
         zip_bytes = self._make_zip({"../evil.txt": "malicious"})
-        url = "http://example.com/test.zip"
+        mocker.patch("rfdetr.datasets._develop.urlretrieve", side_effect=_urlretrieve_writing(zip_bytes))
 
-        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
-            Path(dest).write_bytes(zip_bytes)
-            return dest, {}
+        with pytest.raises(RuntimeError) as exc_info:
+            _download_and_extract("http://example.com/test.zip", tmp_path)
 
-        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
-            with pytest.raises(RuntimeError, match="Unsafe path detected"):
-                _download_and_extract(url, tmp_path)
+        assert "Unsafe path detected" in str(exc_info.value)
 
 
 class TestConcurrentDownloadSafety:
@@ -149,7 +163,7 @@ class TestConcurrentDownloadSafety:
             zf.writestr("annotations/instances_val2017.json", "{}")
         return buf.getvalue()
 
-    def test_same_asset_downloads_never_overlap(self, tmp_path: Path) -> None:
+    def test_same_asset_downloads_never_overlap(self, tmp_path: Path, mocker) -> None:
         """Two concurrent callers of one URL must not be inside the download window together."""
         url = "http://example.com/annotations_trainval2017.zip"
         zip_bytes = self._zip_bytes()
@@ -168,31 +182,27 @@ class TestConcurrentDownloadSafety:
                 active -= 1
             return dest, {}
 
-        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
-            threads = [threading.Thread(target=_download_and_extract, args=(url, tmp_path)) for _ in range(2)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join(timeout=30)
+        mocker.patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve)
+
+        threads = [threading.Thread(target=_download_and_extract, args=(url, tmp_path)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
 
         assert max_concurrent == 1, f"{max_concurrent} callers wrote the same archive concurrently"
 
-    def test_distinct_assets_use_distinct_locks(self, tmp_path: Path) -> None:
+    def test_distinct_assets_use_distinct_locks(self, tmp_path: Path, mocker) -> None:
         """Serialization is per asset, so unrelated URLs are not forced to queue behind each other."""
-        zip_bytes = self._zip_bytes()
+        mocker.patch("rfdetr.datasets._develop.urlretrieve", side_effect=_urlretrieve_writing(self._zip_bytes()))
 
-        def fake_urlretrieve(url: str, dest: str) -> tuple[str, dict[str, str]]:
-            Path(dest).write_bytes(zip_bytes)
-            return dest, {}
-
-        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
-            _download_and_extract("http://example.com/val2017.zip", tmp_path)
-            _download_and_extract("http://example.com/train2017.zip", tmp_path)
+        _download_and_extract("http://example.com/val2017.zip", tmp_path)
+        _download_and_extract("http://example.com/train2017.zip", tmp_path)
 
         lock_names = sorted(path.name for path in tmp_path.glob(".*.lock"))
         assert lock_names == [], f"lock files leaked after completion: {lock_names}"
 
-    def test_completed_asset_is_not_redownloaded(self, tmp_path: Path) -> None:
+    def test_completed_asset_is_not_redownloaded(self, tmp_path: Path, mocker) -> None:
         """A caller that waited on the lock re-checks completeness and skips a redundant fetch."""
         url = "http://example.com/annotations_trainval2017.zip"
         calls: list[str] = []
@@ -202,12 +212,13 @@ class TestConcurrentDownloadSafety:
             Path(dest).write_bytes(self._zip_bytes())
             return dest, {}
 
-        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
-            _download_and_extract(url, tmp_path, is_complete=lambda: True)
+        mocker.patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve)
+
+        _download_and_extract(url, tmp_path, is_complete=lambda: True)
 
         assert calls == [], "asset already present on disk was downloaded again"
 
-    def test_eof_error_during_extraction_is_retried(self, tmp_path: Path) -> None:
+    def test_eof_error_during_extraction_is_retried(self, tmp_path: Path, mocker) -> None:
         """A mid-stream truncation surfaces as EOFError and must be retried, not propagated."""
         url = "http://example.com/annotations_trainval2017.zip"
         zip_bytes = self._zip_bytes()
@@ -223,12 +234,11 @@ class TestConcurrentDownloadSafety:
                 raise EOFError
             (dest_dir_resolved / "extracted.json").write_text("{}")
 
-        with (
-            patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve),
-            patch("rfdetr.datasets._develop._extract_zip", side_effect=flaky_extract),
-            patch("rfdetr.datasets._develop.time.sleep"),
-        ):
-            _download_and_extract(url, tmp_path)
+        mocker.patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve)
+        mocker.patch("rfdetr.datasets._develop._extract_zip", side_effect=flaky_extract)
+        mocker.patch("rfdetr.datasets._develop.time.sleep")
+
+        _download_and_extract(url, tmp_path)
 
         assert len(attempts) == 2, f"expected one retry after EOFError, saw {len(attempts)} attempt(s)"
         assert (tmp_path / "extracted.json").exists()

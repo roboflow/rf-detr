@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Callable
 from pathlib import Path
-from unittest import mock
+from unittest.mock import ANY, Mock
 
 import numpy as np
 import pytest
 import supervision as sv
 from PIL import Image
+from pytest_mock import MockerFixture
 
 from rfdetr.export._benchmark import (
     CocoValSubset,
@@ -172,6 +174,44 @@ def _gt_raw_outputs(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
     return boxes, logits
 
 
+def _gt_raw_outputs_without_batch(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``_gt_raw_outputs`` with the leading batch axis dropped, as a runtime that squeezes it would.
+
+    Examples:
+        >>> boxes, logits = _gt_raw_outputs_without_batch(Image.new("RGB", (64, 64)))
+        >>> boxes.shape, logits.shape
+        ((4, 4), (4, 91))
+    """
+    boxes, logits = _gt_raw_outputs(image)
+    return boxes[0], logits[0]
+
+
+@pytest.fixture
+def download(mocker: MockerFixture) -> Mock:
+    """Replace the image downloader with a recording mock, so no test touches the network.
+
+    Examples:
+        A pytest fixture -- it needs ``mocker`` to install the mock, so the example is not run:
+
+        >>> download(mocker)  # doctest: +SKIP
+        <MagicMock name='_download' id=...>
+    """
+    return mocker.patch("rfdetr.export._benchmark._download")
+
+
+@pytest.fixture
+def logger(mocker: MockerFixture) -> Mock:
+    """Replace the benchmark module's logger with a recording mock.
+
+    Examples:
+        A pytest fixture -- it needs ``mocker`` to install the mock, so the example is not run:
+
+        >>> logger(mocker)  # doctest: +SKIP
+        <MagicMock name='logger' id=...>
+    """
+    return mocker.patch("rfdetr.export._benchmark.logger")
+
+
 class TestSelectCocoValIds:
     """``select_coco_val_ids`` picks a seeded, reproducible subset of image IDs."""
 
@@ -199,15 +239,19 @@ class TestSelectCocoValIds:
     def test_non_integer_count_raises(self, tmp_path: Path, n_images: object) -> None:
         """A float, bool or string count is a type error up front, not a ``TypeError`` from deep inside NumPy."""
         subset = _write_coco(tmp_path)
-        with pytest.raises(TypeError, match="must be an int"):
+        with pytest.raises(TypeError) as exc_info:
             select_coco_val_ids(subset.annotations_path, n_images)  # type: ignore[arg-type]
+
+        assert "must be an int" in str(exc_info.value)
 
     @pytest.mark.parametrize("n_images", [0, -1])
     def test_fewer_than_one_image_raises(self, tmp_path: Path, n_images: int) -> None:
         """``0`` would score nothing and ``-1`` would silently select all but one image; both are refused."""
         subset = _write_coco(tmp_path)
-        with pytest.raises(ValueError, match="at least 1"):
+        with pytest.raises(ValueError) as exc_info:
             select_coco_val_ids(subset.annotations_path, n_images)
+
+        assert "at least 1" in str(exc_info.value)
 
     def test_none_selects_every_image_sorted(self, tmp_path: Path) -> None:
         """``n_images=None`` is the full split, in image-ID order, for the ``FULL_VAL`` path."""
@@ -217,48 +261,56 @@ class TestSelectCocoValIds:
     def test_more_images_than_split_raises(self, tmp_path: Path) -> None:
         """Asking for more images than exist fails loudly instead of silently evaluating fewer."""
         subset = _write_coco(tmp_path)
-        with pytest.raises(ValueError, match="only 3"):
+        with pytest.raises(ValueError) as exc_info:
             select_coco_val_ids(subset.annotations_path, 4)
+
+        assert "only 3" in str(exc_info.value)
 
 
 class TestFetchCocoVal2017:
     """``fetch_coco_val2017`` downloads only the selected images that are not on disk yet."""
 
-    def test_downloads_only_missing_images(self, tmp_path: Path) -> None:
+    def test_downloads_only_missing_images(self, tmp_path: Path, download: Mock) -> None:
         """An image already on disk is not fetched again; a missing one is fetched from the fixed val2017 URL.
 
         Cookbooks rerun this cell on every session, so a second run must not re-download the subset.
         """
         _write_coco(tmp_path)
         (tmp_path / "val2017" / "000000000002.jpg").unlink()
-        with mock.patch("rfdetr.export._benchmark._download") as download:
-            subset = fetch_coco_val2017(tmp_path, n_images=None)
+
+        subset = fetch_coco_val2017(tmp_path, n_images=None)
+
         download.assert_called_once_with(
             "http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "val2017" / "000000000002.jpg"
         )
         assert subset.image_ids == (1, 2, 3)
 
-    def test_n_images_downloads_only_the_selected_subset(self, tmp_path: Path) -> None:
+    def test_n_images_downloads_only_the_selected_subset(self, tmp_path: Path, download: Mock) -> None:
         """With ``n_images`` set, only the selected images are fetched, not the whole split."""
         subset = _write_coco(tmp_path)
         for path in (tmp_path / "val2017").iterdir():
             path.unlink()
-        with mock.patch("rfdetr.export._benchmark._download") as download:
-            fetched = fetch_coco_val2017(tmp_path, n_images=2)
+
+        fetched = fetch_coco_val2017(tmp_path, n_images=2)
+
         assert len(fetched.image_ids) == download.call_count == 2
         assert set(fetched.image_ids) <= set(subset.image_ids)
 
     @pytest.mark.parametrize("n_images", [0, -1])
-    def test_fewer_than_one_image_raises_before_any_download(self, tmp_path: Path, n_images: int) -> None:
+    def test_fewer_than_one_image_raises_before_any_download(
+        self, tmp_path: Path, n_images: int, download: Mock
+    ) -> None:
         """An invalid ``n_images`` is refused up front, with nothing fetched."""
         _write_coco(tmp_path)
-        with mock.patch("rfdetr.export._benchmark._download") as download:
-            with pytest.raises(ValueError, match="at least 1"):
-                fetch_coco_val2017(tmp_path, n_images=n_images)
+
+        with pytest.raises(ValueError) as exc_info:
+            fetch_coco_val2017(tmp_path, n_images=n_images)
+
+        assert "at least 1" in str(exc_info.value)
         download.assert_not_called()
 
     @pytest.mark.parametrize("file_name", ["../evil.jpg", "/abs/evil.jpg", "..", pytest.param("", id="empty")])
-    def test_file_name_outside_images_dir_is_refused(self, tmp_path: Path, file_name: str) -> None:
+    def test_file_name_outside_images_dir_is_refused(self, tmp_path: Path, file_name: str, download: Mock) -> None:
         """A ``file_name`` that is not a bare name inside ``val2017/`` raises before anything is downloaded.
 
         The annotation file travels over plain HTTP, so its ``file_name`` is untrusted: a ``../`` component or an
@@ -267,12 +319,14 @@ class TestFetchCocoVal2017:
         """
         subset = _write_coco(tmp_path)
         _set_image_field(subset.annotations_path, 2, "file_name", file_name)
-        with mock.patch("rfdetr.export._benchmark._download") as download:
-            with pytest.raises(ValueError, match="Refusing COCO image file name"):
-                fetch_coco_val2017(tmp_path, n_images=None)
+
+        with pytest.raises(ValueError) as exc_info:
+            fetch_coco_val2017(tmp_path, n_images=None)
+
+        assert "Refusing COCO image file name" in str(exc_info.value)
         download.assert_not_called()
 
-    def test_image_url_ignores_the_annotation_coco_url(self, tmp_path: Path) -> None:
+    def test_image_url_ignores_the_annotation_coco_url(self, tmp_path: Path, download: Mock) -> None:
         """Each image is fetched from the fixed val2017 host, never from the record's own ``coco_url``.
 
         A tampered ``coco_url`` (``file://``, another host) would otherwise turn the fetch into a local-file copy or a
@@ -281,13 +335,14 @@ class TestFetchCocoVal2017:
         subset = _write_coco(tmp_path)
         _set_image_field(subset.annotations_path, 2, "coco_url", "file:///etc/passwd")
         (tmp_path / "val2017" / "000000000002.jpg").unlink()
-        with mock.patch("rfdetr.export._benchmark._download") as download:
-            fetch_coco_val2017(tmp_path, n_images=None)
+
+        fetch_coco_val2017(tmp_path, n_images=None)
+
         download.assert_called_once_with(
             "http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "val2017" / "000000000002.jpg"
         )
 
-    def test_missing_annotations_use_the_shared_zip_downloader(self, tmp_path: Path) -> None:
+    def test_missing_annotations_use_the_shared_zip_downloader(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """Without ``instances_val2017.json`` the annotation archive goes through the shared retrying zip downloader.
 
         That downloader rejects truncated archives, guards extraction against path traversal, and serializes concurrent
@@ -296,13 +351,15 @@ class TestFetchCocoVal2017:
         subset = _write_coco(tmp_path)
         annotations = subset.annotations_path.read_text()
         subset.annotations_path.unlink()
-        with mock.patch(
+        download_and_extract = mocker.patch(
             "rfdetr.datasets._develop._download_and_extract",
             side_effect=lambda *args, **kwargs: subset.annotations_path.write_text(annotations),
-        ) as download_and_extract:
-            fetch_coco_val2017(tmp_path, n_images=None)
+        )
+
+        fetch_coco_val2017(tmp_path, n_images=None)
+
         download_and_extract.assert_called_once_with(
-            "http://images.cocodataset.org/annotations/annotations_trainval2017.zip", tmp_path, is_complete=mock.ANY
+            "http://images.cocodataset.org/annotations/annotations_trainval2017.zip", tmp_path, is_complete=ANY
         )
         assert download_and_extract.call_args.kwargs["is_complete"]() is True
 
@@ -310,70 +367,64 @@ class TestFetchCocoVal2017:
 class TestDownload:
     """``_download`` puts a file at its destination only once the whole body has arrived."""
 
-    def test_truncated_transfer_leaves_no_file(self, tmp_path: Path) -> None:
+    def test_truncated_transfer_leaves_no_file(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A body shorter than ``Content-Length`` raises and leaves neither the image nor its ``.part`` behind.
 
         ``fetch_coco_val2017`` treats any file at the destination as already downloaded, so a truncated image that
         survived on disk would never be re-fetched; with nothing left behind, the next run fetches it again.
         """
         dest = tmp_path / "val2017" / "000000000002.jpg"
-        with mock.patch("rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"abc", content_length=100)):
-            with pytest.raises(OSError, match="Truncated download"):
-                _download("http://images.cocodataset.org/val2017/000000000002.jpg", dest)
+        mocker.patch("rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"abc", 100))
+
+        with pytest.raises(OSError) as exc_info:
+            _download("http://images.cocodataset.org/val2017/000000000002.jpg", dest)
+
+        assert "Truncated download" in str(exc_info.value)
         assert list(dest.parent.iterdir()) == []
 
-    def test_stale_part_file_is_replaced_by_the_complete_image(self, tmp_path: Path) -> None:
+    def test_stale_part_file_is_replaced_by_the_complete_image(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """A ``.part`` left by a killed run is overwritten, and the complete body lands at the destination.
 
         A process killed mid-transfer leaves only the ``.part`` sibling; the rerun must recover from it, not keep it.
         """
         dest = tmp_path / "000000000002.jpg"
         (tmp_path / "000000000002.jpg.part").write_bytes(b"stale")
-        with mock.patch(
-            "rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"jpeg-bytes", content_length=10)
-        ):
-            _download("http://images.cocodataset.org/val2017/000000000002.jpg", dest)
+        mocker.patch("rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"jpeg-bytes", 10))
+
+        _download("http://images.cocodataset.org/val2017/000000000002.jpg", dest)
+
         assert [(path.name, path.read_bytes()) for path in tmp_path.iterdir()] == [("000000000002.jpg", b"jpeg-bytes")]
 
-    def test_request_carries_a_timeout(self, tmp_path: Path) -> None:
+    def test_request_carries_a_timeout(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """Each request is opened with a socket timeout, so a stalled server fails the cell instead of hanging it."""
-        with mock.patch(
-            "rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"jpeg-bytes", content_length=10)
-        ) as urlopen:
-            _download("http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "000000000002.jpg")
+        urlopen = mocker.patch("rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"jpeg-bytes", 10))
+
+        _download("http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "000000000002.jpg")
+
         assert urlopen.call_args.kwargs["timeout"] > 0
 
 
 class TestEvaluateCocoMap:
     """``evaluate_coco_map`` scores one runtime's batch-1 outputs against COCO ground truth."""
 
-    def test_perfect_decoded_detections_score_one(self, tmp_path: Path) -> None:
-        """Already-decoded detections that equal the ground truth reach mAP 1.0 (the PyTorch ``predict()`` path)."""
-        result = evaluate_coco_map(_gt_detections, _write_coco(tmp_path), progress=False)
-        assert (result.map50_95, result.map50, result.n_images) == (
-            pytest.approx(1.0),
-            pytest.approx(1.0),
-            3,
-        )
+    @pytest.mark.parametrize(
+        "run",
+        [
+            pytest.param(_gt_detections, id="decoded-detections"),
+            pytest.param(_gt_raw_outputs, id="raw-outputs"),
+            pytest.param(_gt_raw_outputs_without_batch, id="raw-outputs-without-batch-axis"),
+        ],
+    )
+    def test_perfect_predictions_score_one(self, tmp_path: Path, run: Callable[..., object]) -> None:
+        """Predictions equal to the ground truth reach mAP 1.0 in every form a runtime can return them.
 
-    def test_perfect_raw_outputs_score_one(self, tmp_path: Path) -> None:
-        """Raw ``dets``/``labels`` decode with sparse COCO IDs, so category 90 is kept and the score is 1.0.
-
-        The default ``background_class_id=None`` matters: the decoder's own default (``-1``) would drop slot 90 and the
-        image whose only object is category 90 would score zero.
+        Decoded detections are the PyTorch ``predict()`` path. Raw ``dets``/``labels`` decode with sparse COCO IDs, so
+        category 90 is kept: the default ``background_class_id=None`` matters, since the decoder's own default (``-1``)
+        would drop slot 90 and score the image whose only object is category 90 as zero. Raw arrays with no batch axis
+        (``(queries, 4)`` / ``(queries, classes)``) score the same.
         """
-        result = evaluate_coco_map(_gt_raw_outputs, _write_coco(tmp_path), progress=False)
-        assert (result.map50_95, result.map50) == (pytest.approx(1.0), pytest.approx(1.0))
-
-    def test_raw_outputs_without_a_batch_axis_are_accepted(self, tmp_path: Path) -> None:
-        """A runtime returning ``(queries, 4)`` / ``(queries, classes)`` arrays, with no batch axis, scores the same."""
-
-        def run(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
-            boxes, logits = _gt_raw_outputs(image)
-            return boxes[0], logits[0]
-
         result = evaluate_coco_map(run, _write_coco(tmp_path), progress=False)
-        assert result.map50_95 == pytest.approx(1.0)
+        assert (result.map50_95, result.map50, result.n_images) == (pytest.approx(1.0), pytest.approx(1.0), 3)
 
     def test_background_class_id_is_forwarded_to_the_decoder(self, tmp_path: Path) -> None:
         """``background_class_id=-1`` reaches the decoder, which then drops slot 90 and misses that image's object."""
@@ -386,8 +437,10 @@ class TestEvaluateCocoMap:
         def run(image: Image.Image) -> sv.Detections:
             return sv.Detections(xyxy=np.array([[0.0, 0.0, 10.0, 10.0]], dtype=np.float32))
 
-        with pytest.raises(ValueError, match="confidence"):
+        with pytest.raises(ValueError) as exc_info:
             evaluate_coco_map(run, _write_coco(tmp_path), progress=False)
+
+        assert "confidence" in str(exc_info.value)
 
     def test_image_name_outside_images_dir_is_refused_before_the_runtime_runs(self, tmp_path: Path) -> None:
         """A tampered annotation file, or a hand-built subset, cannot make the scorer open a file outside ``val2017/``.
@@ -397,9 +450,11 @@ class TestEvaluateCocoMap:
         """
         subset = _write_coco(tmp_path)
         _set_image_field(subset.annotations_path, 1, "file_name", "../evil.jpg")
-        run = mock.Mock(side_effect=_gt_detections)
-        with pytest.raises(ValueError, match="Refusing COCO image file name"):
+        run = Mock(side_effect=_gt_detections)
+        with pytest.raises(ValueError) as exc_info:
             evaluate_coco_map(run, subset, progress=False)
+
+        assert "Refusing COCO image file name" in str(exc_info.value)
         run.assert_not_called()
 
     def test_summary_is_not_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -417,18 +472,19 @@ class TestEvaluateCocoMap:
         result = evaluate_coco_map(lambda image: sv.Detections.empty(), _write_coco(tmp_path), progress=False)
         assert (result.map50_95, result.map50) == (0.0, 0.0)
 
-    def test_no_detections_log_a_warning(self, tmp_path: Path) -> None:
+    def test_no_detections_log_a_warning(self, tmp_path: Path, logger: Mock) -> None:
         """An all-empty run reports 0.0 but says why: that is the symptom of collapsed reduced-precision logits."""
-        with mock.patch("rfdetr.export._benchmark.logger") as logger:
-            evaluate_coco_map(lambda image: sv.Detections.empty(), _write_coco(tmp_path), progress=False)
+        evaluate_coco_map(lambda image: sv.Detections.empty(), _write_coco(tmp_path), progress=False)
+
         logger.warning.assert_called_once()
         assert "no detections" in logger.warning.call_args.args[0]
 
-    def test_empty_subset_does_not_blame_the_runtime(self, tmp_path: Path) -> None:
+    def test_empty_subset_does_not_blame_the_runtime(self, tmp_path: Path, logger: Mock) -> None:
         """With no images to score nothing ran, so the collapsed-logits warning would be misleading."""
         subset = _write_coco(tmp_path)
         empty = CocoValSubset(subset.images_dir, subset.annotations_path, ())
-        with mock.patch("rfdetr.export._benchmark.logger") as logger:
-            result = evaluate_coco_map(_gt_detections, empty, progress=False)
+
+        result = evaluate_coco_map(_gt_detections, empty, progress=False)
+
         assert (result.map50_95, result.n_images) == (0.0, 0)
         logger.warning.assert_not_called()

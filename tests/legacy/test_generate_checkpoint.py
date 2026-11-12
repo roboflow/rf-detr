@@ -18,7 +18,7 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -247,7 +247,7 @@ class TestGetPatchSize:
 class TestBuildModel:
     """Unit tests for _build_model — instantiates rfdetr model with fallback."""
 
-    def test_falls_through_to_rfdetr_base_when_preferred_missing(self) -> None:
+    def test_falls_through_to_rfdetr_base_when_preferred_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Falls back to RFDETRBase when the preferred class is absent.
 
         Simulates a release that ships RFDETRBase but not the caller's preferred class (e.g. RFDETRSmall added later).
@@ -257,41 +257,51 @@ class TestBuildModel:
         mock_base = MagicMock(return_value=fake_instance)
         fake_rfdetr.RFDETRBase = mock_base  # type: ignore[attr-defined]
 
-        with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
-            result = _build_model("NonExistentClass", num_classes=2, device="cpu")
+        monkeypatch.setitem(sys.modules, "rfdetr", fake_rfdetr)
+
+        result = _build_model("NonExistentClass", num_classes=2, device="cpu")
 
         mock_base.assert_called_once_with(pretrain_weights=None, num_classes=2, device="cpu")
         assert result is fake_instance
 
-    def test_raises_when_all_candidate_classes_missing(self) -> None:
+    def test_raises_when_all_candidate_classes_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RuntimeError when neither preferred class, RFDETRBase, nor RFDETR available."""
         fake_rfdetr = types.ModuleType("rfdetr")
 
-        with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
-            with pytest.raises(RuntimeError, match="Could not instantiate"):
-                _build_model("NonExistentClass", num_classes=2, device="cpu")
+        monkeypatch.setitem(sys.modules, "rfdetr", fake_rfdetr)
 
-    def test_raises_transient_fetch_error_when_every_candidate_fails_with_network_error(self) -> None:
+        with pytest.raises(RuntimeError) as exc_info:
+            _build_model("NonExistentClass", num_classes=2, device="cpu")
+
+        assert "Could not instantiate" in str(exc_info.value)
+
+    def test_raises_transient_fetch_error_when_every_candidate_fails_with_network_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """TransientFetchError (not plain RuntimeError) when every candidate fails on a network-shaped error."""
         fake_rfdetr = types.ModuleType("rfdetr")
         fake_rfdetr.RFDETRSmall = MagicMock(side_effect=requests.exceptions.ConnectionError("refused"))  # type: ignore[attr-defined]
         fake_rfdetr.RFDETRBase = MagicMock(side_effect=TimeoutError("timed out"))  # type: ignore[attr-defined]
         fake_rfdetr.RFDETR = MagicMock(side_effect=requests.exceptions.Timeout("slow"))  # type: ignore[attr-defined]
 
-        with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
-            with pytest.raises(TransientFetchError):
-                _build_model("RFDETRSmall", num_classes=2, device="cpu")
+        monkeypatch.setitem(sys.modules, "rfdetr", fake_rfdetr)
 
-    def test_raises_plain_runtime_error_when_a_candidate_fails_with_non_network_error(self) -> None:
+        with pytest.raises(TransientFetchError):
+            _build_model("RFDETRSmall", num_classes=2, device="cpu")
+
+    def test_raises_plain_runtime_error_when_a_candidate_fails_with_non_network_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Plain RuntimeError (not TransientFetchError) when at least one failure is not network-shaped."""
         fake_rfdetr = types.ModuleType("rfdetr")
         fake_rfdetr.RFDETRSmall = MagicMock(side_effect=requests.exceptions.ConnectionError("refused"))  # type: ignore[attr-defined]
         fake_rfdetr.RFDETRBase = MagicMock(side_effect=ValueError("bad config"))  # type: ignore[attr-defined]
         fake_rfdetr.RFDETR = MagicMock(side_effect=requests.exceptions.Timeout("slow"))  # type: ignore[attr-defined]
 
-        with patch.dict(sys.modules, {"rfdetr": fake_rfdetr}):
-            with pytest.raises(RuntimeError) as exc_info:
-                _build_model("RFDETRSmall", num_classes=2, device="cpu")
+        monkeypatch.setitem(sys.modules, "rfdetr", fake_rfdetr)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _build_model("RFDETRSmall", num_classes=2, device="cpu")
 
         assert not isinstance(exc_info.value, TransientFetchError)
 

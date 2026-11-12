@@ -8,27 +8,26 @@
 import pathlib
 import re
 
+import pytest
+
+
+@pytest.fixture
+def entry_point() -> str:
+    """Return the rfdetr console_scripts value from pyproject.toml."""
+    root = pathlib.Path(__file__).parent.parent.parent
+    content = (root / "pyproject.toml").read_text()
+    m = re.search(r"\[project\.scripts\].*?rfdetr\s*=\s*\"([^\"]+)\"", content, re.DOTALL)
+    assert m, "rfdetr entry not found in [project.scripts]"
+    return m.group(1)
+
 
 class TestEntryPoint:
     """[project.scripts] in pyproject.toml uses the correct CLI entry point."""
 
-    @staticmethod
-    def _read_entry_point() -> str:
-        """Return the rfdetr console_scripts value from pyproject.toml.
+    def test_is_cli_main(self, entry_point: str) -> None:
+        """The rfdetr console script points at rfdetr.cli:main."""
+        assert entry_point == "rfdetr.cli:main"
 
-        >>> TestEntryPoint._read_entry_point()
-        'rfdetr.cli:main'
-        """
-        root = pathlib.Path(__file__).parent.parent.parent
-        content = (root / "pyproject.toml").read_text()
-        m = re.search(r"\[project\.scripts\].*?rfdetr\s*=\s*\"([^\"]+)\"", content, re.DOTALL)
-        assert m, "rfdetr entry not found in [project.scripts]"
-        return m.group(1)
-
-    def test_entry_point_value(self):
-        """Rfdetr entry point must be rfdetr.cli:main."""
-        assert self._read_entry_point() == "rfdetr.cli:main"
-
-    def test_entry_point_not_legacy(self):
-        """Entry point must no longer reference rfdetr.cli.main:trainer."""
-        assert self._read_entry_point() != "rfdetr.cli.main:trainer"
+    def test_is_not_legacy_trainer(self, entry_point: str) -> None:
+        """The rfdetr console script no longer references rfdetr.cli.main:trainer."""
+        assert entry_point != "rfdetr.cli.main:trainer"

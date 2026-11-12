@@ -6,9 +6,9 @@
 """Shared test helpers for the inference test suite.
 
 Plain classes and functions (not pytest fixtures) shared across multiple test modules to avoid verbatim duplication.
-Import with a relative import::
+Import with an absolute import::
 
-    from .helpers import _BaseFakeRFDETR, _DummyModel, _DummyRFDETR
+    from tests.inference.helpers import _BaseFakeRFDETR, _DummyModel, _DummyRFDETR
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 from collections.abc import Callable
 from itertools import chain, repeat
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -35,11 +36,11 @@ _requires_opencv = pytest.mark.skipif(not _IS_OPENCV_INSTALLED, reason="requires
 class _BaseFakeRFDETR(RFDETR):
     """RFDETR test double that skips weight downloads and returns a minimal model config.
 
-    Subclasses must override ``get_model`` to supply the model context appropriate for
-    the scenario under test.
+    Subclasses must override ``get_model`` to supply the model context appropriate for the scenario under test.
 
     Examples:
-        This class is imported directly by test modules that need a weight-free RFDETR.
+        >>> issubclass(_BaseFakeRFDETR, RFDETR)
+        True
     """
 
     def maybe_download_pretrain_weights(self) -> None:
@@ -78,12 +79,7 @@ def _scripted_capture(script: list[tuple[bool, Any] | BaseException]) -> MagicMo
     entries = chain(script, repeat((False, None)))
 
     def advance() -> tuple[bool, Any]:
-        """Return the next scripted decoder result.
-
-        Examples:
-            >>> _scripted_capture([(True, 1)]).read()  # doctest: +SKIP
-            # Bound to the enclosing script; exercised through the capture above.
-        """
+        """Return the next scripted decoder result, raising an exception entry in place."""
         entry = next(entries)
         if isinstance(entry, BaseException):
             raise entry
@@ -200,7 +196,7 @@ class _DummyModel:
         return results
 
 
-class _DummyRFDETR(RFDETR):
+class _DummyRFDETR(_BaseFakeRFDETR):
     """Weight-free RFDETR that delegates to ``_DummyModel`` for all inference.
 
     Examples:
@@ -208,14 +204,6 @@ class _DummyRFDETR(RFDETR):
         >>> isinstance(m.model, _DummyModel)
         True
     """
-
-    def maybe_download_pretrain_weights(self) -> None:
-        """Skip weight download in tests."""
-        return None
-
-    def get_model_config(self, **kwargs: object) -> SimpleNamespace:
-        """Return a minimal namespace with just ``num_channels``."""
-        return SimpleNamespace(num_channels=3)
 
     def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _DummyModel:
         """Return a fresh ``_DummyModel`` instance."""
@@ -254,7 +242,15 @@ def _png_bytes(size: tuple[int, int] = (28, 28)) -> bytes:
 
 
 class _FakeResponse:
-    """Minimal stand-in for ``requests.Response`` used by ``predict()`` URL tests."""
+    """Minimal stand-in for ``requests.Response`` used by ``predict()`` URL tests.
+
+    Examples:
+        >>> _FakeResponse(b"ok").raise_for_status() is None
+        True
+        >>> _FakeResponse(status_code=404).raise_for_status()  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        HTTPError: 404 Client Error
+    """
 
     def __init__(self, content: bytes = b"", status_code: int = 200) -> None:
         """Store the response body and status code."""
@@ -265,3 +261,40 @@ class _FakeResponse:
         """Raise ``requests.HTTPError`` for 4xx/5xx status codes, mirroring requests."""
         if self.status_code >= 400:
             raise requests.HTTPError(f"{self.status_code} Client Error")
+
+
+def _source_pixels(results: object) -> list[list[int]]:
+    """Return the first source-image pixel of every prediction, in result order.
+
+    Args:
+        results: The list a non-streamed ``predict`` call returns for an expanded source.
+
+    Returns:
+        One ``[r, g, b]`` triple per prediction.
+
+    Examples:
+        >>> import numpy as np
+        >>> import supervision as sv
+        >>> detections = sv.Detections.empty()
+        >>> detections.metadata["source_image"] = np.full((2, 2, 3), (1, 2, 3), dtype=np.uint8)
+        >>> _source_pixels([detections])
+        [[1, 2, 3]]
+    """
+    assert isinstance(results, list)
+    return [result.metadata["source_image"][0, 0].tolist() for result in results]
+
+
+def _image_dir(root: Path, count: int = 10) -> Path:
+    """Write ``count`` small PNG files into ``root / "images"`` and return that directory.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     len(list(_image_dir(Path(directory), 2).iterdir()))
+        2
+    """
+    images = root / "images"
+    images.mkdir()
+    for index in range(count):
+        PIL.Image.new("RGB", (16, 12), (index, 0, 0)).save(images / f"{index:02d}.png")
+    return images

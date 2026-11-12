@@ -20,8 +20,10 @@ from rfdetr.utilities import imports as utilities_imports
 
 _PYPROJECT_TEXT = Path(__file__).resolve().parents[2].joinpath("pyproject.toml").read_text(encoding="utf-8")
 
-#: Probed packages that no pyproject extra declares, because users or CI install them by hand.
-_UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer"})
+#: Probed packages that no pyproject extra declares: users or CI install them by hand, or (``huggingface_hub`` and
+#: ``safetensors``) they arrive through ``peft`` in the ``train`` and ``lora`` extras and gate the DINOv2 hub weight
+#: tests.
+_UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer", "huggingface_hub", "safetensors"})
 
 #: Probed import names whose distribution is spelled differently, so pyproject.toml declares the distribution.
 _DISTRIBUTION_NAMES = {"cv2": "opencv-python"}
@@ -94,7 +96,7 @@ class TestInstallFlags:
         A flag built another way (a different helper, a computed name) would escape the package-name check below, so the
         set of flags and the set of literal probes must be the same.
         """
-        flags = {name for name in vars(module) if re.fullmatch(r"_IS_[A-Z0-9_]+_INSTALLED", name)}
+        flags = {name for name in vars(module) if name.startswith("_IS_") and name.endswith("_INSTALLED")}
 
         assert flags == set(_probed_packages(module))
 

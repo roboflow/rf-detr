@@ -6,7 +6,6 @@
 """Tests for best-metric tracking in ``rfdetr.training.model_ema``."""
 
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -34,19 +33,22 @@ class TestBestMetricSingle:
     )
     def test_rejects_invalid_better(self, better: object) -> None:
         """An unknown ``better`` value is rejected at construction."""
-        with pytest.raises(ValueError, match="'better' must be 'large' or 'small'"):
+        with pytest.raises(ValueError) as exc_info:
             BestMetricSingle(better=better)  # type: ignore[arg-type]
+        assert "'better' must be 'large' or 'small'" in str(exc_info.value)
 
     @pytest.mark.parametrize("better", ["invalid", 1])
     def test_error_message_names_offending_value(self, better: object) -> None:
         """The ``ValueError`` message shows the rejected value."""
-        with pytest.raises(ValueError, match=re.escape(f"got {better!r}")):
+        with pytest.raises(ValueError) as exc_info:
             BestMetricSingle(better=better)  # type: ignore[arg-type]
+        assert f"got {better!r}" in str(exc_info.value)
 
     def test_holder_rejects_invalid_better(self) -> None:
         """``BestMetricHolder`` passes ``better`` through and rejects it too."""
-        with pytest.raises(ValueError, match="'better' must be 'large' or 'small'"):
+        with pytest.raises(ValueError) as exc_info:
             BestMetricHolder(better="invalid")  # type: ignore[arg-type]
+        assert "'better' must be 'large' or 'small'" in str(exc_info.value)
 
     def test_rejects_invalid_better_under_optimized_mode(self) -> None:
         """The check must not rely on ``assert``, which ``python -O`` strips."""

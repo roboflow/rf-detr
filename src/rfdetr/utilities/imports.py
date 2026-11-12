@@ -30,6 +30,10 @@ _IS_PYTORCH_LIGHTNING_INSTALLED = is_installed("pytorch_lightning")
 _IS_PYTORCH_OPTIMIZER_INSTALLED = is_installed("pytorch_optimizer")
 #: Whether the optional PEFT package is installed.
 _IS_PEFT_INSTALLED = is_installed("peft")
+#: Whether the Hugging Face Hub client is installed (downloads the DINOv2 backbone weights).
+_IS_HUGGINGFACE_HUB_INSTALLED = is_installed("huggingface_hub")
+#: Whether the safetensors package is installed (reads the DINOv2 backbone weight files).
+_IS_SAFETENSORS_INSTALLED = is_installed("safetensors")
 
 #: Whether the optional Kornia package is installed.
 _IS_KORNIA_INSTALLED = is_installed("kornia")

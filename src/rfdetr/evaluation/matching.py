@@ -66,7 +66,7 @@ _MASK_IOU_CHUNK: int = 32
 def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
     """Sum each mask's true pixels, ``_MASK_IOU_CHUNK`` rows at a time.
 
-    Matches ``masks.bool().view(-1, hw).float().sum(dim=1, keepdim=True)`` row for row: a row's sum
+    Matches ``masks.bool().reshape(-1, hw).float().sum(dim=1, keepdim=True)`` row for row: a row's sum
     only reads that row's own pixels, so batching rows into chunks changes neither the per-row
     floating-point reduction nor its result — only how many rows are converted to float32 at once.
 
@@ -79,7 +79,7 @@ def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
     """
     count = masks.shape[0]
     chunks = [
-        masks[start : start + _MASK_IOU_CHUNK].bool().view(-1, hw).float().sum(dim=1, keepdim=True)
+        masks[start : start + _MASK_IOU_CHUNK].bool().reshape(-1, hw).float().sum(dim=1, keepdim=True)
         for start in range(0, count, _MASK_IOU_CHUNK)
     ]
     if not chunks:
@@ -117,6 +117,7 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """Compute pairwise boolean-mask IoU between N predictions and M ground truths.
 
     Both predictions and ground truths are converted to float32 ``_MASK_IOU_CHUNK`` rows at a time.
+    Reshaping a noncontiguous mask can require a copy, bounded here to a single chunk.
     When mask grids differ, ground truths are also resized one chunk at a time before conversion. At
     most one prediction chunk and one ground-truth chunk are resident as float32 [chunk, H*W] tensors,
     bounding that allocation to ``_MASK_IOU_CHUNK x H x W`` on each side instead of ``N x H x W`` and
@@ -152,13 +153,13 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
 
     iou_rows: list[Tensor] = []
     for pstart in range(0, n, _MASK_IOU_CHUNK):
-        pred_chunk = pred_masks[pstart : pstart + _MASK_IOU_CHUNK].bool().view(-1, hw).float()  # [c, HW]
+        pred_chunk = pred_masks[pstart : pstart + _MASK_IOU_CHUNK].bool().reshape(-1, hw).float()  # [c, HW]
         inter_blocks = []
         for gstart in range(0, m, _MASK_IOU_CHUNK):
             gt_chunk = gt_masks[gstart : gstart + _MASK_IOU_CHUNK]
             if resize_ground_truths:
                 gt_chunk = resize_masks_nearest(gt_chunk, mask_size)
-            gt_flat = gt_chunk.bool().view(-1, hw).float()
+            gt_flat = gt_chunk.bool().reshape(-1, hw).float()
             inter_blocks.append(torch.mm(pred_chunk, gt_flat.t()))  # each block [c, g]
         inter = (
             torch.cat(inter_blocks, dim=1)
