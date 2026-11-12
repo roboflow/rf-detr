@@ -36,6 +36,8 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ![Object detection accuracy vs latency on COCO and RF100-VL: RF-DETR against YOLO11, YOLO26, LW-DETR and D-FINE](../assets/benchmark-detection.svg)
 
+<!-- COPIES: the COCO AP50:95 values of the Detection, Segmentation and Keypoints tables are repeated in SAB_REFERENCE in docs/cookbooks/coco-accuracy.ipynb. Update both together. -->
+
 | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: | :--------: |
 |  RF-DETR-A   |         49.4         |          30.5           |          78.2           |            48.3            |     1.0      |    7.4     |  380x380   |  PML 1.0   |
@@ -118,3 +120,7 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 |       YOLO26-pose X        |          71.0           |     9.8      |    57.6    |  AGPL-3.0  |
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
+
+## Reproduce the COCO Accuracy
+
+The tables above come from SAB on an NVIDIA T4 with TensorRT 10.4 in FP16, using the same artifact for accuracy and latency, except for the author-reported rows marked †. The [COCO accuracy cookbook](../../cookbooks/coco-accuracy/) rescores every pretrained checkpoint on all 5000 val2017 images through `RFDETRInference.predict` at a 0.001 score floor, batch 1 and default preprocessing, as eager PyTorch FP32 on any device and as static TensorRT FP16 and INT8 engines on a CUDA GPU. Its last cell prints a Markdown table with the difference to the values above. Small differences are expected because the harness, runtime and preprocessing differ. Plus models need `rfdetr[plus]` and `ACCEPT_PLATFORM_MODEL_LICENSE = True` in the notebook.
