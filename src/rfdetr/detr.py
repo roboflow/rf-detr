@@ -2173,8 +2173,8 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
-                the converted OpenVINO IR already accepts any batch size.
+                Also refused for ``format="openvino"``: the IR has a fixed input shape; export one model
+                per batch size instead.
                 Also refused for ``format="tflite"``: ``onnx2tf`` fails on the dynamic-batch graph (an ``Add``
                 against the dynamic-shaped encoder input reports mismatched dimensions) — export one ``.tflite``
                 per batch size instead. Also unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed

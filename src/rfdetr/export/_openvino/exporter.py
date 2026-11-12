@@ -131,7 +131,7 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     }
     format = "openvino"
     display_name = "OpenVINO"
-    dynamic_batch_reason = "(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size)."
+    dynamic_batch_reason = "(the IR bakes a fixed input shape). Export one model per batch size instead."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
@@ -298,7 +298,7 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         convert_model, save_model = converters
         try:
             with torch.no_grad():
-                ov_model = convert_model(wrapped_model, example_input=input_tensors)
+                ov_model = convert_model(wrapped_model, input=list(input_tensors.shape), example_input=input_tensors)
             if self.config.quantization == "int8":
                 _, channels, height, width = input_tensors.shape
                 ov_model = quantize_int8(
