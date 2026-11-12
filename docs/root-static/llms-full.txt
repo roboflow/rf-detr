@@ -101,8 +101,6 @@ key_points = model.predict("image.jpg", threshold=0.5)
 
 Keypoint detection is a preview feature. The model is pretrained on COCO person keypoints and predicts 17 body keypoints per detected person, in addition to bounding boxes. Accuracy is reported as OKS-based AP50:95, the standard COCO keypoint metric.
 
-The keypoint model is available in the `rfdetr` package only; it is not yet available via the `inference` package.
-
 ---
 
 ## Train a Custom Model

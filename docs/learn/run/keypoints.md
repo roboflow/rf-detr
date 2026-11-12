@@ -22,8 +22,6 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 | :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
 | Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |    40.7    |  576x576   | Apache 2.0 |
 
-> The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
-
 > Benchmark evaluated on COCO val2017 person keypoints (AP<sub>50:95</sub>) with the standard COCO 17-keypoint OKS sigmas; latency on NVIDIA T4, TensorRT FP16, batch size 1.
 
 --8<-- "docs/snippets/license-yolo-note.md"
