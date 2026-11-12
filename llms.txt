@@ -10,7 +10,7 @@
 - Canonical docs: https://rfdetr.roboflow.com/
 - Source repository: https://github.com/roboflow/rf-detr
 - Paper: https://arxiv.org/abs/2511.09554
-- Runtime: Python 3.10+, torch >=2.2.0, torchvision >=0.17.0
+- Runtime: Python 3.10+, torch >=2.2.0, torchvision >=0.17.0, transformers >=5.1.0 and <6.0.0
 - Tasks: object detection, instance segmentation, and keypoint detection (preview)
 - Backbone: DINOv2 vision transformer
 - Dataset formats: COCO JSON and YOLO
