@@ -423,12 +423,12 @@ def _build_yolo_samples(
                         continue
                     if include_keypoints:
                         cid, xyxy_px, keypoints_px = _parse_yolo_pose_label_line(
-                            values,
-                            line_num,
-                            label_path,
-                            len(classes),
-                            width,
-                            height,
+                            values=values,
+                            line_num=line_num,
+                            label_path=label_path,
+                            num_classes=len(classes),
+                            width=width,
+                            height=height,
                             num_keypoints=num_keypoints,
                             keypoint_dim=keypoint_dim,
                         )
@@ -436,12 +436,12 @@ def _build_yolo_samples(
                         keypoints.append(keypoints_px)
                     else:
                         cid, xyxy_px, polygon_px = _parse_yolo_label_line(
-                            values,
-                            line_num,
-                            label_path,
-                            len(classes),
-                            width,
-                            height,
+                            values=values,
+                            line_num=line_num,
+                            label_path=label_path,
+                            num_classes=len(classes),
+                            width=width,
+                            height=height,
                             parse_polygons=include_polygons,
                         )
                     class_id.append(cid)
