@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-05T16:07:06">
+  <meta property="article:modified_time" content="2026-11-12T14:23:34">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-05T16:07:06",
+    "dateModified": "2026-11-12T14:23:34",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3460,7 +3460,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="predict-images">Predict images<a class="headerlink" href="#predict-images" title="Permanent link">&para;</a></h2>
 <p><code>predict()</code> accepts a file path (<code>str</code> or <code>os.PathLike[str]</code>), an HTTP(S) URL string, a PIL image, a NumPy array, a PyTorch tensor, or a list or tuple of these inputs. A list or tuple is one batch and returns one result per image. The runtime receives that batch in one execution; the API does not split or pad it. Each item must meet the source's channel, shape, and batch constraints.</p>
 <p>HTTP(S) URL strings are downloaded with <code>requests</code> using a 30-second connect and read timeout, which does not bound the total download time. Redirects are followed, and the whole response body is read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted URLs, download and validate the image yourself and pass the decoded image instead.</p>
-<p>PIL images and files are converted to the model's expected channels. For a one-channel model, a single-channel PIL image or file is converted to grayscale (<code>L</code>); for three-channel models, non-RGB PIL images are converted to RGB. NumPy arrays retain their supplied layout: use <code>(H, W)</code> or <code>(H, W, 1)</code> for one channel and <code>(H, W, 3)</code> for RGB. Tensor inputs use channel-first <code>(C, H, W)</code> and must already have the model's channel count. Floating-point arrays and all tensor inputs must have pixel values in <code>[0, 1]</code>; PIL images and <code>uint8</code> NumPy arrays use <code>[0, 255]</code>. Tensors are image pixels before mean/std normalization, not already-preprocessed runtime batches.</p>
+<p>PIL images and files are converted to the model's expected channels. For a one-channel model, a single-channel PIL image or file is converted to grayscale (<code>L</code>); for three-channel models, non-RGB PIL images are converted to RGB. NumPy arrays retain their supplied layout: use <code>(H, W)</code> or <code>(H, W, 1)</code> for one channel and <code>(H, W, 3)</code> for RGB. Tensor inputs use channel-first <code>(C, H, W)</code> and must already have the model's channel count. Floating-point arrays and all tensor inputs must have pixel values in <code>[0, 1]</code>, and a NaN is rejected with the same range error before the forward pass; PIL images and <code>uint8</code> NumPy arrays use <code>[0, 255]</code>. Tensors are image pixels before mean/std normalization, not already-preprocessed runtime batches.</p>
 <p>With <code>include_source_image=True</code> (the default), predictions retain a writable <code>uint8</code> source image: single-channel PIL/file inputs converted to <code>L</code> use <code>(H, W)</code>, NumPy arrays keep <code>(H, W)</code> or <code>(H, W, 1)</code>, and single-channel tensor inputs become <code>(H, W, 1)</code> after conversion from channel-first layout. RGB source images use <code>(H, W, 3)</code>. <code>source_image</code> is stored in <code>Detections.metadata</code>; <code>KeyPoints</code> stores it per object in <code>data</code>. Convert grayscale to RGB explicitly before passing it to annotation code that expects three-channel color:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
@@ -3545,7 +3545,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 12, 2026 14:23:34 UTC">2026-11-12 14:23:34</span>
   </span>
 
     

@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-09T21:38:21">
+  <meta property="article:modified_time" content="2026-11-12T14:23:34">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-09T21:38:21",
+    "dateModified": "2026-11-12T14:23:34",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3882,7 +3882,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>epochs</code></td>
 <td><code>int</code></td>
 <td><code>100</code></td>
-<td>Number of full passes over the training dataset.</td>
+<td>Number of full passes over the training dataset. Must be at least 1.</td>
 </tr>
 <tr>
 <td><code>batch_size</code></td>
@@ -4136,7 +4136,19 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>use_ema</code></td>
 <td><code>bool</code></td>
 <td><code>True</code></td>
-<td>Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.</td>
+<td>Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance. See <code>ema_decay</code> for the averaging coefficient.</td>
+</tr>
+<tr>
+<td><code>ema_decay</code></td>
+<td><code>float</code></td>
+<td><code>0.993</code></td>
+<td>Base EMA decay coefficient; the effective coefficient warms up according to <code>ema_tau</code>. Must be in <code>[0, 1]</code>. Only used when <code>use_ema=True</code>.</td>
+</tr>
+<tr>
+<td><code>ema_tau</code></td>
+<td><code>int</code></td>
+<td><code>100</code></td>
+<td>Warm-up time constant in EMA updates. Set to 0 or less to use <code>ema_decay</code> directly. Only used when <code>use_ema=True</code>.</td>
 </tr>
 <tr>
 <td><code>eval_base_model</code></td>
@@ -4152,6 +4164,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
+<p>The first EMA update copies the model weights. For subsequent EMA updates, the effective decay is <code>ema_decay * (1 - exp(-updates / ema_tau))</code> when <code>ema_tau &gt; 0</code>, where <code>updates</code> counts EMA updates including that first copy. The update is <code>effective_decay * ema + (1 - effective_decay) * weight</code>. When <code>ema_tau &lt;= 0</code>, the effective decay is <code>ema_decay</code>. EMA updates occur every <code>ema_update_interval</code> optimizer steps, which defaults to 1.</p>
 <div class="admonition info">
 <p class="admonition-title">What is EMA?</p>
 <p>EMA maintains a moving average of the model weights throughout training. This smoothed version often generalizes better than the raw weights and is commonly used for the final model.</p>
@@ -4536,13 +4549,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>warmup_epochs</code></td>
 <td><code>float</code></td>
 <td><code>0.0</code></td>
-<td>Epochs of linear LR warmup. For explicit schedulers this prepends a <code>SequentialLR</code> warmup ramp (skipped for <code>ReduceLROnPlateau</code>).</td>
+<td>Epochs of linear LR warmup; must not be negative. For explicit schedulers this prepends a <code>SequentialLR</code> warmup ramp (skipped for <code>ReduceLROnPlateau</code>).</td>
 </tr>
 <tr>
 <td><code>drop_path</code></td>
 <td><code>float</code></td>
 <td><code>0.0</code></td>
-<td>Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.</td>
+<td>Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization. Must be in <code>[0, 1)</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -4668,7 +4681,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>epochs</code></td>
 <td>int</td>
 <td>100</td>
-<td>Number of full passes over the dataset.</td>
+<td>Number of full passes over the dataset; at least 1.</td>
 </tr>
 <tr>
 <td><code>batch_size</code></td>
@@ -4723,6 +4736,18 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>bool</td>
 <td>True</td>
 <td>Enable Exponential Moving Average of weights.</td>
+</tr>
+<tr>
+<td><code>ema_decay</code></td>
+<td><code>float</code></td>
+<td><code>0.993</code></td>
+<td>Base EMA decay coefficient; the effective coefficient warms up according to <code>ema_tau</code>. Must be in <code>[0, 1]</code>. Only used when <code>use_ema=True</code>.</td>
+</tr>
+<tr>
+<td><code>ema_tau</code></td>
+<td>int</td>
+<td>100</td>
+<td>EMA warm-up time constant in EMA updates; 0 or less uses <code>ema_decay</code> directly.</td>
 </tr>
 <tr>
 <td><code>compile</code></td>
@@ -4896,13 +4921,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>warmup_epochs</code></td>
 <td>float</td>
 <td>0.0</td>
-<td>Number of linear warmup epochs at the start of training.</td>
+<td>Number of linear warmup epochs at the start of training; must not be negative.</td>
 </tr>
 <tr>
 <td><code>drop_path</code></td>
 <td>float</td>
 <td>0.0</td>
-<td>Stochastic depth drop-path rate for the backbone.</td>
+<td>Stochastic depth drop-path rate for the backbone; in <code>[0, 1)</code>.</td>
 </tr>
 <tr>
 <td><code>compute_val_loss</code></td>
@@ -4980,7 +5005,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 9, 2026 21:38:21 UTC">2026-10-09 21:38:21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 12, 2026 14:23:34 UTC">2026-11-12 14:23:34</span>
   </span>
 
     
