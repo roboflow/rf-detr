@@ -598,6 +598,41 @@ class TestTrainConfigT42PromotedFields:
         """The inclusive bounds remain valid for epochs and EMA decay."""
         assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("drop_path", 1.0),
+            ("drop_path", 1.5),
+            ("drop_path", -0.1),
+            ("warmup_epochs", -1.0),
+        ],
+    )
+    def test_drop_path_and_warmup_fields_reject_out_of_range_values(
+        self, tmp_path: Path, field: str, value: float
+    ) -> None:
+        """``drop_path`` must be in [0, 1) and ``warmup_epochs`` >= 0.
+
+        ``drop_path=1.0`` divides by a zero keep probability and makes every drop-path layer return NaN, a value outside
+        [0, 1) rescales the residual branch by a wrong or negative keep probability, and a negative ``warmup_epochs``
+        starts the managed LR schedule part-way through its decay. None of them raised an error.
+        """
+        with pytest.raises(ValidationError, match=field):
+            _make_train_config(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("drop_path", 0.0),
+            ("drop_path", 0.3),
+            ("drop_path", 0.999),
+            ("warmup_epochs", 0.0),
+            ("warmup_epochs", 0.5),
+        ],
+    )
+    def test_drop_path_and_warmup_fields_accept_valid_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """The valid range stays accepted, including fractional warmup and zero for both fields."""
+        assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
+
     def test_batch_size_auto_is_accepted(self, tmp_path):
         """batch_size accepts the special 'auto' value."""
         tc = _make_train_config(tmp_path, batch_size="auto")

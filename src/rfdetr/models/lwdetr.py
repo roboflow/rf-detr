@@ -830,7 +830,8 @@ class LWDETR(nn.Module):
                 self._drop_path_layers_warned = True
             return
         n = min(vit_encoder_num_layers, len(layers))
-        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n)]
+        # Float32 can round an accepted rate just below one to one, causing division by zero in drop path.
+        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n, dtype=torch.float64)]
         for i in range(n):
             if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
                 layers[i].drop_path.drop_prob = dp_rates[i]  # type: ignore[union-attr]

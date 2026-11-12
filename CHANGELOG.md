@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `RFDETRInference.predict()` without `batch` now predicts a directory, glob or recorded video in batches of the fixed batch size of a predictor from `RFDETR.inference(batch_size=N)` or of a fixed-batch export, with either `stream=True` or `stream=False`. It used one image per batch, so any `N` above one failed on the first batch with `Batch size mismatch` unless the caller passed `batch=N`. A final batch with fewer than `N` images is still refused, not padded. Live captures and `.streams` manifests keep one frame per source in each simultaneous batch, regardless of `batch`; their source count must match the runtime's fixed batch size.
 - `TrainConfig` rejects `epochs` below 1 and `ema_decay` outside `[0, 1]` when it is built, naming the field. `epochs=0` used to fail with a `ZeroDivisionError` inside `configure_optimizers`, and an `ema_decay` outside `[0, 1]` could produce invalid averaging coefficients and make EMA weights diverge without any error. `ema_decay=1.0` stays valid. ([#1699](https://github.com/roboflow/rf-detr/pull/1699))
 
+- `TrainConfig` rejects `drop_path` outside `[0, 1)` and a negative `warmup_epochs` when it is built, naming the field. A peak `drop_path=1.0` could make a layer divide by a zero keep probability and return NaN; values above 1 could use invalid keep probabilities. Negative `drop_path` was ignored by the managed callback, while negative `warmup_epochs` could start the managed cosine LR schedule part-way through decay. Fractional warmup and `drop_path=0.0` stay valid. ([#1705](https://github.com/roboflow/rf-detr/pull/1705))
+
 ## [1.12.0] — 2026-11-05
 
 ### Added
