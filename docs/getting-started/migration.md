@@ -28,6 +28,20 @@ detections = predictor.predict("image.jpg")
 
 The defaults are batch size 1 and float32, compiled with TorchScript, captured as a CUDA graph on CUDA, or compiled with inductor on Apple Silicon (MPS) when the installed PyTorch has its MPS code generator; pass `compile_backend="torchscript"` on either to keep TorchScript alone. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
 
+## Unreleased: `transformers` is no longer a core dependency
+
+`pip install rfdetr` no longer installs `transformers`, `tokenizers`, `huggingface_hub` or `safetensors`. Importing `rfdetr`, building released models, predicting, training from RF-DETR weights and loading non-LoRA checkpoints do not need them. Loading a LoRA checkpoint requires `peft`, available through `rfdetr[lora]`. `rfdetr[train]` and `rfdetr[lora]` still install all four through `peft`.
+
+Install the packages yourself if any of these applies:
+
+- Your own code imports `transformers` and relied on `rfdetr` to install it: `pip install transformers`.
+- You build a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, which download DINOv2 weights from the Hugging Face Hub: `pip install huggingface_hub safetensors`.
+- You build a non-windowed DINOv2 backbone (`DinoV2(use_windowed_attn=False)`): `pip install transformers`.
+
+Without the required packages, the two backbone cases raise an `ImportError` with the install command.
+
+The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are now plain `torch.nn.Module` subclasses. `from_pretrained`, `save_pretrained`, `push_to_hub` and `isinstance` checks against `transformers` classes no longer apply to them, and their outputs are dataclasses read by attribute, not by index.
+
 ---
 
 ## Upgrade 1.11 → 1.12
