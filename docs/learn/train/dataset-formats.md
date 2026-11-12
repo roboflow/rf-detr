@@ -324,6 +324,8 @@ For segmentation, YOLO format extends the label format with polygon coordinates:
 
 The coordinates after the class ID represent the polygon vertices in normalized format.
 
+Box and polygon coordinates must be finite numbers. A label file with a `nan` or `inf` coordinate fails dataset loading with an error that names the file and its line number; blank lines count toward that number.
+
 ---
 
 ### Pose Labels (YOLO Pose)
