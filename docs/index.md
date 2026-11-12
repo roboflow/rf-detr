@@ -78,6 +78,14 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     [:octicons-arrow-right-24: Tutorial](learn/train/index.md)
 
+- **Export Models**
+
+    ---
+
+    Export to ONNX, TensorRT, OpenVINO, Core ML, TFLite and more, and run the exports with `RFDETRInference`.
+
+    [:octicons-arrow-right-24: Tutorial](exports/index.md)
+
 </div>
 
 ## Tutorials
