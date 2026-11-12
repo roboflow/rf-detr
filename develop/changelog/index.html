@@ -3210,6 +3210,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>YOLO dataset loading rejects non-finite box and polygon coordinates before building COCO annotations and reports the label file and its physical line number.</p>
+</li>
+<li>
 <p>Prediction rejects floating NumPy arrays and PyTorch tensors containing NaN with a range error before running the model, including when the original pixels are retained in result metadata.</p>
 </li>
 <li>
