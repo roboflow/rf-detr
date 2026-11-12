@@ -206,7 +206,7 @@ def _parse_yolo_label_line(
         when ``parse_polygons=False``.
 
     Raises:
-        ValueError: If the line is malformed or the class ID is out of range.
+        ValueError: If the line is malformed, the coordinates are non-finite, or the class ID is out of range.
     """
     if len(values) < 5:
         raise ValueError(
@@ -236,31 +236,38 @@ def _parse_yolo_label_line(
             f"class ID {cid} is out of range for dataset with {num_classes} classes "
             f"(valid range 0\u2013{num_classes - 1})."
         )
-    if len(values) == 5:
-        box = _parse_yolo_box(values[1:])
-        # Skip polygon creation on the detection path — only the bbox is needed.
-        polygon: NDArray[np.float32] | None = _box_to_polygon(box) if parse_polygons else None
-    else:
-        try:
-            _raw_polygon = _parse_yolo_polygon(values[1:])
-        except ValueError as exc:
-            raise ValueError(
-                f"Malformed polygon in {str(label_path)!r} at line {line_num}: "
-                f"could not parse coordinate values as floats."
-            ) from exc
-        box = np.array(
-            [
-                np.min(_raw_polygon[:, 0]),
-                np.min(_raw_polygon[:, 1]),
-                np.max(_raw_polygon[:, 0]),
-                np.max(_raw_polygon[:, 1]),
-            ],
-            dtype=np.float32,
+    # Report float32 conversion and scaling overflow with the source label location.
+    with np.errstate(over="ignore", invalid="ignore"):
+        if len(values) == 5:
+            box = _parse_yolo_box(values[1:])
+            # Skip polygon creation on the detection path — only the bbox is needed.
+            polygon: NDArray[np.float32] | None = _box_to_polygon(box) if parse_polygons else None
+        else:
+            try:
+                _raw_polygon = _parse_yolo_polygon(values[1:])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Malformed polygon in {str(label_path)!r} at line {line_num}: "
+                    f"could not parse coordinate values as floats."
+                ) from exc
+            box = np.array(
+                [
+                    np.min(_raw_polygon[:, 0]),
+                    np.min(_raw_polygon[:, 1]),
+                    np.max(_raw_polygon[:, 0]),
+                    np.max(_raw_polygon[:, 1]),
+                ],
+                dtype=np.float32,
+            )
+            # On the detection path, _raw_polygon was only needed for bbox extraction;
+            # skip the pixel-space conversion to avoid a redundant allocation.
+            polygon = _raw_polygon if parse_polygons else None
+        xyxy_px = box * np.array([width, height, width, height], dtype=np.float32)
+    # The polygon bounds also expose any non-finite vertex before clipping.
+    if not np.isfinite(xyxy_px).all():
+        raise ValueError(
+            f"Malformed label in {str(label_path)!r} at line {line_num}: non-finite box or polygon coordinates."
         )
-        # On the detection path, _raw_polygon was only needed for bbox extraction;
-        # skip the pixel-space conversion to avoid a redundant allocation.
-        polygon = _raw_polygon if parse_polygons else None
-    xyxy_px = box * np.array([width, height, width, height], dtype=np.float32)
     if polygon is None:
         return cid, xyxy_px, None
     polygon_px = polygon * np.array([width, height], dtype=np.float32)
@@ -410,36 +417,37 @@ def _build_yolo_samples(
         keypoints: list[NDArray[np.float32]] = []
         if label_path.exists():
             with label_path.open(encoding="utf-8") as handle:
-                lines = [line.strip() for line in handle if line.strip()]
-            for i, line in enumerate(lines):
-                values = line.split()
-                if include_keypoints:
-                    cid, xyxy_px, keypoints_px = _parse_yolo_pose_label_line(
-                        values,
-                        i + 1,
-                        label_path,
-                        len(classes),
-                        width,
-                        height,
-                        num_keypoints=num_keypoints,
-                        keypoint_dim=keypoint_dim,
-                    )
-                    polygon_px = None
-                    keypoints.append(keypoints_px)
-                else:
-                    cid, xyxy_px, polygon_px = _parse_yolo_label_line(
-                        values,
-                        i + 1,
-                        label_path,
-                        len(classes),
-                        width,
-                        height,
-                        parse_polygons=include_polygons,
-                    )
-                class_id.append(cid)
-                xyxy.append(xyxy_px)
-                if include_polygons and polygon_px is not None:
-                    polygons.append(polygon_px)
+                for line_num, line in enumerate(handle, start=1):
+                    values = line.split()
+                    if not values:
+                        continue
+                    if include_keypoints:
+                        cid, xyxy_px, keypoints_px = _parse_yolo_pose_label_line(
+                            values=values,
+                            line_num=line_num,
+                            label_path=label_path,
+                            num_classes=len(classes),
+                            width=width,
+                            height=height,
+                            num_keypoints=num_keypoints,
+                            keypoint_dim=keypoint_dim,
+                        )
+                        polygon_px = None
+                        keypoints.append(keypoints_px)
+                    else:
+                        cid, xyxy_px, polygon_px = _parse_yolo_label_line(
+                            values=values,
+                            line_num=line_num,
+                            label_path=label_path,
+                            num_classes=len(classes),
+                            width=width,
+                            height=height,
+                            parse_polygons=include_polygons,
+                        )
+                    class_id.append(cid)
+                    xyxy.append(xyxy_px)
+                    if include_polygons and polygon_px is not None:
+                        polygons.append(polygon_px)
 
         samples.append(
             _LazyYoloSample(
