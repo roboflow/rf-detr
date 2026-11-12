@@ -589,6 +589,54 @@ class TestYoloDetectionLazyMasks:
 
         assert expected_message in str(exc_info.value)
 
+    @pytest.mark.parametrize(
+        "invalid_row",
+        [
+            pytest.param("0 nan 0.5 0.5 0.5", id="nan-box"),
+            pytest.param("0 0.5 0.5 inf 0.5", id="inf-box"),
+            pytest.param("0 0.25 0.25 nan 0.25 0.25 0.75", id="nan-polygon"),
+            pytest.param("0 0.25 0.25 0.75 0.25 -inf 0.75", id="inf-polygon"),
+            pytest.param("0 1e38 0.5 0.5 0.5", id="pixel-overflow"),
+        ],
+    )
+    @pytest.mark.parametrize("include_masks", [False, True])
+    def test_nonfinite_geometry_is_rejected_at_load(
+        self, tmp_path: Path, invalid_row: str, include_masks: bool
+    ) -> None:
+        """Invalid coordinates must fail before the loader builds COCO annotations."""
+        paths = _write_yolo_detection_dataset(tmp_path, f"0 0.5 0.5 0.5 0.5\n\n{invalid_row}\n")
+
+        with np.errstate(over="raise", invalid="raise"), pytest.raises(ValueError) as exc_info:
+            _build_yolo_dataset(paths, include_masks=include_masks)
+
+        message = str(exc_info.value)
+        assert str(paths[1] / "sample.txt") in message
+        assert "line 3" in message
+        assert "non-finite" in message
+
+    def test_pose_nonfinite_box_is_rejected_at_load(self, tmp_path: Path) -> None:
+        """The pose bbox is validated even when all its keypoints are finite."""
+        paths = _write_yolo_pose_dataset(tmp_path)
+        label = paths[1] / "sample.txt"
+        label.write_text("\n0 0.5 0.5 inf 0.5 0.25 0.25 2 0 0 0\n", encoding="utf-8")
+
+        with pytest.raises(ValueError) as exc_info:
+            _build_yolo_dataset(paths, include_keypoints=True)
+
+        message = str(exc_info.value)
+        assert str(label) in message
+        assert "line 2" in message
+        assert "non-finite" in message
+
+    def test_finite_out_of_bounds_box_keeps_existing_clipping(self, tmp_path: Path) -> None:
+        """Finite boxes may extend beyond the image and still load."""
+        paths = _write_yolo_detection_dataset(tmp_path, "\n0 0.125 0.5 0.5 0.5\n\n")
+        dataset = _build_yolo_dataset(paths)
+
+        _, target = dataset[0]
+
+        assert target["boxes"].tolist() == [[0.0, 1.5, 3.0, 4.5]]
+
     def test_lazy_dataset_polygon_storage_is_smaller_than_eager_masks(self, tmp_path: Path) -> None:
         """The lazy dataset retains polygon coords, not dense masks, so its footprint is orders of magnitude smaller."""
         image_dir = tmp_path / "images"
