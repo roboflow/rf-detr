@@ -322,8 +322,9 @@ def openvino_export_stub(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     return fake_ov
 
 
-def test_export_serializes_static_input_shape(tmp_path: Path) -> None:
-    """The serialized IR retains the example tensor's batch and spatial dimensions."""
+@pytest.mark.parametrize("static_input_shape", [False, True], ids=["dynamic", "static"])
+def test_export_serializes_input_shape(tmp_path: Path, static_input_shape: bool) -> None:
+    """The serialized IR is dynamic by default and fixed when an input shape is requested."""
     openvino = pytest.importorskip("openvino")
 
     class ToyModel(torch.nn.Module):
@@ -332,7 +333,9 @@ def test_export_serializes_static_input_shape(tmp_path: Path) -> None:
 
     example = torch.randn(2, 3, 32, 48)
     output_xml = tmp_path / "model.xml"
-    exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, verbose=False))
+    exporter = OpenVINOExporter(
+        OpenVINOConfig(output_dir=tmp_path, verbose=False, static_input_shape=static_input_shape)
+    )
     exporter._convert_and_save(
         (openvino.convert_model, openvino.save_model),
         ModelWrapper(ToyModel()),
@@ -342,7 +345,11 @@ def test_export_serializes_static_input_shape(tmp_path: Path) -> None:
     )
 
     exported_model = openvino.Core().read_model(output_xml)
-    assert exported_model.input(0).partial_shape.to_shape() == list(example.shape)
+    partial_shape = exported_model.input(0).partial_shape
+    if static_input_shape:
+        assert partial_shape.to_shape() == list(example.shape)
+    else:
+        assert all(dimension.is_dynamic for dimension in partial_shape)
 
 
 class TestExportOpenvinoNaming:
@@ -967,10 +974,17 @@ class TestExportFormatParameter:
         exporter = self._mock_openvino_convert.call_args.args[0]
         assert getattr(exporter.config, config_field) == expected
 
+    @pytest.mark.parametrize("shape", [None, (560, 560)], ids=["omitted", "explicit-default"])
+    def test_shape_request_selects_input_mode(self, tmp_path: Path, shape: tuple[int, int] | None) -> None:
+        """An explicit shape fixes the IR even when it equals the model's default resolution."""
+        _make_rfdetr().export(format="openvino", output_dir=str(tmp_path / "out"), shape=shape)
+        exporter = self._mock_openvino_convert.call_args.args[0]
+        assert exporter.config.static_input_shape is (shape is not None)
+
     def test_dynamic_batch_rejected_before_forward_pass(self, tmp_path: Path) -> None:
         """``dynamic_batch=True`` raises ``NotImplementedError`` before ``make_infer_image`` runs the forward pass.
 
-        OpenVINO exports have fixed input shapes; rejection happens before the forward pass.
+        OpenVINO selects the input mode through ``shape``; rejection happens before the forward pass.
         """
         obj = _make_rfdetr()
         with pytest.raises(NotImplementedError) as exc_info:
@@ -1050,11 +1064,11 @@ def openvino_detection_export(
 
     out_dir = tmp_path_factory.mktemp("openvino_nano")
     detector = rfdetr.RFDETRNano()
-    xml_path = detector.export(output_dir=str(out_dir), format="openvino", verbose=False)
+    resolution = int(detector.model.resolution)
+    xml_path = detector.export(output_dir=str(out_dir), format="openvino", shape=(resolution, resolution), verbose=False)
 
     model = detector.model.model.to("cpu").eval()
     model.export()
-    resolution = int(detector.model.resolution)
     example = _parity_input_from_image(people_walking_image_path, resolution)
     return model, example, Path(xml_path)
 
@@ -1126,6 +1140,23 @@ def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[
 @pytest.mark.e2e_openvino
 class TestOpenVINOEndToEnd:
     """Real OpenVINO IR export + CPU numerical parity (``-m e2e_openvino``, requires ``openvino`` installed)."""
+
+    def test_default_export_has_dynamic_input_and_runs_two_images(self, tmp_path: Path) -> None:
+        """The default IR has dynamic dimensions and accepts a batch at the traced resolution."""
+        import openvino as ov
+        from rfdetr import RFDETRNano
+
+        detector = RFDETRNano(pretrain_weights=None, device="cpu")
+        xml_path = detector.export(output_dir=str(tmp_path), format="openvino", verbose=False)
+        core = ov.Core()
+        ir = core.read_model(xml_path)
+        assert all(dimension.is_dynamic for dimension in ir.input(0).partial_shape)
+        assert read_metadata(xml_path).input_shape[0] == -1
+
+        resolution = detector.model.resolution
+        inputs = np.zeros((2, 3, resolution, resolution), dtype=np.float32)
+        outputs = core.compile_model(ir, "CPU")(inputs)
+        assert all(output.shape[0] == 2 for output in outputs.values())
 
     def test_public_predictor_uses_static_batch_metadata(
         self,

@@ -62,12 +62,14 @@ class OpenVINOConfig(ExportConfig):
         calibration_data: Representative images the INT8 activation ranges are collected from. Required for
             ``"int8"``, unused otherwise.
         max_images: Maximum images read from a *calibration_data* directory.
+        static_input_shape: Fix all input dimensions to the tracing tensor's shape.
     """
 
     precision: str | None = None
     quantization: str | None = None
     calibration_data: Any = None
     max_images: int = 100
+    static_input_shape: bool = False
 
 
 class ModelWrapper(nn.Module):
@@ -128,10 +130,11 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         "quantization": "quantization",
         "calibration_data": "calibration_data",
         "max_images": "max_images",
+        "static_input_shape": "openvino_static_shape",
     }
     format = "openvino"
     display_name = "OpenVINO"
-    dynamic_batch_reason = "(the IR bakes a fixed input shape). Export one model per batch size instead."
+    dynamic_batch_reason = "(omit dynamic_batch; the default IR has a dynamic batch unless shape is specified)."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
@@ -298,7 +301,10 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         convert_model, save_model = converters
         try:
             with torch.no_grad():
-                ov_model = convert_model(wrapped_model, input=list(input_tensors.shape), example_input=input_tensors)
+                if self.config.static_input_shape:
+                    ov_model = convert_model(wrapped_model, input=list(input_tensors.shape), example_input=input_tensors)
+                else:
+                    ov_model = convert_model(wrapped_model, example_input=input_tensors)
             if self.config.quantization == "int8":
                 _, channels, height, width = input_tensors.shape
                 ov_model = quantize_int8(
