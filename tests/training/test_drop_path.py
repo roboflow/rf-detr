@@ -106,6 +106,21 @@ def test_update_drop_path_dinov2(model_with_drop_path: LWDETR) -> None:
     )
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_near_one_drop_path_remains_finite(model_with_drop_path: LWDETR, dtype: torch.dtype) -> None:
+    """An accepted near-one rate stays below one and produces finite output."""
+    layers = model_with_drop_path._get_backbone_encoder_layers()
+    assert layers is not None
+    rate = TrainConfig(dataset_dir=".", output_dir=".", drop_path=0.999999999).drop_path
+    model_with_drop_path.update_drop_path(rate, len(layers))
+    assert layers[-1].drop_path.drop_prob == rate
+    inputs = torch.ones(8, 4, dtype=dtype, requires_grad=True)
+    output = layers[-1].drop_path(inputs)
+    output.sum().backward()
+    assert torch.isfinite(output).all()
+    assert torch.isfinite(inputs.grad).all()
+
+
 def test_drop_path_module_is_identity_only_for_zero_rate(
     model_with_drop_path: LWDETR, model_without_drop_path: LWDETR
 ) -> None:
