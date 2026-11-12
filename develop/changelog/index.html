@@ -3218,6 +3218,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p><code>TrainConfig</code> rejects <code>epochs</code> below 1 and <code>ema_decay</code> outside <code>[0, 1]</code> when it is built, naming the field. <code>epochs=0</code> used to fail with a <code>ZeroDivisionError</code> inside <code>configure_optimizers</code>, and an <code>ema_decay</code> outside <code>[0, 1]</code> could produce invalid averaging coefficients and make EMA weights diverge without any error. <code>ema_decay=1.0</code> stays valid. (<a href="https://github.com/roboflow/rf-detr/pull/1699">#1699</a>)</p>
 </li>
+<li>
+<p><code>TrainConfig</code> rejects <code>drop_path</code> outside <code>[0, 1)</code> and a negative <code>warmup_epochs</code> when it is built, naming the field. A peak <code>drop_path=1.0</code> could make a layer divide by a zero keep probability and return NaN; values above 1 could use invalid keep probabilities. Negative <code>drop_path</code> was ignored by the managed callback, while negative <code>warmup_epochs</code> could start the managed cosine LR schedule part-way through decay. Fractional warmup and <code>drop_path=0.0</code> stay valid. (<a href="https://github.com/roboflow/rf-detr/pull/1705">#1705</a>)</p>
+</li>
 </ul>
 <h2 id="1120-2026-11-05">[1.12.0] — 2026-11-05<a class="headerlink" href="#1120-2026-11-05" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
