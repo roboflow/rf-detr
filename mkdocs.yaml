@@ -31,33 +31,38 @@ extra:
 
 nav:
   - Home: index.md
+  # Pages listed both under "How to" and in their own tab (Train Model, Inference,
+  # Export Model) are cross-navigation links: MkDocs keeps one page object, so the
+  # label must match in both places and the later (dedicated) tab is marked active.
   - How to:
-      - How It Works: learn/how-it-works.md
       - Getting Started:
           - Install: getting-started/install.md
+          - Pretrained Models: learn/pretrained.md
           - Migration Guide: getting-started/migration.md
       - Run Model:
-          - Inference: learn/inference.md
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
           - Keypoints: learn/run/keypoints.md
           - Videos and Streams: learn/run/videos-and-streams.md
-          - Pretrained Models: learn/pretrained.md
-      - Train Model:
-          - Overview: learn/train/index.md
-          - Dataset Formats: learn/train/dataset-formats.md
-          - Training Parameters: learn/train/training-parameters.md
-          - Advanced Training: learn/train/advanced.md
-          - Custom Training API: learn/train/customization.md
-          - Augmentations: learn/train/augmentations.md
-          - Training Loggers: learn/train/loggers.md
+          - Inference: learn/inference.md
+      - Train Model: learn/train/index.md
       - Export Model: exports/index.md
       - Deploy Model: learn/deploy.md
+      - How It Works: learn/how-it-works.md
       - Benchmarks: learn/benchmarks.md
-  - Export:
-      - Overview: exports/index.md
-      - Basics: exports/basics.md
-      - Advanced: exports/advanced.md
+  - Train:
+      - Train Model: learn/train/index.md
+      - Dataset Formats: learn/train/dataset-formats.md
+      - Training Parameters: learn/train/training-parameters.md
+      - Augmentations: learn/train/augmentations.md
+      - Training Loggers: learn/train/loggers.md
+      - Advanced Training: learn/train/advanced.md
+      - Custom Training API: learn/train/customization.md
+  - Inference & Export:
+      - Inference: learn/inference.md
+      - Export Model: exports/index.md
+      - Export Basics: exports/basics.md
+      - Advanced Export: exports/advanced.md
       - Export Formats:
           - ONNX: exports/onnx.md
           - TensorRT: exports/tensorrt.md
@@ -69,6 +74,7 @@ nav:
           - Core AI: exports/coreai.md
       - Contributing:
           - Exporter Blueprint: exports/blueprint.md
+  - Cookbooks: cookbooks.md
   - API Reference:
       - RF-DETR: reference/rfdetr.md
       - Inference: reference/inference.md
@@ -97,10 +103,10 @@ nav:
           - Keypoint Train Config: reference/keypoint_train_config.md
       - Lightning Training:
           - Training Primitives: reference/training.md
-  - FAQ: faq.md
-  - Cookbooks: cookbooks.md
-  - Resources: resources/index.md
-  - Changelog: changelog.md
+  - Resources:
+      - FAQ: faq.md
+      - Articles and Videos: resources/index.md
+      - Changelog: changelog.md
 
 theme:
   name: "material"
@@ -138,6 +144,9 @@ theme:
     - navigation.tracking
     - content.tooltips
     - navigation.tabs.sticky
+    - search.suggest
+    - search.highlight
+    - toc.follow
 
 plugins:
   - search
