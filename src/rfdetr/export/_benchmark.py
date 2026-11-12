@@ -892,7 +892,8 @@ def _coco_ap_prediction(
         if output.mask is None:
             raise ValueError("Segmentation detections need mask to be scored.")
         mask = np.asarray(output.mask)
-        prediction["masks"] = torch.from_numpy(mask[:, None]).float()
+        # Boolean masks: the evaluator thresholds at 0.5 anyway, and a float copy of 300 full-size masks is 4x larger.
+        prediction["masks"] = torch.from_numpy(mask[:, None])
     return prediction
 
 
