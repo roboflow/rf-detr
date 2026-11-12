@@ -1,0 +1,4 @@
+!!! info "How these numbers were obtained"
+
+    - **AP columns**: COCO AP<sub>50:95</sub> on all 5000 val2017 images, scored with the [COCO accuracy cookbook](../../../cookbooks/coco-accuracy/) through `RFDETRInference.predict` at a 0.001 score threshold, batch 1 and default preprocessing. PyTorch FP32 runs the eager model; TensorRT FP16 and INT8 run static batch-1 engines exported with `model.export(format="tensorrt")`, the INT8 engine calibrated on 128 train2017 images. One run on an NVIDIA RTX PRO 6000 Blackwell Server Edition with rfdetr 1.13.0.dev0, torch 2.14.1+cu130, TensorRT 11.4.0.106 and faster-coco-eval 1.8.0, scored on 2026-11-12.
+    - **T4 latency and params**: the official values from the [Benchmarks](../benchmarks.md) page, measured with SAB on an NVIDIA T4 with a TensorRT 10.4 FP16 engine at batch 1. That page also lists the official COCO AP, measured with the same engine; the PyTorch FP32 column here is within 0.7 AP of it.

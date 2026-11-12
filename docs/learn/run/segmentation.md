@@ -8,16 +8,20 @@ RF-DETR is a real-time transformer architecture for instance segmentation, built
 
 ## Pre-trained Checkpoints
 
-RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Every RF-DETR-Seg size, including XLarge and 2XLarge, is part of the core `rfdetr` package under Apache 2.0, so it's commercially usable out of the box: you can ship it in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. No `rfdetr[plus]` install is needed.
+RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. Every RF-DETR-Seg size, including XLarge and 2XLarge, is part of the core `rfdetr` package under Apache 2.0, so it's commercially usable out of the box: you can ship it in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. No `rfdetr[plus]` install is needed.
 
-| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
-| :--: | :-------------------: | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-|  N   |    `RFDETRSegNano`    |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   | Apache 2.0 |
-|  S   |   `RFDETRSegSmall`    |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   | Apache 2.0 |
-|  M   |   `RFDETRSegMedium`   |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   | Apache 2.0 |
-|  L   |   `RFDETRSegLarge`    |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   | Apache 2.0 |
-|  XL  |   `RFDETRSegXLarge`   |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   | Apache 2.0 |
-| 2XL  |  `RFDETRSeg2XLarge`   |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   | Apache 2.0 |
+<!-- COPIES: the three AP columns come from the results table of docs/cookbooks/coco-accuracy.ipynb (one run, provenance in the note below); latency and params repeat the Segmentation table of docs/learn/benchmarks.md. -->
+
+| Size | RF-DETR package class | PyTorch FP32 mask AP<sub>50:95</sub> | TensorRT FP16 mask AP<sub>50:95</sub> | TensorRT INT8 mask AP<sub>50:95</sub> | T4 latency (ms) | Params (M) | Resolution |  License   |
+| :--: | :-------------------: | :----------------------------------: | :-----------------------------------: | :-----------------------------------: | :-------------: | :--------: | :--------: | :--------: |
+|  N   |    `RFDETRSegNano`    |                 40.1                 |                 40.1                  |                 39.6                  |       3.4       |    33.6    |  312x312   | Apache 2.0 |
+|  S   |   `RFDETRSegSmall`    |                 42.9                 |                 43.0                  |                 42.1                  |       4.4       |    33.7    |  384x384   | Apache 2.0 |
+|  M   |   `RFDETRSegMedium`   |                 44.9                 |                 44.9                  |                 44.0                  |       5.9       |    35.7    |  432x432   | Apache 2.0 |
+|  L   |   `RFDETRSegLarge`    |                 46.4                 |                 46.4                  |                 46.0                  |       8.8       |    36.2    |  504x504   | Apache 2.0 |
+|  XL  |   `RFDETRSegXLarge`   |                 48.5                 |                 48.4                  |                 48.0                  |      13.5       |    38.1    |  624x624   | Apache 2.0 |
+| 2XL  |  `RFDETRSeg2XLarge`   |                 49.7                 |                 49.7                  |                 49.3                  |      21.8       |    38.6    |  768x768   | Apache 2.0 |
+
+--8<-- "docs/snippets/reproduced-coco-ap.md"
 
 ## Run on an Image
 

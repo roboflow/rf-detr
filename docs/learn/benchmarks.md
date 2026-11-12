@@ -24,6 +24,17 @@ Latency is measured as single-image inference latency rather than sustained thro
 
 Accuracy and latency are always measured using the same model artifact and the same numerical precision. This avoids reporting FP32 accuracy together with FP16 latency, which can lead to misleading comparisons because naive FP16 conversion can significantly degrade accuracy for some models.
 
+### Where each number comes from
+
+| Number                                                   | Source and conditions                                                                                                                                                                                                                    |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| COCO AP<sub>50</sub> and AP<sub>50:95</sub> on this page | SAB with pycocotools on all 5000 val2017 images, scoring the same TensorRT 10.4 FP16 engine whose latency is reported, for RF-DETR and every baseline                                                                                    |
+| RF100-VL AP<sub>50</sub> and AP<sub>50:95</sub>          | SAB, averaged over the 100 RF100-VL datasets                                                                                                                                                                                             |
+| Latency (ms)                                             | SAB on an NVIDIA T4 with TensorRT 10.4 and CUDA 12.4, FP16, batch 1, with a 200 ms buffer between forward passes                                                                                                                         |
+| Params (M)                                               | Deployment `nn.Module` parameter count, defined under Metric definitions below                                                                                                                                                           |
+| Rows marked †                                            | Quoted from the authors' paper, not run through SAB                                                                                                                                                                                      |
+| PyTorch FP32, TensorRT FP16 and INT8 AP on the Run pages | The [COCO accuracy cookbook](../../cookbooks/coco-accuracy/) through `RFDETRInference.predict` on all 5000 val2017 images, on an NVIDIA RTX PRO 6000 with TensorRT 11.4; see [Reproduce the COCO Accuracy](#reproduce-the-coco-accuracy) |
+
 !!! info "Metric definitions"
 
     **AP50**: Detection accuracy at IoU threshold >= 0.50. **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric. **Params (M)**: Deployment (fused) `nn.Module` parameter count (`model.parameters()`) in millions, excluding training-only branches and folded normalization layers, and counting model parameters rather than the raw tensor count of the saved checkpoint. Rows marked † use the authors' reported counts rather than SAB-measured values. Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1, with 200 ms thermal buffer between passes to reduce GPU thermal variance.
@@ -36,7 +47,7 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ![Object detection accuracy vs latency on COCO and RF100-VL: RF-DETR against YOLO11, YOLO26, LW-DETR and D-FINE](../assets/benchmark-detection.svg)
 
-<!-- COPIES: the COCO AP50:95 values of the Detection, Segmentation and Keypoints tables are repeated in SAB_REFERENCE in docs/cookbooks/coco-accuracy.ipynb. Update both together. -->
+<!-- COPIES: the Latency and Params values of the RF-DETR rows in the Detection, Segmentation and Keypoints tables are repeated in docs/learn/run/detection.md, segmentation.md and keypoints.md. Update both together. -->
 
 | Architecture | Size | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------: | :--: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: | :--------: |
@@ -123,4 +134,6 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ## Reproduce the COCO Accuracy
 
-The tables above come from SAB on an NVIDIA T4 with TensorRT 10.4 in FP16, using the same artifact for accuracy and latency, except for the author-reported rows marked †. The [COCO accuracy cookbook](../../cookbooks/coco-accuracy/) rescores every pretrained checkpoint on all 5000 val2017 images through `RFDETRInference.predict` at a 0.001 score floor, batch 1 and default preprocessing, as eager PyTorch FP32 on any device and as static TensorRT FP16 and INT8 engines on a CUDA GPU. Its last cell prints a Markdown table with the difference to the values above. Small differences are expected because the harness, runtime and preprocessing differ. Plus models need `rfdetr[plus]` and `ACCEPT_PLATFORM_MODEL_LICENSE = True` in the notebook.
+The tables above are the official numbers, from SAB on an NVIDIA T4 with TensorRT 10.4 in FP16, using the same artifact for accuracy and latency, except for the author-reported rows marked †. The [COCO accuracy cookbook](../../cookbooks/coco-accuracy/) rescores every pretrained checkpoint on all 5000 val2017 images through `RFDETRInference.predict` at a 0.001 score floor, batch 1 and default preprocessing, as eager PyTorch FP32 on any device and as static TensorRT FP16 and INT8 engines on a CUDA GPU. Plus models need `rfdetr[plus]` and `ACCEPT_PLATFORM_MODEL_LICENSE = True` in the notebook.
+
+The Run pages for [detection](run/detection.md#pre-trained-checkpoints), [segmentation](run/segmentation.md#pre-trained-checkpoints) and [keypoints](run/keypoints.md#pre-trained-checkpoints) list the scores of one cookbook run on an NVIDIA RTX PRO 6000 Blackwell Server Edition with TensorRT 11.4, with the exact versions under each table. Their PyTorch FP32 scores are within 0.7 AP of the official values above; small differences are expected because the harness, runtime and preprocessing differ.
