@@ -833,8 +833,13 @@ def drop_path(input: Tensor, drop_prob: float = 0.0, training: bool = False) -> 
     shape = (input.shape[0],) + (1,) * (input.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
     random_tensor = keep_prob + torch.rand(shape, dtype=input.dtype, device=input.device)
     random_tensor.floor_()  # binarize
-    output = input.div(keep_prob) * random_tensor
-    return output
+    # Mask before scaling in float32: FP16 can overflow on a dropped path before multiplication by zero.
+    output = (
+        input.float().mul(random_tensor).div(keep_prob)
+        if input.dtype == torch.float16
+        else input.mul(random_tensor).div(keep_prob)
+    )
+    return output.to(input.dtype)
 
 
 class Dinov2WithRegistersDropPath(nn.Module):
