@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `TrainConfig` rejects `epochs` below 1 and `ema_decay` outside `[0, 1]` when it is built, naming the field. `epochs=0` used to fail with a `ZeroDivisionError` inside `configure_optimizers`, and an `ema_decay` outside `[0, 1]` could produce invalid averaging coefficients and make EMA weights diverge without any error. `ema_decay=1.0` stays valid. ([#1699](https://github.com/roboflow/rf-detr/pull/1699))
 
-- `TrainConfig` rejects `drop_path` outside `[0, 1)` and a negative `warmup_epochs` when it is built, naming the field. `drop_path=1.0` made every drop-path layer divide by a zero keep probability and return NaN, `drop_path` above 1 or below 0 rescaled the residual branch with an invalid keep probability, and a negative `warmup_epochs` started the managed LR schedule part-way through its decay, all without any error. Fractional warmup and `drop_path=0.0` stay valid. ([#NNNN](https://github.com/roboflow/rf-detr/pull/NNNN))
+- `TrainConfig` rejects `drop_path` outside `[0, 1)` and a negative `warmup_epochs` when it is built, naming the field. `drop_path=1.0` made every drop-path layer divide by a zero keep probability and return NaN, `drop_path` above 1 or below 0 rescaled the residual branch with an invalid keep probability, and a negative `warmup_epochs` started the managed LR schedule part-way through its decay, all without any error. Fractional warmup and `drop_path=0.0` stay valid. ([#1705](https://github.com/roboflow/rf-detr/pull/1705))
 
 ## [1.12.0] — 2026-11-05
 
