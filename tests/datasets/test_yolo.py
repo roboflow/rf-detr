@@ -610,7 +610,7 @@ class TestYoloDetectionLazyMasks:
             _build_yolo_dataset(paths, include_masks=include_masks)
 
         message = str(exc_info.value)
-        assert str(paths[1] / "sample.txt") in message
+        assert repr(str(paths[1] / "sample.txt")) in message
         assert "line 3" in message
         assert "non-finite" in message
 
@@ -624,7 +624,7 @@ class TestYoloDetectionLazyMasks:
             _build_yolo_dataset(paths, include_keypoints=True)
 
         message = str(exc_info.value)
-        assert str(label) in message
+        assert repr(str(label)) in message
         assert "line 2" in message
         assert "non-finite" in message
 
