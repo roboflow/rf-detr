@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- YOLO dataset loading rejects non-finite box and polygon coordinates before building COCO annotations and reports the label file and its physical line number.
+
 - Prediction rejects floating NumPy arrays and PyTorch tensors containing NaN with a range error before running the model, including when the original pixels are retained in result metadata.
 
 - `RFDETRInference.predict()` without `batch` now predicts a directory, glob or recorded video in batches of the fixed batch size of a predictor from `RFDETR.inference(batch_size=N)` or of a fixed-batch export, with either `stream=True` or `stream=False`. It used one image per batch, so any `N` above one failed on the first batch with `Batch size mismatch` unless the caller passed `batch=N`. A final batch with fewer than `N` images is still refused, not padded. Live captures and `.streams` manifests keep one frame per source in each simultaneous batch, regardless of `batch`; their source count must match the runtime's fixed batch size.
