@@ -12,14 +12,14 @@ RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between
 
 <!-- COPIES: the three AP columns come from the results table of docs/cookbooks/coco-accuracy.ipynb (one run, provenance in the note below); params and resolution repeat the Segmentation table of docs/learn/benchmarks.md. -->
 
-| Size | RF-DETR package class | PyTorch FP32 mask AP<sub>50:95</sub> | TensorRT FP16 mask AP<sub>50:95</sub> | TensorRT INT8 mask AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
-| :--: | :-------------------: | :----------------------------------: | :-----------------------------------: | :-----------------------------------: | :--------: | :--------: | :--------: |
-|  N   |    `RFDETRSegNano`    |                 40.1                 |                 40.1                  |                 39.6                  |    33.6    |  312x312   | Apache 2.0 |
-|  S   |   `RFDETRSegSmall`    |                 42.9                 |                 43.0                  |                 42.1                  |    33.7    |  384x384   | Apache 2.0 |
-|  M   |   `RFDETRSegMedium`   |                 44.9                 |                 44.9                  |                 44.0                  |    35.7    |  432x432   | Apache 2.0 |
-|  L   |   `RFDETRSegLarge`    |                 46.4                 |                 46.4                  |                 46.0                  |    36.2    |  504x504   | Apache 2.0 |
-|  XL  |   `RFDETRSegXLarge`   |                 48.5                 |                 48.4                  |                 48.0                  |    38.1    |  624x624   | Apache 2.0 |
-| 2XL  |  `RFDETRSeg2XLarge`   |                 49.7                 |                 49.7                  |                 49.3                  |    38.6    |  768x768   | Apache 2.0 |
+|     Size      | PyTorch FP32 mask AP<sub>50:95</sub> | TensorRT FP16 mask AP<sub>50:95</sub> | TensorRT INT8 mask AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
+| :-----------: | :----------------------------------: | :-----------------------------------: | :-----------------------------------: | :--------: | :--------: | :--------: |
+|   Nano (N)    |                 40.1                 |                 40.1                  |                 39.6                  |    33.6    |  312x312   | Apache 2.0 |
+|   Small (S)   |                 42.9                 |                 43.0                  |                 42.1                  |    33.7    |  384x384   | Apache 2.0 |
+|  Medium (M)   |                 44.9                 |                 44.9                  |                 44.0                  |    35.7    |  432x432   | Apache 2.0 |
+|   Large (L)   |                 46.4                 |                 46.4                  |                 46.0                  |    36.2    |  504x504   | Apache 2.0 |
+|  XLarge (XL)  |                 48.5                 |                 48.4                  |                 48.0                  |    38.1    |  624x624   | Apache 2.0 |
+| 2XLarge (2XL) |                 49.7                 |                 49.7                  |                 49.3                  |    38.6    |  768x768   | Apache 2.0 |
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
