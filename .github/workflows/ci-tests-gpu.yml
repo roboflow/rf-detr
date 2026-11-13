@@ -26,13 +26,9 @@ concurrency:
 jobs:
   run-gpu-tests:
     name: Testing
-    # Self-hosted GPU runner: never run pull requests from forks on it.
-    if: >-
-      github.event_name == 'push' ||
-      (!github.event.pull_request.draft &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 35
-    runs-on: arc-gpu-runner-set
+    runs-on: Roboflow-GPU-VM-Runner
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi

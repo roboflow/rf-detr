@@ -404,7 +404,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - Every PR-triggered workflow (or each of its jobs, where a job needs its own queue) has a `concurrency` group keyed on `github.ref` that cancels superseded pull request runs.
 - Every job sets `timeout-minutes`, including guardian jobs; a hung job otherwise runs for six hours.
-- GPU jobs run on the self-hosted `arc-gpu-runner-set` (one NVIDIA L4, compute capability 8.9) and must skip pull requests from forks: `github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository`. Leave CPU jobs on GitHub-hosted runners.
+- GPU jobs run on the existing `Roboflow-GPU-VM-Runner`; do not move a job to another runner without maintainer agreement. Leave CPU jobs on GitHub-hosted runners.
 - Use `paths` / `paths-ignore` only on workflows whose checks are not required by branch protection (`Testing`, `testing-guardian` and `Test docs build` are required, so their workflows must always trigger). Integration Tests ignores docs-only changes; Mypy and Test GitHub Scripts list the paths they read.
 - `actions/checkout` sets `persist-credentials: false` unless a later step pushes with the checkout's credentials.
 - Pin every action to a full commit SHA with an exact `# vX.Y.Z` comment; Dependabot (`.github/dependabot.yml`) keeps the pins current.

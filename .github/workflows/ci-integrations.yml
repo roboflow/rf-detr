@@ -316,10 +316,8 @@ jobs:
   tensorrt-parity:
     name: TensorRT parity
     # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
-    # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml). The runner is
-    # self-hosted, so pull requests from forks never run here.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: arc-gpu-runner-set
+    # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml).
+    runs-on: Roboflow-GPU-VM-Runner
     # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
     timeout-minutes: 35
     concurrency:
@@ -460,8 +458,8 @@ jobs:
             --junitxml="${RUNNER_TEMP}/tensorrt-e2e.xml"
 
       - name: 🔎 Fail on unexpected skips
-        # A skipped parity test is a false green. The AMPERE_PLUS skip stays allowed for GPUs below compute capability
-        # 8.0; the L4 runner is 8.9, so it builds that level. Anything else (a missing lean runtime, no
+        # A skipped parity test is a false green. The only skip this runner may produce is the AMPERE_PLUS one: the T4
+        # runner is compute capability 7.5, below the 8.0 that level needs. Anything else (a missing lean runtime, no
         # HardwareCompatibilityLevel member, a TensorRT too old for the host-code refusal) means coverage silently
         # vanished, so fail red. Cross-GPU and cross-release engine loading is not CI-verified: this job builds and
         # loads on one GPU with one TensorRT release.
