@@ -28,6 +28,26 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
+## Fastest Configuration on Apple Silicon
+
+The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
+
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
+
+|      Size       | Fastest configuration      | Median (ms) | p95 (ms) | Images per second |
+| :-------------: | :------------------------- | :---------: | :------: | :---------------: |
+|   Atto (A) △    | `coreml-fp16`              |    3.76     |   4.23   |        266        |
+|   Femto (F) △   | `coreml-fp32`              |    6.01     |   8.85   |        166        |
+|   Pico (P) △    | `coreml-fp16`              |    5.74     |   8.28   |        174        |
+|    Nano (N)     | `pytorch-inductor-fp16`    |    6.73     |   7.02   |        149        |
+|    Small (S)    | `pytorch-inductor-fp16`    |    9.71     |   9.95   |        103        |
+|   Medium (M)    | `pytorch-inductor-fp16`    |    12.07    |  12.39   |        83         |
+|    Large (L)    | `pytorch-inductor-fp16`    |    15.76    |  16.09   |        63         |
+|  XLarge (XL) △  | `pytorch-torchscript-fp16` |    36.03    |  36.53   |        28         |
+| 2XLarge (2XL) △ | `pytorch-torchscript-fp16` |    45.51    |  49.41   |        22         |
+
+--8<-- "docs/snippets/reproduced-latency.md"
+
 ## Run on an Image
 
 Perform inference on an image with the `rfdetr` package. To use a different model size, select the corresponding class from the table above.

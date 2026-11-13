@@ -23,6 +23,25 @@ RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
+## Fastest Configuration on Apple Silicon
+
+The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
+
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
+
+|     Size      | Fastest configuration      | Median (ms) | p95 (ms) | Images per second |
+| :-----------: | :------------------------- | :---------: | :------: | :---------------: |
+|   Nano (N)    | `coreml-fp32`              |    10.68    |  11.52   |        94         |
+|   Small (S)   | `coreml-fp32`              |    13.31    |  14.27   |        75         |
+|  Medium (M)   | `pytorch-torchscript-fp16` |    16.75    |  17.41   |        60         |
+|   Large (L)   | `pytorch-torchscript-fp16` |    19.96    |  20.55   |        50         |
+|  XLarge (XL)  | `pytorch-torchscript-fp16` |    29.13    |  29.85   |        34         |
+| 2XLarge (2XL) | `pytorch-torchscript-fp16` |    46.28    |  48.53   |        22         |
+
+For Small, `coreml-fp32` (13.31 ms) and `pytorch-torchscript-fp16` (13.54 ms) are within 2%, which is a tie: take the FP32 CoreML route when you want to avoid FP16.
+
+--8<-- "docs/snippets/reproduced-latency.md"
+
 ## Run on an Image
 
 Perform inference on an image with the `rfdetr` package. To use a different model size, select the corresponding class from the table above.

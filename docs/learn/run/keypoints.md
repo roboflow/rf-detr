@@ -28,6 +28,20 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
+## Fastest Configuration on Apple Silicon
+
+The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
+
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
+
+|       Model        | Fastest configuration      | Median (ms) | p95 (ms) | Images per second |
+| :----------------: | :------------------------- | :---------: | :------: | :---------------: |
+| Keypoint (Preview) | `pytorch-torchscript-fp16` |    26.69    |  28.03   |        37         |
+
+`coreml-fp32` is within 2% (27.01 ms), which is a tie: take it when you want to avoid FP16.
+
+--8<-- "docs/snippets/reproduced-latency.md"
+
 --8<-- "docs/snippets/license-yolo-note.md"
 
 ## Run on an Image
