@@ -3,8 +3,10 @@ name: Mypy Type Check
 on:
   push:
     branches: ["main", "release/*", "develop"]
+    paths: ["src/**", "scripts/**", "pyproject.toml", ".github/workflows/ci-typing.yml"]
   pull_request:
     branches: ["main", "release/*", "develop"]
+    paths: ["src/**", "scripts/**", "pyproject.toml", ".github/workflows/ci-typing.yml"]
 
 permissions:
   contents: read
@@ -29,6 +31,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0

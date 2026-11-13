@@ -44,11 +44,14 @@ jobs:
   get-versions:
     name: Read versions file
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.parse.outputs.matrix }}
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 📋 Parse checkpoint_versions.txt
         id: parse
@@ -81,6 +84,8 @@ jobs:
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Set up Python + uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -113,11 +118,11 @@ jobs:
             --use-pretrained
 
       - name: 📤 Upload checkpoint artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: checkpoint-v${{ matrix.version }}
           path: checkpoints/checkpoint_v${{ matrix.version }}.pth
-          retention-days: 7
+          retention-days: 1
 
       - name: Minimize uv cache
         continue-on-error: true
@@ -137,6 +142,8 @@ jobs:
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Set up Python + uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -151,7 +158,7 @@ jobs:
         run: uv pip install -e ".[train,cli]" --group tests
 
       - name: 📥 Download all checkpoint artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           # Download every artifact whose name starts with "checkpoint-v"
           # into tests/legacy/checkpoints/ so the test knows where to look.
