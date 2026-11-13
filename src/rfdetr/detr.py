@@ -329,6 +329,37 @@ def _trace_for_prediction(module: torch.nn.Module, example_input: torch.Tensor) 
     return cast("torch.jit.ScriptModule", torch.jit.trace(module, example_input))  # type: ignore[no-untyped-call]
 
 
+#: Compiled variants per function that an inductor predictor build allows Dynamo to keep. Dynamo's default of 8 is
+#: shared by every predictor in the process, because all sizes run the same ``forward``: after eight compiled
+#: variants (for example four sizes in two dtypes) it logs ``hit config.recompile_limit`` and later predictors run
+#: several times slower, with no exception.
+_MIN_DYNAMO_RECOMPILE_LIMIT = 64
+
+
+def _raised_dynamo_recompile_limit() -> contextlib.AbstractContextManager[None]:
+    """Raise Dynamo's per-function recompile limit while one inductor predictor compiles.
+
+    The limit is only raised, never lowered, and is restored on exit, so a process-wide setting the caller made
+    stays in force outside the compile.
+
+    Returns:
+        A context manager that holds the limit at ``_MIN_DYNAMO_RECOMPILE_LIMIT`` or the caller's higher value.
+
+    Examples:
+        >>> import torch._dynamo
+        >>> before = torch._dynamo.config.cache_size_limit
+        >>> with _raised_dynamo_recompile_limit():
+        ...     raised = torch._dynamo.config.cache_size_limit >= _MIN_DYNAMO_RECOMPILE_LIMIT
+        >>> raised, torch._dynamo.config.cache_size_limit == before
+        (True, True)
+    """
+    # Local import: ``torch._dynamo`` is heavy and only the inductor path needs it.
+    import torch._dynamo
+
+    limit = max(torch._dynamo.config.cache_size_limit, _MIN_DYNAMO_RECOMPILE_LIMIT)
+    return cast("contextlib.AbstractContextManager[None]", torch._dynamo.config.patch(cache_size_limit=limit))
+
+
 def _device_move_lock(module: Any) -> threading.Lock:
     """Return the device-move lock for *module*, creating it on first use.
 
@@ -1874,19 +1905,26 @@ class RFDETR:
                         inference_model = torch.jit.freeze(inference_model)
                         inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
                 else:
-                    # `reduce-overhead` only adds CUDA graph trees; elsewhere it records nothing and warns on compile.
-                    inference_model = torch.compile(
-                        inference_model, mode="reduce-overhead" if device.type == "cuda" else "default"
-                    )
-                    with torch.inference_mode():
-                        # `predict()` passes inference tensors, and dynamo guards on that: a warm-up input built
-                        # outside inference mode makes the first prediction compile again.
-                        warmup_input = dummy_input.clone()
-                        inference_model(warmup_input)
-                        if device.type == "cuda":
-                            # CUDA Graph Trees reserve memory on the first call and record on the second.
+                    with _raised_dynamo_recompile_limit():
+                        # `reduce-overhead` only adds CUDA graph trees; elsewhere it records nothing and warns on
+                        # compile.
+                        # The predictor runs one fixed shape. Without `dynamic=False`, Dynamo marks sizes symbolic once
+                        # an earlier predictor in the process compiled the same `forward` for another resolution, and
+                        # the symbolic Metal kernels can exceed the 31-buffer argument limit and fail to compile.
+                        inference_model = torch.compile(
+                            inference_model,
+                            mode="reduce-overhead" if device.type == "cuda" else "default",
+                            dynamic=False,
+                        )
+                        with torch.inference_mode():
+                            # `predict()` passes inference tensors, and dynamo guards on that: a warm-up input built
+                            # outside inference mode makes the first prediction compile again.
+                            warmup_input = dummy_input.clone()
                             inference_model(warmup_input)
-                            torch.cuda.synchronize(device)
+                            if device.type == "cuda":
+                                # CUDA Graph Trees reserve memory on the first call and record on the second.
+                                inference_model(warmup_input)
+                                torch.cuda.synchronize(device)
 
         snapshot.model.inference_model = inference_model
         snapshot._is_optimized_for_inference = True
