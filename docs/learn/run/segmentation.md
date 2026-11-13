@@ -29,18 +29,18 @@ The configuration with the lowest end-to-end latency for each size on an Apple M
 
 <!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
 
-|     Size      | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |   CoreML FP16   | CoreML GPU FP32 |  CoreML GPU FP16  |
-| :-----------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-------------: | :-------------: | :---------------: |
-|   Nano (N)    |     17.41 (18.77)     |     16.93 (18.71)     |      11.44 (11.90)       | 10.68 (11.52) |  22.25 (25.69)  |  11.39 (12.93)  | **10.51 (12.11)** |
-|   Small (S)   |     19.10 (19.86)     |     18.01 (18.99)     |      13.54 (14.09)       | 13.31 (14.27) |  24.42 (28.50)  |  14.43 (15.60)  | **12.67 (13.78)** |
-|  Medium (M)   |     23.42 (25.26)     |     22.14 (23.65)     |    **16.75 (17.41)**     | 17.55 (18.32) |  31.63 (37.49)  |  19.05 (20.48)  |   16.77 (17.96)   |
-|   Large (L)   |     27.63 (28.42)     |     25.67 (26.59)     |    **19.96 (20.55)**     | 21.70 (22.55) |  45.58 (49.67)  |  24.39 (29.42)  |   20.88 (25.45)   |
-|  XLarge (XL)  |     40.65 (42.04)     |     35.72 (36.70)     |    **29.13 (29.85)**     | 37.66 (38.69) | 122.98 (127.42) |  41.64 (44.55)  |   32.61 (34.18)   |
-| 2XLarge (2XL) |     63.12 (67.03)     |     53.17 (56.33)     |    **46.28 (48.53)**     | 66.52 (68.86) | 213.46 (225.57) |  68.23 (72.90)  |   51.12 (54.22)   |
+|     Size      | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |   CoreML FP16   | CoreML GPU FP32 | CoreML GPU FP16 |
+| :-----------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-------------: | :-------------: | :-------------: |
+|   Nano (N)    |     10.44 (10.86)     |   **9.82 (10.24)**    |      12.08 (12.67)       | 11.12 (11.97) |  24.64 (25.38)  |  11.03 (11.74)  |  10.30 (11.16)  |
+|   Small (S)   |     12.79 (13.32)     |   **11.90 (12.32)**   |      14.20 (14.62)       | 13.65 (14.50) |  24.26 (27.45)  |  13.25 (13.90)  |  12.06 (12.70)  |
+|  Medium (M)   |     15.92 (16.23)     |   **14.54 (14.91)**   |      16.68 (17.04)       | 17.39 (18.09) |  31.51 (35.07)  |  17.43 (18.16)  |  15.77 (16.41)  |
+|   Large (L)   |     19.81 (20.21)     |   **18.25 (18.59)**   |      19.96 (20.41)       | 21.28 (21.99) |  45.28 (48.40)  |  21.36 (22.07)  |  19.05 (19.80)  |
+|  XLarge (XL)  |     31.03 (31.56)     |   **27.38 (27.75)**   |      28.71 (29.13)       | 36.23 (37.23) | 125.48 (130.74) |  36.08 (37.05)  |  30.75 (31.53)  |
+| 2XLarge (2XL) |     53.35 (55.11)     |     44.99 (45.59)     |    **43.55 (44.03)**     | 62.08 (63.98) | 224.85 (226.62) |  61.81 (68.96)  |  51.73 (53.44)  |
 
 Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold.
 
-Several rows are ties between their two fastest configurations. For Nano, CoreML GPU FP16 (10.51 ms) and CoreML FP32 (10.68 ms) are within 2%, and for Small CoreML FP32 (13.31 ms) is within 5% of CoreML GPU FP16 (12.67 ms), so take CoreML FP32 for either when you want to avoid FP16. For Medium, PyTorch TorchScript FP16 (16.75 ms) and CoreML GPU FP16 (16.77 ms) are level.
+PyTorch inductor FP16 is fastest for every size except 2XLarge. Several rows are ties between their two fastest configurations, where a gap under about 5% counts as level: Nano, where CoreML GPU FP16 (10.30 ms) is 4.9% behind inductor FP16 (9.82 ms), Small, where CoreML GPU FP16 (12.06 ms) is within 1.3% of inductor FP16 (11.90 ms), Large, where it is within 4.3% (19.05 and 18.25 ms), and XLarge, where PyTorch TorchScript FP16 (28.71 ms) is within 4.9% (27.38 ms). For 2XLarge, TorchScript FP16 (43.55 ms) is within 3.3% of inductor FP16 (44.99 ms).
 
 --8<-- "docs/snippets/reproduced-latency.md"
 

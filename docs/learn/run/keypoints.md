@@ -36,11 +36,11 @@ The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1
 
 |        Size        | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |  CoreML FP16  | CoreML GPU FP32 |  CoreML GPU FP16  |
 | :----------------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-----------: | :-------------: | :---------------: |
-| Keypoint (Preview) |     34.70 (35.87)     |     31.79 (33.95)     |      26.69 (28.03)       | 27.01 (27.65) | 71.84 (75.85) |  26.99 (28.06)  | **22.44 (22.89)** |
+| Keypoint (Preview) |     26.32 (27.01)     |     23.55 (24.08)     |      26.04 (26.55)       | 24.75 (25.12) | 75.02 (78.57) |  24.84 (25.47)  | **21.34 (21.63)** |
 
 Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median is in bold.
 
-The FP32 configurations are about 20% slower: CoreML FP32 takes 27.01 ms and CoreML GPU FP32 takes 26.99 ms.
+The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and CoreML GPU FP32 takes 24.84 ms.
 
 --8<-- "docs/snippets/reproduced-latency.md"
 

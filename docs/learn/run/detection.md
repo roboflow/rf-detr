@@ -34,21 +34,23 @@ The configuration with the lowest end-to-end latency for each size on an Apple M
 
 <!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
 
-|      Size       | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |   CoreML FP32   |   CoreML FP16   | CoreML GPU FP32 |  CoreML GPU FP16  |
-| :-------------: | :-------------------: | :-------------------: | :----------------------: | :-------------: | :-------------: | :-------------: | :---------------: |
-|   Atto (A) △    |     12.46 (14.93)     |     12.00 (15.02)     |       9.81 (11.79)       |   5.91 (8.77)   | **3.76 (4.23)** |   7.26 (9.54)   |    7.49 (9.84)    |
-|   Femto (F) △   |     14.03 (17.83)     |     13.35 (17.17)     |       8.07 (10.49)       | **6.01 (8.85)** |  25.02 (26.39)  |   6.18 (9.37)   |    6.43 (9.26)    |
-|   Pico (P) △    |     15.14 (18.75)     |     15.73 (18.45)     |       9.80 (10.67)       |   6.69 (9.23)   | **5.74 (8.28)** |   7.13 (9.26)   |    6.74 (9.43)    |
-|    Nano (N)     |      7.03 (7.32)      |    **6.73 (7.02)**    |       9.97 (10.67)       |   7.75 (8.65)   |  11.23 (11.74)  |   8.32 (9.40)   |    8.95 (9.57)    |
-|    Small (S)    |     10.44 (10.71)     |    **9.71 (9.95)**    |      11.46 (11.77)       |  10.71 (11.07)  |  22.97 (23.60)  |  10.90 (11.18)  |   9.89 (10.22)    |
-|   Medium (M)    |     13.28 (13.74)     |   **12.07 (12.39)**   |      13.56 (14.20)       |  13.25 (13.50)  |  31.75 (32.40)  |  13.50 (14.00)  |   12.14 (12.73)   |
-|    Large (L)    |     17.59 (18.04)     |   **15.76 (16.09)**   |      17.09 (17.56)       |  17.77 (18.24)  |  55.29 (55.89)  |  20.39 (21.22)  |   17.02 (17.66)   |
-|  XLarge (XL) △  |     46.18 (50.49)     |     42.80 (44.66)     |      36.03 (36.53)       |  40.51 (45.02)  |  91.58 (93.94)  |  42.23 (46.82)  | **33.61 (35.14)** |
-| 2XLarge (2XL) △ |     60.42 (64.14)     |     51.34 (53.36)     |      45.51 (49.41)       |  54.76 (59.14)  | 127.39 (129.93) |  56.62 (62.00)  | **44.69 (46.85)** |
+|      Size       | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |   CoreML FP16   | CoreML GPU FP32 |  CoreML GPU FP16  |
+| :-------------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-------------: | :-------------: | :---------------: |
+|   Atto (A) △    |      4.92 (5.38)      |      4.75 (5.20)      |       9.98 (11.54)       |  7.82 (9.53)  | **3.81 (4.03)** |   8.07 (9.55)   |    6.93 (9.58)    |
+|   Femto (F) △   |      4.74 (5.06)      |    **4.60 (5.07)**    |       9.89 (10.79)       |  8.30 (9.51)  |  24.51 (25.41)  |   7.15 (9.41)   |    8.16 (9.43)    |
+|   Pico (P) △    |      4.99 (5.17)      |    **4.93 (5.20)**    |       9.84 (10.36)       |  8.92 (9.41)  |   8.51 (9.41)   |   8.56 (9.49)   |    8.68 (9.50)    |
+|    Nano (N)     |      7.48 (8.07)      |    **7.22 (8.26)**    |      10.04 (11.86)       | 9.74 (11.51)  |  12.64 (14.58)  |  9.75 (11.16)   |   9.62 (11.09)    |
+|    Small (S)    |     11.65 (13.10)     |   **10.82 (13.32)**   |      12.71 (15.89)       | 12.17 (16.73) |  25.19 (29.14)  |  12.33 (14.55)  |   11.28 (13.56)   |
+|   Medium (M)    |     15.98 (18.37)     |     14.71 (20.54)     |      15.58 (18.30)       | 15.11 (20.66) |  33.75 (36.55)  |  14.73 (16.95)  | **13.24 (15.34)** |
+|    Large (L)    |     21.52 (23.59)     |     18.19 (20.13)     |      18.55 (19.14)       | 17.80 (18.24) |  54.89 (56.16)  |  18.67 (20.25)  | **16.90 (18.65)** |
+|  XLarge (XL) △  |     36.25 (39.79)     |     33.31 (33.83)     |      34.43 (34.83)       | 38.46 (39.06) |  91.62 (92.86)  |  36.93 (38.08)  | **31.29 (31.80)** |
+| 2XLarge (2XL) △ |     49.95 (51.37)     |   **41.74 (42.00)**   |      43.51 (43.80)       | 50.36 (52.05) | 128.73 (129.12) |  50.01 (52.11)  | **41.74 (42.47)** |
 
 Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold.
 
-Femto's CoreML FP16 time (25.02 ms) is not noise: the Neural Engine compiler fails on its FP16 package under the default compute units, as the [CoreML page](../../exports/coreml.md#measured-latency-on-apple-silicon) explains, and Core ML then runs it slowly. CoreML GPU FP16 avoids that plan and takes 6.43 ms.
+Several rows are ties between their two fastest configurations, where a gap under about 5% counts as level. For Femto and Pico, PyTorch inductor FP16 and FP32 are within 3% and 1%. For Nano, inductor FP16 and FP32 are within 4%, and for Small inductor FP16 is within 5% of CoreML GPU FP16 (10.82 and 11.28 ms). For 2XLarge, inductor FP16 and CoreML GPU FP16 both take 41.74 ms. Atto is the one size where the default CoreML FP16 export is clearly fastest, 25% ahead of inductor FP16 (3.81 and 4.75 ms).
+
+Femto's CoreML FP16 time (24.51 ms) is not noise: the Neural Engine compiler fails on its FP16 package under the default compute units, as the [CoreML page](../../exports/coreml.md#measured-latency-on-apple-silicon) explains, and Core ML then runs it slowly. CoreML GPU FP16 avoids that plan and takes 8.16 ms.
 
 --8<-- "docs/snippets/reproduced-latency.md"
 
