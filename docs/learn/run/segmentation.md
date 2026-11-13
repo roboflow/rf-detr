@@ -29,16 +29,18 @@ The configuration with the lowest end-to-end latency for each size on an Apple M
 
 <!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
 
-|     Size      | Fastest configuration      | Median (ms) | p95 (ms) | Images per second |
-| :-----------: | :------------------------- | :---------: | :------: | :---------------: |
-|   Nano (N)    | `coreml-fp32`              |    10.68    |  11.52   |        94         |
-|   Small (S)   | `coreml-fp32`              |    13.31    |  14.27   |        75         |
-|  Medium (M)   | `pytorch-torchscript-fp16` |    16.75    |  17.41   |        60         |
-|   Large (L)   | `pytorch-torchscript-fp16` |    19.96    |  20.55   |        50         |
-|  XLarge (XL)  | `pytorch-torchscript-fp16` |    29.13    |  29.85   |        34         |
-| 2XLarge (2XL) | `pytorch-torchscript-fp16` |    46.28    |  48.53   |        22         |
+|     Size      | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |    CoreML FP32    |   CoreML FP16   |
+| :-----------: | :-------------------: | :-------------------: | :----------------------: | :---------------: | :-------------: |
+|   Nano (N)    |     17.41 (18.77)     |     16.93 (18.71)     |      11.44 (11.90)       | **10.68 (11.52)** |  22.25 (25.69)  |
+|   Small (S)   |     19.10 (19.86)     |     18.01 (18.99)     |      13.54 (14.09)       | **13.31 (14.27)** |  24.42 (28.50)  |
+|  Medium (M)   |     23.42 (25.26)     |     22.14 (23.65)     |    **16.75 (17.41)**     |   17.55 (18.32)   |  31.63 (37.49)  |
+|   Large (L)   |     27.63 (28.42)     |     25.67 (26.59)     |    **19.96 (20.55)**     |   21.70 (22.55)   |  45.58 (49.67)  |
+|  XLarge (XL)  |     40.65 (42.04)     |     35.72 (36.70)     |    **29.13 (29.85)**     |   37.66 (38.69)   | 122.98 (127.42) |
+| 2XLarge (2XL) |     63.12 (67.03)     |     53.17 (56.33)     |    **46.28 (48.53)**     |   66.52 (68.86)   | 213.46 (225.57) |
 
-For Small, `coreml-fp32` (13.31 ms) and `pytorch-torchscript-fp16` (13.54 ms) are within 2%, which is a tie: take the FP32 CoreML route when you want to avoid FP16.
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold.
+
+For Small, CoreML FP32 (13.31 ms) and PyTorch TorchScript FP16 (13.54 ms) are within 2%, which is a tie: take the FP32 CoreML route when you want to avoid FP16.
 
 --8<-- "docs/snippets/reproduced-latency.md"
 
