@@ -25,6 +25,7 @@ import sys
 import threading
 import types
 import warnings
+from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -445,6 +446,13 @@ def _stub_openvino_runtime_module() -> _RuntimeStub:
     compiled_model.outputs = [mock.MagicMock(name="output_0")]
     core.read_model.return_value = mock.MagicMock(name="ov_model")
     core.compile_model.return_value = compiled_model
+
+    def _compile(_model: Any, _device: Any, config: Mapping[str, Any]) -> Any:
+        # Grant every requested property as asked, as the CPU plugin does when the host has the cores.
+        compiled_model.get_property.side_effect = lambda name: config[name]
+        return mock.DEFAULT
+
+    core.compile_model.side_effect = _compile
     fake.Core = mock.MagicMock(return_value=core)
     return fake, core
 
@@ -651,6 +659,29 @@ class TestOpenVINOInferenceDeviceAndCache:
         OpenVINOInference(openvino_stub_xml, config=caller_dict)
         assert caller_dict == {"INFERENCE_NUM_THREADS": 3}
         assert [call.args[2]["INFERENCE_NUM_THREADS"] for call in core.compile_model.call_args_list] == [2, 3]
+
+    def test_refuses_a_thread_count_openvino_lowered(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """A load stops when OpenVINO compiles for fewer threads than ``INFERENCE_NUM_THREADS`` asked for.
+
+        OpenVINO clamps the request to the cores the host lets it use without a warning, so a latency run would
+        otherwise measure fewer threads than it names.
+        """
+        _, core = openvino_runtime_stub
+        core.compile_model.side_effect = None
+        core.compile_model.return_value.get_property.side_effect = None
+        core.compile_model.return_value.get_property.return_value = 4
+        with pytest.raises(RuntimeError, match="compiled for 4 threads.*INFERENCE_NUM_THREADS=8"):
+            OpenVINOInference(openvino_stub_xml, config={"INFERENCE_NUM_THREADS": 8})
+
+    def test_skips_the_thread_check_without_a_thread_request(
+        self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
+    ) -> None:
+        """No ``INFERENCE_NUM_THREADS`` means OpenVINO's own default stands and nothing is read back."""
+        _, core = openvino_runtime_stub
+        OpenVINOInference(openvino_stub_xml)
+        core.compile_model.return_value.get_property.assert_not_called()
 
     @_requires_openvino
     @pytest.mark.integration
