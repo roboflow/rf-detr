@@ -457,27 +457,199 @@ def _artifact_size_mb(*paths: Path) -> float:
     return total_bytes / 1e6
 
 
-#: Reported by :func:`cpu_brand` when the host is not macOS, or when the ``sysctl`` probe cannot run.
+class BenchmarkConfig(NamedTuple):
+    """The fixed options of one benchmark row, one table column each.
+
+    Examples:
+        >>> BenchmarkConfig("CPU EP", "INT8", "static QDQ")
+        BenchmarkConfig(runtime='CPU EP', precision='INT8', quantization='static QDQ')
+        >>> BenchmarkConfig("CPU", "fp32").quantization
+        '—'
+    """
+
+    runtime: str
+    precision: str
+    quantization: str = "—"
+
+
+class BenchmarkRows(list[dict[str, str | int | float | None]]):
+    """The rows of one cookbook's runtime benchmark table, built the same way in every cookbook.
+
+    It is a plain ``list`` of dicts, so ``pandas.DataFrame(rows)`` turns it into the table unchanged.
+
+    Examples:
+        >>> rows = BenchmarkRows()
+        >>> rows.record("ONNX", BenchmarkConfig("CPU EP", "fp32"), 4, BenchmarkResult("call", 8.0, 0.5), 10.0)
+        >>> rows[0]["FPS [img/s]"]
+        500.0
+        >>> rows[0]["Size [MB]"] is None
+        True
+    """
+
+    def record(
+        self,
+        format_label: str,
+        config: BenchmarkConfig,
+        batch: int,
+        result: BenchmarkResult,
+        memory_mb: float,
+        size_mb: float | None = None,
+    ) -> None:
+        """Append one benchmark result.
+
+        ``FPS [img/s]`` counts images per second (``batch * result.fps``), so it compares across batch sizes.
+
+        Args:
+            format_label: Row label, e.g. ``"ONNX"`` or ``"CoreML"``.
+            config: Runtime, precision and quantization of the row.
+            batch: Batch size the row was measured at.
+            result: Per-call latency of the whole batch.
+            memory_mb: Memory growth attributed to the row.
+            size_mb: On-disk size of the artifact, or ``None`` for a row without one.
+        """
+        self.append(
+            {
+                "Format": format_label,
+                "Runtime": config.runtime,
+                "Precision": config.precision,
+                "Quantization": config.quantization,
+                "Batch": batch,
+                "end2end [ms]": result.mean_ms,
+                "± [ms]": result.std_ms,
+                "FPS [img/s]": batch * result.fps,
+                "Memory [MB]": memory_mb,
+                "Size [MB]": size_mb,
+            }
+        )
+
+
+def im_predict(im_model: Any, frames: list[npt.NDArray[Any]], threshold: float) -> list[sv.Detections]:
+    """Run an ``inference-models`` model on RGB arrays and return ``sv.Detections``, like ``RFDETRInference.predict``.
+
+    Args:
+        im_model: Model loaded with ``inference_models.AutoModel.from_pretrained``.
+        frames: RGB image arrays, one per batch item.
+        threshold: Confidence threshold.
+
+    Returns:
+        One result per frame.
+
+    Examples:
+        >>> class _Prediction:
+        ...     def to_supervision(self):
+        ...         return "detections"
+        >>> im_predict(lambda frames, **kwargs: [_Prediction() for _ in frames], [np.zeros((1, 1, 3))], 0.5)
+        ['detections']
+    """
+    return [p.to_supervision() for p in im_model(frames, confidence=threshold, input_color_format="rgb")]
+
+
+def time_folder(predictor: Any, folder: Path, n_images: int, repeats: int, **predict_kwargs: Any) -> float:
+    """Time ``predictor.predict(folder)`` end to end and return the median images per second.
+
+    One untimed pass warms the predictor up first.
+
+    Args:
+        predictor: Anything with a ``predict`` method that takes a folder path.
+        folder: Directory of exactly *n_images* images.
+        n_images: Number of images the folder holds.
+        repeats: Timed passes.
+        **predict_kwargs: Keywords passed to every ``predict`` call.
+
+    Returns:
+        Images per second of the median pass.
+
+    Raises:
+        ValueError: If a pass returns a different number of results than *n_images*.
+
+    Examples:
+        >>> class _Predictor:
+        ...     def predict(self, folder, **kwargs):
+        ...         return [None, None, None]
+        >>> time_folder(_Predictor(), Path("images"), 3, 2) > 0
+        True
+    """
+    predictor.predict(str(folder), **predict_kwargs)
+    seconds = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        results = predictor.predict(str(folder), **predict_kwargs)
+        seconds.append(time.perf_counter() - start)
+        if len(results) != n_images:
+            raise ValueError(f"{folder} gave {len(results)} results, expected {n_images}.")
+    return n_images / sorted(seconds)[len(seconds) // 2]
+
+
+def export_cached(model: Any, output_dir: Path, pattern: str, **export_kwargs: Any) -> Path:
+    """Reuse the artifact already exported into *output_dir*, or export it with ``model.export``.
+
+    Args:
+        model: Model whose ``export`` method runs when *output_dir* holds no artifact.
+        output_dir: Directory dedicated to one model and one export configuration.
+        pattern: Glob that matches the artifact file, e.g. ``"*.trt"``.
+        **export_kwargs: Keywords passed to ``model.export``.
+
+    Returns:
+        Path of the artifact.
+
+    Raises:
+        ValueError: If *output_dir* holds more than one match, or the export wrote a file that does not match
+            *pattern*.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> class _Model:
+        ...     def export(self, output_dir, **kwargs):
+        ...         path = Path(output_dir) / "model.onnx"
+        ...         path.parent.mkdir(parents=True)
+        ...         path.touch()
+        ...         return path
+        >>> with TemporaryDirectory() as tmp:
+        ...     first = export_cached(_Model(), Path(tmp) / "onnx", "*.onnx", format="onnx")
+        ...     export_cached(None, Path(tmp) / "onnx", "*.onnx") == first
+        True
+    """
+    artifacts = sorted(output_dir.glob(pattern))
+    if len(artifacts) > 1:
+        raise ValueError(f"Ambiguous artifact cache: {output_dir} holds {len(artifacts)} matches of {pattern!r}.")
+    if artifacts:
+        return artifacts[0]
+    artifact = Path(model.export(output_dir=str(output_dir), **export_kwargs))
+    if not artifact.match(pattern):
+        raise ValueError(f"The export wrote {artifact}, which does not match {pattern!r}.")
+    return artifact
+
+
+#: Reported by :func:`cpu_brand` when the host is not macOS or Linux, or when its probe cannot run.
 _UNKNOWN_CPU_BRAND = "unknown CPU brand"
 
 
 def cpu_brand() -> str:
-    """CPU brand string as reported by macOS ``sysctl``, or a fixed placeholder when it cannot be read.
+    """CPU brand string as reported by macOS ``sysctl`` or Linux ``/proc/cpuinfo``, or a fixed placeholder.
 
     The per-hardware cookbooks print this in their Host cell, before any measurement runs, so a raised exception here
     aborts the notebook on the first cell that matters. Two guards are needed rather than one: ``sysctl`` ships only on
     Darwin, and ``subprocess.run(..., check=False)`` suppresses a non-zero *exit status* but not the
     ``FileNotFoundError`` raised when the binary is missing from ``PATH`` entirely — so ``check=False`` alone still
-    crashes on the Linux and Windows hosts the CPU and mobile cookbooks claim to support.
+    crashes on the hosts the CPU and mobile cookbooks claim to support. A caller that must not run on an unnamed
+    machine compares the result with :data:`_UNKNOWN_CPU_BRAND`.
 
     Returns:
-        The trimmed brand string on macOS, or :data:`_UNKNOWN_CPU_BRAND` off Darwin, when the probe cannot be spawned,
-        or when it reports nothing.
+        The trimmed brand string on macOS, the first ``model name`` of ``/proc/cpuinfo`` on Linux, or
+        :data:`_UNKNOWN_CPU_BRAND` on another system, when the probe cannot be spawned or read, or when it reports
+        nothing.
 
     Examples:
         >>> isinstance(cpu_brand(), str)
         True
     """
+    if platform.system() == "Linux":
+        try:
+            lines = Path("/proc/cpuinfo").read_text().splitlines()
+        except OSError:
+            return _UNKNOWN_CPU_BRAND
+        names = [line.split(":", 1)[1].strip() for line in lines if line.startswith("model name") and ":" in line]
+        return names[0] if names and names[0] else _UNKNOWN_CPU_BRAND
     if platform.system() != "Darwin":
         return _UNKNOWN_CPU_BRAND
     try:

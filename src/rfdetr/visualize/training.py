@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
+__doctest_requires__ = {"_enable_notebook_inline_matplotlib": ["IPython"]}
+
 _AUXILIARY_LOSS_SUFFIX_RE = re.compile(r"_\d+$")
 _LEGEND_COLUMNS = 4
 
@@ -495,3 +497,20 @@ def plot_metrics(
         output_path=output_path,
         loss_log_scale=loss_log_scale,
     )
+
+
+def _enable_notebook_inline_matplotlib() -> None:
+    """Show matplotlib figures inline and close each after its cell, when running inside IPython.
+
+    A plain Python process has no IPython shell, so nothing changes there. The import is local because IPython is not
+    a dependency of ``rfdetr``; a notebook always has it.
+
+    Examples:
+        >>> _enable_notebook_inline_matplotlib()  # no IPython shell in a doctest, so this does nothing
+    """
+    from IPython import get_ipython
+
+    ipython = get_ipython()
+    if ipython is not None:
+        ipython.run_line_magic("matplotlib", "inline")
+        ipython.run_line_magic("config", "InlineBackend.close_figures = True")

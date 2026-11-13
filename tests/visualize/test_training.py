@@ -7,14 +7,19 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import Mock, call
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PANDAS_INSTALLED, _IS_SEABORN_INSTALLED
 from rfdetr.visualize.training import (
     _build_metric_groups,
+    _enable_notebook_inline_matplotlib,
     _plot_map_columns,
     _plot_metric_groups,
     _read_metrics_csv,
@@ -450,3 +455,34 @@ def test_plot_metrics_adds_legends_to_all_populated_subplots(tmp_path: Path) -> 
     assert detection_ax.get_legend() is not None, "Detection AP@0.50 subplot should have legend"
 
     plt.close(figure)
+
+
+class TestEnableNotebookInlineMatplotlib:
+    """Check the inline-plot switch the fine-tuning cookbooks call before their first plot."""
+
+    def test_selects_the_inline_backend_and_closes_figures_in_ipython(self, mocker: MockerFixture) -> None:
+        """Inside an IPython shell the figures show inline and each closes after its cell.
+
+        Without the second setting every figure of a long fine-tuning run stays open until the kernel stops.
+        """
+        shell = Mock()
+        ipython = ModuleType("IPython")
+        ipython.get_ipython = Mock(return_value=shell)
+        mocker.patch.dict(sys.modules, {"IPython": ipython})
+
+        _enable_notebook_inline_matplotlib()
+
+        assert shell.run_line_magic.call_args_list == [
+            call("matplotlib", "inline"),
+            call("config", "InlineBackend.close_figures = True"),
+        ]
+
+    def test_leaves_a_plain_python_process_alone(self, mocker: MockerFixture) -> None:
+        """Without an IPython shell nothing is configured, so a script that runs the cells still works."""
+        ipython = ModuleType("IPython")
+        ipython.get_ipython = Mock(return_value=None)
+        mocker.patch.dict(sys.modules, {"IPython": ipython})
+
+        _enable_notebook_inline_matplotlib()
+
+        ipython.get_ipython.assert_called_once_with()
