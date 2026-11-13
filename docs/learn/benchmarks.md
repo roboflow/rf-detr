@@ -47,7 +47,7 @@ RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial 
 
 ![Object detection accuracy vs latency on COCO and RF100-VL: RF-DETR against YOLO11, YOLO26, LW-DETR and D-FINE](../assets/benchmark-detection.svg)
 
-<!-- COPIES: the Latency and Params values of the RF-DETR rows in the Detection, Segmentation and Keypoints tables are repeated in docs/learn/run/detection.md, segmentation.md and keypoints.md. Update both together. -->
+<!-- COPIES: the Params values of the RF-DETR rows in the Detection, Segmentation and Keypoints tables are repeated in docs/learn/run/detection.md, segmentation.md and keypoints.md. Update both together. -->
 
 | Architecture | Size | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------: | :--: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: | :--------: |
