@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import quote
 from urllib.request import urlopen
 
@@ -584,6 +584,40 @@ class CocoValSubset:
     annotations_path: Path
     image_ids: tuple[int, ...]
 
+    @property
+    def keypoints_annotations_path(self) -> Path:
+        """Locate person-keypoint annotations beside the instance annotations.
+
+        Examples:
+            >>> subset = CocoValSubset(Path("val2017"), Path("annotations/instances_val2017.json"), ())
+            >>> subset.keypoints_annotations_path.name
+            'person_keypoints_val2017.json'
+        """
+        return self.annotations_path.parent / "person_keypoints_val2017.json"
+
+
+@dataclass(frozen=True)
+class CocoApResult:
+    """Box and task-specific AP of public predictions on a COCO subset.
+
+    Attributes:
+        box_ap: Box AP averaged over IoU 0.50:0.95, in ``[0, 1]``.
+        box_ap50: Box AP at IoU 0.50, in ``[0, 1]``.
+        task_ap: Mask or keypoint AP over IoU 0.50:0.95, in ``[0, 1]``; ``None`` for detection.
+        task_ap50: Mask or keypoint AP at IoU 0.50, in ``[0, 1]``; ``None`` for detection.
+        n_images: Number of images scored.
+
+    Examples:
+        >>> CocoApResult(0.4, 0.6, None, None, 100).n_images
+        100
+    """
+
+    box_ap: float
+    box_ap50: float
+    task_ap: float | None
+    task_ap50: float | None
+    n_images: int
+
 
 @dataclass(frozen=True)
 class CocoMapResult:
@@ -804,6 +838,142 @@ def _coco_records(
         }
         for (x1, y1, x2, y2), score, class_id in zip(xyxy, scores, class_ids)
     ]
+
+
+def _coco_ap_prediction(
+    output: sv.Detections | sv.KeyPoints, task: Literal["detect", "segment", "keypoints"]
+) -> dict[str, torch.Tensor]:
+    """Convert one public prediction result to the tensors consumed by CocoEvaluator.
+
+    Empty results need no fields; CocoEvaluator accepts an empty dictionary for a missed image.
+
+    Args:
+        output: Public prediction result for one image, using sparse COCO category IDs.
+        task: Task whose fields must be present.
+
+    Returns:
+        Boxes, scores, labels and any task-specific tensors, or an empty dictionary.
+
+    Raises:
+        ValueError: If the result type disagrees with the task or a required field is missing.
+
+    Examples:
+        >>> _coco_ap_prediction(sv.Detections.empty(), "detect")
+        {}
+    """
+    import torch
+
+    expected_type = sv.KeyPoints if task == "keypoints" else sv.Detections
+    if not isinstance(output, expected_type):
+        raise ValueError(f"Prediction type {type(output).__name__} does not match task {task!r}.")
+    if len(output) == 0:
+        return {}
+    if isinstance(output, sv.KeyPoints):
+        if "xyxy" not in output.data:
+            raise ValueError('KeyPoints need data["xyxy"] to be scored.')
+        if output.detection_confidence is None or output.class_id is None or output.keypoint_confidence is None:
+            raise ValueError("KeyPoints need detection_confidence, class_id and keypoint_confidence to be scored.")
+        return {
+            "boxes": torch.as_tensor(output.data["xyxy"], dtype=torch.float32),
+            "scores": torch.as_tensor(output.detection_confidence, dtype=torch.float32),
+            "labels": torch.as_tensor(output.class_id, dtype=torch.int64),
+            "keypoints": torch.from_numpy(
+                np.concatenate([output.xy, output.keypoint_confidence[..., None]], axis=-1)
+            ).float(),
+        }
+    if output.confidence is None or output.class_id is None:
+        raise ValueError("Decoded detections need confidence and class_id to be scored.")
+    prediction = {
+        "boxes": torch.as_tensor(output.xyxy, dtype=torch.float32),
+        "scores": torch.as_tensor(output.confidence, dtype=torch.float32),
+        "labels": torch.as_tensor(output.class_id, dtype=torch.int64),
+    }
+    if task == "segment":
+        if output.mask is None:
+            raise ValueError("Segmentation detections need mask to be scored.")
+        mask = np.asarray(output.mask)
+        # Boolean masks: the evaluator thresholds at 0.5 anyway, and a float copy of 300 full-size masks is 4x larger.
+        prediction["masks"] = torch.from_numpy(mask[:, None])
+    return prediction
+
+
+def evaluate_coco_ap(
+    run: Callable[[Image.Image], sv.Detections | sv.KeyPoints],
+    subset: CocoValSubset,
+    task: Literal["detect", "segment", "keypoints"],
+    *,
+    progress: bool = True,
+) -> CocoApResult:
+    """Score box and task AP from public predictions, one RGB image at a time.
+
+    Args:
+        run: Callable wrapping ``RFDETRInference.predict(image, threshold=0.001, include_source_image=False)``.
+        subset: Images and instance annotations from :func:`fetch_coco_val2017`.
+        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints.
+        progress: Whether to show a progress bar.
+
+    Returns:
+        Box AP and AP50, plus mask or keypoint AP and AP50 for those tasks. Task fields are ``None`` for detection.
+        Empty runs return zeros with a warning; COCO's undefined AP (no scorable ground truth) is reported as zero.
+
+    Raises:
+        ImportError: If the optional ``train`` extra's COCO evaluation dependencies are unavailable.
+        ValueError: If the task, result type, required prediction fields or annotation image path is invalid.
+
+    Examples:
+        Skipped because it needs a fetched COCO subset and a predictor.
+
+        >>> result = evaluate_coco_ap(  # doctest: +SKIP
+        ...     lambda image: predictor.predict(image, threshold=0.001, include_source_image=False),
+        ...     subset, predictor.runtime_info["task"],
+        ... )
+        >>> result.box_ap  # doctest: +SKIP
+        0.41
+    """
+    from faster_coco_eval import COCO
+
+    from rfdetr.evaluation.coco_eval import CocoEvaluator
+
+    if task not in ("detect", "segment", "keypoints"):
+        raise ValueError(f"Unknown COCO task {task!r}.")
+    task_iou = {"segment": "segm", "keypoints": "keypoints"}.get(task)
+    iou_types = ["bbox"] if task_iou is None else ["bbox", task_iou]
+    annotations_path = subset.keypoints_annotations_path if task == "keypoints" else subset.annotations_path
+    coco_gt = COCO(str(annotations_path))
+    evaluator = None
+    empty_predictions: dict[int, dict[str, torch.Tensor]] = {}
+    for image_id in tqdm(subset.image_ids, desc="COCO AP", disable=not progress):
+        file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
+        with Image.open(_coco_image_path(subset.images_dir, file_name)) as image:
+            rgb = image.convert("RGB")
+        prediction = _coco_ap_prediction(run(rgb), task)
+        if evaluator is None:
+            if not prediction:
+                empty_predictions[image_id] = {}
+                continue
+            # Delay construction for all-empty runs, but retain preceding missed images in the evaluation.
+            evaluator = CocoEvaluator(coco_gt, iou_types, log_summary=False)
+            evaluator.update(empty_predictions)
+        evaluator.update({image_id: prediction})
+    if evaluator is None:
+        if subset.image_ids:
+            logger.warning(
+                f"evaluate_coco_ap: the runtime produced no detections on any of {len(subset.image_ids)} images, so "
+                "AP is reported as 0.0. A reduced-precision runtime can collapse the logits; check its precision."
+            )
+        task_zero = None if task == "detect" else 0.0
+        return CocoApResult(0.0, 0.0, task_zero, task_zero, len(subset.image_ids))
+    evaluator.synchronize_between_processes()
+    evaluator.accumulate()
+    stats = evaluator.coco_eval["bbox"].stats
+    task_stats = evaluator.coco_eval[task_iou].stats if task_iou is not None else None
+    return CocoApResult(
+        box_ap=max(0.0, float(stats[0])),
+        box_ap50=max(0.0, float(stats[1])),
+        task_ap=max(0.0, float(task_stats[0])) if task_stats is not None else None,
+        task_ap50=max(0.0, float(task_stats[1])) if task_stats is not None else None,
+        n_images=len(subset.image_ids),
+    )
 
 
 def evaluate_coco_map(

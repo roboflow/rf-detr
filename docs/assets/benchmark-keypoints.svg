@@ -1,55 +1,61 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="860" height="860" viewBox="0 0 860 860" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1052" viewBox="0 0 2000 1052" role="img" aria-labelledby="title description">
 <title id="title">Keypoint detection accuracy vs latency: RF-DETR Keypoint, YOLO26-pose, YOLO11-pose</title>
 <desc id="description">COCO person keypoint mAP@50:95 against T4 TensorRT FP16 batch-1 latency in milliseconds. Values are listed in the benchmark tables.</desc>
-<rect width="860" height="860" fill="#ffffff"/>
+<rect width="2000" height="1052" fill="#ffffff"/>
 <g font-family="DejaVu Sans, Arial, sans-serif">
-<text x="465.0" y="30" text-anchor="middle" font-size="26" font-weight="700" fill="#262626">Keypoints Detection (MS COCO)</text>
-<rect x="90" y="50" width="750" height="730" fill="#fff" stroke="#262626" stroke-width="1.5"/>
-<path d="M136.4 50V780" stroke="#cccccc" stroke-width="1.5"/>
-<text x="136.4" y="808" text-anchor="middle" font-size="20" fill="#262626">2</text>
-<path d="M291.0 50V780" stroke="#cccccc" stroke-width="1.5"/>
-<text x="291.0" y="808" text-anchor="middle" font-size="20" fill="#262626">4</text>
-<path d="M445.7 50V780" stroke="#cccccc" stroke-width="1.5"/>
-<text x="445.7" y="808" text-anchor="middle" font-size="20" fill="#262626">6</text>
-<path d="M600.3 50V780" stroke="#cccccc" stroke-width="1.5"/>
-<text x="600.3" y="808" text-anchor="middle" font-size="20" fill="#262626">8</text>
-<path d="M754.9 50V780" stroke="#cccccc" stroke-width="1.5"/>
-<text x="754.9" y="808" text-anchor="middle" font-size="20" fill="#262626">10</text>
-<path d="M90 675.7H840" stroke="#cccccc" stroke-width="1.5"/>
-<text x="80" y="682.7" text-anchor="end" font-size="20" fill="#262626">50</text>
-<path d="M90 545.4H840" stroke="#cccccc" stroke-width="1.5"/>
-<text x="80" y="552.4" text-anchor="end" font-size="20" fill="#262626">55</text>
-<path d="M90 415.0H840" stroke="#cccccc" stroke-width="1.5"/>
-<text x="80" y="422.0" text-anchor="end" font-size="20" fill="#262626">60</text>
-<path d="M90 284.6H840" stroke="#cccccc" stroke-width="1.5"/>
-<text x="80" y="291.6" text-anchor="end" font-size="20" fill="#262626">65</text>
-<path d="M90 154.3H840" stroke="#cccccc" stroke-width="1.5"/>
-<text x="80" y="161.3" text-anchor="end" font-size="20" fill="#262626">70</text>
-<text x="465.0" y="842" text-anchor="middle" font-size="18" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
-<text x="24" y="415.0" text-anchor="middle" font-size="18" font-weight="700" fill="#262626" transform="rotate(-90 24 415.0)">MS COCO mAP@50:95</text>
-<clipPath id="c0-0"><rect x="78" y="38" width="774" height="754"/></clipPath>
-<g clip-path="url(#c0-0)">
-<polyline points="229.2,704.4 244.6,480.2 383.8,305.5 492.1,279.4 801.3,190.8" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
-<text x="229.2" y="710.4" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
-<text x="244.6" y="486.2" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
-<text x="383.8" y="311.5" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
-<text x="492.1" y="285.4" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
-<text x="801.3" y="196.8" text-anchor="middle" font-size="17" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
-<polyline points="128.7,521.9 190.5,362.9 337.4,206.4 437.9,175.1 739.5,128.2" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
-<text x="128.7" y="527.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
-<text x="190.5" y="368.9" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
-<text x="337.4" y="212.4" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
-<text x="437.9" y="181.1" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
-<text x="739.5" y="134.2" text-anchor="middle" font-size="17" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
-<polygon points="731.8,87.4 736.5,100.9 750.8,101.2 739.4,109.8 743.5,123.5 731.8,115.4 720.0,123.5 724.1,109.8 712.7,101.2 727.1,100.9" fill="#9467bd" stroke="#fff" stroke-width="2"/>
-</g>
-<rect x="568" y="664" width="260" height="104" rx="4" fill="#fff" fill-opacity="0.9" stroke="#cccccc"/>
-<polygon points="603.0,670.0 606.1,678.8 615.4,679.0 607.9,684.6 610.6,693.5 603.0,688.2 595.4,693.5 598.1,684.6 590.6,679.0 599.9,678.8" fill="#9467bd"/>
-<text x="638" y="688" font-size="19" fill="#262626">RF-DETR Keypoint</text>
-<path d="M580 713H626" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
-<text x="638" y="718" font-size="19" fill="#262626">YOLO26-pose</text>
-<path d="M580 743H626" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
-<text x="638" y="748" font-size="19" fill="#262626">YOLO11-pose</text>
+<text x="1000.0" y="48.0" text-anchor="middle" font-size="30" font-weight="700" fill="#262626">Keypoint Detection (MS COCO)</text>
+<rect x="565" y="70" width="870" height="830" fill="#fff" stroke="#262626" stroke-width="1.5"/>
+<path d="M644.1 70V900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="644.1" y="932.0" text-anchor="middle" font-size="23" fill="#262626">2</text>
+<path d="M802.3 70V900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="802.3" y="932.0" text-anchor="middle" font-size="23" fill="#262626">4</text>
+<path d="M960.5 70V900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="960.5" y="932.0" text-anchor="middle" font-size="23" fill="#262626">6</text>
+<path d="M1118.6 70V900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1118.6" y="932.0" text-anchor="middle" font-size="23" fill="#262626">8</text>
+<path d="M1276.8 70V900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1276.8" y="932.0" text-anchor="middle" font-size="23" fill="#262626">10</text>
+<path d="M1435.0 70V900" stroke="#cccccc" stroke-width="1.5"/>
+<text x="1435.0" y="932.0" text-anchor="middle" font-size="23" fill="#262626">12</text>
+<path d="M565 900.0H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="908.0" text-anchor="end" font-size="23" fill="#262626">45</text>
+<path d="M565 761.7H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="769.7" text-anchor="end" font-size="23" fill="#262626">50</text>
+<path d="M565 623.3H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="631.3" text-anchor="end" font-size="23" fill="#262626">55</text>
+<path d="M565 485.0H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="493.0" text-anchor="end" font-size="23" fill="#262626">60</text>
+<path d="M565 346.7H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="354.7" text-anchor="end" font-size="23" fill="#262626">65</text>
+<path d="M565 208.3H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="216.3" text-anchor="end" font-size="23" fill="#262626">70</text>
+<path d="M565 70.0H1435" stroke="#cccccc" stroke-width="1.5"/>
+<text x="555.0" y="78.0" text-anchor="end" font-size="23" fill="#262626">75</text>
+<text x="1000.0" y="970.0" text-anchor="middle" font-size="22" font-weight="700" fill="#262626">Latency [ms] (T4, TensorRT FP16, batch=1)</text>
+<text x="493.0" y="485.0" text-anchor="middle" font-size="22" font-weight="700" fill="#262626" transform="rotate(-90 493 485.0)">MS COCO keypoint mAP@50:95</text>
+<clipPath id="c565"><rect x="551" y="56" width="898" height="858"/></clipPath>
+<g clip-path="url(#c565)">
+<polyline points="739.0,792.1 754.8,554.2 897.2,368.8 1007.9,341.1 1324.3,247.1" fill="none" stroke="#f28e2b" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="636.2,598.4 699.5,429.7 849.7,263.7 952.5,230.5 1261.0,180.7" fill="none" stroke="#000000" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polygon points="1253.1,138.5 1258.4,151.3 1272.1,152.4 1261.7,161.3 1264.8,174.7 1253.1,167.5 1241.3,174.7 1244.5,161.3 1234.1,152.4 1247.8,151.3" fill="#9467bd" stroke="#fff" stroke-width="2"/>
+<text x="739.0" y="799.1" text-anchor="middle" font-size="20" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="754.8" y="561.2" text-anchor="middle" font-size="20" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="897.2" y="375.8" text-anchor="middle" font-size="20" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="1007.9" y="348.1" text-anchor="middle" font-size="20" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1324.3" y="254.1" text-anchor="middle" font-size="20" font-weight="700" fill="#f28e2b" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+<text x="636.2" y="605.4" text-anchor="middle" font-size="20" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">N</text>
+<text x="699.5" y="436.7" text-anchor="middle" font-size="20" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">S</text>
+<text x="849.7" y="270.7" text-anchor="middle" font-size="20" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">M</text>
+<text x="952.5" y="237.5" text-anchor="middle" font-size="20" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">L</text>
+<text x="1261.0" y="187.7" text-anchor="middle" font-size="20" font-weight="700" fill="#000000" stroke="#fff" stroke-width="4" paint-order="stroke">X</text>
+</g></g>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<polygon points="629.0,1008.0 632.7,1016.9 642.3,1017.7 635.0,1023.9 637.2,1033.3 629.0,1028.3 620.8,1033.3 623.0,1023.9 615.7,1017.7 625.3,1016.9" fill="#9467bd"/>
+<text x="664.0" y="1030.0" text-anchor="start" font-size="23" fill="#262626">RF-DETR Keypoint</text>
+<path d="M912 1022H958" stroke="#000000" stroke-width="3.5" stroke-linecap="round"/>
+<text x="970.0" y="1030.0" text-anchor="start" font-size="23" fill="#262626">YOLO26-pose</text>
+<path d="M1153 1022H1199" stroke="#f28e2b" stroke-width="3.5" stroke-linecap="round"/>
+<text x="1211.0" y="1030.0" text-anchor="start" font-size="23" fill="#262626">YOLO11-pose</text>
 </g>
 </svg>

@@ -28,7 +28,6 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
-import faster_coco_eval.core.mask as mask_util
 import numpy as np
 from faster_coco_eval import COCO
 from faster_coco_eval.core.faster_eval_api import COCOeval
@@ -612,10 +611,12 @@ class CocoEvaluator:
             labels = prediction["labels"].tolist()
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
 
-            encode = getattr(mask_util, "encode")
-            rles: list[dict[str, Any]] = [
-                encode(np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0] for mask in masks
-            ]
+            # hotcoco (Rust, shipped with the same `train` extra as faster_coco_eval) encodes the whole (H, W, N)
+            # stack in one call and returns the same RLE bytes as encoding each mask on its own, several times faster;
+            # this loop dominated segmentation scoring.
+            import hotcoco.mask as hotcoco_mask
+
+            rles: list[dict[str, Any]] = hotcoco_mask.encode(masks[:, 0].cpu().numpy().transpose(1, 2, 0))
             for rle in rles:
                 rle["counts"] = rle["counts"].decode("utf-8")
 

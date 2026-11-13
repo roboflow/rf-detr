@@ -8,21 +8,25 @@ RF-DETR is a real-time transformer architecture for object detection, built on a
 
 ## Pre-trained Checkpoints
 
-RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Nano to Large are licensed under Apache 2.0, so they're commercially usable out of the box: you can ship them in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. Atto, Femto, Pico, XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr_plus) extension (`pip install rfdetr[plus]`) under the [Roboflow Platform Model License (PML 1.0)](https://github.com/roboflow/rf-detr_plus/blob/main/LICENSE): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
+RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. Nano to Large are licensed under Apache 2.0, so they're commercially usable out of the box: you can ship them in closed-source, commercial products, including self-hosted deployments, without paying a license fee or open-sourcing your code. Atto, Femto, Pico, XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr_plus) extension (`pip install rfdetr[plus]`) under the [Roboflow Platform Model License (PML 1.0)](https://github.com/roboflow/rf-detr_plus/blob/main/LICENSE): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on.
 
-| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
-| :--: | :-------------------: | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-|  A   |    `RFDETRAtto` △     |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
-|  F   |    `RFDETRFemto` △    |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
-|  P   |    `RFDETRPico` △     |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
-|  N   |     `RFDETRNano`      |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
-|  S   |     `RFDETRSmall`     |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
-|  M   |    `RFDETRMedium`     |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |
-|  L   |     `RFDETRLarge`     |         75.1         |          56.5           |     6.8      |    33.9    |  704x704   | Apache 2.0 |
-|  XL  |   `RFDETRXLarge` △    |         77.4         |          58.6           |     11.5     |   126.4    |  700x700   |  PML 1.0   |
-| 2XL  |   `RFDETR2XLarge` △   |         78.5         |          60.1           |     17.2     |   126.9    |  880x880   |  PML 1.0   |
+<!-- COPIES: the three AP columns come from the results table of docs/cookbooks/coco-accuracy.ipynb (one run, provenance in the note below); params and resolution repeat the Detection table of docs/learn/benchmarks.md. -->
 
-> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`
+| Size | RF-DETR package class | PyTorch FP32 AP<sub>50:95</sub> | TensorRT FP16 AP<sub>50:95</sub> | TensorRT INT8 AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
+| :--: | :-------------------: | :-----------------------------: | :------------------------------: | :------------------------------: | :--------: | :--------: | :--------: |
+|  A   |    `RFDETRAtto` △     |              30.7               |               30.6               |               23.7               |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    |              37.6               |               37.6               |               28.9               |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     |              41.7               |               41.6               |               33.2               |    8.4     |  560x560   |  PML 1.0   |
+|  N   |     `RFDETRNano`      |              48.0               |               48.0               |               47.6               |    30.5    |  384x384   | Apache 2.0 |
+|  S   |     `RFDETRSmall`     |              52.8               |               52.8               |               52.3               |    32.1    |  512x512   | Apache 2.0 |
+|  M   |    `RFDETRMedium`     |              54.7               |               54.6               |               54.0               |    33.7    |  576x576   | Apache 2.0 |
+|  L   |     `RFDETRLarge`     |              56.6               |               56.5               |               56.2               |    33.9    |  704x704   | Apache 2.0 |
+|  XL  |   `RFDETRXLarge` △    |              58.7               |               58.7               |               58.3               |   126.4    |  700x700   |  PML 1.0   |
+| 2XL  |   `RFDETR2XLarge` △   |              60.1               |               60.0               |               59.6               |   126.9    |  880x880   |  PML 1.0   |
+
+> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`. Atto, Femto and Pico lose 7.0 to 8.7 AP in TensorRT INT8 against PyTorch FP32, so prefer FP16 engines for them.
+
+--8<-- "docs/snippets/reproduced-coco-ap.md"
 
 ## Run on an Image
 

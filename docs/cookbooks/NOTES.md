@@ -36,7 +36,7 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
     description: One sentence describing what the notebook demonstrates.
 ```
 
-Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`, `CUDA`, `CPU`, `MOBILE`, `APPLE`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
+Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`, `CUDA`, `CPU`, `MOBILE`, `APPLE`, `COCO2017`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
 For newly added or updated notebooks, write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
 
@@ -49,6 +49,7 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 
 | File                                    | Card title                                             | Version |
 | --------------------------------------- | ------------------------------------------------------ | ------- |
+| `coco-accuracy.ipynb`                   | Reproduce the COCO Accuracy of Pretrained Models       | v1.13.0 |
 | `custom-augmentations.ipynb`            | Custom Augmentations and Live Training Progress        | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`      | Custom Optimizer and LR Scheduler                      | v1.9.0  |
 | `export-cuda.ipynb`                     | RF-DETR on NVIDIA GPUs — Export, Inference & Latency   | v1.11.0 |

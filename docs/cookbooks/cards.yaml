@@ -1,4 +1,10 @@
 cards:
+  - href: coco-accuracy/
+    name: "Reproduce the COCO Accuracy of Pretrained Models"
+    labels: [INFERENCE, COCO2017, CUDA]
+    version: v1.13.0
+    author: Borda
+    description: "Score every pretrained checkpoint on COCO val2017 through RFDETRInference.predict with eager PyTorch FP32 on any device and static TensorRT FP16 and INT8 engines on CUDA, then print a Markdown table comparing the results with the Benchmarks page."
   - href: per-class-confidence-thresholds/
     name: "Per-Class Confidence Thresholds"
     labels: [INFERENCE]

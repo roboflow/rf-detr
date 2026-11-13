@@ -8,6 +8,7 @@
 import json
 from pathlib import Path
 
+import faster_coco_eval.core.mask as fce_mask
 import numpy as np
 import pycocotools.coco as pycoco
 import pytest
@@ -403,6 +404,37 @@ class TestSynchronizeBetweenProcesses:
         ev.synchronize_between_processes()
 
         assert len(ev.coco_results["keypoints"]) == 3, "all 3 per-image detections must be kept"
+
+
+class TestPrepareForCocoSegmentation:
+    """Segmentation results carry the COCO RLE of each thresholded mask."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bool])
+    def test_rle_matches_per_mask_encoding(self, tmp_path: Path, dtype: torch.dtype) -> None:
+        """Each result's RLE equals encoding its own mask, thresholded at 0.5, on its own.
+
+        Masks arrive as probabilities or booleans in ``(N, 1, H, W)``; the stack includes an empty and a full mask, the
+        two edge cases of COCO run-length encoding, so encoding the whole stack at once must not shift any run.
+        """
+        annotation_path = tmp_path / "kp.json"
+        _write_person_keypoint_coco(annotation_path)
+        coco_gt = COCO(str(annotation_path))
+        coco_gt.label2cat = {0: 1}
+        evaluator = CocoEvaluator(coco_gt, ["segm"])
+        probabilities = torch.rand((4, 1, 23, 17), generator=torch.Generator().manual_seed(0))
+        probabilities[1] = 0.0
+        probabilities[2] = 1.0
+        masks = probabilities.to(dtype) if dtype == torch.bool else probabilities
+        expected = [
+            fce_mask.encode(np.array(mask[0, :, :, None], dtype=np.uint8, order="F"))[0]["counts"]
+            for mask in (masks > 0.5).numpy()
+        ]
+
+        results = evaluator.prepare_for_coco_segmentation(
+            {1: {"scores": torch.full((4,), 0.9), "labels": torch.zeros(4, dtype=torch.int64), "masks": masks}}
+        )
+
+        assert [result["segmentation"]["counts"] for result in results] == [counts.decode() for counts in expected]
 
 
 def test_coco_evaluator_skips_unmapped_labels_when_label2cat_is_present(tmp_path: Path) -> None:

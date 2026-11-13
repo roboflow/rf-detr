@@ -25,6 +25,7 @@ from pytest_mock import MockerFixture
 from rfdetr.export._benchmark import (
     CocoValSubset,
     _download,
+    evaluate_coco_ap,
     evaluate_coco_map,
     fetch_coco_val2017,
     select_coco_val_ids,
@@ -152,6 +153,69 @@ def _gt_detections(image: Image.Image) -> sv.Detections:
         confidence=np.array([0.9], dtype=np.float32),
         class_id=np.array([category_id]),
     )
+
+
+def _gt_segments(image: Image.Image) -> sv.Detections:
+    """Return the ground-truth box and its filled rectangular mask.
+
+    Examples:
+        >>> _gt_segments(Image.new("RGB", (64, 64))).mask.sum()
+        np.int64(768)
+    """
+    detections = _gt_detections(image)
+    x1, y1, x2, y2 = detections.xyxy[0].astype(int)
+    mask = np.zeros((1, image.height, image.width), dtype=bool)
+    mask[:, y1:y2, x1:x2] = True
+    detections.mask = mask
+    return detections
+
+
+def _gt_keypoints(image: Image.Image) -> sv.KeyPoints:
+    """Return seventeen visible person keypoints and the ground-truth box.
+
+    Examples:
+        >>> _gt_keypoints(Image.new("RGB", (64, 64))).xy.shape
+        (1, 17, 2)
+    """
+    boxes = _gt_detections(image).xyxy
+    xy = boxes[:, None, :2] + np.arange(1, 18, dtype=np.float32)[None, :, None]
+    return sv.KeyPoints(
+        xy=xy,
+        class_id=np.array([1]),
+        keypoint_confidence=np.ones((1, 17), dtype=np.float32),
+        detection_confidence=np.array([0.9], dtype=np.float32),
+        data={"xyxy": boxes},
+    )
+
+
+def _write_task_coco(root: Path, task: str) -> CocoValSubset:
+    """Write synthetic mask or person-keypoint annotations alongside the instance file.
+
+    Examples:
+        >>> import tempfile
+        >>> subset = _write_task_coco(Path(tempfile.mkdtemp()), "keypoints")
+        >>> subset.keypoints_annotations_path.is_file()
+        True
+    """
+    subset = _write_coco(root)
+    data = json.loads(subset.annotations_path.read_text())
+    for annotation in data["annotations"]:
+        image = Image.new("RGB", _IMAGE_SIZES[annotation["image_id"]])
+        if task == "segment":
+            x, y, w, h = annotation["bbox"]
+            annotation["segmentation"] = [[x, y, x + w, y, x + w, y + h, x, y + h]]
+        else:
+            points = _gt_keypoints(image)
+            annotation["category_id"] = 1
+            annotation["keypoints"] = np.concatenate([points.xy, np.full((1, 17, 1), 2)], axis=-1).flatten().tolist()
+            annotation["num_keypoints"] = 17
+    if task == "keypoints":
+        data["categories"] = [{"id": 1, "name": "person", "keypoints": [str(i) for i in range(17)], "skeleton": []}]
+        path = subset.keypoints_annotations_path
+    else:
+        path = subset.annotations_path
+    path.write_text(json.dumps(data))
+    return subset
 
 
 def _gt_raw_outputs(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
@@ -402,6 +466,139 @@ class TestDownload:
         _download("http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "000000000002.jpg")
 
         assert urlopen.call_args.kwargs["timeout"] > 0
+
+
+class TestEvaluateCocoAp:
+    """Score public prediction results with the real COCO evaluator, without downloads."""
+
+    def test_perfect_detect_predictions(self, tmp_path: Path) -> None:
+        """Sparse COCO labels and exact boxes score full box AP."""
+        result = evaluate_coco_ap(_gt_detections, _write_coco(tmp_path), "detect", progress=False)
+        assert (result.box_ap, result.box_ap50, result.task_ap, result.task_ap50, result.n_images) == (
+            pytest.approx(1.0),
+            pytest.approx(1.0),
+            None,
+            None,
+            3,
+        )
+
+    def test_perfect_segment_predictions(self, tmp_path: Path) -> None:
+        """Exact binary masks score full mask AP as well as box AP."""
+        result = evaluate_coco_ap(_gt_segments, _write_task_coco(tmp_path, "segment"), "segment", progress=False)
+        assert (result.box_ap, result.box_ap50, result.task_ap, result.task_ap50) == pytest.approx((1.0, 1.0, 1.0, 1.0))
+
+    def test_perfect_keypoint_predictions(self, tmp_path: Path) -> None:
+        """Person keypoints score against the dedicated keypoint file, rather than instance categories."""
+        result = evaluate_coco_ap(_gt_keypoints, _write_task_coco(tmp_path, "keypoints"), "keypoints", progress=False)
+        assert (result.box_ap, result.box_ap50, result.task_ap, result.task_ap50) == pytest.approx((1.0, 1.0, 1.0, 1.0))
+
+    @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
+    def test_no_detections_score_zero(self, tmp_path: Path, mocker: MockerFixture, task: str) -> None:
+        """An empty run returns zeros without constructing a COCO evaluator."""
+        subset = _write_task_coco(tmp_path, task)
+        output = sv.KeyPoints.empty() if task == "keypoints" else sv.Detections.empty()
+        evaluator = mocker.patch("rfdetr.evaluation.coco_eval.CocoEvaluator", autospec=True)
+        result = evaluate_coco_ap(mocker.Mock(return_value=output), subset, task, progress=False)
+        task_zero = None if task == "detect" else 0.0
+        assert (result.box_ap, result.box_ap50, result.task_ap, result.task_ap50, result.n_images) == (
+            0.0,
+            0.0,
+            task_zero,
+            task_zero,
+            3,
+        )
+        evaluator.assert_not_called()
+
+    def test_no_detections_log_warning(self, tmp_path: Path, logger: Mock) -> None:
+        """The zero result explains that the runtime produced no detections."""
+        evaluate_coco_ap(lambda image: sv.Detections.empty(), _write_coco(tmp_path), "detect", progress=False)
+        logger.warning.assert_called_once()
+        assert "no detections" in logger.warning.call_args.args[0]
+
+    def test_segment_without_mask_is_refused(self, tmp_path: Path) -> None:
+        """Nonempty segmentation predictions require masks."""
+        with pytest.raises(ValueError, match="mask"):
+            evaluate_coco_ap(_gt_detections, _write_coco(tmp_path), "segment", progress=False)
+
+    @pytest.mark.parametrize("field", ["confidence", "class_id"])
+    def test_detections_without_required_field(self, tmp_path: Path, mocker: MockerFixture, field: str) -> None:
+        """Detection scores and category IDs cannot be omitted."""
+        output = _gt_detections(Image.new("RGB", (64, 64)))
+        setattr(output, field, None)
+        with pytest.raises(ValueError, match="confidence.*class_id"):
+            evaluate_coco_ap(mocker.Mock(return_value=output), _write_coco(tmp_path), "detect", progress=False)
+
+    def test_keypoints_without_boxes_is_refused(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """Keypoint predictions require boxes for the accompanying box score."""
+        output = _gt_keypoints(Image.new("RGB", (64, 64)))
+        output.data = {}
+        with pytest.raises(ValueError, match="xyxy"):
+            evaluate_coco_ap(
+                mocker.Mock(return_value=output), _write_task_coco(tmp_path, "keypoints"), "keypoints", progress=False
+            )
+
+    @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
+    def test_mismatched_output_type_is_refused(self, tmp_path: Path, mocker: MockerFixture, task: str) -> None:
+        """Task and prediction type must agree even when predictions are empty."""
+        output = sv.Detections.empty() if task == "keypoints" else sv.KeyPoints.empty()
+        with pytest.raises(ValueError, match="task"):
+            evaluate_coco_ap(mocker.Mock(return_value=output), _write_task_coco(tmp_path, task), task, progress=False)
+
+    def test_keypoints_annotations_path(self, tmp_path: Path) -> None:
+        """Keypoint annotations sit beside the instance annotations."""
+        subset = _write_coco(tmp_path)
+        assert subset.keypoints_annotations_path == subset.annotations_path.parent / "person_keypoints_val2017.json"
+
+    def test_missed_image_before_first_detection_counts(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """Lazy evaluator construction retains a missed image in the AP denominator."""
+        run = mocker.Mock(
+            side_effect=[
+                sv.Detections.empty(),
+                _gt_detections(Image.new("RGB", _IMAGE_SIZES[2])),
+                _gt_detections(Image.new("RGB", _IMAGE_SIZES[3])),
+            ]
+        )
+        result = evaluate_coco_ap(run, _write_coco(tmp_path), "detect", progress=False)
+        assert (result.box_ap, result.box_ap50, result.n_images) == (pytest.approx(2 / 3), pytest.approx(2 / 3), 3)
+
+    def test_wrong_mask_scores_zero_task_ap(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """Perfect boxes cannot hide an incorrect mask in the task metric."""
+        subset = _write_task_coco(tmp_path, "segment")
+        subset = CocoValSubset(subset.images_dir, subset.annotations_path, (1,))
+        output = _gt_segments(Image.new("RGB", _IMAGE_SIZES[1]))
+        output.mask[:] = False
+        result = evaluate_coco_ap(mocker.Mock(return_value=output), subset, "segment", progress=False)
+        assert (result.box_ap, result.task_ap, result.task_ap50) == (pytest.approx(1.0), 0.0, 0.0)
+
+    def test_wrong_keypoints_score_zero_task_ap(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """Perfect boxes cannot hide incorrect keypoints in the task metric."""
+        subset = _write_task_coco(tmp_path, "keypoints")
+        subset = CocoValSubset(subset.images_dir, subset.annotations_path, (1,))
+        output = _gt_keypoints(Image.new("RGB", _IMAGE_SIZES[1]))
+        output.xy += 100
+        result = evaluate_coco_ap(mocker.Mock(return_value=output), subset, "keypoints", progress=False)
+        assert (result.box_ap, result.task_ap, result.task_ap50) == (pytest.approx(1.0), 0.0, 0.0)
+
+    def test_images_are_rgb_in_subset_order(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """The callable receives RGB PIL images in the selected order, including grayscale files."""
+        subset = _write_coco(tmp_path)
+        Image.new("L", _IMAGE_SIZES[2]).save(subset.images_dir / "000000000002.jpg")
+        subset = CocoValSubset(subset.images_dir, subset.annotations_path, (2, 1))
+        run = mocker.Mock(side_effect=_gt_detections)
+        evaluate_coco_ap(run, subset, "detect", progress=False)
+        assert [(call.args[0].mode, call.args[0].size) for call in run.call_args_list] == [
+            ("RGB", _IMAGE_SIZES[2]),
+            ("RGB", _IMAGE_SIZES[1]),
+        ]
+
+    def test_image_path_outside_subset_is_refused(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """Annotation paths cannot escape the image directory."""
+        subset = _write_coco(tmp_path)
+        _set_image_field(subset.annotations_path, 1, "file_name", "../evil.jpg")
+        run = mocker.Mock(side_effect=_gt_detections)
+        with pytest.raises(ValueError, match="Refusing COCO image file name"):
+            evaluate_coco_ap(run, subset, "detect", progress=False)
+        run.assert_not_called()
 
 
 class TestEvaluateCocoMap:

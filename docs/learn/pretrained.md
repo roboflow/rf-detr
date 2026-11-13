@@ -16,7 +16,7 @@ RF-DETR ships COCO-pretrained checkpoints for object detection, instance segment
 | Instance segmentation | `RFDETRSegNano` to `RFDETRSeg2XLarge` (6 sizes) | 80 COCO classes     | [Segmentation checkpoints](run/segmentation.md#pre-trained-checkpoints) |
 | Keypoint detection    | `RFDETRKeypointPreview`                         | 17 person keypoints | [Keypoint checkpoint](run/keypoints.md#pre-trained-checkpoints)         |
 
-`RFDETRSmall` is a good default for detection. Larger sizes are more accurate and slower; compare them on the [Benchmarks](benchmarks.md) page. Atto, Femto, Pico, XLarge and 2XLarge detection need `pip install "rfdetr[plus]"`.
+`RFDETRSmall` is a good default for detection. Larger sizes are more accurate and slower; compare them on the [Benchmarks](benchmarks.md) page. Use the [COCO accuracy cookbook](../../cookbooks/coco-accuracy/) to reproduce the COCO accuracy of every checkpoint on your own hardware. Atto, Femto, Pico, XLarge and 2XLarge detection need `pip install "rfdetr[plus]"`.
 
 ## Run on an image
 
