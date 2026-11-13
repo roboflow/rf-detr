@@ -14,17 +14,17 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 | Size | RF-DETR package class | PyTorch FP32 AP<sub>50:95</sub> | TensorRT FP16 AP<sub>50:95</sub> | TensorRT INT8 AP<sub>50:95</sub> | T4 latency (ms) | Params (M) | Resolution |  License   |
 | :--: | :-------------------: | :-----------------------------: | :------------------------------: | :------------------------------: | :-------------: | :--------: | :--------: | :--------: |
-|  A   |    `RFDETRAtto` △     |                —                |                —                 |                —                 |       1.0       |    7.4     |  380x380   |  PML 1.0   |
-|  F   |    `RFDETRFemto` △    |                —                |                —                 |                —                 |       1.4       |    7.9     |  384x384   |  PML 1.0   |
-|  P   |    `RFDETRPico` △     |                —                |                —                 |                —                 |       1.7       |    8.4     |  560x560   |  PML 1.0   |
+|  A   |    `RFDETRAtto` △     |              30.7               |               30.6               |               23.7               |       1.0       |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    |              37.6               |               37.6               |               28.9               |       1.4       |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     |              41.7               |               41.6               |               33.2               |       1.7       |    8.4     |  560x560   |  PML 1.0   |
 |  N   |     `RFDETRNano`      |              48.0               |               48.0               |               47.6               |       2.3       |    30.5    |  384x384   | Apache 2.0 |
 |  S   |     `RFDETRSmall`     |              52.8               |               52.8               |               52.3               |       3.5       |    32.1    |  512x512   | Apache 2.0 |
-|  M   |    `RFDETRMedium`     |              54.7               |               54.7               |               54.1               |       4.4       |    33.7    |  576x576   | Apache 2.0 |
+|  M   |    `RFDETRMedium`     |              54.7               |               54.6               |               54.0               |       4.4       |    33.7    |  576x576   | Apache 2.0 |
 |  L   |     `RFDETRLarge`     |              56.6               |               56.5               |               56.2               |       6.8       |    33.9    |  704x704   | Apache 2.0 |
-|  XL  |   `RFDETRXLarge` △    |                —                |                —                 |                —                 |      11.5       |   126.4    |  700x700   |  PML 1.0   |
-| 2XL  |   `RFDETR2XLarge` △   |                —                |                —                 |                —                 |      17.2       |   126.9    |  880x880   |  PML 1.0   |
+|  XL  |   `RFDETRXLarge` △    |              58.7               |               58.7               |               58.3               |      11.5       |   126.4    |  700x700   |  PML 1.0   |
+| 2XL  |   `RFDETR2XLarge` △   |              60.1               |               60.0               |               59.6               |      17.2       |   126.9    |  880x880   |  PML 1.0   |
 
-> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`. A dash marks a Plus model the reproduction run has not scored yet; its official COCO AP is on the [Benchmarks](../benchmarks.md#detection) page.
+> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`. Atto, Femto and Pico lose 7.0 to 8.7 AP in TensorRT INT8 against PyTorch FP32, so prefer FP16 engines for them.
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
