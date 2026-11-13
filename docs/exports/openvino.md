@@ -68,7 +68,7 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
 
-`runtime_options` takes `cache_dir`, `inference_precision` and `config`, as described under [Runtime Options](#runtime-options) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
+`runtime_options` takes `cache_dir`, `inference_precision`, `config` and `num_threads` (the CPU thread count, the same key the ONNX, TFLite and LiteRT loaders read; it sets `INFERENCE_NUM_THREADS`, so giving both is an error), as described under [Runtime Options](#runtime-options) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
 
 ```python
 model = RFDETRInference(

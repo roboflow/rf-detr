@@ -29,6 +29,7 @@ from rfdetr.export._runtime.adapters import (
     _input_array,
     _runtime_options,
     _single_input,
+    _thread_count_option,
 )
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.utilities.logger import get_logger
@@ -234,7 +235,7 @@ class OpenVINOInference:
 
 
 #: The ``runtime_options`` keys the OpenVINO loader reads, with the meaning they have on :class:`OpenVINOInference`.
-_OPENVINO_RUNTIME_OPTIONS = ("cache_dir", "config", "inference_precision")
+_OPENVINO_RUNTIME_OPTIONS = ("cache_dir", "config", "inference_precision", "num_threads")
 
 
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
@@ -244,12 +245,25 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         path: OpenVINO IR ``.xml`` file.
         metadata: The artifact's inference metadata.
         device: ``auto``, ``cpu``, ``gpu``, ``npu``, ``gpu.N`` or ``npu.N``.
-        options: Any of ``cache_dir``, ``inference_precision`` and ``config``, as on :class:`OpenVINOInference`.
+        options: Any of ``cache_dir``, ``inference_precision`` and ``config``, as on :class:`OpenVINOInference`, and
+            ``num_threads``, the spelling the other CPU formats share for the ``INFERENCE_NUM_THREADS`` compile
+            property.
 
     Returns:
         The loaded runtime.
+
+    Raises:
+        ValueError: If ``num_threads`` is not a positive integer, or is given beside ``INFERENCE_NUM_THREADS`` in
+            ``config``.
     """
     settings = _runtime_options("OpenVINO", options, _OPENVINO_RUNTIME_OPTIONS)
+    num_threads = _thread_count_option("OpenVINO", settings)
+    settings.pop("num_threads", None)
+    if num_threads is not None:
+        config = dict(settings.get("config") or {})
+        if "INFERENCE_NUM_THREADS" in config:
+            raise ValueError("OpenVINO runtime_options sets both num_threads and config['INFERENCE_NUM_THREADS'].")
+        settings["config"] = {**config, "INFERENCE_NUM_THREADS": num_threads}
     if settings.get("cache_dir") is not None:
         settings["cache_dir"] = os.fspath(settings["cache_dir"])
     if device.lower() == "auto":
