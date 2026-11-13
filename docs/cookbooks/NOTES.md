@@ -56,6 +56,7 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 | `export-cpu.ipynb`                      | RF-DETR on CPU — Export, Inference & Latency           | v1.11.0 |
 | `export-mobile.ipynb`                   | RF-DETR on Mobile & Edge — Export, Inference & Latency | v1.11.0 |
 | `export-apple.ipynb`                    | RF-DETR on Apple Silicon — Export, Inference & Latency | v1.11.0 |
+| `measure-latency.ipynb`                 | Find the Fastest RF-DETR Configuration on Your GPU     | v1.13.0 |
 | `fine-tune_detection.ipynb`             | Fine-Tune RF-DETR Object Detection                     | v1.8.0  |
 | `fine-tune_keypoints.ipynb`             | Fine-Tune RF-DETR Keypoint Detection                   | v1.8.0  |
 | `fine-tune_segmentation.ipynb`          | Fine-Tune RF-DETR Instance Segmentation                | v1.8.2  |
