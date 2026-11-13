@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-12T14:23:34">
+  <meta property="article:modified_time" content="2026-11-13T09:23:01">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-12T14:23:34",
+    "dateModified": "2026-11-13T09:23:01",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4458,6 +4458,7 @@ PyTorch rows. The installed <code>rfdetr</code> version is printed so the Result
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">importlib.metadata</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
 
@@ -4470,6 +4471,13 @@ PyTorch rows. The installed <code>rfdetr</code> version is printed so the Result
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">_artifact_size_mb</span><span class="p">,</span> <span class="n">visualize_detections</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkResult</span><span class="p">,</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+
+<span class="c1"># The TensorRT FP16 export clamps float32 weights below 1e-7 in magnitude to ±1e-7 and warns once per weight;</span>
+<span class="c1"># the clamping is expected and the warnings would bury the output.</span>
+<span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">"ignore"</span><span class="p">,</span> <span class="n">message</span><span class="o">=</span><span class="s2">"the float32 number .* will be truncated to"</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">"onnxconverter_common"</span><span class="p">)</span>
+<span class="c1"># Tracing the model for ONNX export warns wherever a tensor value steers Python control flow; the export</span>
+<span class="c1"># fixes those values for the export resolution, which is intended, so the warnings are noise here.</span>
+<span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">"ignore"</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">jit</span><span class="o">.</span><span class="n">TracerWarning</span><span class="p">)</span>
 
 <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires a CUDA GPU; none is available."</span><span class="p">)</span>
@@ -4499,6 +4507,7 @@ PyTorch rows. The installed <code>rfdetr</code> version is printed so the Result
     <span class="n">quantization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"—"</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-2">import importlib.metadata
+import warnings
 from pathlib import Path
 from typing import NamedTuple
 
@@ -4511,6 +4520,13 @@ from PIL import Image
 from rfdetr import RFDETRInference
 from rfdetr.export._benchmark import _artifact_size_mb, visualize_detections
 from rfdetr.export.benchmark import BenchmarkResult, measure_latency, measure_memory
+
+# The TensorRT FP16 export clamps float32 weights below 1e-7 in magnitude to ±1e-7 and warns once per weight;
+# the clamping is expected and the warnings would bury the output.
+warnings.filterwarnings("ignore", message="the float32 number .* will be truncated to", module="onnxconverter_common")
+# Tracing the model for ONNX export warns wherever a tensor value steers Python control flow; the export
+# fixes those values for the export resolution, which is intended, so the warnings are noise here.
+warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
 
 if not torch.cuda.is_available():
     raise RuntimeError("This notebook requires a CUDA GPU; none is available.")
@@ -8216,7 +8232,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 12, 2026 14:23:34 UTC">2026-11-12 14:23:34</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 13, 2026 09:23:01 UTC">2026-11-13 09:23:01</span>
   </span>
 
     
