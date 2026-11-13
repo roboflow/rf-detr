@@ -34,21 +34,21 @@ The configuration with the lowest end-to-end latency for each size on an Apple M
 
 <!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
 
-|      Size       | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |   CoreML FP32   |   CoreML FP16   |
-| :-------------: | :-------------------: | :-------------------: | :----------------------: | :-------------: | :-------------: |
-|   Atto (A) △    |     12.46 (14.93)     |     12.00 (15.02)     |       9.81 (11.79)       |   5.91 (8.77)   | **3.76 (4.23)** |
-|   Femto (F) △   |     14.03 (17.83)     |     13.35 (17.17)     |       8.07 (10.49)       | **6.01 (8.85)** |  25.02 (26.39)  |
-|   Pico (P) △    |     15.14 (18.75)     |     15.73 (18.45)     |       9.80 (10.67)       |   6.69 (9.23)   | **5.74 (8.28)** |
-|    Nano (N)     |      7.03 (7.32)      |    **6.73 (7.02)**    |       9.97 (10.67)       |   7.75 (8.65)   |  11.23 (11.74)  |
-|    Small (S)    |     10.44 (10.71)     |    **9.71 (9.95)**    |      11.46 (11.77)       |  10.71 (11.07)  |  22.97 (23.60)  |
-|   Medium (M)    |     13.28 (13.74)     |   **12.07 (12.39)**   |      13.56 (14.20)       |  13.25 (13.50)  |  31.75 (32.40)  |
-|    Large (L)    |     17.59 (18.04)     |   **15.76 (16.09)**   |      17.09 (17.56)       |  17.77 (18.24)  |  55.29 (55.89)  |
-|  XLarge (XL) △  |     46.18 (50.49)     |     42.80 (44.66)     |    **36.03 (36.53)**     |  40.51 (45.02)  |  91.58 (93.94)  |
-| 2XLarge (2XL) △ |     60.42 (64.14)     |     51.34 (53.36)     |    **45.51 (49.41)**     |  54.76 (59.14)  | 127.39 (129.93) |
+|      Size       | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |   CoreML FP32   |   CoreML FP16   | CoreML GPU FP32 |  CoreML GPU FP16  |
+| :-------------: | :-------------------: | :-------------------: | :----------------------: | :-------------: | :-------------: | :-------------: | :---------------: |
+|   Atto (A) △    |     12.46 (14.93)     |     12.00 (15.02)     |       9.81 (11.79)       |   5.91 (8.77)   | **3.76 (4.23)** |   7.26 (9.54)   |    7.49 (9.84)    |
+|   Femto (F) △   |     14.03 (17.83)     |     13.35 (17.17)     |       8.07 (10.49)       | **6.01 (8.85)** |  25.02 (26.39)  |   6.18 (9.37)   |    6.43 (9.26)    |
+|   Pico (P) △    |     15.14 (18.75)     |     15.73 (18.45)     |       9.80 (10.67)       |   6.69 (9.23)   | **5.74 (8.28)** |   7.13 (9.26)   |    6.74 (9.43)    |
+|    Nano (N)     |      7.03 (7.32)      |    **6.73 (7.02)**    |       9.97 (10.67)       |   7.75 (8.65)   |  11.23 (11.74)  |   8.32 (9.40)   |    8.95 (9.57)    |
+|    Small (S)    |     10.44 (10.71)     |    **9.71 (9.95)**    |      11.46 (11.77)       |  10.71 (11.07)  |  22.97 (23.60)  |  10.90 (11.18)  |   9.89 (10.22)    |
+|   Medium (M)    |     13.28 (13.74)     |   **12.07 (12.39)**   |      13.56 (14.20)       |  13.25 (13.50)  |  31.75 (32.40)  |  13.50 (14.00)  |   12.14 (12.73)   |
+|    Large (L)    |     17.59 (18.04)     |   **15.76 (16.09)**   |      17.09 (17.56)       |  17.77 (18.24)  |  55.29 (55.89)  |  20.39 (21.22)  |   17.02 (17.66)   |
+|  XLarge (XL) △  |     46.18 (50.49)     |     42.80 (44.66)     |      36.03 (36.53)       |  40.51 (45.02)  |  91.58 (93.94)  |  42.23 (46.82)  | **33.61 (35.14)** |
+| 2XLarge (2XL) △ |     60.42 (64.14)     |     51.34 (53.36)     |      45.51 (49.41)       |  54.76 (59.14)  | 127.39 (129.93) |  56.62 (62.00)  | **44.69 (46.85)** |
 
 Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold.
 
-Femto's CoreML FP16 time (25.02 ms) is not noise: the Neural Engine compiler fails on its FP16 package, as the [CoreML page](../../exports/coreml.md#measured-latency-on-apple-silicon) explains, and Core ML then runs it slowly.
+Femto's CoreML FP16 time (25.02 ms) is not noise: the Neural Engine compiler fails on its FP16 package under the default compute units, as the [CoreML page](../../exports/coreml.md#measured-latency-on-apple-silicon) explains, and Core ML then runs it slowly. CoreML GPU FP16 avoids that plan and takes 6.43 ms.
 
 --8<-- "docs/snippets/reproduced-latency.md"
 
