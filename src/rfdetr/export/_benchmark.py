@@ -56,11 +56,47 @@ logger = get_logger()
 
 
 class BenchmarkResult(NamedTuple):
-    """One latency measurement: mean and standard deviation across timed runs, in milliseconds."""
+    """One latency measurement: mean and standard deviation across timed runs, in milliseconds.
+
+    ``timings_ms`` keeps every timed call, so a median and a high percentile stay available next to the mean: latency is
+    right-skewed, and one slow call (OS jitter, throttling) moves the mean and the standard deviation but not the
+    median.
+    """
 
     label: str
     mean_ms: float
     std_ms: float
+    timings_ms: tuple[float, ...] = ()
+
+    @property
+    def median_ms(self) -> float:
+        """Median of the timed calls, in milliseconds.
+
+        Raises:
+            ValueError: If the result holds no per-call timings.
+
+        Examples:
+            >>> BenchmarkResult("cpu", 22.0, 38.0, (1.0, 2.0, 3.0, 4.0, 100.0)).median_ms
+            3.0
+        """
+        if not self.timings_ms:
+            raise ValueError(f"{self.label!r} holds no per-call timings, so it has no median.")
+        return float(np.median(self.timings_ms))
+
+    @property
+    def p95_ms(self) -> float:
+        """95th percentile of the timed calls, in milliseconds, interpolated linearly between the nearest ranks.
+
+        Raises:
+            ValueError: If the result holds no per-call timings.
+
+        Examples:
+            >>> round(BenchmarkResult("cpu", 22.0, 38.0, (1.0, 2.0, 3.0, 4.0, 100.0)).p95_ms, 1)
+            80.8
+        """
+        if not self.timings_ms:
+            raise ValueError(f"{self.label!r} holds no per-call timings, so it has no 95th percentile.")
+        return float(np.percentile(self.timings_ms, 95))
 
     @property
     def fps(self) -> float:
@@ -84,8 +120,10 @@ def _mean_std(timings: list[float]) -> tuple[float, float]:
     return float(arr.mean()), float(arr.std())
 
 
-def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int, device: torch.device) -> tuple[float, float]:
+def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int, device: torch.device) -> list[float]:
     """Time ``fn`` with CUDA events on *device*: the elapsed time between two events recorded on its current stream.
+
+    Returns the elapsed milliseconds of each of the *runs* timed calls.
 
     The events bracket the work ``fn`` enqueues, so this is time on the GPU's timeline, not pure kernel time: a host
     stall that leaves the stream idle between the events (a ``fn`` that blocks on the host, or slow Python before the
@@ -107,11 +145,14 @@ def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int, device: torc
         end.record(stream)
         torch.cuda.synchronize(device)
         timings.append(start.elapsed_time(end))
-    return _mean_std(timings)
+    return timings
 
 
-def _measure_wall_clock(fn: Callable[[], object], warmup: int, runs: int) -> tuple[float, float]:
-    """Time ``fn`` with ``time.perf_counter`` — correct for any call with no CUDA stream to sync."""
+def _measure_wall_clock(fn: Callable[[], object], warmup: int, runs: int) -> list[float]:
+    """Time ``fn`` with ``time.perf_counter`` — correct for any call with no CUDA stream to sync.
+
+    Returns the elapsed milliseconds of each of the *runs* timed calls.
+    """
     for _ in range(warmup):
         fn()
     timings: list[float] = []
@@ -119,7 +160,7 @@ def _measure_wall_clock(fn: Callable[[], object], warmup: int, runs: int) -> tup
         start = time.perf_counter()
         fn()
         timings.append((time.perf_counter() - start) * 1000.0)
-    return _mean_std(timings)
+    return timings
 
 
 def _cuda_device(device: str | torch.device) -> torch.device | None:
@@ -174,10 +215,11 @@ def measure_latency(
             ``"cuda:1"``, ``torch.device("cuda", 1)`` — selects the CUDA-event timer on that device; any other device
             type (``"cpu"``, ``"mps"``, ...) uses ``perf_counter``.
         warmup: Untimed warm-up calls before measurement starts, to skip first-call JIT/lazy-init cost.
-        runs: Timed calls used to compute the mean and standard deviation.
+        runs: Timed calls used to compute the mean, standard deviation, median and 95th percentile.
 
     Returns:
-        A :class:`BenchmarkResult` with ``mean_ms``, ``std_ms``, and the derived ``fps``.
+        A :class:`BenchmarkResult` with ``mean_ms``, ``std_ms``, every call in ``timings_ms`` and the derived ``fps``,
+        ``median_ms`` and ``p95_ms``.
 
     Raises:
         ValueError: If ``warmup`` is negative or ``runs`` is not positive.
@@ -197,10 +239,11 @@ def measure_latency(
 
     cuda_device = _cuda_device(device)
     if cuda_device is None:
-        mean_ms, std_ms = _measure_wall_clock(fn, warmup, runs)
+        timings = _measure_wall_clock(fn, warmup, runs)
     else:
-        mean_ms, std_ms = _measure_cuda(fn, warmup, runs, cuda_device)
-    return BenchmarkResult(label, mean_ms, std_ms)
+        timings = _measure_cuda(fn, warmup, runs, cuda_device)
+    mean_ms, std_ms = _mean_std(timings)
+    return BenchmarkResult(label, mean_ms, std_ms, tuple(timings))
 
 
 #: Seconds between memory samples taken by the background watcher thread.

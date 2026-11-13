@@ -76,7 +76,7 @@ class TestMeasureLatency:
         monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
         monkeypatch.setattr(torch.cuda, "current_stream", Mock())
 
-        mean_ms, std_ms = _measure_cuda(call, warmup=2, runs=2, device=torch.device("cuda"))
+        timings = _measure_cuda(call, warmup=2, runs=2, device=torch.device("cuda"))
 
         assert order == [
             "call",
@@ -96,8 +96,7 @@ class TestMeasureLatency:
         assert call.call_count == 4
         assert synchronize.call_count == 3
         assert [call.args for call in start.elapsed_time.call_args_list] == [(end,), (end,)]
-        assert mean_ms == pytest.approx(2.0)
-        assert std_ms == pytest.approx(1.0)
+        assert timings == [1.0, 3.0]
 
     def test_cuda_events_and_synchronize_target_the_requested_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Events record on the requested device's stream and every synchronize targets that same device.
@@ -137,7 +136,7 @@ class TestMeasureLatency:
         ``"cuda:0"`` used to miss an exact ``== "cuda"`` match and fall through to the wall-clock timer, which returns
         after the asynchronous kernel launch and reports a falsely low latency.
         """
-        measure_cuda = Mock(return_value=(1.0, 0.0))
+        measure_cuda = Mock(return_value=[1.0])
         monkeypatch.setattr("rfdetr.export._benchmark._measure_cuda", measure_cuda)
         fn = Mock()
 
@@ -153,7 +152,7 @@ class TestMeasureLatency:
 
         Non-CUDA runtimes block the calling thread, so there is no stream to synchronize and the wall clock is exact.
         """
-        wall_clock = Mock(return_value=(1.0, 0.0))
+        wall_clock = Mock(return_value=[1.0])
         monkeypatch.setattr("rfdetr.export._benchmark._measure_wall_clock", wall_clock)
         fn = Mock()
 
@@ -181,6 +180,37 @@ class TestMeasureLatency:
     def test_zero_mean_latency_has_infinite_fps(self) -> None:
         """A zero-duration sample maps to infinite FPS without division failure."""
         assert BenchmarkResult("instant", 0.0, 0.0).fps == float("inf")
+
+    def test_measure_latency_keeps_every_timed_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The result carries each call's time, with the mean and standard deviation computed from the same list."""
+        monkeypatch.setattr("rfdetr.export._benchmark._measure_wall_clock", Mock(return_value=[1.0, 3.0]))
+
+        result = measure_latency(Mock(), label="host", device="cpu", warmup=0, runs=2)
+
+        assert result.timings_ms == (1.0, 3.0)
+        assert (result.mean_ms, result.std_ms) == (pytest.approx(2.0), pytest.approx(1.0))
+
+    def test_median_ignores_one_slow_call(self) -> None:
+        """One slow call moves the mean but not the median, which is why the winners are chosen by the median."""
+        result = BenchmarkResult("host", 22.0, 38.0, (1.0, 2.0, 3.0, 4.0, 100.0))
+
+        assert result.median_ms == 3.0
+
+    def test_p95_interpolates_between_the_nearest_ranks(self) -> None:
+        """The 95th percentile of five calls lies between the fourth and the slowest."""
+        result = BenchmarkResult("host", 22.0, 38.0, (1.0, 2.0, 3.0, 4.0, 100.0))
+
+        assert result.p95_ms == pytest.approx(80.8)
+
+    def test_median_without_timings_raises(self) -> None:
+        """A result built without per-call timings has no median, and says so instead of returning ``nan``."""
+        with pytest.raises(ValueError, match="no per-call timings"):
+            BenchmarkResult("host", 1.0, 0.0).median_ms
+
+    def test_p95_without_timings_raises(self) -> None:
+        """A result built without per-call timings has no 95th percentile, and says so instead of returning ``nan``."""
+        with pytest.raises(ValueError, match="no per-call timings"):
+            BenchmarkResult("host", 1.0, 0.0).p95_ms
 
 
 def _stepping_reader(readings: list[int]) -> tuple[Callable[[], int], threading.Event]:
