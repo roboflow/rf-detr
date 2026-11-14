@@ -7,12 +7,16 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import json
 import sys
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock, call
 
 import numpy as np
@@ -811,18 +815,12 @@ class TestLatencyCookbook:
     @staticmethod
     def _cell(cell_id: str) -> str:
         """Read the code of a named notebook cell."""
-        import json
-
         notebook = Path(__file__).resolve().parents[2] / "docs/cookbooks/measure-latency.ipynb"
         cells = json.loads(notebook.read_text())["cells"]
         return "".join(next(cell for cell in cells if cell.get("id") == cell_id)["source"])
 
     def test_cache_signature_changes_with_calibration_and_weights(self, tmp_path: Path) -> None:
         """Changing calibration pixels or model weights cannot reuse an old cache key."""
-        import ast
-        import hashlib
-        import json
-
         package = tmp_path / "package"
         package.mkdir()
         source = package / "__init__.py"
@@ -862,8 +860,6 @@ class TestLatencyCookbook:
 
     def test_resume_identity_changes_with_runtime_version(self) -> None:
         """A runtime upgrade cannot reuse a measurement attributed to an older version."""
-        from typing import Any
-
         scope = {"Any": Any, "provenance": {"torch_version": "old"}}
         exec(self._cell("2661e6d5"), scope)
         key = scope["resume_key"]
