@@ -128,6 +128,8 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 
 The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same `RFDETRInference` calls as the [CUDA cookbook](../../cookbooks/export-cuda/), which times one size per run, set by `MODEL_SIZE`. Its Section 8 subsection *Batch 1, 4 and 8, end to end* reproduces the `.trt` FP16 and INT8 rows, with one static engine per batch size. All ran `rfdetr` 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to `sv.Detections`, and passes `include_source_image=False`.
 
+The [latency cookbook](../../cookbooks/measure-latency/) times every pretrained size on the same four GPUs, as the median of 500 images with TensorRT 11.4.0.106, at batch 1 only. Its tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-nvidia-gpus), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-nvidia-gpus) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-nvidia-gpus). They do not time the managed engine or batch 8, and they use a different protocol and TensorRT version from the tables below, so compare numbers only within one set.
+
 --8<-- "docs/snippets/latency-routes.md"
 
 - **Latency only.** No accuracy was scored; the INT8 accuracy is in [Results](#results), whose latency is engine-only time and so not comparable with these tables.

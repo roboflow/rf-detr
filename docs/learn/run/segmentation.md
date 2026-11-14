@@ -23,6 +23,63 @@ RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
+## Fastest Configuration on NVIDIA GPUs
+
+The configuration with the lowest end-to-end latency for each size on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
+
+=== "Tesla T4"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
+    |   Nano (N)    |       9.04 (9.63)       |  7.22 (7.70)  |     7.59 (8.39)     |  **6.87 (7.39)**  |     6.98 (8.01)     |
+    |   Small (S)   |      11.32 (11.76)      |  9.22 (9.98)  |     9.19 (9.73)     |  **8.35 (8.90)**  |     8.62 (9.40)     |
+    |  Medium (M)   |      16.13 (16.73)      | 12.00 (12.83) |    12.19 (12.84)    | **11.30 (11.85)** |    11.44 (12.16)    |
+    |   Large (L)   |      20.94 (21.83)      | 16.80 (17.55) |    17.13 (18.03)    | **15.16 (15.81)** |    15.64 (16.21)    |
+    |  XLarge (XL)  |      35.44 (37.11)      | 26.47 (27.93) |    26.47 (27.81)    | **24.41 (25.54)** |    24.73 (26.01)    |
+    | 2XLarge (2XL) |      61.49 (65.45)      | 43.51 (47.45) |    40.39 (41.38)    |   40.43 (41.68)   |  **39.21 (41.05)**  |
+
+=== "NVIDIA L4"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Nano (N)    |     **4.48 (4.84)**     |  4.97 (5.60)  |     4.65 (5.23)     |  4.71 (5.17)  |     4.55 (5.02)     |
+    |   Small (S)   |       5.14 (5.50)       |  5.28 (5.71)  |     5.09 (5.92)     |  5.15 (5.85)  |   **4.83 (5.19)**   |
+    |  Medium (M)   |       6.57 (6.93)       |  6.16 (6.59)  |     5.94 (6.35)     |  5.83 (6.40)  |   **5.65 (6.17)**   |
+    |   Large (L)   |       7.58 (7.92)       |  7.15 (7.60)  |     7.06 (7.55)     |  6.86 (7.24)  |   **6.72 (7.31)**   |
+    |  XLarge (XL)  |      11.82 (12.26)      | 10.78 (11.35) |    10.37 (10.95)    | 9.93 (10.38)  |  **9.90 (10.40)**   |
+    | 2XLarge (2XL) |      18.18 (19.13)      | 16.36 (17.13) |    16.01 (16.69)    | 14.93 (15.39) |  **14.81 (15.37)**  |
+
+=== "A100"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Nano (N)    |       4.42 (4.89)       |  4.72 (5.48)  |     4.32 (4.69)     |  4.64 (5.17)  |   **4.25 (4.59)**   |
+    |   Small (S)   |       4.69 (5.10)       |  4.80 (5.49)  |     4.51 (4.87)     |  4.79 (5.37)  |   **4.49 (4.85)**   |
+    |  Medium (M)   |       5.28 (5.63)       |  5.39 (5.86)  |     5.02 (5.34)     |  5.36 (6.00)  |   **5.01 (5.46)**   |
+    |   Large (L)   |       5.68 (6.04)       |  5.73 (6.47)  |   **5.38 (5.77)**   |  5.92 (6.59)  |     5.38 (5.70)     |
+    |  XLarge (XL)  |       7.22 (7.51)       |  7.23 (7.54)  |     6.57 (6.95)     |  7.01 (7.44)  |   **6.50 (6.82)**   |
+    | 2XLarge (2XL) |       9.16 (9.60)       |  8.44 (8.90)  |   **7.66 (8.20)**   |  8.11 (8.46)  |     7.69 (8.09)     |
+
+=== "RTX PRO 6000"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Nano (N)    |       2.25 (2.39)       |  2.16 (2.24)  |   **1.89 (1.97)**   |  2.18 (2.26)  |     1.89 (1.98)     |
+    |   Small (S)   |       2.41 (2.49)       |  2.24 (2.33)  |     2.01 (2.09)     |  2.17 (2.25)  |   **1.90 (1.98)**   |
+    |  Medium (M)   |       2.75 (2.84)       |  2.51 (2.59)  |     2.30 (2.40)     |  2.34 (2.43)  |   **2.11 (2.21)**   |
+    |   Large (L)   |       2.98 (3.10)       |  2.72 (2.81)  |     2.49 (2.61)     |  2.59 (2.67)  |   **2.39 (2.49)**   |
+    |  XLarge (XL)  |       3.92 (4.00)       |  3.32 (3.40)  |     3.08 (3.16)     |  3.24 (3.36)  |   **3.02 (3.12)**   |
+    | 2XLarge (2XL) |       5.08 (5.20)       |  4.31 (4.40)  |     4.03 (4.15)     |  4.07 (4.16)  |   **3.80 (3.90)**   |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. The configurations are explained in the note below.
+
+- On the RTX PRO 6000 INT8 graph is fastest for Small to 2XLarge. At Nano, FP16 graph and INT8 graph both take 1.89 ms, and at Large and XLarge FP16 graph is within 4.2% and 2.0% of INT8 graph. PyTorch CUDA graph FP16 takes 1.19 to 1.34 times as long as the fastest.
+- On the L4, PyTorch CUDA graph FP16 is fastest for Nano (4.48 ms), level with INT8 graph (4.55 ms) and FP16 graph (4.65 ms). INT8 graph is fastest from Small up, 5% to 7% below FP16 graph.
+- On the A100 the fastest configuration leads the second by less than 2% at every size, so no configuration is clearly faster.
+- On the T4, TensorRT INT8 is fastest from Nano to XLarge and INT8 graph at 2XLarge (39.21 ms, 3.0% below FP16 graph). PyTorch CUDA graph FP16 takes 1.32 to 1.57 times as long as the fastest.
+
 ## Fastest Configuration on Apple Silicon
 
 The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.

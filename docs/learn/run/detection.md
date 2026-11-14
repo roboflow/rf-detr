@@ -28,6 +28,76 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
+## Fastest Configuration on NVIDIA GPUs
+
+The configuration with the lowest end-to-end latency for each size on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
+
+=== "Tesla T4"
+
+    |      Size       | PyTorch CUDA graph FP16 |  TensorRT FP16  | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
+    | :-------------: | :---------------------: | :-------------: | :-----------------: | :---------------: | :-----------------: |
+    |   Atto (A) △    |       3.51 (5.56)       |   3.52 (4.07)   |   **3.22 (3.64)**   |         —         |          —          |
+    |   Femto (F) △   |       4.44 (6.10)       |   3.63 (4.15)   |   **3.62 (4.06)**   |         —         |          —          |
+    |   Pico (P) △    |       4.82 (6.14)       | **4.15 (4.54)** |     4.24 (4.64)     |         —         |          —          |
+    |    Nano (N)     |       5.17 (5.90)       |   4.78 (5.61)   |     4.91 (5.42)     |    4.61 (5.59)    |   **4.44 (4.90)**   |
+    |    Small (S)    |       7.99 (8.38)       |   6.88 (7.24)   |     7.03 (7.85)     |  **6.32 (6.99)**  |     6.33 (6.65)     |
+    |   Medium (M)    |      10.04 (10.46)      |   8.50 (8.84)   |     8.83 (9.48)     |    7.51 (7.89)    |   **7.50 (8.05)**   |
+    |    Large (L)    |      14.91 (15.37)      |  12.41 (13.07)  |    12.74 (13.24)    | **11.11 (11.77)** |    11.21 (11.74)    |
+    |  XLarge (XL) △  |      27.25 (28.77)      |  24.12 (26.20)  |    24.56 (26.54)    | **19.83 (20.46)** |    20.08 (20.69)    |
+    | 2XLarge (2XL) △ |      39.69 (41.26)      |  38.18 (40.39)  |    35.50 (37.99)    | **28.10 (29.72)** |    29.47 (31.13)    |
+
+=== "NVIDIA L4"
+
+    |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Atto (A) △    |     **2.60 (2.88)**     |  3.68 (3.98)  |     3.01 (3.52)     |       —       |          —          |
+    |   Femto (F) △   |     **2.95 (3.20)**     |  3.53 (3.96)  |     3.14 (3.50)     |       —       |          —          |
+    |   Pico (P) △    |     **3.13 (3.40)**     |  3.65 (4.26)  |     3.34 (3.65)     |       —       |          —          |
+    |    Nano (N)     |     **3.20 (3.42)**     |  3.87 (4.14)  |     3.54 (3.89)     |  3.55 (4.13)  |     3.45 (4.06)     |
+    |    Small (S)    |       4.01 (4.33)       |  4.23 (4.51)  |     4.03 (4.31)     |  4.12 (4.48)  |   **3.90 (4.21)**   |
+    |   Medium (M)    |       4.81 (5.09)       |  4.82 (5.35)  |     4.56 (5.09)     |  4.74 (5.09)  |   **4.43 (4.87)**   |
+    |    Large (L)    |       6.01 (6.30)       |  5.89 (6.28)  |     5.65 (6.01)     |  5.27 (5.75)  |   **5.10 (5.54)**   |
+    |  XLarge (XL) △  |      11.02 (11.41)      | 9.90 (10.37)  |    9.87 (10.20)     |  8.53 (8.89)  |   **8.34 (8.72)**   |
+    | 2XLarge (2XL) △ |      14.80 (15.39)      | 12.67 (13.12) |    12.56 (12.96)    | 10.07 (10.88) |  **9.95 (10.54)**   |
+
+=== "A100"
+
+    |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Atto (A) △    |       3.18 (3.69)       |  3.35 (3.64)  |   **3.10 (3.36)**   |       —       |          —          |
+    |   Femto (F) △   |       3.33 (3.88)       |  3.50 (3.78)  |   **3.22 (3.45)**   |       —       |          —          |
+    |   Pico (P) △    |       3.99 (4.39)       |  3.70 (4.32)  |   **3.41 (4.04)**   |       —       |          —          |
+    |    Nano (N)     |     **3.35 (3.92)**     |  3.74 (4.17)  |     3.44 (3.73)     |  3.68 (4.10)  |     3.54 (4.18)     |
+    |    Small (S)    |       3.81 (4.43)       |  4.03 (4.49)  |   **3.67 (3.97)**   |  4.00 (4.61)  |     3.68 (4.16)     |
+    |   Medium (M)    |       4.06 (4.64)       |  4.38 (5.02)  |     4.06 (4.38)     |  4.31 (4.85)  |   **3.93 (4.33)**   |
+    |    Large (L)    |       4.64 (5.04)       |  4.81 (5.36)  |   **4.38 (4.84)**   |  4.82 (5.54)  |     4.68 (4.98)     |
+    |  XLarge (XL) △  |       6.18 (6.50)       |  6.13 (6.76)  |     5.75 (6.01)     |  5.99 (6.38)  |   **5.66 (6.04)**   |
+    | 2XLarge (2XL) △ |       6.90 (7.13)       |  6.67 (7.03)  |     6.32 (6.89)     |  6.38 (6.78)  |   **6.10 (6.44)**   |
+
+=== "RTX PRO 6000"
+
+    |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Atto (A) △    |       1.58 (1.66)       |  1.42 (1.47)  |   **1.25 (1.32)**   |       —       |          —          |
+    |   Femto (F) △   |       1.73 (1.77)       |  1.56 (1.63)  |   **1.36 (1.43)**   |       —       |          —          |
+    |   Pico (P) △    |       1.87 (1.93)       |  1.69 (1.74)  |   **1.46 (1.52)**   |       —       |          —          |
+    |    Nano (N)     |       1.73 (1.82)       |  1.72 (1.79)  |     1.54 (1.62)     |  1.69 (1.77)  |   **1.43 (1.51)**   |
+    |    Small (S)    |       2.07 (2.16)       |  1.94 (2.00)  |     1.73 (1.80)     |  1.87 (1.99)  |   **1.63 (1.70)**   |
+    |   Medium (M)    |       2.23 (2.33)       |  2.07 (2.14)  |     1.84 (1.90)     |  1.96 (2.02)  |   **1.73 (1.81)**   |
+    |    Large (L)    |       2.52 (2.58)       |  2.30 (2.42)  |     2.09 (2.15)     |  2.19 (2.26)  |   **1.96 (2.02)**   |
+    |  XLarge (XL) △  |       3.63 (3.70)       |  3.13 (3.19)  |     2.93 (3.10)     |  2.98 (3.13)  |   **2.78 (2.84)**   |
+    | 2XLarge (2XL) △ |       4.27 (4.35)       |  3.77 (3.84)  |     3.54 (3.61)     |  3.43 (3.51)  |   **3.19 (3.27)**   |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. The configurations are explained in the note below.
+
+- On the RTX PRO 6000 a TensorRT CUDA-graph configuration is fastest for every size: FP16 graph for Atto, Femto and Pico, INT8 graph for Nano to 2XLarge. The next configuration is 5.4% to 15.8% behind, and PyTorch CUDA graph FP16 takes 1.21 to 1.34 times as long as the fastest.
+- On the L4, PyTorch CUDA graph FP16 is fastest for Atto to Nano, 6.4% to 15.8% ahead of the next configuration, and INT8 graph is fastest from Small up. At Small, PyTorch CUDA graph FP16 (4.01 ms) and TensorRT FP16 graph (4.03 ms) are within 3.5% of INT8 graph (3.90 ms). At 2XLarge, INT8 graph (9.95 ms) is 21% below FP16 graph (12.56 ms).
+- On the A100 the fastest configuration leads the second by less than 5% at 7 of 9 sizes, so most rows are ties between several configurations. Its small models are not faster than on the L4: Nano takes 3.35 ms on the A100 and 3.20 ms on the L4, both with PyTorch CUDA graph FP16. The likely cause is the host share of a call this short, which was not measured.
+- On the T4, TensorRT INT8 is fastest from Nano to 2XLarge, with or without the graph, and the two are within 5% of each other. INT8 graph is 10% to 18% below FP16 graph for those sizes. Atto is fastest with FP16 graph, and Femto and Pico are level between FP16 with and without the graph.
+- The 95th percentile is within 1.21 times the median in every cell except the PyTorch CUDA graph FP16 cells of Atto, Femto and Pico on the T4, which are 1.58, 1.37 and 1.27 times (Atto: 3.51 ms, p95 5.56 ms).
+
 ## Fastest Configuration on Apple Silicon
 
 The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.

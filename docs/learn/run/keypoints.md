@@ -28,6 +28,40 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
+## Fastest Configuration on NVIDIA GPUs
+
+The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
+
+=== "Tesla T4"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
+    | Keypoint (Preview) |      20.33 (22.75)      | 18.76 (19.88) |    19.07 (19.91)    | **16.98 (18.02)** |    17.32 (18.29)    |
+
+=== "NVIDIA L4"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    | Keypoint (Preview) |      9.95 (10.62)       | 9.28 (10.17)  |     8.78 (9.15)     |  8.80 (9.34)  |   **8.40 (9.24)**   |
+
+=== "A100"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    | Keypoint (Preview) |       7.95 (8.30)       |  8.09 (8.55)  |   **7.14 (7.57)**   |  8.10 (8.67)  |     7.47 (8.02)     |
+
+=== "RTX PRO 6000"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    | Keypoint (Preview) |       4.30 (4.40)       |  3.68 (3.78)  |     3.40 (3.48)     |  3.56 (3.64)  |   **3.24 (3.31)**   |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. The configurations are explained in the note below.
+
+INT8 graph is fastest on the RTX PRO 6000 (3.24 ms) and the L4 (8.40 ms), TensorRT INT8 on the T4 (16.98 ms) and FP16 graph on the A100 (7.14 ms). On the L4, FP16 graph (8.78 ms) and INT8 (8.80 ms) are within 5% of INT8 graph, and on the A100 INT8 graph (7.47 ms) is 4.6% behind FP16 graph.
+
 ## Fastest Configuration on Apple Silicon
 
 The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
