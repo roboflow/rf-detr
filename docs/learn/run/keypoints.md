@@ -38,29 +38,29 @@ The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 
 
     |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
-    | Keypoint (Preview) |      20.33 (22.75)      | 18.76 (19.88) |    19.07 (19.91)    | **16.98 (18.02)** |    17.32 (18.29)    |
+    | Keypoint (Preview) |      20.33 (22.75)      | 18.76 (19.88) |    19.07 (19.91)    | **16.98 (18.02)** |  **17.32 (18.29)**  |
 
 === "NVIDIA L4"
 
-    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
-    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
-    | Keypoint (Preview) |      9.95 (10.62)       | 9.28 (10.17)  |     8.78 (9.15)     |  8.80 (9.34)  |   **8.40 (9.24)**   |
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |  TensorRT INT8  | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-------------: | :-----------------: |
+    | Keypoint (Preview) |      9.95 (10.62)       | 9.28 (10.17)  |   **8.78 (9.15)**   | **8.80 (9.34)** |   **8.40 (9.24)**   |
 
 === "A100"
 
     |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
-    | Keypoint (Preview) |       7.95 (8.30)       |  8.09 (8.55)  |   **7.14 (7.57)**   |  8.10 (8.67)  |     7.47 (8.02)     |
+    | Keypoint (Preview) |       7.95 (8.30)       |  8.09 (8.55)  |   **7.14 (7.57)**   |  8.10 (8.67)  |   **7.47 (8.02)**   |
 
 === "RTX PRO 6000"
 
     |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
-    | Keypoint (Preview) |       4.30 (4.40)       |  3.68 (3.78)  |     3.40 (3.48)     |  3.56 (3.64)  |   **3.24 (3.31)**   |
+    | Keypoint (Preview) |       4.30 (4.40)       |  3.68 (3.78)  |   **3.40 (3.48)**   |  3.56 (3.64)  |   **3.24 (3.31)**   |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. The configurations are explained in the note below.
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster. The configurations are explained in the note below.
 
-INT8 graph is fastest on the RTX PRO 6000 (3.24 ms) and the L4 (8.40 ms), TensorRT INT8 on the T4 (16.98 ms) and FP16 graph on the A100 (7.14 ms). On the L4, FP16 graph (8.78 ms) and INT8 (8.80 ms) are within 5% of INT8 graph, and on the A100 INT8 graph (7.47 ms) is 4.6% behind FP16 graph.
+TensorRT INT8 graph is among the fastest on every GPU. FP16 graph is level with it on the L4, A100 and RTX PRO 6000.
 
 ## Fastest Configuration on Apple Silicon
 
@@ -72,7 +72,7 @@ The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1
 | :----------------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-----------: | :-------------: | :---------------: |
 | Keypoint (Preview) |     26.32 (27.01)     |     23.55 (24.08)     |      26.04 (26.55)       | 24.75 (25.12) | 75.02 (78.57) |  24.84 (25.47)  | **21.34 (21.63)** |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median is in bold.
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster.
 
 The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and CoreML GPU FP32 takes 24.84 ms.
 
@@ -86,7 +86,7 @@ The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPY
 | :----------------: | :----------------------: | :-------------: | :-----------------: | :-------------: | :--------------: | :--------------: |
 | Keypoint (Preview) |     760.08 (1663.51)     | 853.85 (980.48) | **650.16 (765.01)** | 692.89 (996.57) | 733.37 (1062.62) | 751.76 (1309.10) |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
 
 ONNX INT8 is fastest (650.16 ms, p95 765.01). OpenVINO FP32 (692.89 ms) is 6.6% behind and TorchScript FP32 (760.08 ms) is 16.9% behind. TorchScript FP32 has the widest tail: its p95 is 1663.51 ms, 2.19 times its median.
 

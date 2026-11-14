@@ -167,10 +167,8 @@ What the table supports:
 
 The [latency cookbook](../../cookbooks/measure-latency/) times OpenVINO FP32, FP16 and INT8 for every pretrained size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, OpenVINO 2026.4.1, NNCF 3.4.0, `rfdetr` 1.13.0.dev0), as the median of 200 images at batch 1 after 50 warm-up calls. Its tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu). They use a different protocol from the table above: OpenVINO is asked for all 8 logical cores with hyper-threading enabled, where the table above pins it to the 4 physical cores, and the host and the `rfdetr` version differ, so compare numbers only within one set. For `RFDETRSmall` the cookbook measured OpenVINO FP32 at 248.60 ms, against 373.65 ms in the table above; which of the differences causes the gap was not isolated. In the cookbook:
 
-- OpenVINO FP32 is the fastest of the six configurations at Nano and Small and level with it (a gap under 5%) at Medium and for Seg Small, and no OpenVINO configuration is fastest for any other size.
-- OpenVINO FP16 is no faster than FP32 for any detection size (1% to 11% slower) and for keypoints (6% slower), and is faster only for Seg Medium (0.79 times the FP32 time).
-- OpenVINO INT8 is within 6% of FP32 at every detection size and 8% slower for keypoints, and it swings for segmentation: 0.70 to 0.78 times the FP32 time at Large, XLarge and Medium, and 1.14 to 1.16 times at 2XLarge and Small. As above, INT8 speed on a CPU depends on the host, so measure it on yours.
-- Its 95th percentile is 1.22 to 1.78 times the median for FP32 and 1.29 to 1.74 times for INT8.
+- OpenVINO is among the fastest of the six configurations only at mid sizes (detection Nano to Medium, segmentation Small to Large) and is never alone there.
+- For detection and keypoints OpenVINO FP16 and INT8 are never more than 2% faster than FP32. For segmentation INT8 swings with size (0.70 to 1.16 times the FP32 time), and INT8 speed on a CPU depends on the host, so measure it on yours.
 
 !!! note "Memory column"
 

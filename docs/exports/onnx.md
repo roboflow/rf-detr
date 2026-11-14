@@ -150,8 +150,8 @@ ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than 
 
 The [latency cookbook](../../cookbooks/measure-latency/) times ONNX Runtime FP32 and INT8 on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, ONNX Runtime 1.32.0, `rfdetr` 1.13.0.dev0) for every pretrained size, as the median of 200 images at batch 1, with the thread count set to the 8 logical cores through the `num_threads` runtime option. The tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu), next to PyTorch TorchScript and OpenVINO. In them:
 
-- ONNX INT8 takes 64% to 70% of the ONNX FP32 time for the detection sizes, 65% to 83% for the segmentation sizes and 76% for keypoints.
-- ONNX INT8 is the fastest of the six configurations for 10 of the 16 models, and level with the fastest for 3 more (a gap under 5%: detection Nano and Small, segmentation Medium). ONNX FP32 is never the fastest: it is 8% to 55% slower than PyTorch TorchScript FP32 for detection, 10% to 41% for segmentation and 12% for keypoints.
+- ONNX INT8 takes 64% to 83% of the ONNX FP32 time at every size it was timed for.
+- ONNX INT8 is among the fastest of the six configurations for 13 of the 16 models. ONNX FP32 is never among them: it is slower than PyTorch TorchScript FP32 at every size.
 - No accuracy was scored for these CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.
 
 No earlier x86 CPU table remains here: the earlier run had `RFDETRInference`'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is also a measured route.
