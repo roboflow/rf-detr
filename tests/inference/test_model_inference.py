@@ -638,7 +638,7 @@ class TestModelInferenceCompile:
         ],
     )
     def test_inductor_build_holds_dynamo_recompile_limit_and_restores_it(
-        self, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture, current_limit: int, expected_limit: int
+        self, mocker: MockerFixture, current_limit: int, expected_limit: int
     ) -> None:
         """Compile and warm-up of an inductor predictor run under a raised Dynamo limit that is restored after.
 
@@ -647,7 +647,6 @@ class TestModelInferenceCompile:
         limit at 64 (or the caller's higher value) while it compiles and leave the setting as found.
         """
         setting = "recompile_limit" if hasattr(torch._dynamo.config, "recompile_limit") else "cache_size_limit"
-        monkeypatch.setattr(torch._dynamo.config, setting, current_limit)
         seen: dict[str, int] = {}
 
         def compiled_model(value: torch.Tensor) -> torch.Tensor:
@@ -662,10 +661,13 @@ class TestModelInferenceCompile:
 
         mocker.patch("torch.compile", new=fake_compile)
 
-        _FakeRFDETR().inference(compile=True, compile_backend="inductor")
+        original_limit = getattr(torch._dynamo.config, setting)
+        with torch._dynamo.config.patch(**{setting: current_limit}):
+            _FakeRFDETR().inference(compile=True, compile_backend="inductor")
 
-        assert seen == {"compile": expected_limit, "warmup": expected_limit}
-        assert getattr(torch._dynamo.config, setting) == current_limit
+            assert seen == {"compile": expected_limit, "warmup": expected_limit}
+            assert getattr(torch._dynamo.config, setting) == current_limit
+        assert getattr(torch._dynamo.config, setting) == original_limit
 
     @pytest.mark.parametrize("setting", ["cache_size_limit", "recompile_limit"])
     def test_recompile_limit_uses_available_dynamo_setting(self, monkeypatch: pytest.MonkeyPatch, setting: str) -> None:
