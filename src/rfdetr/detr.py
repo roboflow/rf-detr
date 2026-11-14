@@ -16,7 +16,7 @@ import tempfile
 import threading
 import warnings
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
@@ -335,8 +335,12 @@ def _trace_for_prediction(module: torch.nn.Module, example_input: torch.Tensor) 
 #: several times slower, with no exception.
 _MIN_DYNAMO_RECOMPILE_LIMIT = 64
 
+#: Older PyTorch config patches mutate shared process state.
+_DYNAMO_CONFIG_LOCK = threading.RLock()
 
-def _raised_dynamo_recompile_limit() -> contextlib.AbstractContextManager[None]:
+
+@contextlib.contextmanager
+def _raised_dynamo_recompile_limit() -> Iterator[None]:
     """Raise Dynamo's per-function recompile limit while one inductor predictor compiles.
 
     The limit is only raised, never lowered, and is restored on exit, so a process-wide setting the caller made
@@ -347,17 +351,21 @@ def _raised_dynamo_recompile_limit() -> contextlib.AbstractContextManager[None]:
 
     Examples:
         >>> import torch._dynamo
-        >>> before = torch._dynamo.config.cache_size_limit
+        >>> setting = "recompile_limit" if hasattr(torch._dynamo.config, "recompile_limit") else "cache_size_limit"
+        >>> before = getattr(torch._dynamo.config, setting)
         >>> with _raised_dynamo_recompile_limit():
-        ...     raised = torch._dynamo.config.cache_size_limit >= _MIN_DYNAMO_RECOMPILE_LIMIT
-        >>> raised, torch._dynamo.config.cache_size_limit == before
+        ...     raised = getattr(torch._dynamo.config, setting) >= _MIN_DYNAMO_RECOMPILE_LIMIT
+        >>> raised, getattr(torch._dynamo.config, setting) == before
         (True, True)
     """
     # Local import: ``torch._dynamo`` is heavy and only the inductor path needs it.
     import torch._dynamo
 
-    limit = max(torch._dynamo.config.cache_size_limit, _MIN_DYNAMO_RECOMPILE_LIMIT)
-    return cast("contextlib.AbstractContextManager[None]", torch._dynamo.config.patch(cache_size_limit=limit))
+    with _DYNAMO_CONFIG_LOCK:
+        setting = "recompile_limit" if hasattr(torch._dynamo.config, "recompile_limit") else "cache_size_limit"
+        limit = max(getattr(torch._dynamo.config, setting), _MIN_DYNAMO_RECOMPILE_LIMIT)
+        with torch._dynamo.config.patch(**{setting: limit}):
+            yield
 
 
 def _device_move_lock(module: Any) -> threading.Lock:

@@ -9,7 +9,7 @@ import threading
 import weakref
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, call, patch
@@ -646,17 +646,18 @@ class TestModelInferenceCompile:
         inductor predictor in a process and later ones run uncompiled and several times slower. The build must hold the
         limit at 64 (or the caller's higher value) while it compiles and leave the setting as found.
         """
-        monkeypatch.setattr(torch._dynamo.config, "cache_size_limit", current_limit)
+        setting = "recompile_limit" if hasattr(torch._dynamo.config, "recompile_limit") else "cache_size_limit"
+        monkeypatch.setattr(torch._dynamo.config, setting, current_limit)
         seen: dict[str, int] = {}
 
         def compiled_model(value: torch.Tensor) -> torch.Tensor:
             """Record the limit at warm-up and return the input."""
-            seen["warmup"] = torch._dynamo.config.cache_size_limit
+            seen["warmup"] = getattr(torch._dynamo.config, setting)
             return value
 
         def fake_compile(module: torch.nn.Module, **kwargs: Any) -> Any:
             """Record the limit at compile time and return the stand-in compiled model."""
-            seen["compile"] = torch._dynamo.config.cache_size_limit
+            seen["compile"] = getattr(torch._dynamo.config, setting)
             return compiled_model
 
         mocker.patch("torch.compile", new=fake_compile)
@@ -664,7 +665,60 @@ class TestModelInferenceCompile:
         _FakeRFDETR().inference(compile=True, compile_backend="inductor")
 
         assert seen == {"compile": expected_limit, "warmup": expected_limit}
-        assert torch._dynamo.config.cache_size_limit == current_limit
+        assert getattr(torch._dynamo.config, setting) == current_limit
+
+    @pytest.mark.parametrize("setting", ["cache_size_limit", "recompile_limit"])
+    def test_recompile_limit_uses_available_dynamo_setting(self, monkeypatch: pytest.MonkeyPatch, setting: str) -> None:
+        """Inductor setup accepts both supported Dynamo configuration layouts."""
+        patch_config = Mock(return_value=nullcontext())
+        config = SimpleNamespace(**{setting: 8, "patch": patch_config})
+        monkeypatch.setattr(torch._dynamo, "config", config)
+
+        with detr_module._raised_dynamo_recompile_limit():
+            pass
+
+        patch_config.assert_called_once_with(**{setting: 64})
+
+    def test_overlapping_recompile_limit_contexts_restore_shared_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Overlapping builds serialize patches on PyTorch versions with shared config state."""
+        config = SimpleNamespace(cache_size_limit=8)
+        entered = threading.Event()
+        second_entered = threading.Event()
+        release = threading.Event()
+
+        @contextmanager
+        def patch_config(**changes: int) -> Iterator[None]:
+            previous = config.cache_size_limit
+            config.cache_size_limit = changes["cache_size_limit"]
+            try:
+                yield
+            finally:
+                config.cache_size_limit = previous
+
+        config.patch = patch_config
+        monkeypatch.setattr(torch._dynamo, "config", config)
+
+        def first() -> None:
+            with detr_module._raised_dynamo_recompile_limit():
+                entered.set()
+                assert release.wait(5)
+
+        def second() -> None:
+            assert entered.wait(5)
+            with detr_module._raised_dynamo_recompile_limit():
+                second_entered.set()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_result = pool.submit(first)
+            second_result = pool.submit(second)
+            assert entered.wait(5)
+            try:
+                assert not second_entered.wait(0.2)
+            finally:
+                release.set()
+            first_result.result(timeout=5)
+            second_result.result(timeout=5)
+        assert config.cache_size_limit == 8
 
     def test_invalid_compile_backend_raises(self) -> None:
         """An unknown backend should fail before copying or exporting the model."""
