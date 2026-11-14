@@ -477,6 +477,11 @@ class TestEnableNotebookInlineMatplotlib:
             call("config", "InlineBackend.close_figures = True"),
         ]
 
+    def test_leaves_python_without_ipython_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The optional notebook helper is a no-op when IPython is not installed."""
+        monkeypatch.setitem(sys.modules, "IPython", None)
+        _enable_notebook_inline_matplotlib()
+
     def test_leaves_a_plain_python_process_alone(self, mocker: MockerFixture) -> None:
         """Without an IPython shell nothing is configured, so a script that runs the cells still works."""
         ipython = ModuleType("IPython")

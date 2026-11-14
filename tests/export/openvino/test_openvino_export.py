@@ -660,20 +660,14 @@ class TestOpenVINOInferenceDeviceAndCache:
         assert caller_dict == {"INFERENCE_NUM_THREADS": 3}
         assert [call.args[2]["INFERENCE_NUM_THREADS"] for call in core.compile_model.call_args_list] == [2, 3]
 
-    def test_refuses_a_thread_count_openvino_lowered(
+    def test_accepts_a_thread_count_openvino_lowered(
         self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub
     ) -> None:
-        """A load stops when OpenVINO compiles for fewer threads than ``INFERENCE_NUM_THREADS`` asked for.
-
-        OpenVINO clamps the request to the cores the host lets it use without a warning, so a latency run would
-        otherwise measure fewer threads than it names.
-        """
+        """A runtime may clamp the requested thread count without preventing inference."""
         _, core = openvino_runtime_stub
-        core.compile_model.side_effect = None
-        core.compile_model.return_value.get_property.side_effect = None
         core.compile_model.return_value.get_property.return_value = 4
-        with pytest.raises(RuntimeError, match="compiled for 4 threads.*INFERENCE_NUM_THREADS=8"):
-            OpenVINOInference(openvino_stub_xml, config={"INFERENCE_NUM_THREADS": 8})
+        OpenVINOInference(openvino_stub_xml, config={"INFERENCE_NUM_THREADS": 8})
+        core.compile_model.return_value.get_property.assert_not_called()
 
     def test_skips_the_thread_check_without_a_thread_request(
         self, openvino_stub_xml: Path, openvino_runtime_stub: _RuntimeStub

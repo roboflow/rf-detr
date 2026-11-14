@@ -508,7 +508,12 @@ def _enable_notebook_inline_matplotlib() -> None:
     Examples:
         >>> _enable_notebook_inline_matplotlib()  # no IPython shell in a doctest, so this does nothing
     """
-    from IPython import get_ipython
+    try:
+        from IPython import get_ipython
+    except ModuleNotFoundError as exc:
+        if exc.name != "IPython":
+            raise
+        return
 
     ipython = get_ipython()
     if ipython is not None:

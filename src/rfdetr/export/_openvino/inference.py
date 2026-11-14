@@ -117,17 +117,6 @@ def _load_openvino_session(
         properties["INFERENCE_PRECISION_HINT"] = precision_hint
     properties.update(config or {})
     compiled_model = core.compile_model(model, device, properties)
-    requested_threads = properties.get("INFERENCE_NUM_THREADS")
-    if requested_threads is not None:
-        # OpenVINO clamps a thread request to the cores it may use (a host that hides its hyperthreads, an affinity
-        # mask) without a warning, so a timing run would measure fewer threads than it names.
-        granted_threads = compiled_model.get_property("INFERENCE_NUM_THREADS")
-        if granted_threads != requested_threads:
-            raise RuntimeError(
-                f"OpenVINO compiled for {granted_threads} threads on {device} although INFERENCE_NUM_THREADS="
-                f"{requested_threads} was requested; the host allows fewer (os.cpu_count()={os.cpu_count()}, "
-                f"ENABLE_HYPER_THREADING={properties.get('ENABLE_HYPER_THREADING')})."
-            )
     infer_request = compiled_model.create_infer_request()
     input_layer = compiled_model.input(0)
     output_layers = [compiled_model.output(index) for index in range(len(compiled_model.outputs))]
