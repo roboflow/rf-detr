@@ -706,10 +706,9 @@ class TestGraphInterfaceChecks:
         """
         contract = _detect_metadata("tflite").model_copy(update={"input_shape": (-1, 3, 8, 8)})
 
-        assert (
-            adapters._check_input_interface("TFLite", contract, None, (1, 3, 8, 8), "float32", dynamic_batch=True)
-            is None
-        )
+        actual = adapters._check_input_interface("TFLite", contract, None, (1, 3, 8, 8), "float32", dynamic_batch=True)
+
+        assert actual is None
 
     def test_metadata_batch_wildcard_refused_for_fixed_shape_format(self) -> None:
         """A ``-1`` metadata batch is refused where the graph batch must match exactly, as for CoreML.

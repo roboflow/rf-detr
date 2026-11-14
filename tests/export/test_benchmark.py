@@ -78,19 +78,8 @@ class TestMeasureLatency:
 
         timings = _measure_cuda(call, warmup=2, runs=2, device=torch.device("cuda"))
 
-        assert order == [
-            "call",
-            "call",
-            "sync",
-            "start",
-            "call",
-            "end",
-            "sync",
-            "start",
-            "call",
-            "end",
-            "sync",
-        ]
+        expected = ["call", "call", "sync", "start", "call", "end", "sync", "start", "call", "end", "sync"]
+        assert order == expected
         assert event_factory.call_count == 2
         assert all(call.kwargs == {"enable_timing": True} for call in event_factory.call_args_list)
         assert call.call_count == 4
@@ -701,17 +690,14 @@ class TestBenchmarkRows:
     def test_record_keeps_the_config_columns_and_the_size(self) -> None:
         """The runtime, precision and quantization of the config become their own columns next to the size."""
         rows = BenchmarkRows()
+        config = BenchmarkConfig("CPU", "INT8", "static NNCF")
 
-        rows.record(
-            "OpenVINO", BenchmarkConfig("CPU", "INT8", "static NNCF"), 1, BenchmarkResult("call", 2.0, 0.1), 3.0, 41.5
-        )
+        rows.record("OpenVINO", config, 1, BenchmarkResult("call", 2.0, 0.1), 3.0, 41.5)
 
-        assert (rows[0]["Runtime"], rows[0]["Precision"], rows[0]["Quantization"], rows[0]["Size [MB]"]) == (
-            "CPU",
-            "INT8",
-            "static NNCF",
-            41.5,
-        )
+        row = rows[0]
+        actual = (row["Runtime"], row["Precision"], row["Quantization"], row["Size [MB]"])
+        expected = ("CPU", "INT8", "static NNCF", 41.5)
+        assert actual == expected
 
     def test_record_leaves_the_size_empty_without_an_artifact(self) -> None:
         """A row measured without an exported artifact has no size."""

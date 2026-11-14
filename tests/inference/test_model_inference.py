@@ -334,13 +334,9 @@ class TestTraceForPrediction:
 
         detr_module._trace_for_prediction(_DeterministicModeProbe(), torch.zeros(1))
 
-        assert (
-            torch.are_deterministic_algorithms_enabled(),
-            torch.is_deterministic_algorithms_warn_only_enabled(),
-        ) == (
-            enabled,
-            warn_only,
-        )
+        actual = (torch.are_deterministic_algorithms_enabled(), torch.is_deterministic_algorithms_warn_only_enabled())
+        expected = (enabled, warn_only)
+        assert actual == expected
 
     def test_restores_the_callers_mode_when_tracing_fails(self) -> None:
         """A model that cannot be traced still leaves deterministic algorithms on for the caller."""
