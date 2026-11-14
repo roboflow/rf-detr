@@ -20,13 +20,77 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 <!-- COPIES: the three AP columns come from the results table of docs/cookbooks/coco-accuracy.ipynb (one run, provenance in the note below); params and resolution repeat the Keypoints table of docs/learn/benchmarks.md. -->
 
-|       Model        |  RF-DETR package class  | PyTorch FP32 keypoint AP<sub>50:95</sub> | TensorRT FP16 keypoint AP<sub>50:95</sub> | TensorRT INT8 keypoint AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
-| :----------------: | :---------------------: | :--------------------------------------: | :---------------------------------------: | :---------------------------------------: | :--------: | :--------: | :--------: |
-| Keypoint (Preview) | `RFDETRKeypointPreview` |                   71.8                   |                   71.7                    |                   71.1                    |    40.7    |  576x576   | Apache 2.0 |
+|       Model        | PyTorch FP32 keypoint AP<sub>50:95</sub> | TensorRT FP16 keypoint AP<sub>50:95</sub> | TensorRT INT8 keypoint AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
+| :----------------: | :--------------------------------------: | :---------------------------------------: | :---------------------------------------: | :--------: | :--------: | :--------: |
+| Keypoint (Preview) |                   71.8                   |                   71.7                    |                   71.1                    |    40.7    |  576x576   | Apache 2.0 |
 
 > Keypoint AP is OKS-based, with the standard COCO 17-keypoint sigmas, on COCO val2017 person keypoints.
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
+
+## Fastest Configuration on NVIDIA GPUs
+
+The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
+
+=== "Tesla T4"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
+    | Keypoint (Preview) |      20.33 (22.75)      | 18.76 (19.88) |    19.07 (19.91)    | **16.98 (18.02)** |    17.32 (18.29)    |
+
+=== "NVIDIA L4"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    | Keypoint (Preview) |      9.95 (10.62)       | 9.28 (10.17)  |     8.78 (9.15)     |  8.80 (9.34)  |   **8.40 (9.24)**   |
+
+=== "A100"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    | Keypoint (Preview) |       7.95 (8.30)       |  8.09 (8.55)  |   **7.14 (7.57)**   |  8.10 (8.67)  |     7.47 (8.02)     |
+
+=== "RTX PRO 6000"
+
+    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    | Keypoint (Preview) |       4.30 (4.40)       |  3.68 (3.78)  |     3.40 (3.48)     |  3.56 (3.64)  |   **3.24 (3.31)**   |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. The configurations are explained in the note below.
+
+INT8 graph is fastest on the RTX PRO 6000 (3.24 ms) and the L4 (8.40 ms), TensorRT INT8 on the T4 (16.98 ms) and FP16 graph on the A100 (7.14 ms). On the L4, FP16 graph (8.78 ms) and INT8 (8.80 ms) are within 5% of INT8 graph, and on the A100 INT8 graph (7.47 ms) is 4.6% behind FP16 graph.
+
+## Fastest Configuration on Apple Silicon
+
+The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
+
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
+
+|        Size        | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |  CoreML FP16  | CoreML GPU FP32 |  CoreML GPU FP16  |
+| :----------------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-----------: | :-------------: | :---------------: |
+| Keypoint (Preview) |     26.32 (27.01)     |     23.55 (24.08)     |      26.04 (26.55)       | 24.75 (25.12) | 75.02 (78.57) |  24.84 (25.47)  | **21.34 (21.63)** |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better, and the lowest median is in bold.
+
+The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and CoreML GPU FP32 takes 24.84 ms.
+
+## Fastest Configuration on an x86 CPU
+
+The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in the note below). -->
+
+|        Size        | PyTorch TorchScript FP32 |    ONNX FP32    |      ONNX INT8      |  OpenVINO FP32  |  OpenVINO FP16   |  OpenVINO INT8   |
+| :----------------: | :----------------------: | :-------------: | :-----------------: | :-------------: | :--------------: | :--------------: |
+| Keypoint (Preview) |     760.08 (1663.51)     | 853.85 (980.48) | **650.16 (765.01)** | 692.89 (996.57) | 733.37 (1062.62) | 751.76 (1309.10) |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+
+ONNX INT8 is fastest (650.16 ms, p95 765.01). OpenVINO FP32 (692.89 ms) is 6.6% behind and TorchScript FP32 (760.08 ms) is 16.9% behind. TorchScript FP32 has the widest tail: its p95 is 1663.51 ms, 2.19 times its median.
+
+--8<-- "docs/snippets/reproduced-latency.md"
 
 --8<-- "docs/snippets/license-yolo-note.md"
 

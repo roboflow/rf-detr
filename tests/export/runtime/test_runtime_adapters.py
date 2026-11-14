@@ -599,6 +599,44 @@ class TestRuntimeSuffixes:
         with pytest.raises(ValueError, match="num_threads"):
             load_runtime(artifact, _detect_metadata("tflite"), options={"num_threads": value})
 
+    def test_onnx_passes_num_threads_to_the_session(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """`num_threads` reaches the ONNX Runtime session, so a benchmark can pin it with the other CPU runtimes.
+
+        ONNX Runtime sizes its thread pool to the physical cores unless told otherwise, so a benchmark that pins PyTorch
+        and OpenVINO to every logical core would otherwise time ONNX Runtime on a smaller pool. The loader stops at the
+        stub, before the graph checks, because only the hand-off is under test.
+        """
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"artifact")
+        create = Mock(side_effect=RuntimeError("stop after the session hand-off"))
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+        )
+        monkeypatch.setattr("rfdetr.export._onnx.inference._create_onnx_session", create)
+
+        with pytest.raises(RuntimeError, match="stop after"):
+            load_runtime(artifact, _detect_metadata("onnx"), device="cpu", options={"num_threads": 8})
+
+        create.assert_called_once_with(artifact, providers=["CPUExecutionProvider"], num_threads=8)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool"),
+            pytest.param("4", id="string"),
+            pytest.param(2.5, id="float"),
+        ],
+    )
+    def test_onnx_refuses_an_invalid_num_threads(self, tmp_path: Path, value: object) -> None:
+        """Only a positive integer thread count is accepted, before ONNX Runtime is needed."""
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"artifact")
+
+        with pytest.raises(ValueError, match="num_threads"):
+            load_runtime(artifact, _detect_metadata("onnx"), device="cpu", options={"num_threads": value})
+
 
 class TestGraphInterfaceChecks:
     """The shared graph-interface checks every format loader runs before it builds a runtime."""
@@ -815,3 +853,59 @@ class TestRuntimeOptions:
             cache_dir=str(tmp_path / "cache"),
             config={"INFERENCE_NUM_THREADS": 2},
         )
+
+    def test_openvino_maps_num_threads_to_the_compile_property(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """`num_threads` is the spelling every CPU format shares, and OpenVINO takes it as `INFERENCE_NUM_THREADS`.
+
+        The other compile properties given in `config` stay in place, so a caller can pin the threads without restating
+        a precision or scheduling property.
+        """
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+        session_loader = Mock(side_effect=RuntimeError("stop after session load"))
+        monkeypatch.setitem(sys.modules, "openvino", types.ModuleType("openvino"))
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", session_loader)
+
+        with pytest.raises(RuntimeError, match="stop after session load"):
+            load_runtime(
+                artifact,
+                _detect_metadata("openvino"),
+                options={"num_threads": 8, "config": {"PERFORMANCE_HINT": "LATENCY"}},
+            )
+
+        session_loader.assert_called_once_with(
+            artifact,
+            device="AUTO",
+            inference_precision="auto",
+            config={"PERFORMANCE_HINT": "LATENCY", "INFERENCE_NUM_THREADS": 8},
+        )
+
+    def test_openvino_refuses_num_threads_beside_the_compile_property(self, tmp_path: Path) -> None:
+        """Two thread counts for one compile are refused instead of one silently winning."""
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="INFERENCE_NUM_THREADS"):
+            load_runtime(
+                artifact,
+                _detect_metadata("openvino"),
+                options={"num_threads": 8, "config": {"INFERENCE_NUM_THREADS": 4}},
+            )
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(True, id="bool"),
+            pytest.param("4", id="string"),
+        ],
+    )
+    def test_openvino_refuses_an_invalid_num_threads(self, tmp_path: Path, value: object) -> None:
+        """Only a positive integer thread count is accepted, before OpenVINO is needed."""
+        artifact = tmp_path / "model.xml"
+        artifact.write_text("<model/>", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="OpenVINO runtime_options num_threads"):
+            load_runtime(artifact, _detect_metadata("openvino"), options={"num_threads": value})

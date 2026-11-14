@@ -68,7 +68,7 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
 
-`runtime_options` takes `cache_dir`, `inference_precision` and `config`, as described under [Runtime Options](#runtime-options) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
+`runtime_options` takes `cache_dir`, `inference_precision`, `config` and `num_threads` (the CPU thread count, the same key the ONNX, TFLite and LiteRT loaders read; it sets `INFERENCE_NUM_THREADS`, so giving both is an error), as described under [Runtime Options](#runtime-options) below: reuse compiled kernels across process starts, set the precision the device computes in (`"f32"` by default, except on the NPU), and pass further compile properties.
 
 ```python
 model = RFDETRInference(
@@ -162,6 +162,15 @@ What the table supports:
 - Batching helps little on this CPU: 2.7 FPS at batch 1, 2.8 at batch 4 for fp32.
 - Predicting a folder of 64 images gave no more than batch 1: 2.8 img/s for the fp32 IR, 2.7 for fp16 and 2.0 for INT8. The model, not the input side, is the limit on a CPU.
 - This run was slower and noisier than an earlier one on another Colab host (eager PyTorch 401.6 against 345.4 ms), so compare rows within this table, never against numbers from another run.
+
+### Every Size on the Run Pages
+
+The [latency cookbook](../../cookbooks/measure-latency/) times OpenVINO FP32, FP16 and INT8 for every pretrained size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, OpenVINO 2026.4.1, NNCF 3.4.0, `rfdetr` 1.13.0.dev0), as the median of 200 images at batch 1 after 50 warm-up calls. Its tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu). They use a different protocol from the table above: OpenVINO is asked for all 8 logical cores with hyper-threading enabled, where the table above pins it to the 4 physical cores, and the host and the `rfdetr` version differ, so compare numbers only within one set. For `RFDETRSmall` the cookbook measured OpenVINO FP32 at 248.60 ms, against 373.65 ms in the table above; which of the differences causes the gap was not isolated. In the cookbook:
+
+- OpenVINO FP32 is the fastest of the six configurations at Nano and Small and level with it (a gap under 5%) at Medium and for Seg Small, and no OpenVINO configuration is fastest for any other size.
+- OpenVINO FP16 is no faster than FP32 for any detection size (1% to 11% slower) and for keypoints (6% slower), and is faster only for Seg Medium (0.79 times the FP32 time).
+- OpenVINO INT8 is within 6% of FP32 at every detection size and 8% slower for keypoints, and it swings for segmentation: 0.70 to 0.78 times the FP32 time at Large, XLarge and Medium, and 1.14 to 1.16 times at 2XLarge and Small. As above, INT8 speed on a CPU depends on the host, so measure it on yours.
+- Its 95th percentile is 1.22 to 1.78 times the median for FP32 and 1.29 to 1.74 times for INT8.
 
 !!! note "Memory column"
 

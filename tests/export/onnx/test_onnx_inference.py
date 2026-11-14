@@ -334,6 +334,22 @@ class TestCreateOnnxSession:
         assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
         assert options.get_session_config_entry("session.inter_op.allow_spinning") == "0"
 
+    def test_sizes_the_intra_op_pool_from_num_threads(self, tiny_onnx_model: Path) -> None:
+        """`num_threads` sets the CPU intra-op pool, which ONNX Runtime otherwise sizes to the physical cores.
+
+        A benchmark that pins the other CPU runtimes to every logical core needs this to give ONNX Runtime the same
+        pool.
+        """
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"], num_threads=3)
+
+        assert session.get_session_options().intra_op_num_threads == 3
+
+    def test_leaves_the_intra_op_pool_to_onnx_runtime_by_default(self, tiny_onnx_model: Path) -> None:
+        """Without `num_threads` the pool stays at ONNX Runtime's own default of 0, which means its automatic size."""
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
+
+        assert session.get_session_options().intra_op_num_threads == 0
+
     def test_still_produces_correct_output(self, tiny_onnx_model: Path) -> None:
         """Disabling spinning must not change what the session computes."""
         session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])

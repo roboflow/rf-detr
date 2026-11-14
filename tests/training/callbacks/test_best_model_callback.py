@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +21,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 
 from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig, TrainConfig
-from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
+from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping, _save_final_checkpoint
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 
 # ---------------------------------------------------------------------------
@@ -2766,3 +2767,52 @@ class TestFP8BestEMAWeightReload:
             callback.on_fit_end(trainer, module)
             trainer.test.assert_called_once_with(module, datamodule=trainer.datamodule, verbose=False)
             torch.testing.assert_close(module.model[0].weight, torch.full((1, 1), 3.0), rtol=1e-4, atol=1e-6)
+
+
+class TestSaveFinalCheckpoint:
+    """Check the final ``.pth`` the fine-tuning cookbooks write after their trainer finishes."""
+
+    def test_saves_the_payload_built_from_the_model_and_both_configs(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """The file holds the checkpoint payload of the live weights, the training config and the model config.
+
+        ``from_checkpoint`` rebuilds the model from this file alone, so each of the three inputs must reach the payload
+        builder together with the model name.
+        """
+        model = torch.nn.Linear(2, 1)
+        module = SimpleNamespace(model=model)
+        trainer = MagicMock()
+        train_config = MagicMock(model_dump=MagicMock(return_value={"epochs": 3}))
+        model_config = MagicMock(model_dump=MagicMock(return_value={"resolution": 384}))
+        build = mocker.patch.object(BestModelCallback, "_build_checkpoint_payload", return_value={"marker": 1})
+
+        _save_final_checkpoint(module, trainer, train_config, model_config, tmp_path / "final.pth", "RFDETRSmall")
+
+        args, kwargs = build.call_args
+        assert args[1:] == ({"epochs": 3}, trainer)
+        assert kwargs == {"model_name": "RFDETRSmall", "model_config_dict": {"resolution": 384}}
+        assert torch.load(tmp_path / "final.pth") == {"marker": 1}
+
+    def test_unwraps_a_compiled_model_before_taking_its_weights(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A ``torch.compile`` wrapper prefixes every key with ``_orig_mod.``, so the weights come from inside it."""
+        raw = torch.nn.Linear(2, 1)
+        module = SimpleNamespace(model=SimpleNamespace(_orig_mod=raw))
+        configs = MagicMock()
+        build = mocker.patch.object(BestModelCallback, "_build_checkpoint_payload", return_value={})
+
+        _save_final_checkpoint(module, MagicMock(), configs, configs, tmp_path / "final.pth", "RFDETRSmall")
+
+        assert list(build.call_args.args[0]) == list(raw.state_dict())
+
+    def test_creates_the_missing_parent_directories(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """The cookbooks save under a fresh output folder, so the directory is created and the path is returned."""
+        module = SimpleNamespace(model=torch.nn.Linear(2, 1))
+        configs = MagicMock()
+        mocker.patch.object(BestModelCallback, "_build_checkpoint_payload", return_value={})
+        output_path = tmp_path / "new" / "folder" / "final.pth"
+
+        result = _save_final_checkpoint(module, MagicMock(), configs, configs, output_path, "RFDETRSmall")
+
+        assert result == output_path
+        assert output_path.exists()

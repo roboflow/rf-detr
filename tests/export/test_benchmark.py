@@ -23,7 +23,9 @@ from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.export._benchmark import (
+    BenchmarkConfig,
     BenchmarkResult,
+    BenchmarkRows,
     _artifact_size_mb,
     _decode_batch,
     _measure_cuda,
@@ -31,9 +33,12 @@ from rfdetr.export._benchmark import (
     _sampled_delta_mb,
     _tile_batch,
     cpu_brand,
+    export_cached,
+    im_predict,
     measure_latency,
     measure_memory,
     parity,
+    time_folder,
     visualize_detections,
 )
 
@@ -71,7 +76,7 @@ class TestMeasureLatency:
         monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
         monkeypatch.setattr(torch.cuda, "current_stream", Mock())
 
-        mean_ms, std_ms = _measure_cuda(call, warmup=2, runs=2, device=torch.device("cuda"))
+        timings = _measure_cuda(call, warmup=2, runs=2, device=torch.device("cuda"))
 
         assert order == [
             "call",
@@ -91,8 +96,7 @@ class TestMeasureLatency:
         assert call.call_count == 4
         assert synchronize.call_count == 3
         assert [call.args for call in start.elapsed_time.call_args_list] == [(end,), (end,)]
-        assert mean_ms == pytest.approx(2.0)
-        assert std_ms == pytest.approx(1.0)
+        assert timings == [1.0, 3.0]
 
     def test_cuda_events_and_synchronize_target_the_requested_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Events record on the requested device's stream and every synchronize targets that same device.
@@ -132,7 +136,7 @@ class TestMeasureLatency:
         ``"cuda:0"`` used to miss an exact ``== "cuda"`` match and fall through to the wall-clock timer, which returns
         after the asynchronous kernel launch and reports a falsely low latency.
         """
-        measure_cuda = Mock(return_value=(1.0, 0.0))
+        measure_cuda = Mock(return_value=[1.0])
         monkeypatch.setattr("rfdetr.export._benchmark._measure_cuda", measure_cuda)
         fn = Mock()
 
@@ -148,7 +152,7 @@ class TestMeasureLatency:
 
         Non-CUDA runtimes block the calling thread, so there is no stream to synchronize and the wall clock is exact.
         """
-        wall_clock = Mock(return_value=(1.0, 0.0))
+        wall_clock = Mock(return_value=[1.0])
         monkeypatch.setattr("rfdetr.export._benchmark._measure_wall_clock", wall_clock)
         fn = Mock()
 
@@ -176,6 +180,37 @@ class TestMeasureLatency:
     def test_zero_mean_latency_has_infinite_fps(self) -> None:
         """A zero-duration sample maps to infinite FPS without division failure."""
         assert BenchmarkResult("instant", 0.0, 0.0).fps == float("inf")
+
+    def test_measure_latency_keeps_every_timed_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The result carries each call's time, with the mean and standard deviation computed from the same list."""
+        monkeypatch.setattr("rfdetr.export._benchmark._measure_wall_clock", Mock(return_value=[1.0, 3.0]))
+
+        result = measure_latency(Mock(), label="host", device="cpu", warmup=0, runs=2)
+
+        assert result.timings_ms == (1.0, 3.0)
+        assert (result.mean_ms, result.std_ms) == (pytest.approx(2.0), pytest.approx(1.0))
+
+    def test_median_ignores_one_slow_call(self) -> None:
+        """One slow call moves the mean but not the median, which is why the winners are chosen by the median."""
+        result = BenchmarkResult("host", 22.0, 38.0, (1.0, 2.0, 3.0, 4.0, 100.0))
+
+        assert result.median_ms == 3.0
+
+    def test_p95_interpolates_between_the_nearest_ranks(self) -> None:
+        """The 95th percentile of five calls lies between the fourth and the slowest."""
+        result = BenchmarkResult("host", 22.0, 38.0, (1.0, 2.0, 3.0, 4.0, 100.0))
+
+        assert result.p95_ms == pytest.approx(80.8)
+
+    def test_median_without_timings_raises(self) -> None:
+        """A result built without per-call timings has no median, and says so instead of returning ``nan``."""
+        with pytest.raises(ValueError, match="no per-call timings"):
+            BenchmarkResult("host", 1.0, 0.0).median_ms
+
+    def test_p95_without_timings_raises(self) -> None:
+        """A result built without per-call timings has no 95th percentile, and says so instead of returning ``nan``."""
+        with pytest.raises(ValueError, match="no per-call timings"):
+            BenchmarkResult("host", 1.0, 0.0).p95_ms
 
 
 def _stepping_reader(readings: list[int]) -> tuple[Callable[[], int], threading.Event]:
@@ -481,19 +516,46 @@ class TestCpuBrand:
 
         assert cpu_brand() == "Apple M4 Max"
 
-    def test_skips_the_probe_entirely_on_non_darwin_hosts(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A Linux or Windows host returns the fallback without ever invoking ``sysctl``.
+    def test_skips_the_probe_entirely_on_hosts_without_a_known_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A Windows host returns the fallback without ever invoking ``sysctl``.
 
         Guarding before the call — rather than relying on the ``OSError`` handler — keeps the common non-macOS case free
-        of a doomed subprocess spawn, and is what makes the behaviour deterministic on a Linux box that happens to ship
-        an unrelated ``sysctl``.
+        of a doomed subprocess spawn, and is what makes the behaviour deterministic on a host that happens to ship an
+        unrelated ``sysctl``.
         """
         run = Mock()
-        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Linux"))
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Windows"))
         monkeypatch.setattr("rfdetr.export._benchmark.subprocess.run", run)
 
         assert cpu_brand() == "unknown CPU brand"
         run.assert_not_called()
+
+    def test_reads_the_first_model_name_from_proc_cpuinfo_on_linux(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A Linux host reports the first ``model name`` line of ``/proc/cpuinfo`` without running ``sysctl``."""
+        cpuinfo = "processor\t: 0\nmodel name\t: Intel(R) Xeon(R) CPU @ 2.20GHz\nmodel name\t: other\n"
+        run = Mock()
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Linux"))
+        monkeypatch.setattr("rfdetr.export._benchmark.subprocess.run", run)
+        monkeypatch.setattr("rfdetr.export._benchmark.Path.read_text", Mock(return_value=cpuinfo))
+
+        assert cpu_brand() == "Intel(R) Xeon(R) CPU @ 2.20GHz"
+        run.assert_not_called()
+
+    def test_falls_back_when_proc_cpuinfo_has_no_model_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An ARM Linux host lists no ``model name`` and reports the fallback."""
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Linux"))
+        monkeypatch.setattr("rfdetr.export._benchmark.Path.read_text", Mock(return_value="processor\t: 0\n"))
+
+        assert cpu_brand() == "unknown CPU brand"
+
+    def test_falls_back_when_proc_cpuinfo_cannot_be_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An unreadable ``/proc/cpuinfo`` reports the fallback instead of raising."""
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Linux"))
+        monkeypatch.setattr("rfdetr.export._benchmark.Path.read_text", Mock(side_effect=OSError("denied")))
+
+        assert cpu_brand() == "unknown CPU brand"
 
     def test_falls_back_when_the_sysctl_binary_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A missing ``sysctl`` raises ``FileNotFoundError`` through ``check=False`` and is absorbed.
@@ -620,3 +682,213 @@ class TestParity:
         summary = parity(ref_boxes, ref_logits, ref_boxes, ref_logits)
 
         assert summary == "no reference query scores above 0.3; drift not measured over 0 confident queries"
+
+
+class TestBenchmarkRows:
+    """Check the row every runtime cookbook builds for its benchmark table."""
+
+    def test_record_reports_images_per_second_for_the_whole_batch(self) -> None:
+        """A batch-4 call of 8 ms is 500 images per second, not 125 calls per second.
+
+        Throughput must compare across batch sizes, so the row scales the per-call rate by the batch.
+        """
+        rows = BenchmarkRows()
+
+        rows.record("ONNX", BenchmarkConfig("CPU EP", "fp32"), 4, BenchmarkResult("call", 8.0, 0.5), 10.0)
+
+        assert rows[0]["FPS [img/s]"] == pytest.approx(500.0)
+
+    def test_record_keeps_the_config_columns_and_the_size(self) -> None:
+        """The runtime, precision and quantization of the config become their own columns next to the size."""
+        rows = BenchmarkRows()
+
+        rows.record(
+            "OpenVINO", BenchmarkConfig("CPU", "INT8", "static NNCF"), 1, BenchmarkResult("call", 2.0, 0.1), 3.0, 41.5
+        )
+
+        assert (rows[0]["Runtime"], rows[0]["Precision"], rows[0]["Quantization"], rows[0]["Size [MB]"]) == (
+            "CPU",
+            "INT8",
+            "static NNCF",
+            41.5,
+        )
+
+    def test_record_leaves_the_size_empty_without_an_artifact(self) -> None:
+        """A row measured without an exported artifact has no size."""
+        rows = BenchmarkRows()
+
+        rows.record("PyTorch", BenchmarkConfig("eager", "fp32"), 1, BenchmarkResult("call", 2.0, 0.1), 3.0)
+
+        assert rows[0]["Size [MB]"] is None
+
+
+class TestImPredict:
+    """Check the ``inference-models`` call every GPU, CPU and Apple cookbook shares."""
+
+    def test_converts_every_prediction_with_the_threshold_and_rgb_order(self) -> None:
+        """Each frame's prediction becomes ``sv.Detections``, and the model gets the threshold and the RGB order.
+
+        The cookbooks pass RGB arrays, so a model left at its BGR default would score every row on swapped channels.
+        """
+        model = Mock(
+            return_value=[Mock(to_supervision=Mock(return_value="a")), Mock(to_supervision=Mock(return_value="b"))]
+        )
+        frames = [np.zeros((2, 2, 3)), np.zeros((2, 2, 3))]
+
+        detections = im_predict(model, frames, 0.4)
+
+        assert detections == ["a", "b"]
+        model.assert_called_once_with(frames, confidence=0.4, input_color_format="rgb")
+
+
+class TestTimeFolder:
+    """Check the folder throughput measurement the export cookbooks share."""
+
+    def test_reports_the_median_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Three passes of 1, 2 and 4 seconds report the 2-second pass: 8 images in 2 seconds is 4 images per second."""
+        clock = Mock(side_effect=[0.0, 1.0, 10.0, 12.0, 20.0, 24.0])
+        monkeypatch.setattr("rfdetr.export._benchmark.time.perf_counter", clock)
+        predictor = Mock(predict=Mock(return_value=[None] * 8))
+
+        img_s = time_folder(predictor, Path("images"), 8, 3)
+
+        assert img_s == pytest.approx(4.0)
+
+    def test_runs_one_warm_up_pass_besides_the_timed_ones(self) -> None:
+        """Two timed passes make three ``predict`` calls, because the first pass only warms the predictor up."""
+        predictor = Mock(predict=Mock(return_value=[None] * 2))
+
+        time_folder(predictor, Path("images"), 2, 2)
+
+        assert predictor.predict.call_count == 3
+
+    def test_passes_the_folder_and_the_keywords_to_predict(self) -> None:
+        """``predict`` gets the folder as a string with the caller's keywords."""
+        predictor = Mock(predict=Mock(return_value=[None] * 2))
+
+        time_folder(predictor, Path("images"), 2, 1, threshold=0.3, include_source_image=False)
+
+        predictor.predict.assert_called_with("images", threshold=0.3, include_source_image=False)
+
+    def test_rejects_a_pass_with_the_wrong_number_of_results(self) -> None:
+        """A folder that gives 3 results where 4 images are expected means a predictor skipped files, so it stops."""
+        predictor = Mock(predict=Mock(return_value=[None] * 3))
+
+        with pytest.raises(ValueError, match="expected 4"):
+            time_folder(predictor, Path("images"), 4, 1)
+
+
+class TestExportCached:
+    """Check the artifact cache the accuracy and latency cookbooks share."""
+
+    def test_exports_into_the_directory_when_it_holds_no_artifact(self, tmp_path: Path) -> None:
+        """An empty cache directory runs the export once with the caller's keywords and returns its artifact."""
+        artifact = tmp_path / "onnx" / "model.onnx"
+        model = Mock(export=Mock(return_value=artifact))
+
+        result = export_cached(model, tmp_path / "onnx", "*.onnx", format="onnx", batch_size=1)
+
+        assert result == artifact
+        model.export.assert_called_once_with(output_dir=str(tmp_path / "onnx"), format="onnx", batch_size=1)
+
+    def test_reuses_the_artifact_that_is_already_cached(self, tmp_path: Path) -> None:
+        """A directory that already holds the artifact returns it without exporting again."""
+        cached = tmp_path / "trt" / "model.trt"
+        cached.parent.mkdir()
+        cached.touch()
+        model = Mock()
+
+        result = export_cached(model, tmp_path / "trt", "*.trt")
+
+        assert result == cached
+        model.export.assert_not_called()
+
+    def test_rejects_a_directory_with_two_matches(self, tmp_path: Path) -> None:
+        """Two matching artifacts leave no way to tell which configuration is cached, so the call stops."""
+        for name in ("a.trt", "b.trt"):
+            (tmp_path / name).touch()
+
+        with pytest.raises(ValueError, match="Ambiguous artifact cache"):
+            export_cached(Mock(), tmp_path, "*.trt")
+
+    def test_rejects_an_export_that_does_not_match_the_pattern(self, tmp_path: Path) -> None:
+        """An INT8 pattern must not accept the FP16 file the export wrote, so the precision cannot be mixed up."""
+        model = Mock(export=Mock(return_value=tmp_path / "model.trt"))
+
+        with pytest.raises(ValueError, match="does not match"):
+            export_cached(model, tmp_path, "*_int8.trt")
+
+
+class TestLatencyCookbook:
+    """Check the latency notebook's cache and result identity against real input changes."""
+
+    @staticmethod
+    def _cell(cell_id: str) -> str:
+        """Read the code of a named notebook cell."""
+        import json
+
+        notebook = Path(__file__).resolve().parents[2] / "docs/cookbooks/measure-latency.ipynb"
+        cells = json.loads(notebook.read_text())["cells"]
+        return "".join(next(cell for cell in cells if cell.get("id") == cell_id)["source"])
+
+    def test_cache_signature_changes_with_calibration_and_weights(self, tmp_path: Path) -> None:
+        """Changing calibration pixels or model weights cannot reuse an old cache key."""
+        import ast
+        import hashlib
+        import json
+
+        package = tmp_path / "package"
+        package.mkdir()
+        source = package / "__init__.py"
+        source.write_text("value = 1")
+        calibration = tmp_path / "calibration"
+        calibration.mkdir()
+        image = calibration / "sample.jpg"
+        image.write_bytes(b"first")
+        module = torch.nn.Linear(2, 1)
+        model = SimpleNamespace(model=SimpleNamespace(model=module))
+        package_module = SimpleNamespace(__file__=str(source))
+        scope = {
+            "RFDETR": object,
+            "hashlib": hashlib,
+            "json": json,
+            "Path": Path,
+            "torch": torch,
+            "rfdetr": package_module,
+            "rfdetr_plus": package_module,
+            "provenance": {"torch_version": "test"},
+            "NUM_CALIB": 1,
+            "NUM_WARMUP": 50,
+            "CALIBRATION_DIR": calibration,
+            "EXPORTS": {"onnx": ("*.onnx", {})},
+        }
+        tree = ast.parse(self._cell("6d35247d"))
+        definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), "latency notebook", "exec"), scope)
+        fingerprint = scope["artifact_signature"]
+        before = fingerprint(model)
+        image.write_bytes(b"second")
+        after_calibration = fingerprint(model)
+        module.weight.data.add_(1)
+
+        assert before != after_calibration
+        assert after_calibration != fingerprint(model)
+
+    def test_resume_identity_changes_with_runtime_version(self) -> None:
+        """A runtime upgrade cannot reuse a measurement attributed to an older version."""
+        from typing import Any
+
+        scope = {"Any": Any, "provenance": {"torch_version": "old"}}
+        exec(self._cell("2661e6d5"), scope)
+        key = scope["resume_key"]
+        row = {"model": "m", "config": "c", "artifact_signature": "a", "torch_version": "old"}
+        assert key(row) != key({**row, "torch_version": "new"})
+
+    def test_graph_configuration_keeps_precision(self) -> None:
+        """Graph replay retains the underlying TensorRT precision in the output table."""
+        import pandas as pd
+
+        scope = {"current": pd.DataFrame({"config": ["tensorrt-fp16-graph", "onnx-int8"]})}
+        exec(self._cell("e850c981"), scope)
+        assert scope["current"]["precision"].tolist() == ["fp16", "int8"]
+        assert scope["current"]["engine"].tolist() == ["tensorrt-graph", "onnx"]
