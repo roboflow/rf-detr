@@ -122,6 +122,32 @@ Several rows are ties between their two fastest configurations, where a gap unde
 
 Femto's CoreML FP16 time (24.51 ms) is not noise: the Neural Engine compiler fails on its FP16 package under the default compute units, as the [CoreML page](../../exports/coreml.md#measured-latency-on-apple-silicon) explains, and Core ML then runs it slowly. CoreML GPU FP16 avoids that plan and takes 8.16 ms.
 
+## Fastest Configuration on an x86 CPU
+
+The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in the note below). -->
+
+|      Size       | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    OpenVINO FP32    |   OpenVINO FP16   |   OpenVINO INT8   |
+| :-------------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :---------------: | :---------------: |
+|   Atto (A) △    |    **49.30 (81.53)**     |  66.30 (102.49)   |           —           |   61.89 (110.31)    |  65.78 (101.60)   |         —         |
+|   Femto (F) △   |    **71.49 (105.86)**    |  103.99 (139.05)  |           —           |   77.12 (131.74)    |  79.50 (136.18)   |         —         |
+|   Pico (P) △    |    **96.17 (138.73)**    |  133.67 (168.07)  |           —           |   104.31 (172.77)   |  111.09 (173.81)  |         —         |
+|    Nano (N)     |     144.30 (201.38)      |  223.88 (258.26)  |    142.29 (184.13)    | **139.62 (236.81)** |  140.80 (229.94)  |  147.03 (251.28)  |
+|    Small (S)    |     255.07 (316.23)      |  379.63 (419.53)  |    249.21 (294.51)    | **248.60 (387.60)** |  262.16 (399.60)  |  254.88 (422.05)  |
+|   Medium (M)    |     328.94 (574.67)      |  458.90 (510.59)  |  **301.01 (359.73)**  |   313.77 (496.52)   |  325.86 (496.62)  |  331.42 (552.13)  |
+|    Large (L)    |     503.23 (834.66)      |  653.41 (708.16)  |  **455.91 (521.81)**  |   507.50 (744.23)   |  537.98 (781.94)  |  509.06 (764.56)  |
+|  XLarge (XL) △  |    1073.06 (1901.00)     | 1240.19 (1343.50) |  **859.06 (990.42)**  |  1111.67 (1476.47)  | 1171.22 (1533.26) | 1103.99 (1583.44) |
+| 2XLarge (2XL) △ |    1525.65 (2293.85)     | 1653.97 (1815.14) | **1121.89 (1303.18)** |  1592.33 (2029.86)  | 1762.35 (2233.25) | 1560.11 (2066.94) |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+
+- Atto, Femto and Pico are fastest with PyTorch TorchScript FP32 (49.30, 71.49 and 96.17 ms). The next configuration, OpenVINO FP32, is 25.5%, 7.9% and 8.5% behind.
+- At Nano and Small no configuration is clearly fastest. At Nano, OpenVINO FP32 (139.62 ms), OpenVINO FP16 (140.80), ONNX INT8 (142.29) and TorchScript FP32 (144.30) are within 3.4% of each other. At Small, OpenVINO FP32 (248.60), ONNX INT8 (249.21), OpenVINO INT8 (254.88) and TorchScript FP32 (255.07) are within 2.6%.
+- At Medium ONNX INT8 (301.01 ms) is 4.2% ahead of OpenVINO FP32 (313.77), which is a tie. From Large up ONNX INT8 is fastest, with the next configuration, TorchScript FP32, 10.4% behind at Large, 24.9% at XLarge and 36.0% at 2XLarge.
+- ONNX INT8 takes 64% to 70% of the ONNX FP32 time at every size it was timed for, but ONNX FP32 is itself 8% to 55% slower than TorchScript FP32. OpenVINO INT8 is within 6% of OpenVINO FP32 at every size (0.98 to 1.06 times), and OpenVINO FP16 is never faster than FP32 (1% to 11% slower).
+- The 95th percentile is 1.14 to 1.29 times the median for ONNX INT8, and up to 1.77 times for TorchScript FP32 and 1.78 times for OpenVINO FP32 (Atto: 61.89 ms, p95 110.31 ms). A single Colab run on a shared host cannot say how much of that spread repeats.
+
 --8<-- "docs/snippets/reproduced-latency.md"
 
 ## Run on an Image

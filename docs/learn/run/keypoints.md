@@ -76,6 +76,20 @@ Each cell is median ms (p95): the median latency in milliseconds, with the 95th 
 
 The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and CoreML GPU FP32 takes 24.84 ms.
 
+## Fastest Configuration on an x86 CPU
+
+The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in the note below). -->
+
+|        Size        | PyTorch TorchScript FP32 |    ONNX FP32    |      ONNX INT8      |  OpenVINO FP32  |  OpenVINO FP16   |  OpenVINO INT8   |
+| :----------------: | :----------------------: | :-------------: | :-----------------: | :-------------: | :--------------: | :--------------: |
+| Keypoint (Preview) |     760.08 (1663.51)     | 853.85 (980.48) | **650.16 (765.01)** | 692.89 (996.57) | 733.37 (1062.62) | 751.76 (1309.10) |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+
+ONNX INT8 is fastest (650.16 ms, p95 765.01). OpenVINO FP32 (692.89 ms) is 6.6% behind and TorchScript FP32 (760.08 ms) is 16.9% behind. TorchScript FP32 has the widest tail: its p95 is 1663.51 ms, 2.19 times its median.
+
 --8<-- "docs/snippets/reproduced-latency.md"
 
 --8<-- "docs/snippets/license-yolo-note.md"

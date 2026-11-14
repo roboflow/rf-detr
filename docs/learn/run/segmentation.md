@@ -99,6 +99,28 @@ Each cell is median ms (p95): the median latency in milliseconds, with the 95th 
 
 PyTorch inductor FP16 is fastest for every size except 2XLarge. Several rows are ties between their two fastest configurations, where a gap under about 5% counts as level: Nano, where CoreML GPU FP16 (10.30 ms) is 4.9% behind inductor FP16 (9.82 ms), Small, where CoreML GPU FP16 (12.06 ms) is within 1.3% of inductor FP16 (11.90 ms), Large, where it is within 4.3% (19.05 and 18.25 ms), and XLarge, where PyTorch TorchScript FP16 (28.71 ms) is within 4.9% (27.38 ms). For 2XLarge, TorchScript FP16 (43.55 ms) is within 3.3% of inductor FP16 (44.99 ms).
 
+## Fastest Configuration on an x86 CPU
+
+The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in the note below). -->
+
+|     Size      | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |   OpenVINO FP32   |   OpenVINO FP16   |   OpenVINO INT8   |
+| :-----------: | :----------------------: | :---------------: | :-------------------: | :---------------: | :---------------: | :---------------: |
+|   Nano (N)    |     209.57 (255.84)      |  264.18 (315.07)  |  **208.46 (261.77)**  |  221.90 (316.07)  |  229.96 (334.50)  |  227.43 (373.97)  |
+|   Small (S)   |     281.22 (362.42)      |  380.18 (447.15)  |  **273.00 (344.01)**  |  277.25 (446.00)  |  304.57 (470.89)  |  322.31 (528.42)  |
+|  Medium (M)   |   **443.29 (702.49)**    |  535.52 (625.54)  |    443.64 (501.25)    |  588.96 (832.29)  |  463.97 (686.17)  |  458.56 (726.39)  |
+|   Large (L)   |     780.46 (1570.85)     | 934.20 (1052.00)  |  **606.79 (673.22)**  | 891.78 (1222.33)  | 914.18 (1217.94)  |  627.26 (967.18)  |
+|  XLarge (XL)  |    1083.43 (1980.53)     | 1522.24 (1679.69) | **987.18 (1070.10)**  | 1445.69 (1779.32) | 1502.18 (1881.39) | 1080.86 (1502.20) |
+| 2XLarge (2XL) |    1590.50 (2435.77)     | 1756.35 (1886.75) | **1409.32 (1546.53)** | 1621.37 (1979.92) | 1653.23 (1936.94) | 1853.44 (2386.39) |
+
+Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better, and the lowest median of each row is in bold. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+
+- ONNX INT8 is fastest at Nano (208.46 ms), Small (273.00), Large (606.79), XLarge (987.18) and 2XLarge (1409.32), but the margin varies: TorchScript FP32 is 0.5% behind at Nano, OpenVINO FP32 and TorchScript FP32 are 1.6% and 3.0% behind at Small, OpenVINO INT8 is 3.4% behind at Large, and the next configuration is 9.5% behind at XLarge (OpenVINO INT8) and 12.9% at 2XLarge (TorchScript FP32).
+- At Medium TorchScript FP32 (443.29 ms) and ONNX INT8 (443.64) are level, with OpenVINO INT8 (458.56) and OpenVINO FP16 (463.97) within 5%.
+- ONNX INT8 takes 65% to 83% of the ONNX FP32 time. OpenVINO INT8 does not follow size: it takes 0.70, 0.75 and 0.78 times the OpenVINO FP32 time at Large, XLarge and Medium, and 1.14 and 1.16 times at 2XLarge and Small. OpenVINO FP32 at Medium and XLarge is 33% slower than TorchScript FP32 (588.96 and 1445.69 ms against 443.29 and 1083.43).
+- The 95th percentile is 1.07 to 1.26 times the median for ONNX, and up to 2.01 times for TorchScript FP32 (Large: 780.46 ms, p95 1570.85 ms) and 1.64 times for OpenVINO INT8.
+
 --8<-- "docs/snippets/reproduced-latency.md"
 
 ## Run on an Image
