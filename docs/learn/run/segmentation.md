@@ -27,7 +27,7 @@ RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between
 
 The configuration with the lowest end-to-end latency for each size on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
 
-<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in docs/learn/run/latency.md). -->
 
 === "NVIDIA T4"
 
@@ -73,7 +73,7 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
     |  XLarge (XL)  |       3.92 (4.00)       |  3.32 (3.40)  |   **3.08 (3.16)**   |  3.24 (3.36)  |   **3.02 (3.12)**   |
     | 2XLarge (2XL) |       5.08 (5.20)       |  4.31 (4.40)  |     4.03 (4.15)     |  4.07 (4.16)  |   **3.80 (3.90)**   |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster. The configurations are explained in the note below.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
 - TensorRT INT8 is among the fastest at every size on every GPU.
 - On the A100 TensorRT FP16 graph is level at every size. PyTorch CUDA graph FP16 is level only at Nano on the L4 and A100 and at Small on the A100.
@@ -82,7 +82,7 @@ Each cell is median ms (p95): the median latency in milliseconds, with the 95th 
 
 The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
 
-<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in docs/learn/run/latency.md). -->
 
 |     Size      | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |   CoreML FP16   | CoreML GPU FP32 |  CoreML GPU FP16  |
 | :-----------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-------------: | :-------------: | :---------------: |
@@ -93,7 +93,7 @@ The configuration with the lowest end-to-end latency for each size on an Apple M
 |  XLarge (XL)  |     31.03 (31.56)     |   **27.38 (27.75)**   |    **28.71 (29.13)**     | 36.23 (37.23) | 125.48 (130.74) |  36.08 (37.05)  |   30.75 (31.53)   |
 | 2XLarge (2XL) |     53.35 (55.11)     |   **44.99 (45.59)**   |    **43.55 (44.03)**     | 62.08 (63.98) | 224.85 (226.62) |  61.81 (68.96)  |   51.73 (53.44)   |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
 PyTorch inductor FP16 is fastest or level at every size. CoreML GPU FP16 is level at Nano, Small and Large, and PyTorch TorchScript FP16 at XLarge and 2XLarge.
 
@@ -101,7 +101,7 @@ PyTorch inductor FP16 is fastest or level at every size. CoreML GPU FP16 is leve
 
 The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
 
-<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in the note below). -->
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
 
 |     Size      | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    OpenVINO FP32    |    OpenVINO FP16    |    OpenVINO INT8    |
 | :-----------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :-----------------: | :-----------------: |
@@ -112,12 +112,14 @@ The configuration with the lowest end-to-end latency for each size on a Colab x8
 |  XLarge (XL)  |    1083.43 (1980.53)     | 1522.24 (1679.69) | **987.18 (1070.10)**  |  1445.69 (1779.32)  |  1502.18 (1881.39)  |  1080.86 (1502.20)  |
 | 2XLarge (2XL) |    1590.50 (2435.77)     | 1756.35 (1886.75) | **1409.32 (1546.53)** |  1621.37 (1979.92)  |  1653.23 (1936.94)  |  1853.44 (2386.39)  |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell.
 
 - ONNX INT8 is fastest or level at every size, alone at XLarge and 2XLarge (9.5% and 12.9% ahead). PyTorch TorchScript FP32 is level at Nano to Medium.
 - OpenVINO INT8 against OpenVINO FP32 swings with size (0.70 to 1.16 times). The 95th percentile reaches 2.01 times the median (TorchScript FP32, Large).
 
---8<-- "docs/snippets/reproduced-latency.md"
+!!! warning "FP16 and INT8 can lower accuracy"
+
+    Most of the fastest configurations above run in FP16 or INT8, and accuracy was scored for only some of them. Check it on your own data before you rely on one; [the scored configurations and sources](latency.md#fp16-and-int8-can-lower-accuracy).
 
 ## Run on an Image
 

@@ -32,7 +32,7 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
 
-<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in docs/learn/run/latency.md). -->
 
 === "NVIDIA T4"
 
@@ -58,7 +58,7 @@ The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
     | Keypoint (Preview) |       4.30 (4.40)       |  3.68 (3.78)  |   **3.40 (3.48)**   |  3.56 (3.64)  |   **3.24 (3.31)**   |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster. The configurations are explained in the note below.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
 TensorRT INT8 graph is among the fastest on every GPU. FP16 graph is level with it on the L4, A100 and RTX PRO 6000.
 
@@ -66,13 +66,13 @@ TensorRT INT8 graph is among the fastest on every GPU. FP16 graph is level with 
 
 The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
 
-<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in the note below). -->
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in docs/learn/run/latency.md). -->
 
 |        Size        | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |  CoreML FP16  | CoreML GPU FP32 |  CoreML GPU FP16  |
 | :----------------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-----------: | :-------------: | :---------------: |
 | Keypoint (Preview) |     26.32 (27.01)     |     23.55 (24.08)     |      26.04 (26.55)       | 24.75 (25.12) | 75.02 (78.57) |  24.84 (25.47)  | **21.34 (21.63)** |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 500 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
 The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and CoreML GPU FP32 takes 24.84 ms.
 
@@ -80,17 +80,19 @@ The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and Cor
 
 The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
 
-<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in the note below). -->
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
 
 |        Size        | PyTorch TorchScript FP32 |    ONNX FP32    |      ONNX INT8      |  OpenVINO FP32  |  OpenVINO FP16   |  OpenVINO INT8   |
 | :----------------: | :----------------------: | :-------------: | :-----------------: | :-------------: | :--------------: | :--------------: |
 | Keypoint (Preview) |     760.08 (1663.51)     | 853.85 (980.48) | **650.16 (765.01)** | 692.89 (996.57) | 733.37 (1062.62) | 751.76 (1309.10) |
 
-Each cell is median ms (p95): the median latency in milliseconds, with the 95th percentile of the same 200 calls, also in milliseconds, in brackets. Lower is better. Bold marks the fastest median of each row and every median within 5% of it. Several bold cells in a row are tied: the gap between them is smaller than the run-to-run noise, so these numbers cannot say which of them is faster. Atto, Femto and Pico have no INT8 cell. The configurations are explained in the note below.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell.
 
 ONNX INT8 is fastest (650.16 ms, p95 765.01). OpenVINO FP32 (692.89 ms) is 6.6% behind and TorchScript FP32 (760.08 ms) is 16.9% behind. TorchScript FP32 has the widest tail: its p95 is 1663.51 ms, 2.19 times its median.
 
---8<-- "docs/snippets/reproduced-latency.md"
+!!! warning "FP16 and INT8 can lower accuracy"
+
+    Most of the fastest configurations above run in FP16 or INT8, and accuracy was scored for only some of them. Check it on your own data before you rely on one; [the scored configurations and sources](latency.md#fp16-and-int8-can-lower-accuracy).
 
 --8<-- "docs/snippets/license-yolo-note.md"
 
