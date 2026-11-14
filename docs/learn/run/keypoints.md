@@ -34,7 +34,7 @@ The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 
 
 <!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
 
-=== "Tesla T4"
+=== "NVIDIA T4"
 
     |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
@@ -46,13 +46,13 @@ The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :-------------: | :-----------------: |
     | Keypoint (Preview) |      9.95 (10.62)       | 9.28 (10.17)  |   **8.78 (9.15)**   | **8.80 (9.34)** |   **8.40 (9.24)**   |
 
-=== "A100"
+=== "NVIDIA A100"
 
     |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
     | Keypoint (Preview) |       7.95 (8.30)       |  8.09 (8.55)  |   **7.14 (7.57)**   |  8.10 (8.67)  |   **7.47 (8.02)**   |
 
-=== "RTX PRO 6000"
+=== "NVIDIA RTX PRO 6000"
 
     |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
     | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |

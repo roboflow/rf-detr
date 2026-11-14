@@ -34,7 +34,7 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
 <!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in the note below). -->
 
-=== "Tesla T4"
+=== "NVIDIA T4"
 
     |      Size       | PyTorch CUDA graph FP16 |  TensorRT FP16  | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-------------: | :-----------------: | :---------------: | :-----------------: |
@@ -62,7 +62,7 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
     |  XLarge (XL) △  |      11.02 (11.41)      | 9.90 (10.37)  |    9.87 (10.20)     |  **8.53 (8.89)**  |   **8.34 (8.72)**   |
     | 2XLarge (2XL) △ |      14.80 (15.39)      | 12.67 (13.12) |    12.56 (12.96)    | **10.07 (10.88)** |  **9.95 (10.54)**   |
 
-=== "A100"
+=== "NVIDIA A100"
 
     |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |  TensorRT INT8  | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-----------: | :-----------------: | :-------------: | :-----------------: |
@@ -76,7 +76,7 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
     |  XLarge (XL) △  |       6.18 (6.50)       |  6.13 (6.76)  |   **5.75 (6.01)**   |   5.99 (6.38)   |   **5.66 (6.04)**   |
     | 2XLarge (2XL) △ |       6.90 (7.13)       |  6.67 (7.03)  |   **6.32 (6.89)**   | **6.38 (6.78)** |   **6.10 (6.44)**   |
 
-=== "RTX PRO 6000"
+=== "NVIDIA RTX PRO 6000"
 
     |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |

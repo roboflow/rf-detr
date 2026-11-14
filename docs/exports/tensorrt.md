@@ -60,7 +60,7 @@ Those ranges decide the engine's accuracy, so use images from the deployment dom
 
 ### Results
 
-The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables), run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The three tabs hold every model.
+The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables), run on a NVIDIA T4 (Colab) with TensorRT 11.4.0.106. The three tabs hold every model.
 
 <!-- COPIES: these tables come from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
 
@@ -117,7 +117,7 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 - Detection, segmentation and keypoint models. The smoothing and bias correction apply to detection models only. `RFDETRSegXLarge`, `RFDETRSeg2XLarge` and the `rfdetr_plus` detection models are accepted but were not measured. `backbone_only=True` is refused with `ValueError`.
 - A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer. The batch is fixed when you build the engine.
 - All tables above were measured on TensorRT 11.4. The detection placement without the patch-embedding matrix multiply was also checked on 10.16 and 11.3; the segmentation and keypoint models only on 11.4, and other releases from 10 on are accepted but untested.
-- Only a Tesla T4 (sm_75) was measured for engine-only speed (the end-to-end INT8 rows of [Latency Across NVIDIA GPUs](#latency-across-nvidia-gpus) also cover the L4, A100 and RTX PRO 6000), and only without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`. Those settings are accepted with `quantization="int8"`, but a portable engine may not get the fused INT8 attention kernel the speedup relies on.
+- Only a NVIDIA T4 (sm_75) was measured for engine-only speed (the end-to-end INT8 rows of [Latency Across NVIDIA GPUs](#latency-across-nvidia-gpus) also cover the L4, A100 and RTX PRO 6000), and only without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`. Those settings are accepted with `quantization="int8"`, but a portable engine may not get the fused INT8 attention kernel the speedup relies on.
 - The fused INT8 attention kernel is listed by NVIDIA for sm_75 to sm_90, sm_120 and sm_121. On other GPUs (for example sm_100, B200) attention would run unfused, so measure before deploying.
 
 !!! note "Who consumes the `.trt` engine?"
@@ -137,7 +137,7 @@ The [latency cookbook](../../cookbooks/measure-latency/) times every pretrained 
 
 <!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt INT8). Update all of them together. -->
 
-=== "Tesla T4"
+=== "NVIDIA T4"
 
     | Route                          | Nano                | Small               | Medium              | Large               |
     | ------------------------------ | ------------------- | ------------------- | ------------------- | ------------------- |
@@ -157,7 +157,7 @@ The [latency cookbook](../../cookbooks/measure-latency/) times every pretrained 
     | `.trt` engine, INT8            | 2.92 ms (809 img/s) | 3.45 ms (516 img/s) | 4.10 ms (406 img/s) | 4.72 ms (272 img/s) |
     | Managed engine, auto precision | 3.22 ms (466 img/s) | 3.70 ms (355 img/s) | 4.23 ms (286 img/s) | 5.18 ms (216 img/s) |
 
-=== "A100"
+=== "NVIDIA A100"
 
     | Route                          | Nano                | Small               | Medium              | Large                |
     | ------------------------------ | ------------------- | ------------------- | ------------------- | -------------------- |
@@ -167,7 +167,7 @@ The [latency cookbook](../../cookbooks/measure-latency/) times every pretrained 
     | `.trt` engine, INT8            | 3.40 ms (924 img/s) | 3.69 ms (760 img/s) | 4.06 ms (674 img/s) | 4.34 ms (563 img/s)  |
     | Managed engine, auto precision | no engine           | no engine           | no engine           | no engine            |
 
-=== "RTX PRO 6000"
+=== "NVIDIA RTX PRO 6000"
 
     | Route                          | Nano                 | Small                | Medium               | Large                |
     | ------------------------------ | -------------------- | -------------------- | -------------------- | -------------------- |
@@ -198,7 +198,7 @@ The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on 
 
 <!-- COPIES: none yet. If these tables are copied elsewhere, list the copy here and in the copy. -->
 
-=== "Tesla T4"
+=== "NVIDIA T4"
 
     | Route                          | Nano                | Small               | Medium               | Large               |
     | ------------------------------ | ------------------- | ------------------- | -------------------- | ------------------- |
@@ -218,7 +218,7 @@ The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on 
     | `.trt` engine, INT8            | 4.38 ms (363 img/s) | 4.50 ms (267 img/s) | 5.38 ms (201 img/s) | 6.39 ms (152 img/s) |
     | Managed engine, auto precision | 15.43 ms (71 img/s) | 16.45 ms (63 img/s) | 19.04 ms (57 img/s) | 20.91 ms (50 img/s) |
 
-=== "A100"
+=== "NVIDIA A100"
 
     | Route                          | Nano                | Small               | Medium               | Large                |
     | ------------------------------ | ------------------- | ------------------- | -------------------- | -------------------- |
@@ -228,7 +228,7 @@ The same measurement for the four instance segmentation sizes (`RFDETRSeg*`) on 
     | `.trt` engine, INT8            | 4.31 ms (487 img/s) | 4.59 ms (429 img/s) | 5.14 ms (391 img/s)  | 5.51 ms (338 img/s)  |
     | Managed engine, auto precision | no engine           | no engine           | no engine            | no engine            |
 
-=== "RTX PRO 6000"
+=== "NVIDIA RTX PRO 6000"
 
     | Route                          | Nano                 | Small                | Medium               | Large               |
     | ------------------------------ | -------------------- | -------------------- | -------------------- | ------------------- |
