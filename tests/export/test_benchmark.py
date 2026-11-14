@@ -817,3 +817,78 @@ class TestExportCached:
 
         with pytest.raises(ValueError, match="does not match"):
             export_cached(model, tmp_path, "*_int8.trt")
+
+
+class TestLatencyCookbook:
+    """Check the latency notebook's cache and result identity against real input changes."""
+
+    @staticmethod
+    def _cell(cell_id: str) -> str:
+        """Read the code of a named notebook cell."""
+        import json
+
+        notebook = Path(__file__).resolve().parents[2] / "docs/cookbooks/measure-latency.ipynb"
+        cells = json.loads(notebook.read_text())["cells"]
+        return "".join(next(cell for cell in cells if cell.get("id") == cell_id)["source"])
+
+    def test_cache_signature_changes_with_calibration_and_weights(self, tmp_path: Path) -> None:
+        """Changing calibration pixels or model weights cannot reuse an old cache key."""
+        import ast
+        import hashlib
+        import json
+
+        package = tmp_path / "package"
+        package.mkdir()
+        source = package / "__init__.py"
+        source.write_text("value = 1")
+        calibration = tmp_path / "calibration"
+        calibration.mkdir()
+        image = calibration / "sample.jpg"
+        image.write_bytes(b"first")
+        module = torch.nn.Linear(2, 1)
+        model = SimpleNamespace(model=SimpleNamespace(model=module))
+        package_module = SimpleNamespace(__file__=str(source))
+        scope = {
+            "RFDETR": object,
+            "hashlib": hashlib,
+            "json": json,
+            "Path": Path,
+            "torch": torch,
+            "rfdetr": package_module,
+            "rfdetr_plus": package_module,
+            "provenance": {"torch_version": "test"},
+            "NUM_CALIB": 1,
+            "NUM_WARMUP": 50,
+            "CALIBRATION_DIR": calibration,
+            "EXPORTS": {"onnx": ("*.onnx", {})},
+        }
+        tree = ast.parse(self._cell("6d35247d"))
+        definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), "latency notebook", "exec"), scope)
+        fingerprint = scope["artifact_signature"]
+        before = fingerprint(model)
+        image.write_bytes(b"second")
+        after_calibration = fingerprint(model)
+        module.weight.data.add_(1)
+
+        assert before != after_calibration
+        assert after_calibration != fingerprint(model)
+
+    def test_resume_identity_changes_with_runtime_version(self) -> None:
+        """A runtime upgrade cannot reuse a measurement attributed to an older version."""
+        from typing import Any
+
+        scope = {"Any": Any, "provenance": {"torch_version": "old"}}
+        exec(self._cell("2661e6d5"), scope)
+        key = scope["resume_key"]
+        row = {"model": "m", "config": "c", "artifact_signature": "a", "torch_version": "old"}
+        assert key(row) != key({**row, "torch_version": "new"})
+
+    def test_graph_configuration_keeps_precision(self) -> None:
+        """Graph replay retains the underlying TensorRT precision in the output table."""
+        import pandas as pd
+
+        scope = {"current": pd.DataFrame({"config": ["tensorrt-fp16-graph", "onnx-int8"]})}
+        exec(self._cell("e850c981"), scope)
+        assert scope["current"]["precision"].tolist() == ["fp16", "int8"]
+        assert scope["current"]["engine"].tolist() == ["tensorrt-graph", "onnx"]
