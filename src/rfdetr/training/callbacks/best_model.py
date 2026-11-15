@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from typing import Any
 
+    from rfdetr.config import TrainConfig
     from rfdetr.training.module_model import RFDETRModelModule
 
 import torch
@@ -963,3 +964,43 @@ class RFDETREarlyStopping(EarlyStopping):
 
         trainer.callback_metrics[self._SYNTHETIC_MONITOR] = torch.tensor(effective)
         super().on_validation_end(trainer, pl_module)
+
+
+def _save_final_checkpoint(
+    module: RFDETRModelModule,
+    trainer: Trainer,
+    train_config: TrainConfig,
+    model_config: Any,
+    output_path: Path,
+    model_name: str,
+) -> Path:
+    """Save a final RF-DETR ``.pth`` checkpoint that ``from_checkpoint`` can load.
+
+    The fine-tuning cookbooks drive the Lightning trainer directly, so no :class:`BestModelCallback` writes the
+    self-contained checkpoint for them. This writes the same payload from the weights of the live model, unwrapping
+    a ``torch.compile`` wrapper first.
+
+    Args:
+        module: Trained module whose ``model`` holds the weights to save.
+        trainer: Trainer that ran the fit, providing the epoch and step counters.
+        train_config: Training configuration stored in the checkpoint.
+        model_config: Architecture configuration stored in the checkpoint.
+        output_path: File to write; missing parent directories are created.
+        model_name: Name of the model class, e.g. ``"RFDETRSmall"``.
+
+    Returns:
+        *output_path*.
+    """
+    raw_model: Any = getattr(module.model, "_orig_mod", module.model)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        BestModelCallback._build_checkpoint_payload(
+            raw_model.state_dict(),
+            train_config.model_dump(),
+            trainer,
+            model_name=model_name,
+            model_config_dict=model_config.model_dump(),
+        ),
+        output_path,
+    )
+    return output_path

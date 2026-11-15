@@ -30,6 +30,7 @@ from rfdetr.export._runtime.adapters import (
     _input_tensor,
     _runtime_options,
     _single_input,
+    _thread_count_option,
 )
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
@@ -105,8 +106,8 @@ def _run_onnx_bound(session: Any, input_name: str, batch: torch.Tensor, outputs:
 
 
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
-    """Load an ONNX artifact with explicit provider and interface checks; it reads no runtime options."""
-    _runtime_options("ONNX", options, ())
+    """Load an ONNX artifact with provider and interface checks; it reads the ``num_threads`` option."""
+    num_threads = _thread_count_option("ONNX", _runtime_options("ONNX", options, ("num_threads",)))
     try:
         import onnxruntime as ort
     except ImportError as exc:
@@ -128,7 +129,9 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
     requested: list[str | tuple[str, dict[str, Any]]] = (
         [(provider, {"device_id": device_id})] if provider == "CUDAExecutionProvider" else [provider]
     )
-    session = _create_onnx_session(path, providers=requested)
+    session = _create_onnx_session(
+        path, providers=requested, **({} if num_threads is None else {"num_threads": num_threads})
+    )
     if provider not in session.get_providers():
         raise RuntimeError(f"ONNX session did not activate requested provider {provider}.")
     if device != "auto" and provider == "CUDAExecutionProvider" and hasattr(session, "disable_fallback"):
@@ -179,7 +182,9 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
 
 
 def _create_onnx_session(
-    model_path: str | Path, providers: list[str | tuple[str, dict[str, Any]]] | None = None
+    model_path: str | Path,
+    providers: list[str | tuple[str, dict[str, Any]]] | None = None,
+    num_threads: int | None = None,
 ) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
@@ -202,6 +207,8 @@ def _create_onnx_session(
         providers: Ordered list of ORT execution providers, e.g.
             ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.  When ``None`` (default), the best available
             provider is selected automatically.
+        num_threads: Size of the CPU intra-op thread pool, or ``None`` to leave it to ONNX Runtime, which sizes it
+            to the physical cores. Pass the logical core count to use hyperthreads too.
 
     Returns:
         An ``onnxruntime.InferenceSession`` ready for inference.
@@ -232,6 +239,8 @@ def _create_onnx_session(
                 "Install onnxruntime-gpu for GPU acceleration: `pip install onnxruntime-gpu`"
             )
     session_options = ort.SessionOptions()
+    if num_threads is not None:
+        session_options.intra_op_num_threads = num_threads
     # ORT's default CPU intra-op thread pool busy-spins while idle instead of blocking, trading
     # wake-up latency for CPU usage between calls. That spinning contends for CPU with any other
     # work in this process -- including this module's own torchvision-based preprocessing in
