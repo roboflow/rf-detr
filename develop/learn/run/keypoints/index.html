@@ -18,7 +18,7 @@
         <link rel="prev" href="../segmentation/">
       
       
-        <link rel="next" href="../videos-and-streams/">
+        <link rel="next" href="../latency/">
       
       
         
@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-13T09:23:01">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-13T09:23:01",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1019,6 +1019,39 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#fastest-configuration-on-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-apple-silicon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on Apple Silicon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-an-x86-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on an x86 CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-on-an-image" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1066,6 +1099,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3263,6 +3324,39 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#fastest-configuration-on-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-apple-silicon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on Apple Silicon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-an-x86-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on an x86 CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-on-an-image" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3342,7 +3436,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <thead>
 <tr>
 <th style="text-align: center;">Model</th>
-<th style="text-align: center;">RF-DETR package class</th>
 <th style="text-align: center;">PyTorch FP32 keypoint AP<sub>50:95</sub></th>
 <th style="text-align: center;">TensorRT FP16 keypoint AP<sub>50:95</sub></th>
 <th style="text-align: center;">TensorRT INT8 keypoint AP<sub>50:95</sub></th>
@@ -3354,7 +3447,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td style="text-align: center;">Keypoint (Preview)</td>
-<td style="text-align: center;"><code>RFDETRKeypointPreview</code></td>
 <td style="text-align: center;">71.8</td>
 <td style="text-align: center;">71.7</td>
 <td style="text-align: center;">71.1</td>
@@ -3374,13 +3466,185 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>Params</strong>: the official values from the <a href="../../benchmarks/">Benchmarks</a> page. That page also lists the official COCO AP, measured with SAB on an NVIDIA T4 with a TensorRT 10.4 FP16 engine at batch 1; the PyTorch FP32 column here is within 0.7 AP of it.</li>
 </ul>
 </div>
+<h2 id="fastest-configuration-on-nvidia-gpus">Fastest Configuration on NVIDIA GPUs<a class="headerlink" href="#fastest-configuration-on-nvidia-gpus" title="Permanent link">&para;</a></h2>
+<p>The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own GPU to find yours.</p>
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in docs/learn/run/latency.md). -->
+
+<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">NVIDIA T4</label><label for="__tabbed_1_2">NVIDIA L4</label><label for="__tabbed_1_3">NVIDIA A100</label><label for="__tabbed_1_4">NVIDIA RTX PRO 6000</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Keypoint (Preview)</td>
+<td style="text-align: center;">20.33 (22.75)</td>
+<td style="text-align: center;">18.76 (19.88)</td>
+<td style="text-align: center;">19.07 (19.91)</td>
+<td style="text-align: center;"><strong>16.98 (18.02)</strong></td>
+<td style="text-align: center;"><strong>17.32 (18.29)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Keypoint (Preview)</td>
+<td style="text-align: center;">9.95 (10.62)</td>
+<td style="text-align: center;">9.28 (10.17)</td>
+<td style="text-align: center;"><strong>8.78 (9.15)</strong></td>
+<td style="text-align: center;"><strong>8.80 (9.34)</strong></td>
+<td style="text-align: center;"><strong>8.40 (9.24)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Keypoint (Preview)</td>
+<td style="text-align: center;">7.95 (8.30)</td>
+<td style="text-align: center;">8.09 (8.55)</td>
+<td style="text-align: center;"><strong>7.14 (7.57)</strong></td>
+<td style="text-align: center;">8.10 (8.67)</td>
+<td style="text-align: center;"><strong>7.47 (8.02)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Keypoint (Preview)</td>
+<td style="text-align: center;">4.30 (4.40)</td>
+<td style="text-align: center;">3.68 (3.78)</td>
+<td style="text-align: center;"><strong>3.40 (3.48)</strong></td>
+<td style="text-align: center;">3.56 (3.64)</td>
+<td style="text-align: center;"><strong>3.24 (3.31)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>.</p>
+<p>TensorRT INT8 graph is among the fastest on every GPU. FP16 graph is level with it on the L4, A100 and RTX PRO 6000.</p>
+<h2 id="fastest-configuration-on-apple-silicon">Fastest Configuration on Apple Silicon<a class="headerlink" href="#fastest-configuration-on-apple-silicon" title="Permanent link">&para;</a></h2>
+<p>The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own device to find yours.</p>
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in docs/learn/run/latency.md). -->
+
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch inductor FP32</th>
+<th style="text-align: center;">PyTorch inductor FP16</th>
+<th style="text-align: center;">PyTorch TorchScript FP16</th>
+<th style="text-align: center;">CoreML FP32</th>
+<th style="text-align: center;">CoreML FP16</th>
+<th style="text-align: center;">CoreML GPU FP32</th>
+<th style="text-align: center;">CoreML GPU FP16</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Keypoint (Preview)</td>
+<td style="text-align: center;">26.32 (27.01)</td>
+<td style="text-align: center;">23.55 (24.08)</td>
+<td style="text-align: center;">26.04 (26.55)</td>
+<td style="text-align: center;">24.75 (25.12)</td>
+<td style="text-align: center;">75.02 (78.57)</td>
+<td style="text-align: center;">24.84 (25.47)</td>
+<td style="text-align: center;"><strong>21.34 (21.63)</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>.</p>
+<p>The FP32 configurations are about 16% slower: CoreML FP32 takes 24.75 ms and CoreML GPU FP32 takes 24.84 ms.</p>
+<h2 id="fastest-configuration-on-an-x86-cpu">Fastest Configuration on an x86 CPU<a class="headerlink" href="#fastest-configuration-on-an-x86-cpu" title="Permanent link">&para;</a></h2>
+<p>The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own CPU to find yours.</p>
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
+
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch TorchScript FP32</th>
+<th style="text-align: center;">ONNX FP32</th>
+<th style="text-align: center;">ONNX INT8</th>
+<th style="text-align: center;">OpenVINO FP32</th>
+<th style="text-align: center;">OpenVINO FP16</th>
+<th style="text-align: center;">OpenVINO INT8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Keypoint (Preview)</td>
+<td style="text-align: center;">760.08 (1663.51)</td>
+<td style="text-align: center;">853.85 (980.48)</td>
+<td style="text-align: center;"><strong>650.16 (765.01)</strong></td>
+<td style="text-align: center;">692.89 (996.57)</td>
+<td style="text-align: center;">733.37 (1062.62)</td>
+<td style="text-align: center;">751.76 (1309.10)</td>
+</tr>
+</tbody>
+</table>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>. Atto, Femto and Pico have no INT8 cell.</p>
+<p>ONNX INT8 is fastest (650.16 ms, p95 765.01). OpenVINO FP32 (692.89 ms) is 6.6% behind and TorchScript FP32 (760.08 ms) is 16.9% behind. TorchScript FP32 has the widest tail: its p95 is 1663.51 ms, 2.19 times its median.</p>
+<div class="admonition warning">
+<p class="admonition-title">FP16 and INT8 can lower accuracy</p>
+<p>Most of the fastest configurations above run in FP16 or INT8, and accuracy was scored for only some of them. Check it on your own data before you rely on one; <a href="../latency/#fp16-and-int8-can-lower-accuracy">the scored configurations and sources</a>.</p>
+</div>
 <div class="admonition note">
 <p class="admonition-title">License note</p>
 <p>YOLOv8, YOLO11 and YOLO26 are released under AGPL-3.0. In practice, using them in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a commercial license. Deploying on Roboflow includes a commercial license for these models for every user; commercial self-hosting is an Enterprise add-on (<a href="https://roboflow.com/ultralytics">details</a>). Need a permissive license? RF-DETR Nano to Large detection, every RF-DETR-Seg size and RF-DETR Keypoint are Apache 2.0.</p>
 </div>
 <h2 id="run-on-an-image">Run on an Image<a class="headerlink" href="#run-on-an-image" title="Permanent link">&para;</a></h2>
 <p>Perform inference on an image using the <code>rfdetr</code> package. <code>model.predict()</code> returns an <a href="https://supervision.roboflow.com/latest/keypoint/core/"><code>sv.KeyPoints</code></a> object containing skeleton coordinates and per-keypoint confidence scores for each detected person.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:1"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">rfdetr</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:1"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">rfdetr</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
@@ -3456,7 +3720,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>RFDETRInference(model).predict()</code> reads video files, video URLs, webcams, RTSP streams, and YouTube directly and can yield results lazily with <code>stream=True</code>. See <a href="../videos-and-streams/">Run on Videos and Streams</a>. The examples below keep full control of decoding and display with OpenCV.</p>
 </div>
 <p>These examples use OpenCV for decoding and display. Replace <code>&lt;SOURCE_VIDEO_PATH&gt;</code>, <code>&lt;WEBCAM_INDEX&gt;</code>, and <code>&lt;RTSP_STREAM_URL&gt;</code> with your inputs. <code>&lt;WEBCAM_INDEX&gt;</code> is usually <code>0</code> for the default camera.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="2:3"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">video</label><label for="__tabbed_2_2">webcam</label><label for="__tabbed_2_3">stream</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:3"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><input id="__tabbed_3_3" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">video</label><label for="__tabbed_3_2">webcam</label><label for="__tabbed_3_3">stream</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
@@ -3550,7 +3814,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <h2 id="visualization">Visualization<a class="headerlink" href="#visualization" title="Permanent link">&para;</a></h2>
 <p><code>supervision</code> provides several keypoint annotators. Choose based on what you want to draw.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="3:4"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><input id="__tabbed_3_3" name="__tabbed_3" type="radio" /><input id="__tabbed_3_4" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">EdgeAnnotator</label><label for="__tabbed_3_2">VertexAnnotator</label><label for="__tabbed_3_3">VertexEllipseAnnotator</label><label for="__tabbed_3_4">VertexEllipseHaloAnnotator</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="4:4"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><input id="__tabbed_4_3" name="__tabbed_4" type="radio" /><input id="__tabbed_4_4" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">EdgeAnnotator</label><label for="__tabbed_4_2">VertexAnnotator</label><label for="__tabbed_4_3">VertexEllipseAnnotator</label><label for="__tabbed_4_4">VertexEllipseHaloAnnotator</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <p>Draws skeleton edges (lines between connected joints). Edges where either endpoint has <code>visible=False</code> are skipped automatically.</p>
@@ -3594,7 +3858,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 13, 2026 09:23:01 UTC">2026-11-13 09:23:01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

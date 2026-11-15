@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-09T13:06:30">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-09T13:06:30",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -939,6 +939,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -4350,7 +4378,14 @@ printed so the Results header can be filled from it.</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">_artifact_size_mb</span><span class="p">,</span> <span class="n">visualize_detections</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BenchmarkConfig</span><span class="p">,</span>
+    <span class="n">BenchmarkRows</span><span class="p">,</span>
+    <span class="n">_artifact_size_mb</span><span class="p">,</span>
+    <span class="n">im_predict</span><span class="p">,</span>
+    <span class="n">time_folder</span><span class="p">,</span>
+    <span class="n">visualize_detections</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rfdetr: </span><span class="si">{</span><span class="n">importlib</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="s1">'rfdetr'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
@@ -4371,7 +4406,14 @@ import torch
 from PIL import Image
 
 from rfdetr import RFDETRInference
-from rfdetr.export._benchmark import _artifact_size_mb, visualize_detections
+from rfdetr.export._benchmark import (
+    BenchmarkConfig,
+    BenchmarkRows,
+    _artifact_size_mb,
+    im_predict,
+    time_folder,
+    visualize_detections,
+)
 from rfdetr.export.benchmark import measure_latency, measure_memory
 
 print(f"rfdetr: {importlib.metadata.version('rfdetr')}")
@@ -4462,9 +4504,7 @@ COCO mAP helpers used later. They size artifacts and draw detections; neither ch
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamedTuple</span>
-
-<span class="k">if</span> <span class="n">platform</span><span class="o">.</span><span class="n">system</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"Darwin"</span> <span class="ow">or</span> <span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"arm64"</span><span class="p">:</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">platform</span><span class="o">.</span><span class="n">system</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"Darwin"</span> <span class="ow">or</span> <span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"arm64"</span><span class="p">:</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires Apple Silicon (macOS, arm64); none is available here."</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"macOS </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">mac_ver</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
@@ -4483,44 +4523,14 @@ COCO mAP helpers used later. They size artifacts and draw detections; neither ch
 <span class="n">MEASURE_RUNS</span> <span class="o">=</span> <span class="mi">30</span>
 <span class="n">BATCH_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
 
-<span class="c1">#: One record per (format, config, batch) benchmark, appended to by `record()`.</span>
-<span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-<span class="c1">#: Batch-1 artifact of every export, keyed by (Format, Config) — the files the COCO section scores.</span>
+<span class="c1">#: One record per (format, config, batch) benchmark, appended to by `rows.record()`.</span>
+<span class="n">rows</span> <span class="o">=</span> <span class="n">BenchmarkRows</span><span class="p">()</span>
+<span class="c1">#: Batch-1 artifact of every export, keyed by (Format, BenchmarkConfig) — the files the COCO section scores.</span>
 <span class="n">artifact_paths</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-<span class="c1">#: Every batch's artifact, keyed by (Format, Config) then batch size — the folder throughput section loads batch 8.</span>
+<span class="c1">#: Every batch's artifact, keyed by (Format, BenchmarkConfig) then batch size — the folder throughput section loads batch 8.</span>
 <span class="n">artifacts_by_batch</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Path</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">Config</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">"""The fixed options of one benchmark row, one table column each."""</span>
-
-    <span class="n">runtime</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">precision</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">quantization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"—"</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span>
-    <span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Config</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">memory_mb</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">size_mb</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Append one benchmark result; `FPS` counts images per second, so it compares across batch sizes."""</span>
-    <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-        <span class="p">{</span>
-            <span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span>
-            <span class="s2">"Runtime"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span><span class="p">,</span>
-            <span class="s2">"Precision"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">precision</span><span class="p">,</span>
-            <span class="s2">"Quantization"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">quantization</span><span class="p">,</span>
-            <span class="s2">"Batch"</span><span class="p">:</span> <span class="n">batch</span><span class="p">,</span>
-            <span class="s2">"end2end [ms]"</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">mean_ms</span><span class="p">,</span>
-            <span class="s2">"± [ms]"</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">std_ms</span><span class="p">,</span>
-            <span class="s2">"FPS [img/s]"</span><span class="p">:</span> <span class="n">batch</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">fps</span><span class="p">,</span>
-            <span class="s2">"Memory [MB]"</span><span class="p">:</span> <span class="n">memory_mb</span><span class="p">,</span>
-            <span class="s2">"Size [MB]"</span><span class="p">:</span> <span class="n">size_mb</span><span class="p">,</span>
-        <span class="p">}</span>
-    <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">from typing import NamedTuple
-
-if platform.system() != "Darwin" or platform.machine() != "arm64":
+<div class="clipboard-copy-txt" id="cell-5">if platform.system() != "Darwin" or platform.machine() != "arm64":
     raise RuntimeError("This notebook requires Apple Silicon (macOS, arm64); none is available here.")
 print(f"macOS {platform.mac_ver()[0]}, {platform.machine()}")
 
@@ -4539,40 +4549,12 @@ WARMUP_RUNS = 5
 MEASURE_RUNS = 30
 BATCH_SIZES = (1, 4, 8)
 
-#: One record per (format, config, batch) benchmark, appended to by `record()`.
-rows: list[dict] = []
-#: Batch-1 artifact of every export, keyed by (Format, Config) — the files the COCO section scores.
+#: One record per (format, config, batch) benchmark, appended to by `rows.record()`.
+rows = BenchmarkRows()
+#: Batch-1 artifact of every export, keyed by (Format, BenchmarkConfig) — the files the COCO section scores.
 artifact_paths: dict[tuple[str, str], Path] = {}
-#: Every batch's artifact, keyed by (Format, Config) then batch size — the folder throughput section loads batch 8.
-artifacts_by_batch: dict[tuple[str, str], dict[int, Path]] = {}
-
-
-class Config(NamedTuple):
-    """The fixed options of one benchmark row, one table column each."""
-
-    runtime: str
-    precision: str
-    quantization: str = "—"
-
-
-def record(
-    format_label: str, config: Config, batch: int, result, memory_mb: float, size_mb: float | None = None
-) -&gt; None:
-    """Append one benchmark result; `FPS` counts images per second, so it compares across batch sizes."""
-    rows.append(
-        {
-            "Format": format_label,
-            "Runtime": config.runtime,
-            "Precision": config.precision,
-            "Quantization": config.quantization,
-            "Batch": batch,
-            "end2end [ms]": result.mean_ms,
-            "± [ms]": result.std_ms,
-            "FPS [img/s]": batch * result.fps,
-            "Memory [MB]": memory_mb,
-            "Size [MB]": size_mb,
-        }
-    )</div>
+#: Every batch's artifact, keyed by (Format, BenchmarkConfig) then batch size — the folder throughput section loads batch 8.
+artifacts_by_batch: dict[tuple[str, str], dict[int, Path]] = {}</div>
 </div>
 </div>
 </div>
@@ -4741,7 +4723,9 @@ every batch row in the summary table.</p>
         <span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">pytorch_baseline</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;40</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">pytorch_baseline</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">pytorch_baseline</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span>
         <span class="sa">f</span><span class="s2">"   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">pytorch_baseline</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span>
     <span class="p">)</span>
-    <span class="n">record</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"predict() eager"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">batch</span><span class="p">,</span> <span class="n">pytorch_baseline</span><span class="p">,</span> <span class="n">pytorch_baseline_memory_mb</span><span class="p">)</span>
+    <span class="n">rows</span><span class="o">.</span><span class="n">record</span><span class="p">(</span>
+        <span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"predict() eager"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">batch</span><span class="p">,</span> <span class="n">pytorch_baseline</span><span class="p">,</span> <span class="n">pytorch_baseline_memory_mb</span>
+    <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-8">for batch in BATCH_SIZES:
     images_batch = [frame] * batch
@@ -4756,7 +4740,9 @@ every batch row in the summary table.</p>
         f"  {pytorch_baseline.label:&lt;40}  {pytorch_baseline.mean_ms:6.2f} ms ± {pytorch_baseline.std_ms:5.2f}"
         f"   ({batch * pytorch_baseline.fps:6.1f} FPS)"
     )
-    record("PyTorch", Config("predict() eager", "fp32"), batch, pytorch_baseline, pytorch_baseline_memory_mb)</div>
+    rows.record(
+        "PyTorch", BenchmarkConfig("predict() eager", "fp32"), batch, pytorch_baseline, pytorch_baseline_memory_mb
+    )</div>
 </div>
 </div>
 </div>
@@ -4814,7 +4800,13 @@ the export calls that follow.</p>
         <span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">pytorch_fp16_jit</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;40</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">pytorch_fp16_jit</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">pytorch_fp16_jit</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span>
         <span class="sa">f</span><span class="s2">"   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">pytorch_fp16_jit</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)   +</span><span class="si">{</span><span class="n">pytorch_fp16_jit_memory_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
     <span class="p">)</span>
-    <span class="n">record</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() TorchScript"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="n">batch</span><span class="p">,</span> <span class="n">pytorch_fp16_jit</span><span class="p">,</span> <span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">)</span>
+    <span class="n">rows</span><span class="o">.</span><span class="n">record</span><span class="p">(</span>
+        <span class="s2">"PyTorch"</span><span class="p">,</span>
+        <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference() TorchScript"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span>
+        <span class="n">batch</span><span class="p">,</span>
+        <span class="n">pytorch_fp16_jit</span><span class="p">,</span>
+        <span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="k">del</span> <span class="n">predictor</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-9">for batch in BATCH_SIZES:
@@ -4835,7 +4827,13 @@ the export calls that follow.</p>
         f"  {pytorch_fp16_jit.label:&lt;40}  {pytorch_fp16_jit.mean_ms:6.2f} ms ± {pytorch_fp16_jit.std_ms:5.2f}"
         f"   ({batch * pytorch_fp16_jit.fps:6.1f} FPS)   +{pytorch_fp16_jit_memory_mb:.1f} MB"
     )
-    record("PyTorch", Config("inference() TorchScript", "fp16"), batch, pytorch_fp16_jit, pytorch_fp16_jit_memory_mb)
+    rows.record(
+        "PyTorch",
+        BenchmarkConfig("inference() TorchScript", "fp16"),
+        batch,
+        pytorch_fp16_jit,
+        pytorch_fp16_jit_memory_mb,
+    )
     del predictor</div>
 </div>
 </div>
@@ -4890,7 +4888,7 @@ the export calls that follow.</p>
             <span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">inductor</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;52</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">inductor</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">inductor</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span>
             <span class="sa">f</span><span class="s2">"   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">inductor</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)   +</span><span class="si">{</span><span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
         <span class="p">)</span>
-        <span class="n">record</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() inductor"</span><span class="p">,</span> <span class="n">precision</span><span class="p">),</span> <span class="n">batch</span><span class="p">,</span> <span class="n">inductor</span><span class="p">,</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">)</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference() inductor"</span><span class="p">,</span> <span class="n">precision</span><span class="p">),</span> <span class="n">batch</span><span class="p">,</span> <span class="n">inductor</span><span class="p">,</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">)</span>
         <span class="k">del</span> <span class="n">predictor</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-10">for dtype in (torch.float32, torch.float16):
@@ -4911,7 +4909,7 @@ the export calls that follow.</p>
             f"  {inductor.label:&lt;52}  {inductor.mean_ms:6.2f} ms ± {inductor.std_ms:5.2f}"
             f"   ({batch * inductor.fps:6.1f} FPS)   +{mem.delta_mb:.1f} MB"
         )
-        record("PyTorch", Config("inference() inductor", precision), batch, inductor, mem.delta_mb)
+        rows.record("PyTorch", BenchmarkConfig("inference() inductor", precision), batch, inductor, mem.delta_mb)
         del predictor</div>
 </div>
 </div>
@@ -4959,7 +4957,7 @@ artifacts, instead of by comparing raw tensors against a reference runtime.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">benchmark_export</span><span class="p">(</span><span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Config</span><span class="p">,</span> <span class="n">subdir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">export_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">benchmark_export</span><span class="p">(</span><span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="n">subdir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">export_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">artifacts_by_batch</span><span class="o">.</span><span class="n">setdefault</span><span class="p">((</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">),</span> <span class="p">{})</span>
 <span class="w">    </span><span class="sd">"""Export one artifact per batch size, load each with `RFDETRInference` and time its `predict()`."""</span>
     <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
@@ -4983,10 +4981,10 @@ artifacts, instead of by comparing raw tensors against a reference runtime.</p>
             <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">result</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
-        <span class="n">record</span><span class="p">(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">,</span> <span class="n">size_mb</span><span class="p">)</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">,</span> <span class="n">size_mb</span><span class="p">)</span>
         <span class="k">del</span> <span class="n">predictor</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">def benchmark_export(format_label: str, config: Config, subdir: str, **export_kwargs) -&gt; None:
+<div class="clipboard-copy-txt" id="cell-11">def benchmark_export(format_label: str, config: BenchmarkConfig, subdir: str, **export_kwargs) -&gt; None:
     artifacts_by_batch.setdefault((format_label, config), {})
     """Export one artifact per batch size, load each with `RFDETRInference` and time its `predict()`."""
     for batch in BATCH_SIZES:
@@ -5010,7 +5008,7 @@ artifacts, instead of by comparing raw tensors against a reference runtime.</p>
             runs=MEASURE_RUNS,
         )
         print(f"  batch={batch}: {result.mean_ms:6.2f} ms ± {result.std_ms:5.2f}   ({batch * result.fps:6.1f} FPS)")
-        record(format_label, config, batch, result, mem.delta_mb, size_mb)
+        rows.record(format_label, config, batch, result, mem.delta_mb, size_mb)
         del predictor</div>
 </div>
 </div>
@@ -5053,9 +5051,9 @@ coremltools' default <code>ComputeUnit.ALL</code>; the printed <code>runtime_inf
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="s2">"coreml"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="s2">"coreml"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">benchmark_export("CoreML", Config("—", "fp32"), "coreml", format="coreml")</div>
+<div class="clipboard-copy-txt" id="cell-12">benchmark_export("CoreML", BenchmarkConfig("—", "fp32"), "coreml", format="coreml")</div>
 </div>
 </div>
 </div>
@@ -5094,9 +5092,9 @@ different detection set) becomes more likely than in the fp32 row above. The mAP
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="s2">"coreml_fp16"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="s2">"coreml_fp16"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13">benchmark_export("CoreML", Config("—", "fp16"), "coreml_fp16", format="coreml", coreml_precision="float16")</div>
+<div class="clipboard-copy-txt" id="cell-13">benchmark_export("CoreML", BenchmarkConfig("—", "fp16"), "coreml_fp16", format="coreml", coreml_precision="float16")</div>
 </div>
 </div>
 </div>
@@ -5142,10 +5140,10 @@ Engine and sets no preferred unit, so the choice is its own, made at load time.<
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">COREAI_RUNTIME_AVAILABLE</span><span class="p">:</span>
-    <span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="s2">"coreai"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreai"</span><span class="p">)</span>
+    <span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="s2">"coreai"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreai"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-14">if COREAI_RUNTIME_AVAILABLE:
-    benchmark_export("Core AI", Config("—", "fp32"), "coreai", format="coreai")</div>
+    benchmark_export("Core AI", BenchmarkConfig("—", "fp32"), "coreai", format="coreai")</div>
 </div>
 </div>
 </div>
@@ -5186,10 +5184,14 @@ the graph actually runs in fp16.</p>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">COREAI_RUNTIME_AVAILABLE</span><span class="p">:</span>
-    <span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="s2">"coreai_fp16"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreai"</span><span class="p">,</span> <span class="n">coreai_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">)</span>
+    <span class="n">benchmark_export</span><span class="p">(</span>
+        <span class="s2">"Core AI"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"—"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="s2">"coreai_fp16"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"coreai"</span><span class="p">,</span> <span class="n">coreai_precision</span><span class="o">=</span><span class="s2">"float16"</span>
+    <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-15">if COREAI_RUNTIME_AVAILABLE:
-    benchmark_export("Core AI", Config("—", "fp16"), "coreai_fp16", format="coreai", coreai_precision="float16")</div>
+    benchmark_export(
+        "Core AI", BenchmarkConfig("—", "fp16"), "coreai_fp16", format="coreai", coreai_precision="float16"
+    )</div>
 </div>
 </div>
 </div>
@@ -5238,9 +5240,13 @@ when lowering.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"ExecuTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"CoreML backend"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="s2">"executorch"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span>
+    <span class="s2">"ExecuTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"CoreML backend"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">),</span> <span class="s2">"executorch"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"coreml"</span>
+<span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">benchmark_export("ExecuTorch", Config("CoreML backend", "fp16"), "executorch", format="executorch", backend="coreml")</div>
+<div class="clipboard-copy-txt" id="cell-16">benchmark_export(
+    "ExecuTorch", BenchmarkConfig("CoreML backend", "fp16"), "executorch", format="executorch", backend="coreml"
+)</div>
 </div>
 </div>
 </div>
@@ -5276,9 +5282,9 @@ when lowering.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"CPU EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="s2">"onnx"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"onnx"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_export</span><span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"CPU EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="s2">"onnx"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"onnx"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-17">benchmark_export("ONNX", Config("CPU EP", "fp32"), "onnx", format="onnx")</div>
+<div class="clipboard-copy-txt" id="cell-17">benchmark_export("ONNX", BenchmarkConfig("CPU EP", "fp32"), "onnx", format="onnx")</div>
 </div>
 </div>
 </div>
@@ -5320,20 +5326,13 @@ when lowering.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">BackendType</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">BackendType</span>
+
+<span class="c1">#: `inference-models` models by (Format, BenchmarkConfig), kept for the COCO section.</span>
+<span class="n">im_models</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">],</span> <span class="nb">object</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">im_predict</span><span class="p">(</span><span class="n">im_model</span><span class="p">,</span> <span class="n">frames</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">"""Run an `inference-models` model on RGB arrays and return `sv.Detections`, like `RFDETRInference.predict`."""</span>
-    <span class="k">return</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">im_model</span><span class="p">(</span><span class="n">frames</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">threshold</span><span class="p">,</span> <span class="n">input_color_format</span><span class="o">=</span><span class="s2">"rgb"</span><span class="p">)]</span>
-
-
-<span class="c1">#: `inference-models` models by (Format, Config), kept for the COCO section.</span>
-<span class="n">im_models</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Config</span><span class="p">],</span> <span class="nb">object</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">benchmark_inference_models</span><span class="p">(</span><span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Config</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">benchmark_inference_models</span><span class="p">(</span><span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="o">**</span><span class="n">load_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""</span>
     <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
@@ -5350,23 +5349,16 @@ when lowering.</p>
             <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">result</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
-        <span class="n">record</span><span class="p">(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">)</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">)</span>
         <span class="k">del</span> <span class="n">im_model</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-18">import supervision as sv
-from inference_models import AutoModel, BackendType
+<div class="clipboard-copy-txt" id="cell-18">from inference_models import AutoModel, BackendType
+
+#: `inference-models` models by (Format, BenchmarkConfig), kept for the COCO section.
+im_models: dict[tuple[str, BenchmarkConfig], object] = {}
 
 
-def im_predict(im_model, frames: list[np.ndarray], threshold: float) -&gt; list[sv.Detections]:
-    """Run an `inference-models` model on RGB arrays and return `sv.Detections`, like `RFDETRInference.predict`."""
-    return [p.to_supervision() for p in im_model(frames, confidence=threshold, input_color_format="rgb")]
-
-
-#: `inference-models` models by (Format, Config), kept for the COCO section.
-im_models: dict[tuple[str, Config], object] = {}
-
-
-def benchmark_inference_models(format_label: str, config: Config, **load_kwargs) -&gt; None:
+def benchmark_inference_models(format_label: str, config: BenchmarkConfig, **load_kwargs) -&gt; None:
     """Load one `inference-models` model, check it once on the sample image and time `im_predict` at every batch size."""
     for batch in BATCH_SIZES:
         with measure_memory() as mem:
@@ -5383,7 +5375,7 @@ def benchmark_inference_models(format_label: str, config: Config, **load_kwargs)
             runs=MEASURE_RUNS,
         )
         print(f"  batch={batch}: {result.mean_ms:6.2f} ms ± {result.std_ms:5.2f}   ({batch * result.fps:6.1f} FPS)")
-        record(format_label, config, batch, result, mem.delta_mb)
+        rows.record(format_label, config, batch, result, mem.delta_mb)
         del im_model</div>
 </div>
 </div>
@@ -5410,17 +5402,17 @@ def benchmark_inference_models(format_label: str, config: Config, **load_kwargs)
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">benchmark_inference_models</span><span class="p">(</span>
-    <span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TORCH</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">PYTORCH_DEVICE</span>
+    <span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference-models"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TORCH</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">PYTORCH_DEVICE</span>
 <span class="p">)</span>
 <span class="n">benchmark_inference_models</span><span class="p">(</span>
     <span class="s2">"ONNX"</span><span class="p">,</span>
-    <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models CPU EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
+    <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference-models CPU EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
     <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">ONNX</span><span class="p">,</span>
     <span class="n">onnx_execution_providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CPUExecutionProvider"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="n">benchmark_inference_models</span><span class="p">(</span>
     <span class="s2">"ONNX"</span><span class="p">,</span>
-    <span class="n">Config</span><span class="p">(</span><span class="s2">"inference-models CoreML EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
+    <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference-models CoreML EP"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">),</span>
     <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">ONNX</span><span class="p">,</span>
     <span class="n">onnx_execution_providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CoreMLExecutionProvider"</span><span class="p">,</span> <span class="s2">"CPUExecutionProvider"</span><span class="p">],</span>
 <span class="p">)</span>
@@ -5431,17 +5423,17 @@ def benchmark_inference_models(format_label: str, config: Config, **load_kwargs)
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"inference-models CoreML backend: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">error</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-19">benchmark_inference_models(
-    "PyTorch", Config("inference-models", "fp32"), backend=BackendType.TORCH, device=PYTORCH_DEVICE
+    "PyTorch", BenchmarkConfig("inference-models", "fp32"), backend=BackendType.TORCH, device=PYTORCH_DEVICE
 )
 benchmark_inference_models(
     "ONNX",
-    Config("inference-models CPU EP", "fp32"),
+    BenchmarkConfig("inference-models CPU EP", "fp32"),
     backend=BackendType.ONNX,
     onnx_execution_providers=["CPUExecutionProvider"],
 )
 benchmark_inference_models(
     "ONNX",
-    Config("inference-models CoreML EP", "fp32"),
+    BenchmarkConfig("inference-models CoreML EP", "fp32"),
     backend=BackendType.ONNX,
     onnx_execution_providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
 )
@@ -5508,7 +5500,7 @@ supported API and do not change what any runtime computes.</p>
 <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
 <span class="n">COCO_SCORE_FLOOR</span> <span class="o">=</span> <span class="mf">0.001</span>  <span class="c1"># keeps the whole precision-recall curve</span>
 
-<span class="c1">#: One entry per batch-1 Results row, keyed by that row's (Format, Config).</span>
+<span class="c1">#: One entry per batch-1 Results row, keyed by that row's (Format, BenchmarkConfig).</span>
 <span class="n">map_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">CocoMapResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-20">from rfdetr.export._benchmark import CocoMapResult, evaluate_coco_map, fetch_coco_val2017
@@ -5519,7 +5511,7 @@ COCO_SEED = 0
 COCO_ROOT = Path("coco")
 COCO_SCORE_FLOOR = 0.001  # keeps the whole precision-recall curve
 
-#: One entry per batch-1 Results row, keyed by that row's (Format, Config).
+#: One entry per batch-1 Results row, keyed by that row's (Format, BenchmarkConfig).
 map_results: dict[tuple[str, str], CocoMapResult] = {}</div>
 </div>
 </div>
@@ -5598,38 +5590,38 @@ fp16+JIT predictor at batch 1, the same <code>inference()</code> call as its lat
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"predict() eager"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">))]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"predict() eager"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">))]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
     <span class="n">partial</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">COCO_SCORE_FLOOR</span><span class="p">),</span> <span class="n">coco_subset</span>
 <span class="p">)</span>
 
 <span class="k">for</span> <span class="n">dtype</span> <span class="ow">in</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">):</span>
     <span class="n">precision</span> <span class="o">=</span> <span class="s2">"fp32"</span> <span class="k">if</span> <span class="n">dtype</span> <span class="o">==</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span> <span class="k">else</span> <span class="s2">"fp16"</span>
     <span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"inductor"</span><span class="p">)</span>
-    <span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() inductor"</span><span class="p">,</span> <span class="n">precision</span><span class="p">))]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference() inductor"</span><span class="p">,</span> <span class="n">precision</span><span class="p">))]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
         <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">COCO_SCORE_FLOOR</span><span class="p">),</span> <span class="n">coco_subset</span>
     <span class="p">)</span>
     <span class="k">del</span> <span class="n">predictor</span>
 
 <span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"torchscript"</span><span class="p">)</span>
-<span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() TorchScript"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">))]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+<span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference() TorchScript"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">))]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
     <span class="n">partial</span><span class="p">(</span><span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">COCO_SCORE_FLOOR</span><span class="p">),</span> <span class="n">coco_subset</span>
 <span class="p">)</span>
 <span class="k">del</span> <span class="n">predictor</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-22">map_results[("PyTorch", Config("predict() eager", "fp32"))] = evaluate_coco_map(
+<div class="clipboard-copy-txt" id="cell-22">map_results[("PyTorch", BenchmarkConfig("predict() eager", "fp32"))] = evaluate_coco_map(
     partial(model.predict, threshold=COCO_SCORE_FLOOR), coco_subset
 )
 
 for dtype in (torch.float32, torch.float16):
     precision = "fp32" if dtype == torch.float32 else "fp16"
     predictor = model.inference(dtype=dtype, batch_size=1, compile_backend="inductor")
-    map_results[("PyTorch", Config("inference() inductor", precision))] = evaluate_coco_map(
+    map_results[("PyTorch", BenchmarkConfig("inference() inductor", precision))] = evaluate_coco_map(
         partial(predictor.predict, threshold=COCO_SCORE_FLOOR), coco_subset
     )
     del predictor
 
 predictor = model.inference(dtype=torch.float16, batch_size=1, compile_backend="torchscript")
-map_results[("PyTorch", Config("inference() TorchScript", "fp16"))] = evaluate_coco_map(
+map_results[("PyTorch", BenchmarkConfig("inference() TorchScript", "fp16"))] = evaluate_coco_map(
     partial(predictor.predict, threshold=COCO_SCORE_FLOOR), coco_subset
 )
 del predictor</div>
@@ -5775,7 +5767,6 @@ del predictor</div>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
 
@@ -5793,17 +5784,10 @@ del predictor</div>
 <span class="n">folder_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">measure_folder</span><span class="p">(</span><span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Config</span><span class="p">,</span> <span class="n">predictor</span><span class="p">,</span> <span class="o">**</span><span class="n">predict_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_folder</span><span class="p">(</span><span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="n">predictor</span><span class="p">,</span> <span class="o">**</span><span class="n">predict_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Time `predictor.predict(folder)` end to end and record the median images per second."""</span>
     <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">,</span> <span class="s2">"include_source_image"</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">predict_kwargs</span><span class="p">}</span>
-    <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">FOLDER_DIR</span><span class="p">),</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>  <span class="c1"># warm-up pass</span>
-    <span class="n">seconds</span> <span class="o">=</span> <span class="p">[]</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">FOLDER_REPS</span><span class="p">):</span>
-        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-        <span class="n">results</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">FOLDER_DIR</span><span class="p">),</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-        <span class="n">seconds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span>
-    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span> <span class="o">==</span> <span class="n">N_FOLDER</span>
-    <span class="n">img_s</span> <span class="o">=</span> <span class="n">N_FOLDER</span> <span class="o">/</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">seconds</span><span class="p">)[</span><span class="nb">len</span><span class="p">(</span><span class="n">seconds</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">img_s</span> <span class="o">=</span> <span class="n">time_folder</span><span class="p">(</span><span class="n">predictor</span><span class="p">,</span> <span class="n">FOLDER_DIR</span><span class="p">,</span> <span class="n">N_FOLDER</span><span class="p">,</span> <span class="n">FOLDER_REPS</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
     <span class="n">folder_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
         <span class="p">{</span><span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span> <span class="s2">"Runtime"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">runtime</span><span class="p">,</span> <span class="s2">"Precision"</span><span class="p">:</span> <span class="n">config</span><span class="o">.</span><span class="n">precision</span><span class="p">,</span> <span class="s2">"Folder [img/s]"</span><span class="p">:</span> <span class="n">img_s</span><span class="p">}</span>
     <span class="p">)</span>
@@ -5813,7 +5797,7 @@ del predictor</div>
 <span class="k">for</span> <span class="n">dtype</span> <span class="ow">in</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">):</span>
     <span class="n">precision</span> <span class="o">=</span> <span class="s2">"fp32"</span> <span class="k">if</span> <span class="n">dtype</span> <span class="o">==</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span> <span class="k">else</span> <span class="s2">"fp16"</span>
     <span class="n">predictor</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">compile_backend</span><span class="o">=</span><span class="s2">"inductor"</span><span class="p">)</span>
-    <span class="n">measure_folder</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">Config</span><span class="p">(</span><span class="s2">"inference() inductor"</span><span class="p">,</span> <span class="n">precision</span><span class="p">),</span> <span class="n">predictor</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+    <span class="n">measure_folder</span><span class="p">(</span><span class="s2">"PyTorch"</span><span class="p">,</span> <span class="n">BenchmarkConfig</span><span class="p">(</span><span class="s2">"inference() inductor"</span><span class="p">,</span> <span class="n">precision</span><span class="p">),</span> <span class="n">predictor</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
     <span class="k">del</span> <span class="n">predictor</span>
 <span class="k">for</span> <span class="p">(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">),</span> <span class="n">by_batch</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">artifacts_by_batch</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"Folder throughput"</span><span class="p">):</span>
     <span class="n">predictor</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">by_batch</span><span class="p">[</span><span class="mi">8</span><span class="p">])</span>
@@ -5821,7 +5805,6 @@ del predictor</div>
     <span class="k">del</span> <span class="n">predictor</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-25">import shutil
-import time
 
 from tqdm.auto import tqdm
 
@@ -5839,17 +5822,10 @@ assert len(list(FOLDER_DIR.glob("*.jpg"))) == N_FOLDER
 folder_rows: list[dict] = []
 
 
-def measure_folder(format_label: str, config: Config, predictor, **predict_kwargs) -&gt; None:
+def measure_folder(format_label: str, config: BenchmarkConfig, predictor, **predict_kwargs) -&gt; None:
     """Time `predictor.predict(folder)` end to end and record the median images per second."""
     kwargs = {"threshold": CONFIDENCE_THRESHOLD, "include_source_image": False, **predict_kwargs}
-    predictor.predict(str(FOLDER_DIR), **kwargs)  # warm-up pass
-    seconds = []
-    for _ in range(FOLDER_REPS):
-        start = time.perf_counter()
-        results = predictor.predict(str(FOLDER_DIR), **kwargs)
-        seconds.append(time.perf_counter() - start)
-    assert len(results) == N_FOLDER
-    img_s = N_FOLDER / sorted(seconds)[len(seconds) // 2]
+    img_s = time_folder(predictor, FOLDER_DIR, N_FOLDER, FOLDER_REPS, **kwargs)
     folder_rows.append(
         {"Format": format_label, "Runtime": config.runtime, "Precision": config.precision, "Folder [img/s]": img_s}
     )
@@ -5859,7 +5835,7 @@ def measure_folder(format_label: str, config: Config, predictor, **predict_kwarg
 for dtype in (torch.float32, torch.float16):
     precision = "fp32" if dtype == torch.float32 else "fp16"
     predictor = model.inference(dtype=dtype, batch_size=8, compile_backend="inductor")
-    measure_folder("PyTorch", Config("inference() inductor", precision), predictor, batch=8)
+    measure_folder("PyTorch", BenchmarkConfig("inference() inductor", precision), predictor, batch=8)
     del predictor
 for (format_label, config), by_batch in tqdm(artifacts_by_batch.items(), desc="Folder throughput"):
     predictor = RFDETRInference(by_batch[8])
@@ -6149,7 +6125,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 13:06:30 UTC">2026-11-09 13:06:30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

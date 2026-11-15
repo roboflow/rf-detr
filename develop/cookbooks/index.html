@@ -967,6 +967,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
+      <a href="../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../learn/run/videos-and-streams/" class="md-nav__link">
         
   
@@ -3167,7 +3195,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
              data-labels="INFERENCE,COCO2017,CUDA"
              data-version="v1.13.0"
              data-author="Borda"
-             data-description="Score every pretrained checkpoint on COCO val2017 through RFDETRInference.predict with eager PyTorch FP32 on any device and static TensorRT FP16 and INT8 engines on CUDA, then print a Markdown table comparing the results with the Benchmarks page."></div>
+             data-description="Score every pretrained checkpoint on COCO val2017 through RFDETRInference.predict with eager PyTorch FP32 on any device and static TensorRT FP16 and INT8 engines on CUDA, and save one row per run with its provenance, ready to copy into the Run pages."></div>
+        </a>
+      
+        <a href="measure-latency/">
+          <div class="card repo-card"
+             data-name="Find the Fastest RF-DETR Configuration on Your GPU"
+             data-labels="INFERENCE,LATENCY,COCO2017,CUDA"
+             data-version="v1.13.0"
+             data-author="Borda"
+             data-description="Time every pretrained checkpoint at batch 1 through RFDETRInference.predict with PyTorch FP16 and static TensorRT FP16 and INT8 engines, each with and without CUDA graph replay, and keep the fastest configuration per model for your GPU."></div>
         </a>
       
         <a href="per-class-confidence-thresholds/">

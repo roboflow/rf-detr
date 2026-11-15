@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-13T09:23:01">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-13T09:23:01",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -939,6 +939,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -4068,7 +4096,7 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETR</span><span class="p">,</span> <span class="n">RFDETRInference</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets._develop</span><span class="w"> </span><span class="kn">import</span> <span class="n">_download_and_extract</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">_download</span><span class="p">,</span> <span class="n">evaluate_coco_ap</span><span class="p">,</span> <span class="n">fetch_coco_val2017</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">_download</span><span class="p">,</span> <span class="n">evaluate_coco_ap</span><span class="p">,</span> <span class="n">export_cached</span><span class="p">,</span> <span class="n">fetch_coco_val2017</span>
 
 <span class="c1"># The TensorRT FP16 export clamps float32 weights below 1e-7 in magnitude to ±1e-7 and warns once per weight;</span>
 <span class="c1"># the clamping is expected and the warnings would bury the output.</span>
@@ -4098,7 +4126,7 @@ from tqdm.auto import tqdm
 import rfdetr
 from rfdetr import RFDETR, RFDETRInference
 from rfdetr.datasets._develop import _download_and_extract
-from rfdetr.export._benchmark import _download, evaluate_coco_ap, fetch_coco_val2017
+from rfdetr.export._benchmark import _download, evaluate_coco_ap, export_cached, fetch_coco_val2017
 
 # The TensorRT FP16 export clamps float32 weights below 1e-7 in magnitude to ±1e-7 and warns once per weight;
 # the clamping is expected and the warnings would bury the output.
@@ -4490,28 +4518,14 @@ print(f"Engine cache: {ENGINE_DIR}")</div>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">resume_key</span><span class="p">(</span><span class="n">row</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">"""Identify a score by its model, runtime and evaluation context.</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        row: A saved result or a proposed scoring context.</span>
-
-<span class="sd">    Returns:</span>
-<span class="sd">        Values of the fields that define a resumable score.</span>
-<span class="sd">    """</span>
+<span class="w">    </span><span class="sd">"""Identify a score by its model, runtime and evaluation context."""</span>
     <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="n">field</span><span class="p">]</span> <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">RESUME_FIELDS</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-9">RESUME_FIELDS = ("model", "arm", "device", "rfdetr_version", "commit")
 
 
 def resume_key(row: dict[str, Any]) -&gt; tuple[Any, ...]:
-    """Identify a score by its model, runtime and evaluation context.
-
-    Args:
-        row: A saved result or a proposed scoring context.
-
-    Returns:
-        Values of the fields that define a resumable score.
-    """
+    """Identify a score by its model, runtime and evaluation context."""
     return tuple(row[field] for field in RESUME_FIELDS)</div>
 </div>
 </div>
@@ -4655,27 +4669,11 @@ print(f"Calibration: {N_CALIB} train2017 images, first by filename, in {CALIBRAT
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">build_pytorch_fp32</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">RFDETR</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RFDETRInference</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Wrap the live eager model without compilation or dtype changes.</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        model: Freshly constructed pretrained FP32 model.</span>
-<span class="sd">        model_name: Selected checkpoint label, unused by the borrowed runtime.</span>
-
-<span class="sd">    Returns:</span>
-<span class="sd">        A public predictor borrowing the model.</span>
-<span class="sd">    """</span>
+<span class="w">    </span><span class="sd">"""Wrap the live eager model without compilation or dtype changes."""</span>
     <span class="k">return</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-12">def build_pytorch_fp32(model: RFDETR, model_name: str) -&gt; RFDETRInference:
-    """Wrap the live eager model without compilation or dtype changes.
-
-    Args:
-        model: Freshly constructed pretrained FP32 model.
-        model_name: Selected checkpoint label, unused by the borrowed runtime.
-
-    Returns:
-        A public predictor borrowing the model.
-    """
+    """Wrap the live eager model without compilation or dtype changes."""
     return RFDETRInference(model)</div>
 </div>
 </div>
@@ -4713,54 +4711,30 @@ print(f"Calibration: {N_CALIB} train2017 images, first by filename, in {CALIBRAT
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">build_tensorrt_fp16</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">RFDETR</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RFDETRInference</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Reuse or export one static batch-1 FP16 engine.</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        model: Pretrained model to export when no engine exists.</span>
-<span class="sd">        model_name: Checkpoint label for the engine directory.</span>
-
-<span class="sd">    Returns:</span>
-<span class="sd">        A public predictor owning the exported runtime.</span>
-<span class="sd">    """</span>
-    <span class="n">output_dir</span> <span class="o">=</span> <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="s2">"tensorrt-fp16"</span>
-    <span class="n">engines</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">output_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.trt"</span><span class="p">))</span>
-    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">engines</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Ambiguous engine cache: </span><span class="si">{</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">"</span>
-    <span class="k">if</span> <span class="n">engines</span><span class="p">:</span>
-        <span class="n">engine_path</span> <span class="o">=</span> <span class="n">engines</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">engine_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
-            <span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span>
-            <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">output_dir</span><span class="p">),</span>
-            <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-            <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="p">)</span>
+<span class="w">    </span><span class="sd">"""Reuse or export one static batch-1 FP16 engine."""</span>
+    <span class="n">engine_path</span> <span class="o">=</span> <span class="n">export_cached</span><span class="p">(</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="s2">"tensorrt-fp16"</span><span class="p">,</span>
+        <span class="s2">"*.trt"</span><span class="p">,</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="k">assert</span> <span class="ow">not</span> <span class="n">engine_path</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">"_int8.trt"</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Expected an FP16 engine, got </span><span class="si">{</span><span class="n">engine_path</span><span class="si">}</span><span class="s2">"</span>
     <span class="k">return</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">engine_path</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-13">def build_tensorrt_fp16(model: RFDETR, model_name: str) -&gt; RFDETRInference:
-    """Reuse or export one static batch-1 FP16 engine.
-
-    Args:
-        model: Pretrained model to export when no engine exists.
-        model_name: Checkpoint label for the engine directory.
-
-    Returns:
-        A public predictor owning the exported runtime.
-    """
-    output_dir = ENGINE_DIR / model_name / "tensorrt-fp16"
-    engines = sorted(output_dir.glob("*.trt"))
-    assert len(engines) &lt;= 1, f"Ambiguous engine cache: {output_dir}"
-    if engines:
-        engine_path = engines[0]
-    else:
-        engine_path = model.export(
-            format="tensorrt",
-            output_dir=str(output_dir),
-            batch_size=1,
-            verbose=False,
-            fp16=True,
-        )
+    """Reuse or export one static batch-1 FP16 engine."""
+    engine_path = export_cached(
+        model,
+        ENGINE_DIR / model_name / "tensorrt-fp16",
+        "*.trt",
+        format="tensorrt",
+        batch_size=1,
+        verbose=False,
+        fp16=True,
+    )
     assert not engine_path.name.endswith("_int8.trt"), f"Expected an FP16 engine, got {engine_path}"
     return RFDETRInference(engine_path)</div>
 </div>
@@ -4799,59 +4773,33 @@ print(f"Calibration: {N_CALIB} train2017 images, first by filename, in {CALIBRAT
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">build_tensorrt_int8</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">RFDETR</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RFDETRInference</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Reuse or export one static batch-1 calibrated INT8 engine.</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        model: Pretrained model to export when no engine exists.</span>
-<span class="sd">        model_name: Checkpoint label for the engine directory.</span>
-
-<span class="sd">    Returns:</span>
-<span class="sd">        A public predictor owning the exported runtime.</span>
-<span class="sd">    """</span>
-    <span class="n">output_dir</span> <span class="o">=</span> <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="s2">"tensorrt-int8"</span>
-    <span class="n">engines</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">output_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.trt"</span><span class="p">))</span>
-    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">engines</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Ambiguous engine cache: </span><span class="si">{</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">"</span>
-    <span class="k">if</span> <span class="n">engines</span><span class="p">:</span>
-        <span class="n">engine_path</span> <span class="o">=</span> <span class="n">engines</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">engine_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
-            <span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span>
-            <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">output_dir</span><span class="p">),</span>
-            <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-            <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span>
-            <span class="n">calibration_data</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">CALIBRATION_DIR</span><span class="p">),</span>
-            <span class="n">max_images</span><span class="o">=</span><span class="n">N_CALIB</span><span class="p">,</span>
-        <span class="p">)</span>
-    <span class="k">assert</span> <span class="n">engine_path</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">"_int8.trt"</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Expected an INT8 engine, got </span><span class="si">{</span><span class="n">engine_path</span><span class="si">}</span><span class="s2">"</span>
+<span class="w">    </span><span class="sd">"""Reuse or export one static batch-1 calibrated INT8 engine."""</span>
+    <span class="n">engine_path</span> <span class="o">=</span> <span class="n">export_cached</span><span class="p">(</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="s2">"tensorrt-int8"</span><span class="p">,</span>
+        <span class="s2">"*_int8.trt"</span><span class="p">,</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span>
+        <span class="n">calibration_data</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">CALIBRATION_DIR</span><span class="p">),</span>
+        <span class="n">max_images</span><span class="o">=</span><span class="n">N_CALIB</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="k">return</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">engine_path</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-14">def build_tensorrt_int8(model: RFDETR, model_name: str) -&gt; RFDETRInference:
-    """Reuse or export one static batch-1 calibrated INT8 engine.
-
-    Args:
-        model: Pretrained model to export when no engine exists.
-        model_name: Checkpoint label for the engine directory.
-
-    Returns:
-        A public predictor owning the exported runtime.
-    """
-    output_dir = ENGINE_DIR / model_name / "tensorrt-int8"
-    engines = sorted(output_dir.glob("*.trt"))
-    assert len(engines) &lt;= 1, f"Ambiguous engine cache: {output_dir}"
-    if engines:
-        engine_path = engines[0]
-    else:
-        engine_path = model.export(
-            format="tensorrt",
-            output_dir=str(output_dir),
-            batch_size=1,
-            verbose=False,
-            quantization="int8",
-            calibration_data=str(CALIBRATION_DIR),
-            max_images=N_CALIB,
-        )
-    assert engine_path.name.endswith("_int8.trt"), f"Expected an INT8 engine, got {engine_path}"
+    """Reuse or export one static batch-1 calibrated INT8 engine."""
+    engine_path = export_cached(
+        model,
+        ENGINE_DIR / model_name / "tensorrt-int8",
+        "*_int8.trt",
+        format="tensorrt",
+        batch_size=1,
+        verbose=False,
+        quantization="int8",
+        calibration_data=str(CALIBRATION_DIR),
+        max_images=N_CALIB,
+    )
     return RFDETRInference(engine_path)</div>
 </div>
 </div>
@@ -5195,7 +5143,7 @@ display(results.drop(columns=shared).assign(**{column: (100 * results[column]).r
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 13, 2026 09:23:01 UTC">2026-11-13 09:23:01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

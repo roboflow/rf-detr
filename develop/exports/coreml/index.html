@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-05T16:07:06">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-05T16:07:06",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -951,6 +951,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -3814,6 +3842,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tbody>
 </table>
 <p>CoreML fp32 is the faster of the two CoreML rows at every batch size, and a folder of 64 images runs at 86.1 img/s in fp32 against 58.1 in fp16, and 1.7 times faster than eager PyTorch <code>predict()</code> on the same machine at batch 1 (12.0 against 20.0 ms). It is not faster than PyTorch's best route on this Mac: <code>inference()</code> with inductor, the MPS default, ran at 10.3 ms in fp16 and 11.1 ms in fp32 (see the <a href="../#pytorch-baseline">PyTorch baseline</a>), so at batch 1 the two are within two milliseconds of each other and the choice is about size, tooling and deployment target rather than speed. Its fp16 export is half the size but about twice as slow at batch 1 (23.6 against 12.0 ms), so for <code>RFDETRSmall</code>'s default graph under <code>ALL</code>, fp16 saves disk space, not time. That is not a rule for every model and compute unit: in the <a href="#neural-engine-export">Neural Engine export</a> table, the fp16 Neural Engine graph on <code>CPU_AND_NE</code> is the fastest row for <code>RFDETRNano</code>, and in the M3 Pro table fp16 under <code>ALL</code> beats fp32. Those tables come from another macOS release and timing method (p50 over 3 runs of 100 iterations, not 30 timed <code>predict()</code> calls), so compare rankings across them, not milliseconds. Measure fp16 per model and chip generation. Both rows score the same mAP on the subset as eager PyTorch, so the choice here is about latency, size and tooling.</p>
+<p>The <a href="../../cookbooks/measure-latency/">latency cookbook</a> times every pretrained size on the same M4 Max, as the median of 500 images, and the fastest configuration per size is on the Run pages for <a href="../../learn/run/detection/#fastest-configuration-on-apple-silicon">detection</a>, <a href="../../learn/run/segmentation/#fastest-configuration-on-apple-silicon">segmentation</a> and <a href="../../learn/run/keypoints/#fastest-configuration-on-apple-silicon">keypoints</a>. It measures CoreML twice: with the default <code>device="auto"</code>, which lets Core ML plan work on the Neural Engine, and with <code>device="cpu_and_gpu"</code>. The default is fastest for Atto only (fp16, 3.81 ms against 7.82 ms in fp32, and 25% ahead of PyTorch inductor in fp16). <code>cpu_and_gpu</code> in fp16 is fastest for Medium (13.24 ms), Large (16.90 ms), XLarge (31.29 ms) and Keypoint (21.34 ms), and ties with PyTorch inductor for 2XLarge (41.74 ms for both). PyTorch inductor in fp16 is fastest for Femto, Pico, Nano, Small and Seg Nano to Seg XLarge, and PyTorch TorchScript in fp16 for Seg 2XLarge, and a gap under about 5% is a tie. fp16 under the default compute units is not reliably faster: Femto took 24.51 ms, 3.0 times its fp32 time (8.30 ms), and the same package took 8.16 ms with <code>cpu_and_gpu</code>. The Femto time is repeatable, not noise (25.02 ms in an earlier run of the cookbook, 24.94 ms in an earlier export): loading its fp16 package prints <code>ANECCompile() FAILED</code> from the Neural Engine compiler, so Core ML cannot run the Neural Engine plan it chose and the model runs slowly. Atto's fp16 package did not print that error. For Nano to 2XLarge the default fp16 plan was slower than <code>cpu_and_gpu</code> too, so pass <code>device="cpu_and_gpu"</code> to <code>RFDETRInference</code> and measure fp16 and fp32 per model.</p>
 <p>On a Mac with macOS earlier than 27 the Core AI package loads and runs, but only on the CPU, so it is not measured here; see <a href="../coreai/">Core AI</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Noisy run</p>
@@ -3839,7 +3868,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 5, 2026 16:07:06 UTC">2026-11-05 16:07:06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

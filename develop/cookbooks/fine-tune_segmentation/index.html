@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T19:57:56">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T19:57:56",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -939,6 +939,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -4114,9 +4142,9 @@ cause is a stale in-memory import — restart the Python runtime once and re-run
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual]&gt;=1.8.2"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,visual] @ git+https://github.com/roboflow/rf-detr.git@453752ad3000b431c7fbed712e5a652c428cd9b0"</span> <span class="n">roboflow</span> <span class="n">pandas</span> <span class="n">seaborn</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual]&gt;=1.8.2" roboflow pandas seaborn</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[train,visual] @ git+https://github.com/roboflow/rf-detr.git@453752ad3000b431c7fbed712e5a652c428cd9b0" roboflow pandas seaborn</div>
 </div>
 </div>
 </div>
@@ -4161,7 +4189,8 @@ cause is a stale in-memory import — restart the Python runtime once and re-run
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegSmall</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">SegmentationTrainConfig</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRDataModule</span><span class="p">,</span> <span class="n">RFDETRModelModule</span><span class="p">,</span> <span class="n">build_trainer</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training.callbacks.best_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">BestModelCallback</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training.callbacks.best_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">_save_final_checkpoint</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.utilities.files</span><span class="w"> </span><span class="kn">import</span> <span class="n">_find_images</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.utilities.reproducibility</span><span class="w"> </span><span class="kn">import</span> <span class="n">seed_all</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.visualize.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">plot_loss_metrics</span><span class="p">,</span> <span class="n">plot_map_metrics</span>
 </pre></div>
@@ -4185,7 +4214,8 @@ from roboflow import Roboflow
 from rfdetr import RFDETRSegSmall
 from rfdetr.config import SegmentationTrainConfig
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
-from rfdetr.training.callbacks.best_model import BestModelCallback
+from rfdetr.training.callbacks.best_model import _save_final_checkpoint
+from rfdetr.utilities.files import _find_images
 from rfdetr.utilities.reproducibility import seed_all
 from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics</div>
 </div>
@@ -4409,9 +4439,7 @@ print(f"resolution={RESOLUTION}")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="notebook-display">Notebook display<a class="anchor-link" href="#notebook-display">¶</a></h2><p>This helper registers the <code>%matplotlib inline</code> magic so figures render directly beneath each cell when you run the
-notebook in Jupyter or Google Colab. If you are running this file as a plain Python script the function detects the
-absence of an IPython kernel and exits silently, so it is always safe to call.</p>
+<h2 id="notebook-display">Notebook display<a class="anchor-link" href="#notebook-display">¶</a></h2><p>The <code>%matplotlib inline</code> magic renders figures directly beneath each cell in Jupyter or Google Colab, and <code>InlineBackend.close_figures</code> closes each figure after its cell, so a long fine-tuning run does not keep every plot open until the kernel stops.</p>
 </div>
 </div>
 </div>
@@ -4434,31 +4462,11 @@ absence of an IPython kernel and exits silently, so it is always safe to call.</
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_enable_notebook_inline_matplotlib</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Enable inline matplotlib figures when running in IPython."""</span>
-    <span class="n">get_ipython_func</span> <span class="o">=</span> <span class="nb">globals</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"get_ipython"</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">callable</span><span class="p">(</span><span class="n">get_ipython_func</span><span class="p">):</span>
-        <span class="k">return</span>
-    <span class="n">ipython</span> <span class="o">=</span> <span class="n">get_ipython_func</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">ipython</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">ipython</span><span class="o">.</span><span class="n">run_line_magic</span><span class="p">(</span><span class="s2">"matplotlib"</span><span class="p">,</span> <span class="s2">"inline"</span><span class="p">)</span>
-        <span class="n">ipython</span><span class="o">.</span><span class="n">run_line_magic</span><span class="p">(</span><span class="s2">"config"</span><span class="p">,</span> <span class="s2">"InlineBackend.close_figures = True"</span><span class="p">)</span>
-
-
-<span class="n">_enable_notebook_inline_matplotlib</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
+<span class="o">%</span><span class="n">config</span> <span class="n">InlineBackend</span><span class="o">.</span><span class="n">close_figures</span> <span class="o">=</span> <span class="kc">True</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">def _enable_notebook_inline_matplotlib() -&gt; None:
-    """Enable inline matplotlib figures when running in IPython."""
-    get_ipython_func = globals().get("get_ipython")
-    if not callable(get_ipython_func):
-        return
-    ipython = get_ipython_func()
-    if ipython is not None:
-        ipython.run_line_magic("matplotlib", "inline")
-        ipython.run_line_magic("config", "InlineBackend.close_figures = True")
-
-
-_enable_notebook_inline_matplotlib()</div>
+<div class="clipboard-copy-txt" id="cell-4">%matplotlib inline
+%config InlineBackend.close_figures = True</div>
 </div>
 </div>
 </div>
@@ -4644,73 +4652,6 @@ on any machine, without reconstructing the original config.</p>
 </div>
 </div>
 </div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ed36df66">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="CodeMirror cm-s-jupyter">
-<div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
-<div>
-<span class="notice" hidden="">Copied!</span>
-<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
-<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
-</svg>
-</div>
-</clipboard-copy>
-</div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_save_final_checkpoint</span><span class="p">(</span>
-    <span class="n">module</span><span class="p">:</span> <span class="n">RFDETRModelModule</span><span class="p">,</span>
-    <span class="n">trainer</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
-    <span class="n">train_config</span><span class="p">:</span> <span class="n">SegmentationTrainConfig</span><span class="p">,</span>
-    <span class="n">model_config</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
-    <span class="n">output_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Save a final RF-DETR .pth checkpoint that can be loaded with ``from_checkpoint``."""</span>
-    <span class="n">raw_model</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="s2">"_orig_mod"</span><span class="p">,</span> <span class="n">module</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
-    <span class="n">output_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span>
-        <span class="n">BestModelCallback</span><span class="o">.</span><span class="n">_build_checkpoint_payload</span><span class="p">(</span>
-            <span class="n">raw_model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
-            <span class="n">train_config</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(),</span>
-            <span class="n">trainer</span><span class="p">,</span>
-            <span class="n">model_name</span><span class="o">=</span><span class="s2">"RFDETRSegSmall"</span><span class="p">,</span>
-            <span class="n">model_config_dict</span><span class="o">=</span><span class="n">model_config</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(),</span>
-        <span class="p">),</span>
-        <span class="n">output_path</span><span class="p">,</span>
-    <span class="p">)</span>
-    <span class="k">return</span> <span class="n">output_path</span>
-</pre></div>
-<div class="clipboard-copy-txt" id="cell-7">def _save_final_checkpoint(
-    module: RFDETRModelModule,
-    trainer: Any,
-    train_config: SegmentationTrainConfig,
-    model_config: Any,
-    output_path: Path,
-) -&gt; Path:
-    """Save a final RF-DETR .pth checkpoint that can be loaded with ``from_checkpoint``."""
-    raw_model: Any = getattr(module.model, "_orig_mod", module.model)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        BestModelCallback._build_checkpoint_payload(
-            raw_model.state_dict(),
-            train_config.model_dump(),
-            trainer,
-            model_name="RFDETRSegSmall",
-            model_config_dict=model_config.model_dump(),
-        ),
-        output_path,
-    )
-    return output_path</div>
-</div>
-</div>
-</div>
-</div>
-</div>
 </div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7000d9a4">
 <div class="jp-Cell-inputWrapper" tabindex="0">
@@ -4733,7 +4674,7 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4783,7 +4724,7 @@ Masks are drawn with <code>sv.MaskAnnotator</code> (translucent colour fill) and
     <span class="n">figure</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
     <span class="k">return</span> <span class="n">figure</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">def _segmentation_grid_figure(
+<div class="clipboard-copy-txt" id="cell-7">def _segmentation_grid_figure(
     items: list[tuple[str, np.ndarray, sv.Detections]],
     columns: int,
     class_names: list[str],
@@ -4855,7 +4796,7 @@ checkpoint, giving you a lightweight experiment log that travels with the model 
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4909,7 +4850,7 @@ checkpoint, giving you a lightweight experiment log that travels with the model 
 <span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRModelModule</span><span class="p">(</span><span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="p">,</span> <span class="n">train_config</span><span class="p">)</span>
 <span class="n">trainer</span> <span class="o">=</span> <span class="n">build_trainer</span><span class="p">(</span><span class="n">train_config</span><span class="p">,</span> <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">seed_all(SEED)
+<div class="clipboard-copy-txt" id="cell-8">seed_all(SEED)
 variant = RFDETRSegSmall(  # type: ignore[no-untyped-call]
     num_classes=NUM_CLASSES,
     resolution=RESOLUTION,
@@ -4980,7 +4921,7 @@ boundary. Catching label noise here costs a few seconds; catching it after 50 ep
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4999,7 +4940,7 @@ boundary. Catching label noise here costs a few seconds; catching it after 50 ep
 <span class="n">display</span><span class="p">(</span><span class="n">sample_figure</span><span class="p">)</span>
 <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">sample_figure</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">sample_figure = datamodule._show_samples(
+<div class="clipboard-copy-txt" id="cell-9">sample_figure = datamodule._show_samples(
     SAMPLE_PREVIEW_COUNT,
     split="train",
     columns=SAMPLE_PREVIEW_COLUMNS,
@@ -5037,7 +4978,7 @@ consumer GPU (RTX 3090 or similar) 50 epochs on the crack dataset takes roughly 
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5050,7 +4991,7 @@ consumer GPU (RTX 3090 or similar) 50 epochs on the crack dataset takes roughly 
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">datamodule</span><span class="o">=</span><span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="n">train_config</span><span class="o">.</span><span class="n">resume</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"output_dir=</span><span class="si">{</span><span class="n">OUTPUT_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">trainer.fit(model, datamodule=datamodule, ckpt_path=train_config.resume or None)
+<div class="clipboard-copy-txt" id="cell-10">trainer.fit(model, datamodule=datamodule, ckpt_path=train_config.resume or None)
 print(f"output_dir={OUTPUT_DIR}")</div>
 </div>
 </div>
@@ -5082,7 +5023,7 @@ version number printed in section 1.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5092,10 +5033,14 @@ version number printed in section 1.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">final_checkpoint</span> <span class="o">=</span> <span class="n">_save_final_checkpoint</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">trainer</span><span class="p">,</span> <span class="n">train_config</span><span class="p">,</span> <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="p">,</span> <span class="n">FINAL_CHECKPOINT_PATH</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">final_checkpoint</span> <span class="o">=</span> <span class="n">_save_final_checkpoint</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span> <span class="n">trainer</span><span class="p">,</span> <span class="n">train_config</span><span class="p">,</span> <span class="n">variant</span><span class="o">.</span><span class="n">model_config</span><span class="p">,</span> <span class="n">FINAL_CHECKPOINT_PATH</span><span class="p">,</span> <span class="s2">"RFDETRSegSmall"</span>
+<span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"saved_checkpoint=</span><span class="si">{</span><span class="n">final_checkpoint</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">final_checkpoint = _save_final_checkpoint(model, trainer, train_config, variant.model_config, FINAL_CHECKPOINT_PATH)
+<div class="clipboard-copy-txt" id="cell-11">final_checkpoint = _save_final_checkpoint(
+    model, trainer, train_config, variant.model_config, FINAL_CHECKPOINT_PATH, "RFDETRSegSmall"
+)
 print(f"saved_checkpoint={final_checkpoint}")</div>
 </div>
 </div>
@@ -5129,7 +5074,7 @@ interrupted before any epoch finished, this file will not exist and the cell bel
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5152,7 +5097,7 @@ interrupted before any epoch finished, this file will not exist and the cell bel
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"validation_metrics=</span><span class="si">{</span><span class="n">validation_metrics</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"validation_metrics_json=</span><span class="si">{</span><span class="n">VALIDATION_METRICS_JSON</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13"># checkpoint_best_total.pth stores plain model weights under key "model", not a full
+<div class="clipboard-copy-txt" id="cell-12"># checkpoint_best_total.pth stores plain model weights under key "model", not a full
 # PTL checkpoint.  Passing it as ckpt_path to trainer.validate() triggers a KeyError
 # on "validate_loop" because PTL tries to restore loop state that isn't present.
 # Load the weights directly and run validate without ckpt_path instead.
@@ -5195,7 +5140,7 @@ more meaningful portion of the curve gets compressed into a flat line.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5210,7 +5155,7 @@ more meaningful portion of the curve gets compressed into a flat line.</p>
 <span class="n">display</span><span class="p">(</span><span class="n">loss_figure</span><span class="p">)</span>
 <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">loss_figure</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-14">print(f"metrics_csv={METRICS_CSV}")
+<div class="clipboard-copy-txt" id="cell-13">print(f"metrics_csv={METRICS_CSV}")
 loss_figure = plot_loss_metrics(str(METRICS_CSV), loss_log_scale=PLOT_LOSS_LOG_SCALE)
 display(loss_figure)
 plt.close(loss_figure)</div>
@@ -5228,7 +5173,7 @@ plt.close(loss_figure)</div>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5242,7 +5187,7 @@ plt.close(loss_figure)</div>
 <span class="n">display</span><span class="p">(</span><span class="n">map_figure</span><span class="p">)</span>
 <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">map_figure</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">map_figure = plot_map_metrics(str(METRICS_CSV))
+<div class="clipboard-copy-txt" id="cell-14">map_figure = plot_map_metrics(str(METRICS_CSV))
 display(map_figure)
 plt.close(map_figure)</div>
 </div>
@@ -5273,7 +5218,7 @@ immediately — the class names and architecture are all embedded alongside the 
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5286,7 +5231,7 @@ immediately — the class names and architecture are all embedded alongside the 
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">loaded_model</span> <span class="o">=</span> <span class="n">RFDETRSegSmall</span><span class="o">.</span><span class="n">from_checkpoint</span><span class="p">(</span><span class="n">FINAL_CHECKPOINT_PATH</span><span class="p">)</span>
 <span class="n">predictor</span> <span class="o">=</span> <span class="n">loaded_model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">loaded_model = RFDETRSegSmall.from_checkpoint(FINAL_CHECKPOINT_PATH)
+<div class="clipboard-copy-txt" id="cell-15">loaded_model = RFDETRSegSmall.from_checkpoint(FINAL_CHECKPOINT_PATH)
 predictor = loaded_model.inference(compile=False)</div>
 </div>
 </div>
@@ -5317,7 +5262,7 @@ inference on custom images.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5330,37 +5275,25 @@ inference on custom images.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">_IMAGE_EXTS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">".jpg"</span><span class="p">,</span> <span class="s2">".jpeg"</span><span class="p">,</span> <span class="s2">".png"</span><span class="p">}</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_find_images</span><span class="p">(</span><span class="n">directory</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">directory</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">[]</span>
-    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">directory</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"**/*"</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">suffix</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
-
-
-<span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">)</span>
+<span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"test"</span><span class="p">,</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"valid"</span><span class="p">)</span>
+    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"valid"</span><span class="p">,</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
-    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span><span class="p">)</span>
+    <span class="n">validation_image_paths</span> <span class="o">=</span> <span class="n">_find_images</span><span class="p">(</span><span class="n">DATASET_DIR</span> <span class="o">/</span> <span class="s2">"train"</span><span class="p">,</span> <span class="n">_IMAGE_EXTS</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">validation_image_paths</span><span class="p">:</span>
     <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"No images (</span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_IMAGE_EXTS</span><span class="p">))</span><span class="si">}</span><span class="s2">) found under </span><span class="si">{</span><span class="n">DATASET_DIR</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="n">inference_image_paths</span> <span class="o">=</span> <span class="n">validation_image_paths</span><span class="p">[:</span><span class="n">INFERENCE_COUNT</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"inference_images=</span><span class="si">{</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">inference_image_paths</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-17">_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+<div class="clipboard-copy-txt" id="cell-16">_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
-def _find_images(directory: Path) -&gt; list[Path]:
-    if not directory.is_dir():
-        return []
-    return sorted(p for p in directory.glob("**/*") if p.is_file() and p.suffix.lower() in _IMAGE_EXTS)
-
-
-validation_image_paths = _find_images(DATASET_DIR / "test")
+validation_image_paths = _find_images(DATASET_DIR / "test", _IMAGE_EXTS)
 if not validation_image_paths:
-    validation_image_paths = _find_images(DATASET_DIR / "valid")
+    validation_image_paths = _find_images(DATASET_DIR / "valid", _IMAGE_EXTS)
 if not validation_image_paths:
-    validation_image_paths = _find_images(DATASET_DIR / "train")
+    validation_image_paths = _find_images(DATASET_DIR / "train", _IMAGE_EXTS)
 if not validation_image_paths:
     raise FileNotFoundError(f"No images ({', '.join(sorted(_IMAGE_EXTS))}) found under {DATASET_DIR}")
 
@@ -5396,7 +5329,7 @@ resolution gives the segmentation head more spatial detail to work with.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5420,7 +5353,7 @@ resolution gives the segmentation head more spatial detail to work with.</p>
     <span class="n">display</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">figure</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-18">inference_grid_items: list[tuple[str, np.ndarray, sv.Detections]] = []
+<div class="clipboard-copy-txt" id="cell-17">inference_grid_items: list[tuple[str, np.ndarray, sv.Detections]] = []
 for image_path in inference_image_paths:
     with Image.open(image_path) as image:
         image_rgb = image.convert("RGB")
@@ -5461,7 +5394,7 @@ add more negative examples to your training set.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5490,7 +5423,7 @@ add more negative examples to your training set.</p>
 <span class="n">summary_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">summary_rows</span><span class="p">)</span>
 <span class="n">display</span><span class="p">(</span><span class="n">summary_df</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-19">summary_rows = []
+<div class="clipboard-copy-txt" id="cell-18">summary_rows = []
 for image_path, (_, _, detections) in zip(inference_image_paths, inference_grid_items):
     num_det = len(detections)
     has_masks = detections.mask is not None and detections.mask.shape[0] &gt; 0
@@ -5541,7 +5474,7 @@ display(summary_df)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 19:57:56 UTC">2026-10-30 19:57:56</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

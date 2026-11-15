@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-13T09:23:01">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-13T09:23:01",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -963,6 +963,39 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#fastest-configuration-on-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-apple-silicon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on Apple Silicon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-an-x86-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on an x86 CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-on-an-image" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1047,6 +1080,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -3252,6 +3313,39 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#fastest-configuration-on-nvidia-gpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on NVIDIA GPUs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-apple-silicon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on Apple Silicon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fastest-configuration-on-an-x86-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fastest Configuration on an x86 CPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-on-an-image" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3314,7 +3408,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <thead>
 <tr>
 <th style="text-align: center;">Size</th>
-<th style="text-align: center;">RF-DETR package class</th>
 <th style="text-align: center;">PyTorch FP32 AP<sub>50:95</sub></th>
 <th style="text-align: center;">TensorRT FP16 AP<sub>50:95</sub></th>
 <th style="text-align: center;">TensorRT INT8 AP<sub>50:95</sub></th>
@@ -3325,8 +3418,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </thead>
 <tbody>
 <tr>
-<td style="text-align: center;">A</td>
-<td style="text-align: center;"><code>RFDETRAtto</code> △</td>
+<td style="text-align: center;">Atto (A) △</td>
 <td style="text-align: center;">30.7</td>
 <td style="text-align: center;">30.6</td>
 <td style="text-align: center;">23.7</td>
@@ -3335,8 +3427,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">F</td>
-<td style="text-align: center;"><code>RFDETRFemto</code> △</td>
+<td style="text-align: center;">Femto (F) △</td>
 <td style="text-align: center;">37.6</td>
 <td style="text-align: center;">37.6</td>
 <td style="text-align: center;">28.9</td>
@@ -3345,8 +3436,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">P</td>
-<td style="text-align: center;"><code>RFDETRPico</code> △</td>
+<td style="text-align: center;">Pico (P) △</td>
 <td style="text-align: center;">41.7</td>
 <td style="text-align: center;">41.6</td>
 <td style="text-align: center;">33.2</td>
@@ -3355,8 +3445,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">N</td>
-<td style="text-align: center;"><code>RFDETRNano</code></td>
+<td style="text-align: center;">Nano (N)</td>
 <td style="text-align: center;">48.0</td>
 <td style="text-align: center;">48.0</td>
 <td style="text-align: center;">47.6</td>
@@ -3365,8 +3454,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">S</td>
-<td style="text-align: center;"><code>RFDETRSmall</code></td>
+<td style="text-align: center;">Small (S)</td>
 <td style="text-align: center;">52.8</td>
 <td style="text-align: center;">52.8</td>
 <td style="text-align: center;">52.3</td>
@@ -3375,8 +3463,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">M</td>
-<td style="text-align: center;"><code>RFDETRMedium</code></td>
+<td style="text-align: center;">Medium (M)</td>
 <td style="text-align: center;">54.7</td>
 <td style="text-align: center;">54.6</td>
 <td style="text-align: center;">54.0</td>
@@ -3385,8 +3472,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">L</td>
-<td style="text-align: center;"><code>RFDETRLarge</code></td>
+<td style="text-align: center;">Large (L)</td>
 <td style="text-align: center;">56.6</td>
 <td style="text-align: center;">56.5</td>
 <td style="text-align: center;">56.2</td>
@@ -3395,8 +3481,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Apache 2.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">XL</td>
-<td style="text-align: center;"><code>RFDETRXLarge</code> △</td>
+<td style="text-align: center;">XLarge (XL) △</td>
 <td style="text-align: center;">58.7</td>
 <td style="text-align: center;">58.7</td>
 <td style="text-align: center;">58.3</td>
@@ -3405,8 +3490,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">PML 1.0</td>
 </tr>
 <tr>
-<td style="text-align: center;">2XL</td>
-<td style="text-align: center;"><code>RFDETR2XLarge</code> △</td>
+<td style="text-align: center;">2XLarge (2XL) △</td>
 <td style="text-align: center;">60.1</td>
 <td style="text-align: center;">60.0</td>
 <td style="text-align: center;">59.6</td>
@@ -3425,6 +3509,595 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>AP columns</strong>: COCO AP<sub>50:95</sub> on all 5000 val2017 images, scored with the <a href="../../../cookbooks/coco-accuracy/">COCO accuracy cookbook</a> through <code>RFDETRInference.predict</code> at a 0.001 score threshold, batch 1 and default preprocessing. PyTorch FP32 runs the eager model; TensorRT FP16 and INT8 run static batch-1 engines exported with <code>model.export(format="tensorrt")</code>, the INT8 engine calibrated on 128 train2017 images. One run per page on an NVIDIA RTX PRO 6000 Blackwell Server Edition with rfdetr 1.13.0.dev0, rfdetr_plus 1.2.0, torch 2.14.1+cu130, TensorRT 11.4.0.106 and faster-coco-eval 1.8.0: detection scored on 2026-11-13, segmentation and keypoints on 2026-11-12.</li>
 <li><strong>Params</strong>: the official values from the <a href="../../benchmarks/">Benchmarks</a> page. That page also lists the official COCO AP, measured with SAB on an NVIDIA T4 with a TensorRT 10.4 FP16 engine at batch 1; the PyTorch FP32 column here is within 0.7 AP of it.</li>
 </ul>
+</div>
+<h2 id="fastest-configuration-on-nvidia-gpus">Fastest Configuration on NVIDIA GPUs<a class="headerlink" href="#fastest-configuration-on-nvidia-gpus" title="Permanent link">&para;</a></h2>
+<p>The configuration with the lowest end-to-end latency for each size on four NVIDIA GPUs, batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own GPU to find yours.</p>
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in docs/learn/run/latency.md). -->
+
+<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">NVIDIA T4</label><label for="__tabbed_1_2">NVIDIA L4</label><label for="__tabbed_1_3">NVIDIA A100</label><label for="__tabbed_1_4">NVIDIA RTX PRO 6000</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Atto (A) △</td>
+<td style="text-align: center;">3.51 (5.56)</td>
+<td style="text-align: center;">3.52 (4.07)</td>
+<td style="text-align: center;"><strong>3.22 (3.64)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Femto (F) △</td>
+<td style="text-align: center;">4.44 (6.10)</td>
+<td style="text-align: center;"><strong>3.63 (4.15)</strong></td>
+<td style="text-align: center;"><strong>3.62 (4.06)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Pico (P) △</td>
+<td style="text-align: center;">4.82 (6.14)</td>
+<td style="text-align: center;"><strong>4.15 (4.54)</strong></td>
+<td style="text-align: center;"><strong>4.24 (4.64)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Nano (N)</td>
+<td style="text-align: center;">5.17 (5.90)</td>
+<td style="text-align: center;">4.78 (5.61)</td>
+<td style="text-align: center;">4.91 (5.42)</td>
+<td style="text-align: center;"><strong>4.61 (5.59)</strong></td>
+<td style="text-align: center;"><strong>4.44 (4.90)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Small (S)</td>
+<td style="text-align: center;">7.99 (8.38)</td>
+<td style="text-align: center;">6.88 (7.24)</td>
+<td style="text-align: center;">7.03 (7.85)</td>
+<td style="text-align: center;"><strong>6.32 (6.99)</strong></td>
+<td style="text-align: center;"><strong>6.33 (6.65)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Medium (M)</td>
+<td style="text-align: center;">10.04 (10.46)</td>
+<td style="text-align: center;">8.50 (8.84)</td>
+<td style="text-align: center;">8.83 (9.48)</td>
+<td style="text-align: center;"><strong>7.51 (7.89)</strong></td>
+<td style="text-align: center;"><strong>7.50 (8.05)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Large (L)</td>
+<td style="text-align: center;">14.91 (15.37)</td>
+<td style="text-align: center;">12.41 (13.07)</td>
+<td style="text-align: center;">12.74 (13.24)</td>
+<td style="text-align: center;"><strong>11.11 (11.77)</strong></td>
+<td style="text-align: center;"><strong>11.21 (11.74)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">XLarge (XL) △</td>
+<td style="text-align: center;">27.25 (28.77)</td>
+<td style="text-align: center;">24.12 (26.20)</td>
+<td style="text-align: center;">24.56 (26.54)</td>
+<td style="text-align: center;"><strong>19.83 (20.46)</strong></td>
+<td style="text-align: center;"><strong>20.08 (20.69)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">2XLarge (2XL) △</td>
+<td style="text-align: center;">39.69 (41.26)</td>
+<td style="text-align: center;">38.18 (40.39)</td>
+<td style="text-align: center;">35.50 (37.99)</td>
+<td style="text-align: center;"><strong>28.10 (29.72)</strong></td>
+<td style="text-align: center;"><strong>29.47 (31.13)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Atto (A) △</td>
+<td style="text-align: center;"><strong>2.60 (2.88)</strong></td>
+<td style="text-align: center;">3.68 (3.98)</td>
+<td style="text-align: center;">3.01 (3.52)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Femto (F) △</td>
+<td style="text-align: center;"><strong>2.95 (3.20)</strong></td>
+<td style="text-align: center;">3.53 (3.96)</td>
+<td style="text-align: center;">3.14 (3.50)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Pico (P) △</td>
+<td style="text-align: center;"><strong>3.13 (3.40)</strong></td>
+<td style="text-align: center;">3.65 (4.26)</td>
+<td style="text-align: center;">3.34 (3.65)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Nano (N)</td>
+<td style="text-align: center;"><strong>3.20 (3.42)</strong></td>
+<td style="text-align: center;">3.87 (4.14)</td>
+<td style="text-align: center;">3.54 (3.89)</td>
+<td style="text-align: center;">3.55 (4.13)</td>
+<td style="text-align: center;">3.45 (4.06)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Small (S)</td>
+<td style="text-align: center;"><strong>4.01 (4.33)</strong></td>
+<td style="text-align: center;">4.23 (4.51)</td>
+<td style="text-align: center;"><strong>4.03 (4.31)</strong></td>
+<td style="text-align: center;">4.12 (4.48)</td>
+<td style="text-align: center;"><strong>3.90 (4.21)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Medium (M)</td>
+<td style="text-align: center;">4.81 (5.09)</td>
+<td style="text-align: center;">4.82 (5.35)</td>
+<td style="text-align: center;"><strong>4.56 (5.09)</strong></td>
+<td style="text-align: center;">4.74 (5.09)</td>
+<td style="text-align: center;"><strong>4.43 (4.87)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Large (L)</td>
+<td style="text-align: center;">6.01 (6.30)</td>
+<td style="text-align: center;">5.89 (6.28)</td>
+<td style="text-align: center;">5.65 (6.01)</td>
+<td style="text-align: center;"><strong>5.27 (5.75)</strong></td>
+<td style="text-align: center;"><strong>5.10 (5.54)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">XLarge (XL) △</td>
+<td style="text-align: center;">11.02 (11.41)</td>
+<td style="text-align: center;">9.90 (10.37)</td>
+<td style="text-align: center;">9.87 (10.20)</td>
+<td style="text-align: center;"><strong>8.53 (8.89)</strong></td>
+<td style="text-align: center;"><strong>8.34 (8.72)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">2XLarge (2XL) △</td>
+<td style="text-align: center;">14.80 (15.39)</td>
+<td style="text-align: center;">12.67 (13.12)</td>
+<td style="text-align: center;">12.56 (12.96)</td>
+<td style="text-align: center;"><strong>10.07 (10.88)</strong></td>
+<td style="text-align: center;"><strong>9.95 (10.54)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Atto (A) △</td>
+<td style="text-align: center;"><strong>3.18 (3.69)</strong></td>
+<td style="text-align: center;">3.35 (3.64)</td>
+<td style="text-align: center;"><strong>3.10 (3.36)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Femto (F) △</td>
+<td style="text-align: center;"><strong>3.33 (3.88)</strong></td>
+<td style="text-align: center;">3.50 (3.78)</td>
+<td style="text-align: center;"><strong>3.22 (3.45)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Pico (P) △</td>
+<td style="text-align: center;">3.99 (4.39)</td>
+<td style="text-align: center;">3.70 (4.32)</td>
+<td style="text-align: center;"><strong>3.41 (4.04)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Nano (N)</td>
+<td style="text-align: center;"><strong>3.35 (3.92)</strong></td>
+<td style="text-align: center;">3.74 (4.17)</td>
+<td style="text-align: center;"><strong>3.44 (3.73)</strong></td>
+<td style="text-align: center;">3.68 (4.10)</td>
+<td style="text-align: center;">3.54 (4.18)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Small (S)</td>
+<td style="text-align: center;"><strong>3.81 (4.43)</strong></td>
+<td style="text-align: center;">4.03 (4.49)</td>
+<td style="text-align: center;"><strong>3.67 (3.97)</strong></td>
+<td style="text-align: center;">4.00 (4.61)</td>
+<td style="text-align: center;"><strong>3.68 (4.16)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Medium (M)</td>
+<td style="text-align: center;"><strong>4.06 (4.64)</strong></td>
+<td style="text-align: center;">4.38 (5.02)</td>
+<td style="text-align: center;"><strong>4.06 (4.38)</strong></td>
+<td style="text-align: center;">4.31 (4.85)</td>
+<td style="text-align: center;"><strong>3.93 (4.33)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Large (L)</td>
+<td style="text-align: center;">4.64 (5.04)</td>
+<td style="text-align: center;">4.81 (5.36)</td>
+<td style="text-align: center;"><strong>4.38 (4.84)</strong></td>
+<td style="text-align: center;">4.82 (5.54)</td>
+<td style="text-align: center;">4.68 (4.98)</td>
+</tr>
+<tr>
+<td style="text-align: center;">XLarge (XL) △</td>
+<td style="text-align: center;">6.18 (6.50)</td>
+<td style="text-align: center;">6.13 (6.76)</td>
+<td style="text-align: center;"><strong>5.75 (6.01)</strong></td>
+<td style="text-align: center;">5.99 (6.38)</td>
+<td style="text-align: center;"><strong>5.66 (6.04)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">2XLarge (2XL) △</td>
+<td style="text-align: center;">6.90 (7.13)</td>
+<td style="text-align: center;">6.67 (7.03)</td>
+<td style="text-align: center;"><strong>6.32 (6.89)</strong></td>
+<td style="text-align: center;"><strong>6.38 (6.78)</strong></td>
+<td style="text-align: center;"><strong>6.10 (6.44)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="tabbed-block">
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch CUDA graph FP16</th>
+<th style="text-align: center;">TensorRT FP16</th>
+<th style="text-align: center;">TensorRT FP16 graph</th>
+<th style="text-align: center;">TensorRT INT8</th>
+<th style="text-align: center;">TensorRT INT8 graph</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Atto (A) △</td>
+<td style="text-align: center;">1.58 (1.66)</td>
+<td style="text-align: center;">1.42 (1.47)</td>
+<td style="text-align: center;"><strong>1.25 (1.32)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Femto (F) △</td>
+<td style="text-align: center;">1.73 (1.77)</td>
+<td style="text-align: center;">1.56 (1.63)</td>
+<td style="text-align: center;"><strong>1.36 (1.43)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Pico (P) △</td>
+<td style="text-align: center;">1.87 (1.93)</td>
+<td style="text-align: center;">1.69 (1.74)</td>
+<td style="text-align: center;"><strong>1.46 (1.52)</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Nano (N)</td>
+<td style="text-align: center;">1.73 (1.82)</td>
+<td style="text-align: center;">1.72 (1.79)</td>
+<td style="text-align: center;">1.54 (1.62)</td>
+<td style="text-align: center;">1.69 (1.77)</td>
+<td style="text-align: center;"><strong>1.43 (1.51)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Small (S)</td>
+<td style="text-align: center;">2.07 (2.16)</td>
+<td style="text-align: center;">1.94 (2.00)</td>
+<td style="text-align: center;">1.73 (1.80)</td>
+<td style="text-align: center;">1.87 (1.99)</td>
+<td style="text-align: center;"><strong>1.63 (1.70)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Medium (M)</td>
+<td style="text-align: center;">2.23 (2.33)</td>
+<td style="text-align: center;">2.07 (2.14)</td>
+<td style="text-align: center;">1.84 (1.90)</td>
+<td style="text-align: center;">1.96 (2.02)</td>
+<td style="text-align: center;"><strong>1.73 (1.81)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Large (L)</td>
+<td style="text-align: center;">2.52 (2.58)</td>
+<td style="text-align: center;">2.30 (2.42)</td>
+<td style="text-align: center;">2.09 (2.15)</td>
+<td style="text-align: center;">2.19 (2.26)</td>
+<td style="text-align: center;"><strong>1.96 (2.02)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">XLarge (XL) △</td>
+<td style="text-align: center;">3.63 (3.70)</td>
+<td style="text-align: center;">3.13 (3.19)</td>
+<td style="text-align: center;">2.93 (3.10)</td>
+<td style="text-align: center;">2.98 (3.13)</td>
+<td style="text-align: center;"><strong>2.78 (2.84)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">2XLarge (2XL) △</td>
+<td style="text-align: center;">4.27 (4.35)</td>
+<td style="text-align: center;">3.77 (3.84)</td>
+<td style="text-align: center;">3.54 (3.61)</td>
+<td style="text-align: center;">3.43 (3.51)</td>
+<td style="text-align: center;"><strong>3.19 (3.27)</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>.</p>
+<ul>
+<li>Atto, Femto and Pico (no INT8 column) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.</li>
+<li>From Small up an INT8 engine is among the fastest on every GPU, except at Large on the A100, where FP16 graph alone is.</li>
+<li>The 95th percentile stays within 1.21 times the median, except for PyTorch CUDA graph FP16 on the T4 at Atto, Femto and Pico (1.27 to 1.58 times).</li>
+</ul>
+<h2 id="fastest-configuration-on-apple-silicon">Fastest Configuration on Apple Silicon<a class="headerlink" href="#fastest-configuration-on-apple-silicon" title="Permanent link">&para;</a></h2>
+<p>The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own device to find yours.</p>
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in docs/learn/run/latency.md). -->
+
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch inductor FP32</th>
+<th style="text-align: center;">PyTorch inductor FP16</th>
+<th style="text-align: center;">PyTorch TorchScript FP16</th>
+<th style="text-align: center;">CoreML FP32</th>
+<th style="text-align: center;">CoreML FP16</th>
+<th style="text-align: center;">CoreML GPU FP32</th>
+<th style="text-align: center;">CoreML GPU FP16</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Atto (A) △</td>
+<td style="text-align: center;">4.92 (5.38)</td>
+<td style="text-align: center;">4.75 (5.20)</td>
+<td style="text-align: center;">9.98 (11.54)</td>
+<td style="text-align: center;">7.82 (9.53)</td>
+<td style="text-align: center;"><strong>3.81 (4.03)</strong></td>
+<td style="text-align: center;">8.07 (9.55)</td>
+<td style="text-align: center;">6.93 (9.58)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Femto (F) △</td>
+<td style="text-align: center;"><strong>4.74 (5.06)</strong></td>
+<td style="text-align: center;"><strong>4.60 (5.07)</strong></td>
+<td style="text-align: center;">9.89 (10.79)</td>
+<td style="text-align: center;">8.30 (9.51)</td>
+<td style="text-align: center;">24.51 (25.41)</td>
+<td style="text-align: center;">7.15 (9.41)</td>
+<td style="text-align: center;">8.16 (9.43)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Pico (P) △</td>
+<td style="text-align: center;"><strong>4.99 (5.17)</strong></td>
+<td style="text-align: center;"><strong>4.93 (5.20)</strong></td>
+<td style="text-align: center;">9.84 (10.36)</td>
+<td style="text-align: center;">8.92 (9.41)</td>
+<td style="text-align: center;">8.51 (9.41)</td>
+<td style="text-align: center;">8.56 (9.49)</td>
+<td style="text-align: center;">8.68 (9.50)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Nano (N)</td>
+<td style="text-align: center;"><strong>7.48 (8.07)</strong></td>
+<td style="text-align: center;"><strong>7.22 (8.26)</strong></td>
+<td style="text-align: center;">10.04 (11.86)</td>
+<td style="text-align: center;">9.74 (11.51)</td>
+<td style="text-align: center;">12.64 (14.58)</td>
+<td style="text-align: center;">9.75 (11.16)</td>
+<td style="text-align: center;">9.62 (11.09)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Small (S)</td>
+<td style="text-align: center;">11.65 (13.10)</td>
+<td style="text-align: center;"><strong>10.82 (13.32)</strong></td>
+<td style="text-align: center;">12.71 (15.89)</td>
+<td style="text-align: center;">12.17 (16.73)</td>
+<td style="text-align: center;">25.19 (29.14)</td>
+<td style="text-align: center;">12.33 (14.55)</td>
+<td style="text-align: center;"><strong>11.28 (13.56)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Medium (M)</td>
+<td style="text-align: center;">15.98 (18.37)</td>
+<td style="text-align: center;">14.71 (20.54)</td>
+<td style="text-align: center;">15.58 (18.30)</td>
+<td style="text-align: center;">15.11 (20.66)</td>
+<td style="text-align: center;">33.75 (36.55)</td>
+<td style="text-align: center;">14.73 (16.95)</td>
+<td style="text-align: center;"><strong>13.24 (15.34)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Large (L)</td>
+<td style="text-align: center;">21.52 (23.59)</td>
+<td style="text-align: center;">18.19 (20.13)</td>
+<td style="text-align: center;">18.55 (19.14)</td>
+<td style="text-align: center;">17.80 (18.24)</td>
+<td style="text-align: center;">54.89 (56.16)</td>
+<td style="text-align: center;">18.67 (20.25)</td>
+<td style="text-align: center;"><strong>16.90 (18.65)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">XLarge (XL) △</td>
+<td style="text-align: center;">36.25 (39.79)</td>
+<td style="text-align: center;">33.31 (33.83)</td>
+<td style="text-align: center;">34.43 (34.83)</td>
+<td style="text-align: center;">38.46 (39.06)</td>
+<td style="text-align: center;">91.62 (92.86)</td>
+<td style="text-align: center;">36.93 (38.08)</td>
+<td style="text-align: center;"><strong>31.29 (31.80)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">2XLarge (2XL) △</td>
+<td style="text-align: center;">49.95 (51.37)</td>
+<td style="text-align: center;"><strong>41.74 (42.00)</strong></td>
+<td style="text-align: center;"><strong>43.51 (43.80)</strong></td>
+<td style="text-align: center;">50.36 (52.05)</td>
+<td style="text-align: center;">128.73 (129.12)</td>
+<td style="text-align: center;">50.01 (52.11)</td>
+<td style="text-align: center;"><strong>41.74 (42.47)</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>.</p>
+<p>Atto is fastest with CoreML FP16 alone, 25% ahead of PyTorch inductor FP16 (3.81 and 4.75 ms). Femto to Small are fastest with PyTorch inductor FP16 (level with inductor FP32 up to Nano and with CoreML GPU FP16 at Small), Medium to XLarge with CoreML GPU FP16, and 2XLarge is a three-way tie.</p>
+<p>Femto's CoreML FP16 time (24.51 ms) is not noise: the Neural Engine compiler fails on its FP16 package under the default compute units, as the <a href="../../../exports/coreml/#measured-latency-on-apple-silicon">CoreML page</a> explains. CoreML GPU FP16 avoids that plan and takes 8.16 ms.</p>
+<h2 id="fastest-configuration-on-an-x86-cpu">Fastest Configuration on an x86 CPU<a class="headerlink" href="#fastest-configuration-on-an-x86-cpu" title="Permanent link">&para;</a></h2>
+<p>The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own CPU to find yours.</p>
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
+
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Size</th>
+<th style="text-align: center;">PyTorch TorchScript FP32</th>
+<th style="text-align: center;">ONNX FP32</th>
+<th style="text-align: center;">ONNX INT8</th>
+<th style="text-align: center;">OpenVINO FP32</th>
+<th style="text-align: center;">OpenVINO FP16</th>
+<th style="text-align: center;">OpenVINO INT8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">Atto (A) △</td>
+<td style="text-align: center;"><strong>49.30 (81.53)</strong></td>
+<td style="text-align: center;">66.30 (102.49)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">61.89 (110.31)</td>
+<td style="text-align: center;">65.78 (101.60)</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Femto (F) △</td>
+<td style="text-align: center;"><strong>71.49 (105.86)</strong></td>
+<td style="text-align: center;">103.99 (139.05)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">77.12 (131.74)</td>
+<td style="text-align: center;">79.50 (136.18)</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Pico (P) △</td>
+<td style="text-align: center;"><strong>96.17 (138.73)</strong></td>
+<td style="text-align: center;">133.67 (168.07)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">104.31 (172.77)</td>
+<td style="text-align: center;">111.09 (173.81)</td>
+<td style="text-align: center;">—</td>
+</tr>
+<tr>
+<td style="text-align: center;">Nano (N)</td>
+<td style="text-align: center;"><strong>144.30 (201.38)</strong></td>
+<td style="text-align: center;">223.88 (258.26)</td>
+<td style="text-align: center;"><strong>142.29 (184.13)</strong></td>
+<td style="text-align: center;"><strong>139.62 (236.81)</strong></td>
+<td style="text-align: center;"><strong>140.80 (229.94)</strong></td>
+<td style="text-align: center;">147.03 (251.28)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Small (S)</td>
+<td style="text-align: center;"><strong>255.07 (316.23)</strong></td>
+<td style="text-align: center;">379.63 (419.53)</td>
+<td style="text-align: center;"><strong>249.21 (294.51)</strong></td>
+<td style="text-align: center;"><strong>248.60 (387.60)</strong></td>
+<td style="text-align: center;">262.16 (399.60)</td>
+<td style="text-align: center;"><strong>254.88 (422.05)</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">Medium (M)</td>
+<td style="text-align: center;">328.94 (574.67)</td>
+<td style="text-align: center;">458.90 (510.59)</td>
+<td style="text-align: center;"><strong>301.01 (359.73)</strong></td>
+<td style="text-align: center;"><strong>313.77 (496.52)</strong></td>
+<td style="text-align: center;">325.86 (496.62)</td>
+<td style="text-align: center;">331.42 (552.13)</td>
+</tr>
+<tr>
+<td style="text-align: center;">Large (L)</td>
+<td style="text-align: center;">503.23 (834.66)</td>
+<td style="text-align: center;">653.41 (708.16)</td>
+<td style="text-align: center;"><strong>455.91 (521.81)</strong></td>
+<td style="text-align: center;">507.50 (744.23)</td>
+<td style="text-align: center;">537.98 (781.94)</td>
+<td style="text-align: center;">509.06 (764.56)</td>
+</tr>
+<tr>
+<td style="text-align: center;">XLarge (XL) △</td>
+<td style="text-align: center;">1073.06 (1901.00)</td>
+<td style="text-align: center;">1240.19 (1343.50)</td>
+<td style="text-align: center;"><strong>859.06 (990.42)</strong></td>
+<td style="text-align: center;">1111.67 (1476.47)</td>
+<td style="text-align: center;">1171.22 (1533.26)</td>
+<td style="text-align: center;">1103.99 (1583.44)</td>
+</tr>
+<tr>
+<td style="text-align: center;">2XLarge (2XL) △</td>
+<td style="text-align: center;">1525.65 (2293.85)</td>
+<td style="text-align: center;">1653.97 (1815.14)</td>
+<td style="text-align: center;"><strong>1121.89 (1303.18)</strong></td>
+<td style="text-align: center;">1592.33 (2029.86)</td>
+<td style="text-align: center;">1762.35 (2233.25)</td>
+<td style="text-align: center;">1560.11 (2066.94)</td>
+</tr>
+</tbody>
+</table>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>. Atto, Femto and Pico have no INT8 cell.</p>
+<ul>
+<li>Atto, Femto and Pico are fastest with PyTorch TorchScript FP32 alone, the next configuration 7.9% to 25.5% behind. Nano and Small are a four-way tie.</li>
+<li>From Medium up ONNX INT8 is fastest or tied, and alone from Large up, 10.4% to 36.0% ahead of TorchScript FP32.</li>
+<li>OpenVINO FP16 and INT8 are never more than 2% faster than OpenVINO FP32. The 95th percentile reaches 1.78 times the median (OpenVINO FP32, Atto), so this one shared-host run cannot order configurations inside the 5% band.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">FP16 and INT8 can lower accuracy</p>
+<p>Most of the fastest configurations above run in FP16 or INT8, and accuracy was scored for only some of them. Check it on your own data before you rely on one; <a href="../latency/#fp16-and-int8-can-lower-accuracy">the scored configurations and sources</a>.</p>
 </div>
 <h2 id="run-on-an-image">Run on an Image<a class="headerlink" href="#run-on-an-image" title="Permanent link">&para;</a></h2>
 <p>Perform inference on an image with the <code>rfdetr</code> package. To use a different model size, select the corresponding class from the table above.</p>
@@ -3484,7 +4157,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>RFDETRInference(model).predict()</code> reads video files, video URLs, webcams, RTSP streams, and YouTube directly and can yield results lazily with <code>stream=True</code>. See <a href="../videos-and-streams/">Run on Videos and Streams</a>. The examples below keep full control of decoding and display with OpenCV.</p>
 </div>
 <p>These examples use OpenCV for decoding and display. Replace <code>&lt;SOURCE_VIDEO_PATH&gt;</code>, <code>&lt;WEBCAM_INDEX&gt;</code>, and <code>&lt;RTSP_STREAM_URL&gt;</code> with your inputs. <code>&lt;WEBCAM_INDEX&gt;</code> is usually <code>0</code> for the default camera.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">video</label><label for="__tabbed_1_2">webcam</label><label for="__tabbed_1_3">stream</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:3"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">video</label><label for="__tabbed_2_2">webcam</label><label for="__tabbed_2_3">stream</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
@@ -3608,7 +4281,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 13, 2026 09:23:01 UTC">2026-11-13 09:23:01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

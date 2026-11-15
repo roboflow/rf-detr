@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-06T13:51:09">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-06T13:51:09",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -951,6 +951,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -3466,7 +3494,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>On the same subset, INT8 cost 2.65 mAP (Nano) and 2.67 (Small) against each model's own FP32 baseline, for roughly 3x smaller files and ~1.4x faster CPU inference at batch 1. That is a real trade, not a rounding error — <strong>measure on your own data and task before deploying</strong>. Published INT8 RF-DETR models built with other tooling land closer to 0.5 mAP, so this gap is a property of the current configuration rather than of the architecture.</p>
 </div>
 <p>Quantization runs on CPU via ONNX Runtime, which the <code>rfdetr[onnx]</code> extra already installs.</p>
-<p>The x86 CPU timing and accuracy comparison against the fp32 model is pending a rerun of the <a href="../../cookbooks/export-cpu/">CPU cookbook</a>; see <a href="#on-an-x86-cpu">On an x86 CPU</a> below.</p>
+<p>The x86 CPU timing of the INT8 model against the fp32 model is in <a href="#on-an-x86-cpu">On an x86 CPU</a> below. The accuracy comparison on x86 is pending a rerun of the <a href="../../cookbooks/export-cpu/">CPU cookbook</a>.</p>
 <h2 id="measured-latency">Measured Latency<a class="headerlink" href="#measured-latency" title="Permanent link">&para;</a></h2>
 <p>Every latency is the end-to-end <code>predict()</code> call (preprocessing, forward, postprocessing) through <code>RFDETRInference</code>, <code>RFDETRSmall</code>. <code>FPS</code> is images per second. <code>mAP@50:95</code> is a seeded 500-image COCO val2017 subset, scored at batch 1 on the same artifact that was timed. The PyTorch baseline of each machine is on the <a href="../#pytorch-baseline">export overview</a>.</p>
 <h3 id="on-an-nvidia-l4">On an NVIDIA L4<a class="headerlink" href="#on-an-nvidia-l4" title="Permanent link">&para;</a></h3>
@@ -3515,7 +3543,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </table>
 <p>ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than batch 4 (120.5 against 132.9 img/s). The batch 4 and 8 latencies are batch size divided by the measured img/s, rounded to one decimal. On this GPU a <a href="../tensorrt/#latency-across-nvidia-gpus">TensorRT engine</a> is the faster route.</p>
 <h3 id="on-an-x86-cpu">On an x86 CPU<a class="headerlink" href="#on-an-x86-cpu" title="Permanent link">&para;</a></h3>
-<p>No x86 CPU table is published yet: the earlier run had <code>RFDETRInference</code>'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows are removed pending a rerun of the <a href="../../cookbooks/export-cpu/">CPU cookbook</a>. On Intel CPUs, <a href="../openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> is the measured route.</p>
+<p>The <a href="../../cookbooks/measure-latency/">latency cookbook</a> times ONNX Runtime FP32 and INT8 on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, ONNX Runtime 1.32.0, <code>rfdetr</code> 1.13.0.dev0) for every pretrained size, as the median of 200 images at batch 1, with the thread count set to the 8 logical cores through the <code>num_threads</code> runtime option. The tables are on the Run pages for <a href="../../learn/run/detection/#fastest-configuration-on-an-x86-cpu">detection</a>, <a href="../../learn/run/segmentation/#fastest-configuration-on-an-x86-cpu">segmentation</a> and <a href="../../learn/run/keypoints/#fastest-configuration-on-an-x86-cpu">keypoints</a>, next to PyTorch TorchScript and OpenVINO. In them:</p>
+<ul>
+<li>ONNX INT8 takes 64% to 83% of the ONNX FP32 time at every size it was timed for.</li>
+<li>ONNX INT8 is among the fastest of the six configurations for 13 of the 16 models. ONNX FP32 is never among them: it is slower than PyTorch TorchScript FP32 at every size.</li>
+<li>No accuracy was scored for these CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.</li>
+</ul>
+<p>No earlier x86 CPU table remains here: the earlier run had <code>RFDETRInference</code>'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, <a href="../openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> is also a measured route.</p>
 
 
 
@@ -3536,7 +3570,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 6, 2026 13:51:09 UTC">2026-11-06 13:51:09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

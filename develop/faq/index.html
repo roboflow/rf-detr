@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-10T08:44:52">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-10T08:44:52",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -951,6 +951,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -3229,6 +3257,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#why-is-an-inductor-predictor-slower-after-i-built-several-models-in-one-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why is an inductor predictor slower after I built several models in one process?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-do-i-evaluate-a-trained-model-and-get-map" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3470,6 +3509,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#why-is-an-inductor-predictor-slower-after-i-built-several-models-in-one-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why is an inductor predictor slower after I built several models in one process?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-do-i-evaluate-a-trained-model-and-get-map" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3569,6 +3619,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>See <a href="../learn/train/advanced/#fp8-training-on-nvidia-cuda">Advanced FP8 setup</a> for installation, CUDA-major compatibility, and fixes for empty-metapackage, skipped-layer, and EMA extra-state messages.</p>
 <h2 id="what-export-formats-are-supported">What export formats are supported?<a class="headerlink" href="#what-export-formats-are-supported" title="Permanent link">&para;</a></h2>
 <p>ONNX, TFLite (FP32/FP16/INT8), LiteRT (<code>.tflite</code> straight from PyTorch via litert-torch), TensorRT (<code>.trt</code>), ExecuTorch (XNNPACK, CoreML, QNN), native CoreML (<code>.mlpackage</code>), and OpenVINO IR. Install the matching extra — <code>rfdetr[onnx]</code>, <code>rfdetr[tflite]</code>, <code>rfdetr[litert]</code>, <code>rfdetr[tensorrt]</code>, <code>rfdetr[executorch]</code>, <code>rfdetr[coreml]</code>, or <code>rfdetr[openvino]</code> — then call <code>model.export(format=...)</code>. <code>format="tensorrt"</code> (alias <code>"trt"</code>) exports ONNX and builds the engine in-process, so it is one call rather than a separate conversion step. Native CoreML (<code>format="coreml"</code>) is distinct from the ExecuTorch CoreML backend (<code>format="executorch", backend="coreml"</code>) — the former produces a <code>.mlpackage</code> directly, the latter a <code>.pte</code>. See <a href="../exports/">Export Model</a>.</p>
+<h2 id="why-is-an-inductor-predictor-slower-after-i-built-several-models-in-one-process">Why is an inductor predictor slower after I built several models in one process?<a class="headerlink" href="#why-is-an-inductor-predictor-slower-after-i-built-several-models-in-one-process" title="Permanent link">&para;</a></h2>
+<p><code>model.inference(compile_backend="inductor")</code> (the default on Apple Silicon) compiles through <code>torch.compile</code>, and PyTorch Dynamo stops compiling a function after <code>torch._dynamo.config.recompile_limit</code> compiled variants (also named <code>cache_size_limit</code>, default 8). Every RF-DETR size runs the same <code>forward</code>, so each inductor predictor built in one process, per size, dtype and resolution, uses one variant. After the eighth, Dynamo logs <code>torch._dynamo hit config.recompile_limit (8)</code> and later predictors run several times slower, with no exception.</p>
+<p><code>RFDETR.inference()</code> now holds the limit at 64 (or your higher value) while it compiles and restores it afterwards, so building predictors through it is not affected. It also compiles with <code>dynamic=False</code>: with the limit lifted but dynamic shapes left on, Femto in fp16 failed to compile on Apple Silicon (<code>no 'buffer' resource location available</code>) after several other sizes had been built in the same process, and with <code>dynamic=False</code> the same sequence compiled. You can still hit the limit when you call <code>torch.compile</code> on RF-DETR modules yourself, or on an installed version without that change. If timings depend on the order in which you build predictors, look for the warning in the log, then raise the limit before building them, or build each predictor in its own process:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch._dynamo</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">torch</span><span class="o">.</span><span class="n">_dynamo</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">cache_size_limit</span> <span class="o">=</span> <span class="mi">64</span>
+</span></code></pre></div>
+<p>On an Apple M4 Max, Atto with inductor in fp16 took 12.20 ms when built after Nano, Small, Medium and Large in fp32 and fp16 (eight variants), against 4.61 ms in the same process with the limit raised. With the limit set to 1, the second model took 10.6 to 12.8 ms instead of about 4.6 to 6.5 ms. Whether Dynamo runs the function eagerly once the limit is hit was not checked directly.</p>
 <h2 id="how-do-i-evaluate-a-trained-model-and-get-map">How do I evaluate a trained model and get mAP?<a class="headerlink" href="#how-do-i-evaluate-a-trained-model-and-get-map" title="Permanent link">&para;</a></h2>
 <p>Call <code>model.evaluate(split="test")</code> (or <code>split="val"</code>). It returns a dictionary of metrics including mAP. See the <a href="../learn/train/customization/">Custom Training API</a>.</p>
 
@@ -3591,7 +3649,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 10, 2026 08:44:52 UTC">2026-11-10 08:44:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

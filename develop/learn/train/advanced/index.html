@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-30T11:01:55">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-30T11:01:55",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -951,6 +951,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -4728,7 +4756,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>For the Transformer Engine route, a synthetic RF-DETR Nano run at 384 px and batch 4 on an RTX PRO 6000 Blackwell used 20 warm-up and 50 measured steps: eager averaged 78.075 ms per step versus 40.066 ms with Transformer Engine-aware graphs (about 1.95x throughput), with one graph capture serving 70 calls. This is a single fixed-shape experiment, not COCO parity or accuracy evidence, and does not establish a large-batch gain. Repeat numerical-parity and performance checks on your target GPU before treating it as a production baseline.</p>
 <div class="admonition note">
 <p class="admonition-title">FP8 CUDA-graph capture/replay tests are CI-blind today</p>
-<p><code>tests/training/test_cuda_graph_te.py</code> covers this route, but the repository's GPU CI runner is a Tesla T4 (compute capability 7.5). The test's FP8-hardware gate checks <code>torch.cuda.get_device_capability(0) &gt;= (8, 9)</code> before anything imports Transformer Engine, so on a T4 the whole module skips rather than exercising the capture path. These tests are validated only by local or manual runs on Ada/Hopper-class or newer hardware until an 8.9+ GPU is available in CI.</p>
+<p><code>tests/training/test_cuda_graph_te.py</code> covers this route, but the repository's GPU CI runner is a NVIDIA T4 (compute capability 7.5). The test's FP8-hardware gate checks <code>torch.cuda.get_device_capability(0) &gt;= (8, 9)</code> before anything imports Transformer Engine, so on a T4 the whole module skips rather than exercising the capture path. These tests are validated only by local or manual runs on Ada/Hopper-class or newer hardware until an 8.9+ GPU is available in CI.</p>
 </div>
 <p>A second reference point, on real data, shows the other end of the range. RF-DETR Nano on an NVIDIA RTX PRO 6000 (Blackwell, 96 GB) with BF16, batch 64, resolution 384, <code>multi_scale=False</code>, COCO train2017 through the Albumentations CPU pipeline on Colab: eager and <code>cuda_graphs=True</code> both ran at 3.54 it/s (about 8 min 40 s per epoch, one captured graph, no fallback), while <code>compile=True</code> finished the same epoch in 7 min 10 s, about 17% faster. Nothing was wrong with the capture; the two options remove different costs.</p>
 <h3 id="choosing-between-cuda-graphs-and-compilation">Choosing between CUDA graphs and compilation<a class="headerlink" href="#choosing-between-cuda-graphs-and-compilation" title="Permanent link">&para;</a></h3>
@@ -4933,7 +4961,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 30, 2026 11:01:55 UTC">2026-10-30 11:01:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     

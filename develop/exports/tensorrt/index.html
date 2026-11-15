@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-09T18:49:00">
+  <meta property="article:modified_time" content="2026-11-15T09:29:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-09T18:49:00",
+    "dateModified": "2026-11-15T09:29:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -951,6 +951,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
   
     Keypoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/run/latency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measuring Latency
   
 
     
@@ -3564,7 +3592,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>This writes <code>output/rfdetr-small_int8.trt</code> (next to the intermediate <code>output/rfdetr-small.onnx</code>). The export runs the first <code>max_images</code> (default <code>100</code>) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as <code>predict()</code> does, and records each quantized tensor's largest absolute value. For a detection model it makes two more passes: one to measure how wide each backbone LayerNorm output is per channel (so the widest channels can be folded into the weights that read them) and one to measure how much INT8 shifts each backbone MLP layer's mean output (subtracted from the layer's bias); see the <a href="#placement-rules">placement rules</a>.</p>
 <p>Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. <code>calibration_data</code> also accepts a <code>.npy</code> path or an array shaped <code>(N, C, H, W)</code>, already normalized the way <code>predict()</code> normalizes (an integer array of raw pixels is refused). <code>max_images</code> caps only a directory of images; an array or <code>.npy</code> file is used whole. Calibration runs the graph at the export's <code>batch_size</code>, so its host memory grows with the batch.</p>
 <h3 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h3>
-<p>The numbers come from <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a>, run on a Tesla T4 (Colab) with TensorRT 11.4.0.106. The three tabs hold every model.</p>
+<p>The numbers come from <a href="../../cookbooks/export-cuda/#81-benchmark-for-the-docs-tables">Section 8.1 of the CUDA cookbook</a>, run on a NVIDIA T4 (Colab) with TensorRT 11.4.0.106. The three tabs hold every model.</p>
 <!-- COPIES: these tables come from Section 8.1 of docs/cookbooks/export-cuda.ipynb. Any range quoted from it elsewhere (INT8 summary text, docs/exports/index.md) must match it. Update them together. -->
 
 <ul>
@@ -3744,7 +3772,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Detection, segmentation and keypoint models. The smoothing and bias correction apply to detection models only. <code>RFDETRSegXLarge</code>, <code>RFDETRSeg2XLarge</code> and the <code>rfdetr_plus</code> detection models are accepted but were not measured. <code>backbone_only=True</code> is refused with <code>ValueError</code>.</li>
 <li>A static batch (<code>dynamic_batch=True</code> is refused), <code>fp16=True</code>, and TensorRT 10 or newer. The batch is fixed when you build the engine.</li>
 <li>All tables above were measured on TensorRT 11.4. The detection placement without the patch-embedding matrix multiply was also checked on 10.16 and 11.3; the segmentation and keypoint models only on 11.4, and other releases from 10 on are accepted but untested.</li>
-<li>Only a Tesla T4 (sm_75) was measured for engine-only speed (the end-to-end INT8 rows of <a href="#latency-across-nvidia-gpus">Latency Across NVIDIA GPUs</a> also cover the L4, A100 and RTX PRO 6000), and only without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>. Those settings are accepted with <code>quantization="int8"</code>, but a portable engine may not get the fused INT8 attention kernel the speedup relies on.</li>
+<li>Only a NVIDIA T4 (sm_75) was measured for engine-only speed (the end-to-end INT8 rows of <a href="#latency-across-nvidia-gpus">Latency Across NVIDIA GPUs</a> also cover the L4, A100 and RTX PRO 6000), and only without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>. Those settings are accepted with <code>quantization="int8"</code>, but a portable engine may not get the fused INT8 attention kernel the speedup relies on.</li>
 <li>The fused INT8 attention kernel is listed by NVIDIA for sm_75 to sm_90, sm_120 and sm_121. On other GPUs (for example sm_100, B200) attention would run unfused, so measure before deploying.</li>
 </ul>
 <div class="admonition note">
@@ -3753,6 +3781,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <h2 id="latency-across-nvidia-gpus">Latency Across NVIDIA GPUs<a class="headerlink" href="#latency-across-nvidia-gpus" title="Permanent link">&para;</a></h2>
 <p>The same end-to-end measurement for the four detection sizes on four GPUs, from one run per GPU, timed with the same <code>RFDETRInference</code> calls as the <a href="../../cookbooks/export-cuda/">CUDA cookbook</a>, which times one size per run, set by <code>MODEL_SIZE</code>. Its Section 8 subsection <em>Batch 1, 4 and 8, end to end</em> reproduces the <code>.trt</code> FP16 and INT8 rows, with one static engine per batch size. All ran <code>rfdetr</code> 1.12.0.dev0, PyTorch 2.15.0 with CUDA 13.2 and TensorRT 10.16.1.11, with 20 warmup and 100 timed runs per row. Every row times one decoded RGB NumPy array through preprocessing, forward, postprocessing and conversion to <code>sv.Detections</code>, and passes <code>include_source_image=False</code>.</p>
+<p>The <a href="../../cookbooks/measure-latency/">latency cookbook</a> times every pretrained size on the same four GPUs, as the median of 500 images with TensorRT 11.4.0.106, at batch 1 only. Its tables are on the Run pages for <a href="../../learn/run/detection/#fastest-configuration-on-nvidia-gpus">detection</a>, <a href="../../learn/run/segmentation/#fastest-configuration-on-nvidia-gpus">segmentation</a> and <a href="../../learn/run/keypoints/#fastest-configuration-on-nvidia-gpus">keypoints</a>. They do not time the managed engine or batch 8, and they use a different protocol and TensorRT version from the tables below, so compare numbers only within one set.</p>
 <p>Routes (the letter is how the <a href="../#fastest-route-across-nvidia-gpus">fastest-route tables</a> name a route):</p>
 <ul>
 <li><strong>C</strong>, <code>inference()</code> graph, FP16: <code>model.inference()</code> with fp16 and a captured CUDA graph.</li>
@@ -3769,7 +3798,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <!-- COPIES: the four GPU tabs are mirrored by docs/exports/index.md, "Fastest route across NVIDIA GPUs" (the fastest of the graph, FP16, INT8 and managed routes per cell, ms at batch 1, img/s at batch 8; FP32 is never the fastest) and the "NVIDIA L4" row of "Measured Performance by Hardware" (Small, .trt INT8). Update all of them together. -->
 
-<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Tesla T4</label><label for="__tabbed_2_2">NVIDIA L4</label><label for="__tabbed_2_3">A100</label><label for="__tabbed_2_4">RTX PRO 6000</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">NVIDIA T4</label><label for="__tabbed_2_2">NVIDIA L4</label><label for="__tabbed_2_3">NVIDIA A100</label><label for="__tabbed_2_4">NVIDIA RTX PRO 6000</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <table>
@@ -3991,7 +4020,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The same measurement for the four instance segmentation sizes (<code>RFDETRSeg*</code>) on the same four GPUs, one run per GPU with 20 warmup and 100 timed runs. The A100 here is the 40 GB part, and the RTX PRO 6000 ran PyTorch 2.14.1 with CUDA 13.0; the other GPUs ran PyTorch 2.15.0 with CUDA 13.2. Each call returns masks, so the times include decoding them on the host and are not comparable with the detection tables above. Latency only: no mask AP was scored. Cells and the INT8 speedup read as in the detection tabs above.</p>
 <!-- COPIES: none yet. If these tables are copied elsewhere, list the copy here and in the copy. -->
 
-<div class="tabbed-set tabbed-alternate" data-tabs="3:4"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><input id="__tabbed_3_3" name="__tabbed_3" type="radio" /><input id="__tabbed_3_4" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">Tesla T4</label><label for="__tabbed_3_2">NVIDIA L4</label><label for="__tabbed_3_3">A100</label><label for="__tabbed_3_4">RTX PRO 6000</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:4"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><input id="__tabbed_3_3" name="__tabbed_3" type="radio" /><input id="__tabbed_3_4" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">NVIDIA T4</label><label for="__tabbed_3_2">NVIDIA L4</label><label for="__tabbed_3_3">NVIDIA A100</label><label for="__tabbed_3_4">NVIDIA RTX PRO 6000</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <table>
@@ -4355,7 +4384,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 9, 2026 18:49:00 UTC">2026-11-09 18:49:00</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
   </span>
 
     
