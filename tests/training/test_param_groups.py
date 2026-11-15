@@ -187,6 +187,20 @@ class TestGetParamDict:
 
         assert grouped.isdisjoint({id(p) for p in frozen.parameters()})
 
+    def test_non_positive_vit_decay_would_make_group_learning_rates_negative(
+        self, nano_model_and_args: tuple[LWDETR, Any]
+    ) -> None:
+        """Why ``TrainConfig`` rejects a non-positive ``lr_vit_layer_decay``.
+
+        The rate is raised to a per-depth power, so a negative one alternates sign with depth and reaches the optimizer
+        as a negative learning rate for every group whose exponent is odd, ascending the loss for those parameters. The
+        namespace is set directly because ``TrainConfig`` rejects the value before it can get here.
+        """
+        model, args = nano_model_and_args
+        args.lr_vit_layer_decay = -0.8
+
+        assert any(group["lr"] < 0 for group in get_param_dict(args, model))
+
     def test_no_empty_group(self, nano_model_and_args: tuple[LWDETR, Any]) -> None:
         """An empty group would reach the optimizer as a no-op group; buckets are built from real parameters."""
         model, args = nano_model_and_args

@@ -1279,8 +1279,12 @@ class TrainConfig(BaseConfig):
     smooth_alpha: float = 0.0
     # ge=0: a negative value shifts the managed LR schedule so it starts part-way through its decay.
     warmup_epochs: float = Field(default=0.0, ge=0.0)
-    lr_vit_layer_decay: float = 0.8
-    lr_component_decay: float = 0.7
+    # gt=0: both scale per-parameter learning rates multiplicatively. ``lr_vit_layer_decay`` is raised to a per-depth
+    # power, so a negative rate alternates sign with depth and gives half the ViT blocks a negative learning rate; a
+    # negative ``lr_component_decay`` makes the decoder learning rate negative. Zero freezes every ViT block while the
+    # non-block backbone parameters keep the full rate, a partial freeze ``freeze_encoder`` already expresses.
+    lr_vit_layer_decay: float = Field(default=0.8, gt=0.0)
+    lr_component_decay: float = Field(default=0.7, gt=0.0)
     # [0, 1): ``drop_path=1.0`` divides by a zero keep probability and turns every drop-path layer output into NaN.
     drop_path: float = Field(default=0.0, ge=0.0, lt=1.0)
     cls_loss_coef: float = 1.0

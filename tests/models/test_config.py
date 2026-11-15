@@ -633,6 +633,41 @@ class TestTrainConfigT42PromotedFields:
         """The valid range stays accepted, including fractional warmup and zero for both fields."""
         assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("lr_vit_layer_decay", 0.0),
+            ("lr_vit_layer_decay", -0.8),
+            ("lr_component_decay", 0.0),
+            ("lr_component_decay", -0.7),
+        ],
+    )
+    def test_layer_decay_fields_reject_non_positive_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """``lr_vit_layer_decay`` and ``lr_component_decay`` must be > 0.
+
+        Both scale per-parameter learning rates multiplicatively. ``lr_vit_layer_decay`` is raised to a per-depth power
+        in ``get_vit_lr_decay_rate``, so a negative rate alternates sign with depth and gives half the ViT blocks a
+        negative learning rate, which ascends the loss for those blocks. A negative ``lr_component_decay`` makes the
+        decoder learning rate negative the same way. Zero freezes every ViT block at a zero learning rate while the
+        non-block backbone parameters keep the full rate, a partial freeze that ``freeze_encoder`` already expresses.
+        None of them raised an error.
+        """
+        with pytest.raises(ValidationError, match=field):
+            _make_train_config(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("lr_vit_layer_decay", 0.8),
+            ("lr_vit_layer_decay", 1.0),
+            ("lr_component_decay", 0.7),
+            ("lr_component_decay", 1.0),
+        ],
+    )
+    def test_layer_decay_fields_accept_positive_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """Positive decay rates stay valid, including ``1.0`` for a disabled decay."""
+        assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
+
     def test_batch_size_auto_is_accepted(self, tmp_path):
         """batch_size accepts the special 'auto' value."""
         tc = _make_train_config(tmp_path, batch_size="auto")
