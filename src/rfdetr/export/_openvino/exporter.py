@@ -302,7 +302,9 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         try:
             with torch.no_grad():
                 if self.config.static_input_shape:
-                    ov_model = convert_model(wrapped_model, input=list(input_tensors.shape), example_input=input_tensors)
+                    ov_model = convert_model(
+                        wrapped_model, input=list(input_tensors.shape), example_input=input_tensors
+                    )
                 else:
                     ov_model = convert_model(wrapped_model, example_input=input_tensors)
             if self.config.quantization == "int8":

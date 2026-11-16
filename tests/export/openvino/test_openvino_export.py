@@ -323,9 +323,10 @@ def openvino_export_stub(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 
 @pytest.mark.parametrize("static_input_shape", [False, True], ids=["dynamic", "static"])
+@_requires_openvino
 def test_export_serializes_input_shape(tmp_path: Path, static_input_shape: bool) -> None:
     """The serialized IR is dynamic by default and fixed when an input shape is requested."""
-    openvino = pytest.importorskip("openvino")
+    import openvino
 
     class ToyModel(torch.nn.Module):
         def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, ...]:
@@ -1065,7 +1066,9 @@ def openvino_detection_export(
     out_dir = tmp_path_factory.mktemp("openvino_nano")
     detector = rfdetr.RFDETRNano()
     resolution = int(detector.model.resolution)
-    xml_path = detector.export(output_dir=str(out_dir), format="openvino", shape=(resolution, resolution), verbose=False)
+    xml_path = detector.export(
+        output_dir=str(out_dir), format="openvino", shape=(resolution, resolution), verbose=False
+    )
 
     model = detector.model.model.to("cpu").eval()
     model.export()
@@ -1144,6 +1147,7 @@ class TestOpenVINOEndToEnd:
     def test_default_export_has_dynamic_input_and_runs_two_images(self, tmp_path: Path) -> None:
         """The default IR has dynamic dimensions and accepts a batch at the traced resolution."""
         import openvino as ov
+
         from rfdetr import RFDETRNano
 
         detector = RFDETRNano(pretrain_weights=None, device="cpu")
