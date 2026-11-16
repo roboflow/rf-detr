@@ -568,7 +568,7 @@ def load_pretrain_weights(
     }
     if short_rows:
         raise ValueError(
-            f"Pretrained weights hold {min(short_rows.values())} query rows but the config needs "
+            f"Only {min(short_rows.values())} pretrained query rows fit the requested layout, which needs "
             f"{target_query_rows} (num_queries={mc.num_queries} x group_detr={mc.group_detr}). Pretrained weights "
             "cannot grow num_queries or group_detr: keep the defaults and raise only num_select, or pass "
             "pretrain_weights=None to train with the larger layout from scratch."
