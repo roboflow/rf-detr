@@ -996,6 +996,32 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
         assert passed_state["refpoint_embed.weight"][:, 0].int().tolist() == expected
         assert passed_state["query_feat.weight"][:, 0].int().tolist() == expected
 
+    @pytest.mark.parametrize(
+        ("config_shape", "checkpoint_shape"),
+        [
+            pytest.param((8, 3), (4, 3), id="num_queries_grows"),
+            pytest.param((4, 5), (4, 3), id="group_detr_grows"),
+        ],
+    )
+    def test_rejects_query_layout_larger_than_checkpoint(
+        self, monkeypatch, config_shape: tuple, checkpoint_shape: tuple
+    ) -> None:
+        """A config asking for more query slots than the checkpoint holds fails with an actionable error.
+
+        Pretrained weights cannot supply the extra rows, so the loader names the offending settings and the
+        ``pretrain_weights=None`` escape hatch instead of surfacing a bare ``load_state_dict`` size mismatch.
+        """
+        mc = _query_config(*config_shape)
+        _serve_checkpoint(
+            monkeypatch,
+            _query_checkpoint(
+                *checkpoint_shape, args={"num_queries": checkpoint_shape[0], "group_detr": checkpoint_shape[1]}
+            ),
+        )
+
+        with pytest.raises(ValueError, match=r"num_queries.*pretrain_weights=None"):
+            load_pretrain_weights(_fake_nn_model(), mc)
+
     def test_legacy_fallback_multigroup_emits_warning(self, monkeypatch, captured) -> None:
         """group_detr > 1 legacy checkpoint (no num_queries/group_detr in args) emits scramble-risk warning."""
         mc = _query_config(2, 3)
@@ -1048,8 +1074,6 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
             pytest.param((4, 3), (4, 3), id="matching_rows_group_detr_gt1"),
             # group_detr == 1 has no groups to scramble even though the flat slice truncates rows.
             pytest.param((4, 1), (8, 1), id="truncating_rows_group_detr_eq1"),
-            # Growing num_queries: a checkpoint with FEWER rows than the target never trips the strict ``>`` check.
-            pytest.param((4, 3), (6, 1), id="fewer_checkpoint_rows_than_target"),
             # (150, 2) and (100, 3) both have 300 rows, so nothing truncates and no warning fires, yet the flat slice
             # is a no-op on row values while the target reinterprets them under its own partition.
             pytest.param((100, 3), (150, 2), id="matching_total_rows_different_factorization"),

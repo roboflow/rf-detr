@@ -559,6 +559,21 @@ def load_pretrain_weights(
                 # is still reinterpreted under the target partition undetectably.
                 checkpoint["model"][name] = tensor[:target_query_rows]
 
+    # Query embeddings can only shrink: the checkpoint has no rows for extra slots, so a larger layout would
+    # surface later as a bare ``load_state_dict`` size mismatch. Fail here with the setting to change instead.
+    short_rows = {
+        name: tensor.shape[0]
+        for name, tensor in checkpoint["model"].items()
+        if _is_query_param(name) and tensor.shape[0] < target_query_rows
+    }
+    if short_rows:
+        raise ValueError(
+            f"Pretrained weights hold {min(short_rows.values())} query rows but the config needs "
+            f"{target_query_rows} (num_queries={mc.num_queries} x group_detr={mc.group_detr}). Pretrained weights "
+            "cannot grow num_queries or group_detr: keep the defaults and raise only num_select, or pass "
+            "pretrain_weights=None to train with the larger layout from scratch."
+        )
+
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
 
     # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it.
