@@ -102,9 +102,10 @@ def test_train_fast_dev_run(
     and real data (no mocking).  Only asserts the pipeline runs without error; convergence is tested by the GPU-only
     tests below.
 
-    The larger case grows ``num_queries`` above the default 300 and sets ``num_select`` above ``num_queries``, which
-    needs ``pretrain_weights=None`` (pretrained weights cannot supply the extra query rows) and exercises the
-    validation-time top-k over more query/class pairs than there are queries.
+    The larger case grows ``num_queries`` above the default 300 and sets ``num_select`` above ``num_queries``,
+    exercising the validation-time top-k over more query/class pairs than there are queries. It trains from scratch, so
+    it needs no weight download; padding pretrained weights to more queries is unit-tested in
+    ``tests/models/test_weights.py``.
     """
     output_dir = tmp_path / "output"
     output_dir.mkdir(parents=True, exist_ok=True)

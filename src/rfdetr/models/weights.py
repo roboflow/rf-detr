@@ -92,7 +92,8 @@ def _slice_query_param_per_group(
       drop tail groups; retained groups stay pretrained.
     * Either dimension expands, or one shrinks while the other expands →
       return whatever per-group sub-tensor can be built (``min(target, ckpt)`` along each axis). The result has fewer
-      rows than the model expects, so ``load_state_dict`` will raise a shape mismatch immediately.
+      rows than the model expects; ``load_pretrain_weights`` then pads a ``num_queries`` increase with
+      :func:`_pad_query_param_per_group` and rejects anything else.
 
     When the tensor's flat length disagrees with ``ckpt_num_queries * ckpt_group_detr`` (corrupt or unexpected
     checkpoint shape), fall back to the legacy flat slice so loading continues with the same behavior the codebase had
@@ -143,6 +144,55 @@ def _slice_query_param_per_group(
     keep_per_group = min(target_num_queries, ckpt_num_queries)
     pieces = [tensor[g * ckpt_num_queries : g * ckpt_num_queries + keep_per_group] for g in range(keep_groups)]
     return torch.cat(pieces, dim=0)
+
+
+def _pad_query_param_per_group(
+    tensor: torch.Tensor,
+    ckpt_num_queries: int,
+    target_num_queries: int,
+    target_group_detr: int,
+    fresh: torch.Tensor,
+) -> torch.Tensor:
+    """Grow a ``refpoint_embed`` / ``query_feat`` weight to more queries per group, keeping every pretrained row.
+
+    Each group of the result starts with the checkpoint's rows for that group; the remaining rows of the group come from
+    ``fresh``, the tensor the model initialised for itself. Appending the fresh rows flat would instead push the
+    checkpoint's second group into the new slots of the first, which is the group inference reads.
+
+    Args:
+        tensor: Checkpoint rows already cut to ``target_group_detr`` groups of ``ckpt_num_queries`` rows each.
+        ckpt_num_queries: Queries per group held by ``tensor``.
+        target_num_queries: Queries per group the model needs; at least ``ckpt_num_queries``.
+        target_group_detr: Number of groups in both ``tensor`` and the result.
+        fresh: The model's own tensor of shape ``(target_num_queries * target_group_detr, ...)``.
+
+    Returns:
+        A new tensor shaped like ``fresh``; ``fresh`` itself is not modified.
+
+    Raises:
+        ValueError: If the shapes of ``tensor`` and ``fresh`` do not match the stated layout.
+
+    Examples:
+        >>> pretrained = torch.tensor([[1.0], [2.0]])
+        >>> fresh = torch.tensor([[-1.0], [-2.0], [-3.0], [-4.0]])
+        >>> _pad_query_param_per_group(pretrained, 1, 2, 2, fresh).squeeze(-1).tolist()
+        [1.0, -2.0, 2.0, -4.0]
+    """
+    if ckpt_num_queries > target_num_queries:
+        raise ValueError(f"cannot pad {ckpt_num_queries} queries per group down to {target_num_queries}.")
+    if (
+        tensor.shape[0] != ckpt_num_queries * target_group_detr
+        or fresh.shape[0] != target_num_queries * target_group_detr
+    ):
+        raise ValueError(
+            f"cannot pad: got {tensor.shape[0]} pretrained and {fresh.shape[0]} fresh rows for "
+            f"{target_group_detr} groups of {ckpt_num_queries} -> {target_num_queries} queries."
+        )
+    padded = fresh.clone()
+    for group in range(target_group_detr):
+        start = group * target_num_queries
+        padded[start : start + ckpt_num_queries] = tensor[group * ckpt_num_queries : (group + 1) * ckpt_num_queries]
+    return padded
 
 
 def _filter_intentional_keys(keys: list[str]) -> list[str]:
@@ -538,6 +588,32 @@ def load_pretrain_weights(
             "the checkpoint was trained with group_detr > 1.",
             mc.group_detr,
         )
+    # A checkpoint that records no layout (most published files) is read as the variant's default ``group_detr``
+    # groups of equal size, so it can still be padded below. The default is used instead of ``mc.group_detr`` because a
+    # config that also changed ``group_detr`` would otherwise have its group growth misread as ``num_queries`` growth.
+    _default_group_detr = type(mc).model_fields["group_detr"].default
+    if ckpt_num_queries is None and ckpt_group_detr is None and isinstance(_default_group_detr, int):
+        _short_rows = next(
+            (
+                t.shape[0]
+                for n, t in checkpoint["model"].items()
+                if _is_query_param(n) and t.shape[0] < target_query_rows and t.shape[0] % _default_group_detr == 0
+            ),
+            None,
+        )
+        if _short_rows is not None:
+            ckpt_group_detr = _default_group_detr
+            ckpt_num_queries = _short_rows // _default_group_detr
+    # Growing num_queries keeps the pretrained rows of every group and takes the extra rows from the model's own
+    # initialisation; group_detr cannot grow, because the extra groups would need encoder heads the checkpoint lacks.
+    can_pad_queries = (
+        ckpt_num_queries is not None
+        and ckpt_group_detr is not None
+        and ckpt_num_queries < mc.num_queries
+        and mc.group_detr <= ckpt_group_detr
+    )
+    fresh_state = nn_model.state_dict() if can_pad_queries else {}
+    padded_any = False
     for name in list(checkpoint["model"].keys()):
         if _is_query_param(name):
             tensor = checkpoint["model"][name]
@@ -549,6 +625,17 @@ def load_pretrain_weights(
                     target_num_queries=mc.num_queries,
                     target_group_detr=mc.group_detr,
                 )
+                fresh = fresh_state.get(name)
+                if (
+                    can_pad_queries
+                    and isinstance(fresh, torch.Tensor)
+                    and fresh.shape[0] == target_query_rows
+                    and fresh.shape[1:] == tensor.shape[1:]
+                ):
+                    checkpoint["model"][name] = _pad_query_param_per_group(
+                        checkpoint["model"][name], ckpt_num_queries, mc.num_queries, mc.group_detr, fresh
+                    )
+                    padded_any = True
             else:
                 # Checkpoint without args.num_queries/args.group_detr (published legacy files
                 # and BestModelCallback output, whose args value is a TrainConfig dump lacking
@@ -559,7 +646,16 @@ def load_pretrain_weights(
                 # is still reinterpreted under the target partition undetectably.
                 checkpoint["model"][name] = tensor[:target_query_rows]
 
-    # Query embeddings can only shrink: the checkpoint has no rows for extra slots, so a larger layout would
+    if padded_any:
+        logger.warning(
+            "load_pretrain_weights: num_queries=%d exceeds the %d the checkpoint was trained with; the %d extra query "
+            "slots per group are untrained (initialised like a fresh model) and need fine-tuning before they add "
+            "useful detections.",
+            mc.num_queries,
+            ckpt_num_queries,
+            mc.num_queries - (ckpt_num_queries or 0),
+        )
+    # Anything still short could not be padded (group_detr growth, or a layout that cannot be recovered), and would
     # surface later as a bare ``load_state_dict`` size mismatch. Fail here with the setting to change instead.
     short_rows = {
         name: tensor.shape[0]
@@ -570,8 +666,8 @@ def load_pretrain_weights(
         raise ValueError(
             f"Pretrained weights hold {min(short_rows.values())} query rows but the config needs "
             f"{target_query_rows} (num_queries={mc.num_queries} x group_detr={mc.group_detr}). Pretrained weights "
-            "cannot grow num_queries or group_detr: keep the defaults and raise only num_select, or pass "
-            "pretrain_weights=None to train with the larger layout from scratch."
+            "cannot grow group_detr, and num_queries only when the checkpoint layout is known: keep the defaults and "
+            "raise only num_select, or pass pretrain_weights=None to train with the larger layout from scratch."
         )
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)

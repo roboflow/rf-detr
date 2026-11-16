@@ -21,7 +21,13 @@ import torch
 
 from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
-from rfdetr.models.weights import _slice_query_param_per_group, _warn_on_partial_load, apply_lora, load_pretrain_weights
+from rfdetr.models.weights import (
+    _pad_query_param_per_group,
+    _slice_query_param_per_group,
+    _warn_on_partial_load,
+    apply_lora,
+    load_pretrain_weights,
+)
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_peft
@@ -920,7 +926,7 @@ class TestSliceQueryParamPerGroup:
         assert out[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0]
 
     def test_num_queries_expansion_returns_smaller_tensor(self):
-        """When target > ckpt, return min-per-group; load_state_dict will reject."""
+        """When target > ckpt, return min-per-group; padding to the target size is left to the caller."""
         tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
         out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=8, target_group_detr=3)
         # min(4, 8) = 4 per group, all 3 groups → 12 rows == input length.
@@ -944,6 +950,114 @@ class TestSliceQueryParamPerGroup:
         with pytest.raises(ValueError) as exc_info:
             _slice_query_param_per_group(torch.zeros(12, 2), ckpt_nq, ckpt_g, tgt_nq, tgt_g)
         assert "must be positive" in str(exc_info.value)
+
+
+def _fresh_query_init(num_queries: int, group_detr: int) -> dict[str, torch.Tensor]:
+    """Return the freshly initialised query tensors of a model, every row labelled ``-1 - row_index``.
+
+    Negative labels never collide with the non-negative ``_labelled_query_tensor`` checkpoint labels, so a row in the
+    padded result is attributable to the checkpoint or to the model's own initialisation by its sign.
+
+    Examples:
+        >>> _fresh_query_init(2, 2)["refpoint_embed.weight"][:, 0].tolist()
+        [-1.0, -2.0, -3.0, -4.0]
+    """
+    total = num_queries * group_detr
+    labels = -1.0 - torch.arange(total, dtype=torch.float32)
+    return {
+        "refpoint_embed.weight": labels.unsqueeze(1).repeat(1, 4),
+        "query_feat.weight": labels.unsqueeze(1).repeat(1, 256),
+    }
+
+
+class TestPadQueryParamPerGroup:
+    """Direct unit tests for ``_pad_query_param_per_group``."""
+
+    @pytest.mark.parametrize(
+        ("ckpt_nq", "target_nq", "target_g", "expected_labels"),
+        [
+            pytest.param(2, 4, 2, [0, 1, -3, -4, 100, 101, -7, -8], id="two_groups"),
+            pytest.param(2, 4, 1, [0, 1, -3, -4], id="single_group"),
+            pytest.param(3, 5, 2, [0, 1, 2, -4, -5, 100, 101, 102, -9, -10], id="uneven_split"),
+        ],
+    )
+    def test_keeps_pretrained_rows_at_the_head_of_each_group(
+        self, ckpt_nq: int, target_nq: int, target_g: int, expected_labels: list[int]
+    ) -> None:
+        """Pretrained rows land at the start of every group, and the model's fresh rows fill the rest of it.
+
+        A flat append would shift checkpoint group 1 into the new slots of group 0, which inference reads.
+        """
+        sliced = _labelled_query_tensor(num_queries=ckpt_nq, group_detr=target_g, dim=4)
+        fresh = _fresh_query_init(target_nq, target_g)["refpoint_embed.weight"]
+
+        padded = _pad_query_param_per_group(sliced, ckpt_nq, target_nq, target_g, fresh)
+
+        assert padded[:, 0].int().tolist() == expected_labels
+
+    def test_leaves_the_fresh_tensor_untouched(self) -> None:
+        """The padded result is a copy, so the model's own initial tensor is not overwritten by pretrained rows."""
+        sliced = _labelled_query_tensor(num_queries=2, group_detr=1, dim=4)
+        fresh = _fresh_query_init(4, 1)["refpoint_embed.weight"]
+        before = fresh.clone()
+
+        _pad_query_param_per_group(sliced, 2, 4, 1, fresh)
+
+        assert torch.equal(fresh, before)
+
+
+class TestLoadPretrainWeightsPadsQueryGrowth(_PatchWeightsIO):
+    """``load_pretrain_weights`` pads a checkpoint to a larger ``num_queries`` instead of failing."""
+
+    @staticmethod
+    def _model_with_query_init(num_queries: int, group_detr: int) -> MagicMock:
+        """Fake model whose ``state_dict`` exposes its freshly initialised query tensors.
+
+        Examples:
+            >>> model = TestLoadPretrainWeightsPadsQueryGrowth._model_with_query_init(2, 1)
+            >>> model.state_dict()["query_feat.weight"].shape
+            torch.Size([2, 256])
+        """
+        model = _fake_nn_model()
+        model.state_dict.return_value = _fresh_query_init(num_queries, group_detr)
+        return model
+
+    def test_pretrained_rows_are_kept_and_new_rows_come_from_the_model(self, monkeypatch, captured) -> None:
+        """A 4 -> 6 queries-per-group config loads every pretrained row and initialises only the 2 extra per group.
+
+        The first column carries each row's identity, so the check reads which rows are pretrained (non-negative) and
+        which are the model's own (negative), group by group.
+        """
+        mc = _query_config(6, 3)
+        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 3, args={"num_queries": 4, "group_detr": 3}))
+        nn_model = self._model_with_query_init(6, 3)
+
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        expected = [0, 1, 2, 3, -5, -6, 100, 101, 102, 103, -11, -12, 200, 201, 202, 203, -17, -18]
+        assert passed_state["refpoint_embed.weight"][:, 0].int().tolist() == expected
+        assert passed_state["query_feat.weight"][:, 0].int().tolist() == expected
+
+    def test_warns_that_new_queries_are_untrained(self, monkeypatch, captured) -> None:
+        """The padding is announced, so a user knows the extra slots need fine-tuning before they are useful."""
+        mc = _query_config(6, 3)
+        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 3, args={"num_queries": 4, "group_detr": 3}))
+
+        load_pretrain_weights(self._model_with_query_init(6, 3), mc)
+
+        assert any("untrained" in msg and "num_queries" in msg for msg in captured), captured
+
+    def test_recovers_layout_of_checkpoint_without_args(self, monkeypatch, captured) -> None:
+        """Published checkpoints that record no layout are padded too, splitting their rows by the default groups."""
+        mc = _query_config(6, 13)
+        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 13, args={}))
+        nn_model = self._model_with_query_init(6, 13)
+
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        assert passed_state["query_feat.weight"][:, 0].int().tolist()[:6] == [0, 1, 2, 3, -5, -6]
 
 
 class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
@@ -997,27 +1111,26 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
         assert passed_state["query_feat.weight"][:, 0].int().tolist() == expected
 
     @pytest.mark.parametrize(
-        ("config_shape", "checkpoint_shape"),
+        ("config_shape", "checkpoint_shape", "checkpoint_args"),
         [
-            pytest.param((8, 3), (4, 3), id="num_queries_grows"),
-            pytest.param((4, 5), (4, 3), id="group_detr_grows"),
+            pytest.param((4, 5), (4, 3), {"num_queries": 4, "group_detr": 3}, id="group_detr_grows"),
+            # No recorded layout and 7 rows do not split into 3 groups, so the layout cannot be recovered to pad.
+            pytest.param((5, 3), (7, 1), {}, id="unknown_layout_not_divisible"),
+            # 12 rows read as 6 groups of 2 would pad group growth as query growth and drop half of group 0's rows.
+            pytest.param((4, 6), (4, 3), {}, id="unknown_layout_with_group_growth"),
         ],
     )
     def test_rejects_query_layout_larger_than_checkpoint(
-        self, monkeypatch, config_shape: tuple, checkpoint_shape: tuple
+        self, monkeypatch, config_shape: tuple, checkpoint_shape: tuple, checkpoint_args: dict
     ) -> None:
-        """A config asking for more query slots than the checkpoint holds fails with an actionable error.
+        """A layout the loader cannot pad fails with an actionable error.
 
-        Pretrained weights cannot supply the extra rows, so the loader names the offending settings and the
-        ``pretrain_weights=None`` escape hatch instead of surfacing a bare ``load_state_dict`` size mismatch.
+        Growing ``group_detr`` needs new per-group encoder heads, and a checkpoint with no recorded layout may not split
+        into the configured groups, so the loader names the offending settings and the ``pretrain_weights=None`` escape
+        hatch instead of surfacing a bare ``load_state_dict`` size mismatch.
         """
         mc = _query_config(*config_shape)
-        _serve_checkpoint(
-            monkeypatch,
-            _query_checkpoint(
-                *checkpoint_shape, args={"num_queries": checkpoint_shape[0], "group_detr": checkpoint_shape[1]}
-            ),
-        )
+        _serve_checkpoint(monkeypatch, _query_checkpoint(*checkpoint_shape, args=checkpoint_args))
 
         with pytest.raises(ValueError, match=r"num_queries.*pretrain_weights=None"):
             load_pretrain_weights(_fake_nn_model(), mc)

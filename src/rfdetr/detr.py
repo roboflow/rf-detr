@@ -1130,12 +1130,13 @@ class RFDETR:
         elif "rfdetr_version" in ckpt or "best_total_source" in ckpt:
             # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
             # unstripped file they were copied from, named by best_total_source, still has it. These settings then
-            # fall back to class defaults without an error (a changed num_queries or group_detr fails loudly on the
-            # weight shapes instead), so keep warning until the caller has passed all of them.
+            # fall back to class defaults without an error (a changed group_detr fails loudly on the weight shapes
+            # instead; a num_queries below the default is padded by load_pretrain_weights, so it is listed too),
+            # so keep warning until the caller has passed all of them.
             # Both keys discriminate, because neither is present on its own in every affected file: rfdetr_version
             # reaches back to 1.7.0 but is omitted when get_version() cannot resolve a version (editable install
             # without package metadata), while best_total_source covers those but only exists since 1.9.0.
-            silent_fields = ["resolution", "num_select", "dec_layers"]
+            silent_fields = ["resolution", "num_queries", "num_select", "dec_layers"]
             segmentation_field = _mc_fields.get("segmentation_head")
             if kwargs.get("segmentation_head", getattr(segmentation_field, "default", False)) is True:
                 silent_fields.append("mask_downsample_ratio")
