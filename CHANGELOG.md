@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `RFDETR.export(format="executorch", backend="tensorrt")` writes an ExecuTorch `.pte` that runs on an NVIDIA GPU through TensorRT, built through Torch-TensorRT from the `torch.export` graph with no ONNX step. `RFDETRInference` loads it on the GPU. It needs the new `rfdetr[executorch-tensorrt]` extra (Linux, Python 3.11 or newer), which cannot share an environment with `rfdetr[executorch]`, and a CUDA device at export time. ([#1712](https://github.com/roboflow/rf-detr/pull/1712))
+
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.

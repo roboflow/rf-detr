@@ -1,5 +1,5 @@
 ---
-description: Export RF-DETR models to ExecuTorch (XNNPACK, CoreML, QNN) for on-device PyTorch inference.
+description: Export RF-DETR models to ExecuTorch (XNNPACK, CoreML, QNN, TensorRT) for on-device PyTorch inference.
 ---
 
 # ExecuTorch Export
@@ -12,6 +12,7 @@ description: Export RF-DETR models to ExecuTorch (XNNPACK, CoreML, QNN) for on-d
 
     - `dynamic_batch=True` is not supported: the runtime cannot resize RF-DETR's windowed-attention reshapes, so export one `.pte` per batch size instead.
     - The `"qnn"` backend requires a **source build** of ExecuTorch against the QAIRT SDK and cannot be installed via `pip`.
+    - The `"tensorrt"` backend needs its own extra, `rfdetr[executorch-tensorrt]`, which cannot share an environment with `rfdetr[executorch]`.
     - CoreML export runs in fp16; confident top-level detections carry over but raw tensor values will differ from the PyTorch fp32 model, both as expected for fp16 computation and through the query-ranking effect described under [Native CoreML Export](coreml.md#neural-engine-compute-units-and-the-fallback-boundary).
 
 ExecuTorch is PyTorch's on-device inference runtime. Unlike ONNX export, the model is exported directly via `torch.export` to a portable `.pte` binary — no intermediate ONNX conversion step is involved.
@@ -21,6 +22,8 @@ ExecuTorch is PyTorch's on-device inference runtime. Unlike ONNX export, the mod
 ```bash
 pip install "rfdetr[executorch]"
 ```
+
+For `backend="tensorrt"`, install `rfdetr[executorch-tensorrt]` instead; see [TensorRT Backend](#tensorrt-backend-nvidia-gpu-fp32).
 
 ## XNNPACK Backend (Portable CPU, fp32)
 
@@ -96,10 +99,44 @@ The `soc` parameter is required for QNN and must be a `QcomChipset` name matchin
 
     QNN export is validated on-device but cannot be tested in CI (requires QAIRT SDK). Validate detections on your target Snapdragon device before deploying to production.
 
+## TensorRT Backend (NVIDIA GPU, fp32)
+
+The `"tensorrt"` backend targets NVIDIA GPUs. Torch-TensorRT builds a TensorRT engine from the `torch.export` graph and stores it in the `.pte`, so there is no ONNX step. For the models we checked (detection Nano to Large, segmentation Nano and the keypoint preview model), TensorRT converts every operator, so the program runs as one TensorRT engine. It takes and returns CPU tensors, like the other backends.
+
+It needs its own extra, on Linux with Python 3.11 or newer. The extra installs Torch-TensorRT and the ExecuTorch release it was built with, which is newer than the one `rfdetr[executorch]` pins, so the two extras cannot share an environment. Use this environment for `backend="tensorrt"`; the other backends are tested with `rfdetr[executorch]`.
+
+```bash
+pip install "rfdetr[executorch-tensorrt]"
+```
+
+Export on a machine with an NVIDIA GPU:
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+
+model.export(format="executorch", backend="tensorrt")
+```
+
+This produces `output/rfdetr-small_tensorrt.pte`. [`RFDETRInference`](#predict-with-rfdetrinference) loads it on the GPU. To use the ExecuTorch runtime directly, import the TensorRT delegate first, because it ships outside the `executorch` wheel:
+
+```python
+import torch_tensorrt_executorch_runtime  # registers the TensorRT delegate
+from executorch.runtime import Runtime
+
+method = Runtime.get().load_program("output/rfdetr-small_tensorrt.pte").load_method("forward")
+```
+
+!!! note
+
+    The engine inside the `.pte` is built for the GPU and the TensorRT release used at export. Unlike `format="tensorrt"`, this backend has no `trt_hardware_compatibility` or `trt_version_compatible` option, so export again for a different GPU or TensorRT release. The engine computes in fp32; TensorRT may use TF32 math on Ampere and newer GPUs.
+
 ## ExecuTorch Limitations
 
 - **`dynamic_batch=True` is not supported.** The ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size. Export one `.pte` file per batch size instead (e.g. `batch_size=1` for single-image inference).
 - **QNN requires a source build.** The QNN backend is not available via the pip wheel; see the ExecuTorch documentation for source-build instructions against the QAIRT SDK.
+- **A TensorRT `.pte` is tied to its GPU.** Its engine runs only on GPUs and TensorRT releases compatible with the ones it was exported on.
 
 ## Measured Latency on a Laptop CPU
 

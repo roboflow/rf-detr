@@ -2277,8 +2277,9 @@ class RFDETR:
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
-                and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
-                QAIRT SDK — not available via pip).
+                ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
+                QAIRT SDK — not available via pip), and ``"tensorrt"`` (NVIDIA GPUs, fp32; requires
+                ``pip install rfdetr[executorch-tensorrt]`` and a CUDA device at export time).
             soc: Target SoC (System on Chip) — the specific Qualcomm Snapdragon chip the exported model will run
                 on.  Required when ``backend="qnn"``: the QNN backend compiles the ``.pte`` ahead-of-time for one
                 chip's Hexagon Tensor Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which run on any device of
@@ -2286,7 +2287,7 @@ class RFDETR:
                 any other backend or format.  Must be a
                 :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset` name, e.g. ``"SM8650"``
                 (Snapdragon 8 Gen 3); see that enum for the full list of supported chips.  Has no effect for
-                ``"xnnpack"`` or ``"coreml"``.
+                ``"xnnpack"``, ``"coreml"`` or ``"tensorrt"``.
             fp16: Build the TensorRT engine with FP16 precision.  Only applies when ``format="tensorrt"``
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
                 on NVIDIA GPUs.  TensorRT 11+ removed the FP16 builder flag, so there the engine is built
@@ -2436,7 +2437,8 @@ class RFDETR:
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
-                ``backend="coreml"``, ``openvino`` for OpenVINO export,
+                ``backend="coreml"``, ``rfdetr[executorch-tensorrt]`` for ExecuTorch ``backend="tensorrt"``,
+                ``openvino`` for OpenVINO export,
                 ``rfdetr[litert]`` for LiteRT export,
                 ``onnxruntime`` for ``format="onnx"`` with ``quantization="int8"``, ``nncf`` for
                 ``format="openvino"`` with ``quantization="int8"``,
@@ -2451,7 +2453,8 @@ class RFDETR:
                 backend's extension, the TensorRT cast's packages, the Core AI runtime package, ``onnxruntime`` or
                 ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
-                model has been cleared; instantiate a new :class:`RFDETR` to export).
+                model has been cleared; instantiate a new :class:`RFDETR` to export), or for ExecuTorch
+                ``backend="tensorrt"`` on a host without a CUDA device.
             OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
 
         Examples:

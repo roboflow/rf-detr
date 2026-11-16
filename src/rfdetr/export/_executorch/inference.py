@@ -5,8 +5,11 @@
 # ------------------------------------------------------------------------
 """Load a ``.pte`` built by :mod:`rfdetr.export._executorch.exporter` and run it via ExecuTorch's Python runtime.
 
-Backend-agnostic: the same ``Runtime.get().load_program(...).load_method(...)`` call loads a ``.pte`` regardless of
-which backend (XNNPACK, CoreML, QNN) it was delegated to at export time -- only the artifact's own content differs.
+Backend-agnostic: once the program's delegate is registered, the same
+``Runtime.get().load_program(...).load_method(...)`` call loads a ``.pte`` regardless of which backend (XNNPACK,
+CoreML, QNN, TensorRT) it was delegated to at export time -- only the artifact's own content differs.  The TensorRT
+delegate ships outside the ``executorch`` wheel, so :func:`load_export_runtime` imports its package first to register
+it; callers of :func:`load_executorch_method` import ``torch_tensorrt_executorch_runtime`` themselves.
 Nothing decodes detections here, same division of responsibility as :mod:`rfdetr.export._tensorrt.inference`.
 """
 
@@ -32,6 +35,9 @@ def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward"
     ``require_runtime=True`` first, so a torch/executorch ABI mismatch (see that function's docstring) raises a
     friendly, actionable :class:`ImportError` here rather than surfacing later as an opaque native crash (e.g.
     ``RuntimeError: tensor does not have a device``) on the first ``method.execute(...)`` call.
+
+    For a ``backend="tensorrt"`` program, import ``torch_tensorrt_executorch_runtime`` before calling this, because
+    that import registers the TensorRT delegate and this function does not know which delegate the program uses.
 
     Args:
         pte_path: Path to a ``.pte`` file written by ``RFDETR.export(format="executorch", ...)``.
@@ -72,6 +78,22 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         if device not in {"auto", "qnn"}:
             raise ValueError("ExecuTorch QNN requires auto or qnn.")
         target = "qnn"
+    elif delegate == "tensorrt":
+        if device not in {"auto", "cuda"}:
+            raise ValueError("ExecuTorch TensorRT requires cuda or auto.")
+        if not torch.cuda.is_available():
+            raise RuntimeError("ExecuTorch TensorRT requires an available CUDA device.")
+        try:
+            # Importing the package registers the TensorRT delegate with ExecuTorch's runtime.
+            import torch_tensorrt_executorch_runtime  # noqa: F401
+        except ModuleNotFoundError as exc:
+            if exc.name != "torch_tensorrt_executorch_runtime":
+                raise
+            raise ImportError(
+                "Running an ExecuTorch TensorRT .pte requires the Torch-TensorRT delegate. "
+                "Install it with: pip install rfdetr[executorch-tensorrt]"
+            ) from exc
+        target = "cuda"
     else:
         raise ValueError(f"Unsupported ExecuTorch delegate {delegate!r}.")
     session = load_executorch_method(path)

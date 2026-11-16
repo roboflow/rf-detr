@@ -164,7 +164,7 @@ The test suite imports the training and augmentation dependencies, so installing
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt and not e2e_executorch_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
 
 The marker expressions exclude suites that need assets, optional integrations, or unavailable hardware: `coco17` needs the COCO dataset, `integration` covers tests owned by dedicated integration jobs, and `xla` / `tpu` need accelerators. Dropping them from the expression is what produces most local-only failures.

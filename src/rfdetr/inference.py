@@ -70,7 +70,7 @@ class RFDETRInference:
         | TFLite, LiteRT | ``auto``, ``cpu`` |
         | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only), ``cpu_and_gpu``, ``cpu_and_ne`` (preferences) |
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
-        | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+        | ExecuTorch | XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn``, TensorRT ``auto``/``cuda`` |
 
         The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
 
