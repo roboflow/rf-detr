@@ -14,6 +14,8 @@ import os
 import secrets
 import stat
 import tempfile
+from collections.abc import Collection
+from pathlib import Path
 
 import requests
 from tqdm.auto import tqdm
@@ -209,3 +211,29 @@ def _download_file(
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
         raise
+
+
+def _find_images(directory: Path, extensions: Collection[str]) -> list[Path]:
+    """List the image files below *directory*, sorted, searching every subfolder.
+
+    Args:
+        directory: Folder to search; a path that is not a directory gives an empty list.
+        extensions: Lowercase suffixes that count as images, with the dot, e.g. ``{".jpg", ".png"}``.
+
+    Returns:
+        The matching files, case-insensitive on the suffix.
+
+    Examples:
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as tmp:
+        ...     (Path(tmp) / "sub").mkdir()
+        ...     (Path(tmp) / "sub" / "a.JPG").touch()
+        ...     (Path(tmp) / "notes.txt").touch()
+        ...     [path.name for path in _find_images(Path(tmp), {".jpg"})]
+        ['a.JPG']
+        >>> _find_images(Path("missing-directory"), {".jpg"})
+        []
+    """
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.glob("**/*") if path.is_file() and path.suffix.lower() in extensions)

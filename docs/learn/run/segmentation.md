@@ -12,16 +12,114 @@ RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between
 
 <!-- COPIES: the three AP columns come from the results table of docs/cookbooks/coco-accuracy.ipynb (one run, provenance in the note below); params and resolution repeat the Segmentation table of docs/learn/benchmarks.md. -->
 
-| Size | RF-DETR package class | PyTorch FP32 mask AP<sub>50:95</sub> | TensorRT FP16 mask AP<sub>50:95</sub> | TensorRT INT8 mask AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
-| :--: | :-------------------: | :----------------------------------: | :-----------------------------------: | :-----------------------------------: | :--------: | :--------: | :--------: |
-|  N   |    `RFDETRSegNano`    |                 40.1                 |                 40.1                  |                 39.6                  |    33.6    |  312x312   | Apache 2.0 |
-|  S   |   `RFDETRSegSmall`    |                 42.9                 |                 43.0                  |                 42.1                  |    33.7    |  384x384   | Apache 2.0 |
-|  M   |   `RFDETRSegMedium`   |                 44.9                 |                 44.9                  |                 44.0                  |    35.7    |  432x432   | Apache 2.0 |
-|  L   |   `RFDETRSegLarge`    |                 46.4                 |                 46.4                  |                 46.0                  |    36.2    |  504x504   | Apache 2.0 |
-|  XL  |   `RFDETRSegXLarge`   |                 48.5                 |                 48.4                  |                 48.0                  |    38.1    |  624x624   | Apache 2.0 |
-| 2XL  |  `RFDETRSeg2XLarge`   |                 49.7                 |                 49.7                  |                 49.3                  |    38.6    |  768x768   | Apache 2.0 |
+|     Size      | PyTorch FP32 mask AP<sub>50:95</sub> | TensorRT FP16 mask AP<sub>50:95</sub> | TensorRT INT8 mask AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
+| :-----------: | :----------------------------------: | :-----------------------------------: | :-----------------------------------: | :--------: | :--------: | :--------: |
+|   Nano (N)    |                 40.1                 |                 40.1                  |                 39.6                  |    33.6    |  312x312   | Apache 2.0 |
+|   Small (S)   |                 42.9                 |                 43.0                  |                 42.1                  |    33.7    |  384x384   | Apache 2.0 |
+|  Medium (M)   |                 44.9                 |                 44.9                  |                 44.0                  |    35.7    |  432x432   | Apache 2.0 |
+|   Large (L)   |                 46.4                 |                 46.4                  |                 46.0                  |    36.2    |  504x504   | Apache 2.0 |
+|  XLarge (XL)  |                 48.5                 |                 48.4                  |                 48.0                  |    38.1    |  624x624   | Apache 2.0 |
+| 2XLarge (2XL) |                 49.7                 |                 49.7                  |                 49.3                  |    38.6    |  768x768   | Apache 2.0 |
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
+
+## Fastest Configuration on NVIDIA GPUs
+
+The configuration with the lowest end-to-end latency for each size on four NVIDIA GPUs, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own GPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cuda", one run per GPU, provenance in docs/learn/run/latency.md). -->
+
+=== "NVIDIA T4"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
+    |   Nano (N)    |       9.04 (9.63)       |  7.22 (7.70)  |     7.59 (8.39)     |  **6.87 (7.39)**  |   **6.98 (8.01)**   |
+    |   Small (S)   |      11.32 (11.76)      |  9.22 (9.98)  |     9.19 (9.73)     |  **8.35 (8.90)**  |   **8.62 (9.40)**   |
+    |  Medium (M)   |      16.13 (16.73)      | 12.00 (12.83) |    12.19 (12.84)    | **11.30 (11.85)** |  **11.44 (12.16)**  |
+    |   Large (L)   |      20.94 (21.83)      | 16.80 (17.55) |    17.13 (18.03)    | **15.16 (15.81)** |  **15.64 (16.21)**  |
+    |  XLarge (XL)  |      35.44 (37.11)      | 26.47 (27.93) |    26.47 (27.81)    | **24.41 (25.54)** |  **24.73 (26.01)**  |
+    | 2XLarge (2XL) |      61.49 (65.45)      | 43.51 (47.45) |  **40.39 (41.38)**  | **40.43 (41.68)** |  **39.21 (41.05)**  |
+
+=== "NVIDIA L4"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
+    |   Nano (N)    |     **4.48 (4.84)**     |  4.97 (5.60)  |   **4.65 (5.23)**   |    4.71 (5.17)    |   **4.55 (5.02)**   |
+    |   Small (S)   |       5.14 (5.50)       |  5.28 (5.71)  |     5.09 (5.92)     |    5.15 (5.85)    |   **4.83 (5.19)**   |
+    |  Medium (M)   |       6.57 (6.93)       |  6.16 (6.59)  |     5.94 (6.35)     |  **5.83 (6.40)**  |   **5.65 (6.17)**   |
+    |   Large (L)   |       7.58 (7.92)       |  7.15 (7.60)  |     7.06 (7.55)     |  **6.86 (7.24)**  |   **6.72 (7.31)**   |
+    |  XLarge (XL)  |      11.82 (12.26)      | 10.78 (11.35) |  **10.37 (10.95)**  | **9.93 (10.38)**  |  **9.90 (10.40)**   |
+    | 2XLarge (2XL) |      18.18 (19.13)      | 16.36 (17.13) |    16.01 (16.69)    | **14.93 (15.39)** |  **14.81 (15.37)**  |
+
+=== "NVIDIA A100"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Nano (N)    |     **4.42 (4.89)**     |  4.72 (5.48)  |   **4.32 (4.69)**   |  4.64 (5.17)  |   **4.25 (4.59)**   |
+    |   Small (S)   |     **4.69 (5.10)**     |  4.80 (5.49)  |   **4.51 (4.87)**   |  4.79 (5.37)  |   **4.49 (4.85)**   |
+    |  Medium (M)   |       5.28 (5.63)       |  5.39 (5.86)  |   **5.02 (5.34)**   |  5.36 (6.00)  |   **5.01 (5.46)**   |
+    |   Large (L)   |       5.68 (6.04)       |  5.73 (6.47)  |   **5.38 (5.77)**   |  5.92 (6.59)  |   **5.38 (5.70)**   |
+    |  XLarge (XL)  |       7.22 (7.51)       |  7.23 (7.54)  |   **6.57 (6.95)**   |  7.01 (7.44)  |   **6.50 (6.82)**   |
+    | 2XLarge (2XL) |       9.16 (9.60)       |  8.44 (8.90)  |   **7.66 (8.20)**   |  8.11 (8.46)  |   **7.69 (8.09)**   |
+
+=== "NVIDIA RTX PRO 6000"
+
+    |     Size      | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
+    | :-----------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
+    |   Nano (N)    |       2.25 (2.39)       |  2.16 (2.24)  |   **1.89 (1.97)**   |  2.18 (2.26)  |   **1.89 (1.98)**   |
+    |   Small (S)   |       2.41 (2.49)       |  2.24 (2.33)  |     2.01 (2.09)     |  2.17 (2.25)  |   **1.90 (1.98)**   |
+    |  Medium (M)   |       2.75 (2.84)       |  2.51 (2.59)  |     2.30 (2.40)     |  2.34 (2.43)  |   **2.11 (2.21)**   |
+    |   Large (L)   |       2.98 (3.10)       |  2.72 (2.81)  |   **2.49 (2.61)**   |  2.59 (2.67)  |   **2.39 (2.49)**   |
+    |  XLarge (XL)  |       3.92 (4.00)       |  3.32 (3.40)  |   **3.08 (3.16)**   |  3.24 (3.36)  |   **3.02 (3.12)**   |
+    | 2XLarge (2XL) |       5.08 (5.20)       |  4.31 (4.40)  |     4.03 (4.15)     |  4.07 (4.16)  |   **3.80 (3.90)**   |
+
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
+
+- TensorRT INT8 is among the fastest at every size on every GPU.
+- On the A100 TensorRT FP16 graph is level at every size. PyTorch CUDA graph FP16 is level only at Nano on the L4 and A100 and at Small on the A100.
+
+## Fastest Configuration on Apple Silicon
+
+The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own device to find yours.
+
+<!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in docs/learn/run/latency.md). -->
+
+|     Size      | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |   CoreML FP16   | CoreML GPU FP32 |  CoreML GPU FP16  |
+| :-----------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-------------: | :-------------: | :---------------: |
+|   Nano (N)    |     10.44 (10.86)     |   **9.82 (10.24)**    |      12.08 (12.67)       | 11.12 (11.97) |  24.64 (25.38)  |  11.03 (11.74)  | **10.30 (11.16)** |
+|   Small (S)   |     12.79 (13.32)     |   **11.90 (12.32)**   |      14.20 (14.62)       | 13.65 (14.50) |  24.26 (27.45)  |  13.25 (13.90)  | **12.06 (12.70)** |
+|  Medium (M)   |     15.92 (16.23)     |   **14.54 (14.91)**   |      16.68 (17.04)       | 17.39 (18.09) |  31.51 (35.07)  |  17.43 (18.16)  |   15.77 (16.41)   |
+|   Large (L)   |     19.81 (20.21)     |   **18.25 (18.59)**   |      19.96 (20.41)       | 21.28 (21.99) |  45.28 (48.40)  |  21.36 (22.07)  | **19.05 (19.80)** |
+|  XLarge (XL)  |     31.03 (31.56)     |   **27.38 (27.75)**   |    **28.71 (29.13)**     | 36.23 (37.23) | 125.48 (130.74) |  36.08 (37.05)  |   30.75 (31.53)   |
+| 2XLarge (2XL) |     53.35 (55.11)     |   **44.99 (45.59)**   |    **43.55 (44.03)**     | 62.08 (63.98) | 224.85 (226.62) |  61.81 (68.96)  |   51.73 (53.44)   |
+
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
+
+PyTorch inductor FP16 is fastest or level at every size. CoreML GPU FP16 is level at Nano, Small and Large, and PyTorch TorchScript FP16 at XLarge and 2XLarge.
+
+## Fastest Configuration on an x86 CPU
+
+The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
+
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
+
+|     Size      | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    OpenVINO FP32    |    OpenVINO FP16    |    OpenVINO INT8    |
+| :-----------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :-----------------: | :-----------------: |
+|   Nano (N)    |   **209.57 (255.84)**    |  264.18 (315.07)  |  **208.46 (261.77)**  |   221.90 (316.07)   |   229.96 (334.50)   |   227.43 (373.97)   |
+|   Small (S)   |   **281.22 (362.42)**    |  380.18 (447.15)  |  **273.00 (344.01)**  | **277.25 (446.00)** |   304.57 (470.89)   |   322.31 (528.42)   |
+|  Medium (M)   |   **443.29 (702.49)**    |  535.52 (625.54)  |  **443.64 (501.25)**  |   588.96 (832.29)   | **463.97 (686.17)** | **458.56 (726.39)** |
+|   Large (L)   |     780.46 (1570.85)     | 934.20 (1052.00)  |  **606.79 (673.22)**  |  891.78 (1222.33)   |  914.18 (1217.94)   | **627.26 (967.18)** |
+|  XLarge (XL)  |    1083.43 (1980.53)     | 1522.24 (1679.69) | **987.18 (1070.10)**  |  1445.69 (1779.32)  |  1502.18 (1881.39)  |  1080.86 (1502.20)  |
+| 2XLarge (2XL) |    1590.50 (2435.77)     | 1756.35 (1886.75) | **1409.32 (1546.53)** |  1621.37 (1979.92)  |  1653.23 (1936.94)  |  1853.44 (2386.39)  |
+
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell.
+
+- ONNX INT8 is fastest or level at every size, alone at XLarge and 2XLarge (9.5% and 12.9% ahead). PyTorch TorchScript FP32 is level at Nano to Medium.
+- OpenVINO INT8 against OpenVINO FP32 swings with size (0.70 to 1.16 times). The 95th percentile reaches 2.01 times the median (TorchScript FP32, Large).
+
+!!! warning "FP16 and INT8 can lower accuracy"
+
+    Most of the fastest configurations above run in FP16 or INT8, and accuracy was scored for only some of them. Check it on your own data before you rely on one; [the scored configurations and sources](latency.md#fp16-and-int8-can-lower-accuracy).
 
 ## Run on an Image
 

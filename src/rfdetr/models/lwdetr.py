@@ -353,6 +353,12 @@ class LWDETR(nn.Module):
         self._export = True
         self._forward_origin = self.forward
         self.forward = self.forward_export  # type: ignore[method-assign,assignment]
+        # TODO: the Plus ``PECoreEncoder`` (Atto, Femto, Pico) defines ``export()`` but no ``_export`` attribute, so the
+        #  check below skips it: ``inference()`` and every export path run it with timm's attention forward and the
+        #  empty-prefix RoPE concatenations instead of ``_export_attention_forward``. Setting ``_export = False`` on it
+        #  makes this loop call its ``export()``; on Pico that changed Apple M4 Max latency by under 0.1 ms in eager,
+        #  TorchScript and inductor, so the skip is not what keeps the small sizes slow. Output parity of the swapped
+        #  attention is untested (the check ran on noise, 0 detections). Fix in ``rfdetr_plus`` by adding the attribute.
         for name, m in self.named_modules():
             if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()

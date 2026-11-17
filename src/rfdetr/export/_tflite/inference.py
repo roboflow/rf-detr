@@ -31,6 +31,7 @@ from rfdetr.export._runtime.adapters import (
     _input_array,
     _runtime_options,
     _single_input,
+    _thread_count_option,
 )
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
@@ -110,12 +111,7 @@ def _run_interpreter_raw(
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
     """Load a TFLite or LiteRT artifact through the shared interpreter; it reads the ``num_threads`` runtime option."""
     format_name = "TFLite" if metadata.format.lower() == "tflite" else "LiteRT"
-    settings = _runtime_options(format_name, options, ("num_threads",))
-    num_threads = settings.get("num_threads")
-    if num_threads is not None and (
-        isinstance(num_threads, bool) or not isinstance(num_threads, int) or num_threads < 1
-    ):
-        raise ValueError(f"{format_name} runtime_options num_threads must be a positive integer, got {num_threads!r}.")
+    num_threads = _thread_count_option(format_name, _runtime_options(format_name, options, ("num_threads",)))
     if device not in {"auto", "cpu"}:
         raise ValueError("TFLite inference supports cpu or auto only.")
 
