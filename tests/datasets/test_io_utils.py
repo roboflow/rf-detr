@@ -5,13 +5,14 @@
 # ------------------------------------------------------------------------
 """Tests for the shared image decoder in ``rfdetr.datasets.io_utils``."""
 
+import io
 import json
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from rfdetr.datasets import io_utils
 from rfdetr.datasets.coco import CocoDetection
@@ -488,6 +489,43 @@ class TestDecodePilImagePixelLimit:
             image, _ = decode_pil_image(image_path, max_image_pixels=10)
 
         assert image.size == (64, 32)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_process_limit_is_never_changed_while_pillow_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """Pillow's own path never raises the process-wide limit, so another thread's ``Image.open`` keeps it."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+        limits_during_read: set[int | None] = set()
+
+        class _RecordingStream(io.BytesIO):
+            def read(self, size: int | None = -1) -> bytes:
+                limits_during_read.add(Image.MAX_IMAGE_PIXELS)
+                return super().read(size)
+
+        io_utils._decode_with_pillow(_RecordingStream(image_path.read_bytes()), None, max_image_pixels=5000)
+
+        assert limits_during_read == {1000}
+
+    def test_jpeg_without_simplejpeg_still_drafts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pillow's JPEG reduction still applies when the per-call limit routes the open around ``Image.open``."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
+
+        image, scales = decode_pil_image(jpeg_path, 256, max_image_pixels=10**9)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    def test_unidentified_image_raises_pillow_error(self) -> None:
+        """Bytes no Pillow plugin recognises raise the error ``Image.open`` raises for them."""
+        with pytest.raises(UnidentifiedImageError):
+            decode_pil_image_bytes(b"not an image", max_image_pixels=5000)
 
     @pytest.mark.parametrize("extension", ["jpg", "png"])
     def test_coco_detection_applies_its_limit_to_the_images_it_reads(

@@ -21,7 +21,7 @@ that :func:`decode_pil_image` avoids for its own callers, a scope call deferred 
 from __future__ import annotations
 
 import io
-import threading
+import struct
 import warnings
 from pathlib import Path
 from typing import IO
@@ -33,10 +33,9 @@ try:
     import simplejpeg  # type: ignore[import-untyped,import-not-found,unused-ignore]
 except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to Pillow without it
     simplejpeg = None
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 _JPEG_SOI = b"\xff\xd8"
-_PIXEL_LIMIT_LOCK = threading.Lock()
 
 
 def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> int:
@@ -118,10 +117,12 @@ def _check_decompression_bomb(width: int, height: int, max_image_pixels: int | N
 
 
 def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image.Image:
-    """Open an image with Pillow, applying ``max_image_pixels`` to this one ``Image.open`` call.
+    """Open an image with Pillow, checking its size against ``max_image_pixels`` instead of Pillow's limit alone.
 
-    Pillow reads its limit only from ``PIL.Image.MAX_IMAGE_PIXELS``, so the global is swapped under a lock for the
-    header read, where Pillow checks the size, and restored before the pixels are decoded.
+    ``Image.open`` checks the size only against ``PIL.Image.MAX_IMAGE_PIXELS``, and changing that global, even
+    briefly, would raise the limit for every other thread.  With ``max_image_pixels`` set, the format plugins
+    ``Image.open`` would try are therefore called directly, which skips Pillow's check, and
+    :func:`_check_decompression_bomb` applies the per-decode limit to the header size.
 
     Args:
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
@@ -129,16 +130,35 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
 
     Returns:
         The opened image, with its pixels not yet decoded.
+
+    Raises:
+        PIL.UnidentifiedImageError: If no Pillow plugin recognises the image.
+        PIL.Image.DecompressionBombError: If the image has more than twice the limit in force.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="PNG")
+        >>> _open_image(io.BytesIO(encoded.getvalue()), max_image_pixels=10).size
+        (4, 2)
     """
     if max_image_pixels is None:
         return Image.open(source)
-    with _PIXEL_LIMIT_LOCK:
-        process_limit = Image.MAX_IMAGE_PIXELS
-        Image.MAX_IMAGE_PIXELS = _pixel_limit(max_image_pixels)
+    stream = io.BytesIO(source.read_bytes()) if isinstance(source, Path) else source
+    prefix = stream.read(16)
+    Image.init()
+    for image_format in Image.ID:
+        factory, accept = Image.OPEN[image_format]
         try:
-            return Image.open(source)
-        finally:
-            Image.MAX_IMAGE_PIXELS = process_limit
+            accepted = accept is None or accept(prefix)
+            if not accepted or isinstance(accepted, str):
+                continue
+            stream.seek(0)
+            image = factory(stream, "")
+        except (SyntaxError, IndexError, TypeError, struct.error):
+            continue  # the errors ``Image.open`` treats as "not this format"
+        _check_decompression_bomb(*image.size, max_image_pixels)
+        return image
+    raise UnidentifiedImageError(f"cannot identify image file {source!r}")
 
 
 def _decode_with_pillow(
