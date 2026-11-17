@@ -702,6 +702,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, used to enable
             JPEG DCT-domain downscaling during decode (see :meth:`_decode_image`).  ``None`` (the default) decodes at
             full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
+        max_image_pixels: Decompression-bomb limit for the images this dataset reads, used when it is higher than
+            ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
     """
 
     def __init__(
@@ -715,10 +717,12 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         remap_category_ids: bool = False,
         cat2label: dict[int, int] | None = None,
         draft_size: int | None = None,
+        max_image_pixels: int | None = None,
     ) -> None:
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self._draft_size = draft_size
+        self._max_image_pixels = max_image_pixels
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         if cat2label is not None and not remap_category_ids:
@@ -771,7 +775,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
         path = self.coco.loadImgs(image_id)[0]["file_name"]
-        return decode_pil_image(Path(self.root) / path, self._draft_size)
+        return decode_pil_image(Path(self.root) / path, self._draft_size, self._max_image_pixels)
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]

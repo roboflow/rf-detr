@@ -6,6 +6,7 @@
 """Tests for the shared image decoder in ``rfdetr.datasets.io_utils``."""
 
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -407,6 +408,99 @@ class TestDecodePilImage:
 
         with pytest.raises(Image.UnidentifiedImageError):
             decode_pil(source)
+
+
+class TestDecodePilImagePixelLimit:
+    """``max_image_pixels`` raises the decompression-bomb limit for one decode, never for the process (#1716).
+
+    Each case runs on a JPEG (``simplejpeg`` guard when installed, Pillow's otherwise) and a PNG (Pillow's guard).
+    """
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_decodes_image_above_process_limit_without_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, extension: str
+    ) -> None:
+        """An image the process limit rejects decodes silently when the per-call limit admits it."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)  # 2048 pixels, above the process limit's raise tier
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image, _ = decode_pil(source, max_image_pixels=5000)
+
+        assert image.size == (64, 32)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_process_limit_is_unchanged_after_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """The process-wide limit is the application's once the decode returns."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        decode_pil_image(image_path, max_image_pixels=5000)
+
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_image_above_twice_the_per_call_limit_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """The per-call limit is still a guard: more than twice it raises, as Pillow's own limit does."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)  # 2048 pixels
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil_image(image_path, max_image_pixels=1000)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_process_limit_is_restored_after_rejected_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """A decode that raises leaves the process-wide limit as it found it."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil_image(image_path, max_image_pixels=1000)
+
+        assert Image.MAX_IMAGE_PIXELS == 100
+
+    @pytest.mark.parametrize("process_limit", [None, 1_000_000])
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_never_lowers_a_more_permissive_process_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, process_limit: int | None, extension: str
+    ) -> None:
+        """A process limit that is disabled or already higher wins over a smaller per-call limit."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", process_limit)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image, _ = decode_pil_image(image_path, max_image_pixels=10)
+
+        assert image.size == (64, 32)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_coco_detection_applies_its_limit_to_the_images_it_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """``CocoDetection(max_image_pixels=...)`` reads an image the process limit rejects."""
+        root = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 64, 32).root
+        dataset = CocoDetection(root, tmp_path / "annotations.json", transforms=None, max_image_pixels=5000)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, _ = dataset[0]
+
+        assert image.size == (64, 32)
 
 
 class TestReadSimplejpegCandidate:
