@@ -648,9 +648,9 @@ class TestTrainConfigT42PromotedFields:
         Both scale per-parameter learning rates multiplicatively. ``lr_vit_layer_decay`` is raised to a per-depth power
         in ``get_vit_lr_decay_rate``, so a negative rate alternates sign with depth and gives half the ViT blocks a
         negative learning rate, which ascends the loss for those blocks. A negative ``lr_component_decay`` makes the
-        decoder learning rate negative the same way. Zero freezes every ViT block at a zero learning rate while the
-        non-block backbone parameters keep the full rate, a partial freeze that ``freeze_encoder`` already expresses.
-        None of them raised an error.
+        decoder learning rate negative the same way. Zero freezes every ViT block at a zero learning rate while the non-
+        block backbone parameters keep the full rate, a partial freeze that ``freeze_encoder`` already expresses. None
+        of them raised an error.
         """
         with pytest.raises(ValidationError, match=field):
             _make_train_config(tmp_path, **{field: value})
