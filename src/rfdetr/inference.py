@@ -20,10 +20,8 @@ from rfdetr._prediction.core import PredictionContext, predict
 from rfdetr._prediction.types import _PredictionInput, _ThresholdInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
-from rfdetr.models.backbone.backbone import Backbone
-from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
-from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.models.weights import adapt_input_channels, apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
@@ -349,32 +347,6 @@ class ModelContext:
 _ModelContext = ModelContext  # backward-compat alias
 
 
-def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Tensor:
-    """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
-
-    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
-    original 3 channels.
-    Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
-    pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
-
-    Args:
-        num_channels: Target number of input channels.
-        conv_weight: Original weight tensor of shape ``[out_ch, 3, H, W]``.
-
-    Returns:
-        Adapted weight tensor of shape ``[out_ch, num_channels, H, W]``.
-    """
-    if num_channels == 3:
-        return conv_weight
-    if num_channels == 1:
-        return conv_weight.mean(dim=1, keepdim=True)
-    # General case: tile and scale
-    repeats = (num_channels + 2) // 3
-    weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
-    weight_out = weight_out * (3.0 / num_channels)
-    return weight_out
-
-
 def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = False) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
@@ -430,28 +402,8 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         # No-op when load_pretrain_weights already wrapped the encoder to load a LoRA checkpoint.
         apply_lora(nn_model)
 
-    # Adapt patch-embedding projection for non-RGB channel counts
-    if model_config.num_channels != 3:
-        import copy
-
-        # Channel adaptation rewrites DINOv2's patch embedding. Dispatch on the encoder name, as
-        # Backbone._build_encoder does: with backbone_lora the encoder is a PEFT wrapper, not a DinoV2 instance.
-        if model_config.encoder.split("_")[0] != "dinov2":
-            raise ValueError(
-                f"num_channels={model_config.num_channels} is supported for DINOv2 encoders only, "
-                f"not encoder={model_config.encoder!r}."
-            )
-        backbone = cast(Backbone, nn_model.backbone[0])
-        # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
-        encoder = cast(DinoV2, backbone.encoder)
-        proj = encoder.encoder.embeddings.patch_embeddings.projection
-        new_proj = copy.deepcopy(proj)
-        new_proj.in_channels = model_config.num_channels
-        new_weight = _adapt_input_conv(model_config.num_channels, proj.weight)
-        new_proj.weight = torch.nn.Parameter(new_weight)
-        new_proj.weight.requires_grad = proj.weight.requires_grad
-        encoder.encoder.embeddings.patch_embeddings.projection = new_proj
-        encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
+    # Adapt patch-embedding projection for non-RGB channel counts; a no-op when a non-RGB checkpoint already set it.
+    adapt_input_channels(nn_model, model_config.num_channels, encoder_name=model_config.encoder)
 
     device = torch.device(args.device)
     # Keep the model on CPU here; predict() / export() move it lazily, while inference() moves only its snapshot.
