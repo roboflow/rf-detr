@@ -326,6 +326,38 @@ def decode_pil_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[
     return _decode_with_pillow(io.BytesIO(data), draft_size)
 
 
+def read_image_with_retries(read: Callable[[], _T], path: str | Path) -> _T:
+    """Call ``read`` up to ``_IMAGE_READ_ATTEMPTS`` times, pausing longer after each ``OSError``.
+
+    Each failed attempt is logged as a warning naming ``path``.  Exceptions other than ``OSError`` propagate from the
+    first attempt.
+
+    Args:
+        read: Reads an image, or its header, from ``path``.
+        path: The file ``read`` reads, for log messages.
+
+    Returns:
+        What ``read`` returned on its first successful attempt.
+
+    Raises:
+        OSError: The last attempt's error, if every attempt failed.
+
+    Examples:
+        >>> read_image_with_retries(lambda: "pixels", "image.jpg")
+        'pixels'
+    """
+    attempt = 1
+    while True:
+        try:
+            return read()
+        except OSError as exc:
+            logger.warning("Could not read image %s (attempt %d of %d): %s", path, attempt, _IMAGE_READ_ATTEMPTS, exc)
+            if attempt == _IMAGE_READ_ATTEMPTS:
+                raise
+        time.sleep(_IMAGE_READ_BACKOFF_SECONDS * attempt)
+        attempt += 1
+
+
 def read_image_or_substitute(
     read: Callable[[int], _T],
     index: int,
@@ -360,18 +392,10 @@ def read_image_or_substitute(
         >>> read_image_or_substitute(lambda i: f"pixels-{i}", 3, 10, lambda i: f"{i}.jpg")
         (3, 'pixels-3')
     """
-    failure: OSError | None = None
-    for attempt in range(1, _IMAGE_READ_ATTEMPTS + 1):
-        try:
-            return index, read(index)
-        except OSError as exc:
-            failure = exc
-            logger.warning(
-                "Could not read image %s (attempt %d of %d): %s", path_of(index), attempt, _IMAGE_READ_ATTEMPTS, exc
-            )
-            if attempt < _IMAGE_READ_ATTEMPTS:
-                time.sleep(_IMAGE_READ_BACKOFF_SECONDS * attempt)
-    assert failure is not None
+    try:
+        return index, read_image_with_retries(lambda: read(index), path_of(index))
+    except OSError as exc:
+        failure = exc
 
     num_candidates = min(_MAX_SUBSTITUTIONS, num_samples - 1)
     for step in range(1, num_candidates + 1):

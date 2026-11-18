@@ -396,6 +396,85 @@ class TestYoloDetectionUnreadableFile:
             dataset[0]
 
 
+def _corrupt_header(path: Path) -> None:
+    """Overwrite a file with bytes no decoder identifies, so that even its header cannot be read."""
+    path.write_bytes(b"not an image")
+
+
+class TestYoloDetectionUnreadableHeader:
+    """``YoloDetection`` reads every image header when it is built, so the corrupt file exists before construction."""
+
+    def _dataset(self, root: Path, **kwargs: Any) -> YoloDetection:
+        image_dir, label_dir, data_file = _write_yolo_dataset(root)
+        _corrupt_header(image_dir / "image1.png")
+        return YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, **kwargs)
+
+    def test_default_raises_from_the_constructor(self, tmp_path: Path, sleep: Any) -> None:
+        with pytest.raises(OSError, match="cannot identify image file"):
+            self._dataset(tmp_path)
+        assert sleep.called is False
+
+    def test_construction_keeps_the_dataset_length(self, tmp_path: Path) -> None:
+        assert len(self._dataset(tmp_path, skip_unreadable=True)) == 3
+
+    def test_construction_logs_one_error_naming_the_file(self, tmp_path: Path, mocker: Any) -> None:
+        error = mocker.patch.object(yolo.logger, "error")
+
+        self._dataset(tmp_path, skip_unreadable=True)
+
+        (call,) = error.call_args_list
+        assert str(tmp_path / "images" / "image1.png") in call.args[0] % call.args[1:]
+
+    def test_unreadable_sample_is_replaced_by_the_next_sample(self, tmp_path: Path) -> None:
+        dataset = self._dataset(tmp_path, skip_unreadable=True)
+
+        image, target = dataset[1]
+
+        assert (_gray_level(image), int(target["image_id"]), len(target["boxes"])) == (3, 2, 3)
+
+    @pytest.mark.parametrize("index", [0, 2])
+    def test_other_samples_keep_their_index_and_labels(self, tmp_path: Path, index: int) -> None:
+        dataset = self._dataset(tmp_path, skip_unreadable=True)
+
+        image, target = dataset[index]
+
+        assert (_gray_level(image), int(target["image_id"]), len(target["boxes"])) == (index + 1, index, index + 1)
+
+    def test_file_repaired_after_construction_is_still_substituted(self, tmp_path: Path) -> None:
+        """Its labels were not kept, so returning its pixels would pair a labelled image with no boxes."""
+        dataset = self._dataset(tmp_path, skip_unreadable=True)
+        Image.new("RGB", (64, 48), color=(80, 80, 80)).save(tmp_path / "images" / "image1.png")
+
+        _, target = dataset[1]
+
+        assert int(target["image_id"]) == 2
+
+    def test_malformed_label_of_the_unreadable_image_still_raises(self, tmp_path: Path) -> None:
+        image_dir, label_dir, data_file = _write_yolo_dataset(tmp_path)
+        _corrupt_header(image_dir / "image1.png")
+        (label_dir / "image1.txt").write_text("7 0.5 0.5 0.25 0.25\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="image1.txt"):
+            YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, skip_unreadable=True)
+
+    def test_header_that_reads_on_retry_keeps_its_labels(self, tmp_path: Path, mocker: Any) -> None:
+        image_dir, label_dir, data_file = _write_yolo_dataset(tmp_path)
+        read_size = yolo._read_image_size
+        failures = [OSError("short read")]
+
+        def flaky_read_size(path: str) -> tuple[int, int]:
+            if path.endswith("image1.png") and failures:
+                raise failures.pop()
+            return read_size(path)
+
+        mocker.patch.object(yolo, "_read_image_size", side_effect=flaky_read_size)
+        dataset = YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, skip_unreadable=True)
+
+        _, target = dataset[1]
+
+        assert (int(target["image_id"]), len(target["boxes"])) == (1, 2)
+
+
 def _builder_args(dataset_dir: Path, **train_kwargs: Any) -> Any:
     return _namespace_from_configs(RFDETRSmallConfig(), TrainConfig(dataset_dir=str(dataset_dir), **train_kwargs))
 
