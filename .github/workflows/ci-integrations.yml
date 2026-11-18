@@ -550,12 +550,16 @@ jobs:
             --junitxml="${RUNNER_TEMP}/executorch-tensorrt-e2e.xml"
 
       - name: 🔎 Fail on unexpected skips
-        # A skipped parity test is a false green, and every test here has to run on this runner, so the allow-list of
-        # skips is empty: a missing extra, a missing delegate or no CUDA device all mean coverage silently vanished.
+        # A skipped parity test is a false green. The only skip this runner may produce is the pre-Ampere one: the T4
+        # runner is compute capability 7.5, below the 8.0 that TensorRT 11.4's attention layer needs, so on it every
+        # test skips and the job proves only that the extra installs and imports. A missing extra, a missing delegate or
+        # no CUDA device mean coverage silently vanished, so fail red. The suite runs for real only on an Ampere or
+        # newer runner.
         run: |
           import os
           import xml.etree.ElementTree as ET
 
+          allowed_prefixes = ("TensorRT 11 attention needs compute capability 8.0 or newer",)
           tree = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "executorch-tensorrt-e2e.xml"))
           cases = list(tree.iter("testcase"))
           assert cases, "no ExecuTorch TensorRT test was collected"
@@ -563,9 +567,10 @@ jobs:
               f"{case.get('classname')}::{case.get('name')}: {skipped.get('message') or ''}"
               for case in cases
               for skipped in case.iter("skipped")
+              if not (skipped.get("message") or "").startswith(allowed_prefixes)
           ]
-          assert not unexpected, "skips in the ExecuTorch TensorRT job:\n" + "\n".join(unexpected)
-          print("no skips")
+          assert not unexpected, "unexpected skips in the ExecuTorch TensorRT job:\n" + "\n".join(unexpected)
+          print("no unexpected skips")
         shell: python
 
       - name: Minimize uv cache

@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import torch
 
 from rfdetr import RFDETRNano
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
@@ -33,6 +34,15 @@ _requires_executorch_tensorrt = pytest.mark.skipif(
     or not _IS_TORCH_TENSORRT_INSTALLED
     or not _IS_TORCH_TENSORRT_EXECUTORCH_RUNTIME_INSTALLED,
     reason="needs the executorch-tensorrt extra",
+)
+
+#: Skip on a GPU older than Ampere: Torch-TensorRT 2.15 pulls in TensorRT 11.4, which builds attention with
+#: ``IAttention``, and that layer needs compute capability 8.0 or higher. On a Turing T4 (7.5) the engine build fails.
+#: A host without CUDA is left to ``_requires_cuda``. The reason's opening words are what the CI job's skip allow-list
+#: matches, so change both together.
+_requires_ampere = pytest.mark.skipif(
+    torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 0),
+    reason="TensorRT 11 attention needs compute capability 8.0 or newer",
 )
 
 
@@ -78,6 +88,7 @@ def _delegate_ids(pte_path: Path) -> list[str]:
 
 @_requires_executorch_tensorrt
 @_requires_cuda
+@_requires_ampere
 @pytest.mark.gpu
 @pytest.mark.integration
 @pytest.mark.e2e_executorch_tensorrt

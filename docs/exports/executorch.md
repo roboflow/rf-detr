@@ -103,7 +103,7 @@ The `soc` parameter is required for QNN and must be a `QcomChipset` name matchin
 
 The `"tensorrt"` backend targets NVIDIA GPUs. Torch-TensorRT builds a TensorRT engine from the `torch.export` graph and stores it in the `.pte`, so there is no ONNX step. For the models we checked (detection Nano to Large, segmentation Nano and the keypoint preview model), TensorRT converts every operator, so the program runs as one TensorRT engine. It takes and returns CPU tensors, like the other backends.
 
-It needs its own extra, on Linux with Python 3.11 or newer. It is validated on Linux x86-64; aarch64 is untested. The extra installs Torch-TensorRT and the ExecuTorch release it was built with, which is newer than the one `rfdetr[executorch]` pins, so the two extras cannot share an environment. Use this environment for `backend="tensorrt"`; the other backends are tested with `rfdetr[executorch]`.
+It needs its own extra, on Linux with Python 3.11 or newer. It is validated on Linux x86-64; aarch64 is untested. It needs an NVIDIA Ampere or newer GPU (compute capability 8.0 or higher): TensorRT 11.4, which Torch-TensorRT 2.15 installs, builds attention with a layer that older GPUs such as the Tesla T4 reject, so the engine build fails there. The extra installs Torch-TensorRT and the ExecuTorch release it was built with, which is newer than the one `rfdetr[executorch]` pins, so the two extras cannot share an environment. Use this environment for `backend="tensorrt"`; the other backends are tested with `rfdetr[executorch]`.
 
 ```bash
 pip install "rfdetr[executorch-tensorrt]"
