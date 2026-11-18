@@ -1430,7 +1430,11 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         class_names = [_class_id_to_name.get(cid, "__background__" if cid == _bg_sentinel else "") for cid in class_ids]
         detections.data["class_name"] = np.array(class_names, dtype=object)
 
-        if has_keypoints and keypoints_array is not None:
+        if has_keypoints and keypoints_array is not None and masks_cpu is not None:
+            # KeyPoints cannot carry masks: a model with both heads returns Detections with (N, K, 3) keypoints.
+            detections.data["keypoints"] = keypoints_array.astype(np.float32, copy=False)
+            predictions_list.append(detections)
+        elif has_keypoints and keypoints_array is not None:
             keypoint_data = dict(detections.data)
             keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
             if include_source_image:

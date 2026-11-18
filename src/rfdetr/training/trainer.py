@@ -406,7 +406,8 @@ def _append_training_callbacks(
     # val/mAR for both detection and segmentation (torchmetrics does not expose a separate mask
     # mAR), and the OKS-based val/keypoint_mAR for the keypoint task.
     kp_key, segm_key, det_key = _BEST_MODEL_MONITOR_KEYS[tc.best_model_metric]
-    if has_keypoints:
+    # A model with both heads is selected on its segmentation metric.
+    if has_keypoints and not model_config.segmentation_head:
         monitor_regular = f"val/{kp_key}"
         early_stopping_monitor_ema = f"val/ema_{kp_key}"
     elif model_config.segmentation_head:

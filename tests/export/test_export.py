@@ -1739,6 +1739,21 @@ class TestExportRejectsBeforeForwardPass:
 
         make_infer_image.assert_not_called()
 
+    @pytest.mark.parametrize("export_format", ["onnx", "tensorrt", "tflite"])
+    def test_masks_with_keypoints_never_reach_the_forward_pass(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export_format: str
+    ) -> None:
+        """A model with both a segmentation head and a keypoint head is refused for every format."""
+        stubs = _stub_export_dependencies(monkeypatch, tmp_path, export_format=export_format)
+        model = _make_export_model(segmentation_head=True)
+        model.model_config.use_grouppose_keypoints = True
+        model.model_config.num_keypoints_per_class = [2]
+
+        with pytest.raises(NotImplementedError, match="both a segmentation head and a keypoint head"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format=export_format, shape=(14, 14))
+
+        stubs["rfdetr.export.prepare.make_infer_image"].assert_not_called()
+
 
 class TestExportWarningLocation:
     """Warnings ``RFDETR.export`` raises while it builds the exporter point at the caller, not inside ``rfdetr``.

@@ -136,6 +136,30 @@ Set `keypoint_flip_pairs` if horizontal flips should swap left/right keypoints f
 
 For YOLO pose datasets, use `infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml")` instead. RF-DETR also infers YOLO pose schema automatically during `model.train()` when `data.yaml` declares `kpt_shape`.
 
+### Keypoints on other models, and masks with keypoints
+
+`RFDETRKeypointPreview` is the only model with a pretrained keypoint head, but any model class trains one when it is built with `use_grouppose_keypoints=True` and `num_keypoints_per_class`. The keypoint head then starts from random weights. `model.train()` picks the train config class from the model's heads, so the keypoint loss parameters are accepted without further setup.
+
+A segmentation model built this way predicts boxes, instance masks and keypoints together. Train it on a COCO dataset whose annotations carry both `segmentation` and `keypoints`:
+
+```python
+from rfdetr import RFDETRSegSmall
+
+# `schema` and `DATASET_DIR` as in the example above.
+model = RFDETRSegSmall(
+    num_classes=len(schema.class_names),
+    use_grouppose_keypoints=True,
+    num_keypoints_per_class=schema.num_keypoints_per_class,
+)
+model.train(dataset_dir=str(DATASET_DIR), class_names=schema.class_names, epochs=50)
+
+detections = model.predict("image.jpg", threshold=0.5)
+detections.mask  # (N, H, W) boolean instance masks
+detections.data["keypoints"]  # (N, K, 3): pixel x, y and keypoint confidence
+```
+
+Such a model trains with [`SegmentationKeypointTrainConfig`](../../reference/segmentation_keypoint_train_config.md). Validation reports mask mAP and OKS keypoint AP, and the best checkpoint follows mask mAP. `predict()` returns `sv.Detections`, not `sv.KeyPoints`, because `sv.KeyPoints` has no mask field. Two limits apply: `model.export()` refuses a model with both heads, so predict with the PyTorch model or `model.inference()`, and YOLO datasets cannot supply masks and keypoints together.
+
 ## Dataset Format
 
 RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the `train()` method and the appropriate data loader will be used.

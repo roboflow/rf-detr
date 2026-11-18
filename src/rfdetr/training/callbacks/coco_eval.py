@@ -275,7 +275,7 @@ class COCOEvalCallback(Callback):
             getattr(model_config, "use_grouppose_keypoints", False) if model_config is not None else False
         )
         self._keypoint_mode = use_grouppose_keypoints is True
-        self._use_segm_metrics = self._segmentation and not self._keypoint_mode
+        # A model with both heads reports mask mAP here and OKS keypoint metrics beside it.
         iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
             # Per-class AP is genuinely skipped (compute + state memory) when per-class logging is

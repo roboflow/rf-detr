@@ -254,6 +254,18 @@ class TestWriteExportMetadata:
         assert error.value.args == (artifact,)
         assert not artifact.with_name("missing.xml.rfdetr.json").exists()
 
+    def test_masks_with_keypoints_source_is_refused(self, tmp_path: Path, metadata_source: RFDETR) -> None:
+        """No metadata is written for a source model whose two task outputs the export contract cannot describe."""
+        artifact = tmp_path / "model.xml"
+        artifact.write_bytes(b"<model/>")
+        metadata_source.model_config.segmentation_head = True
+        metadata_source.model_config.use_grouppose_keypoints = True
+
+        with pytest.raises(NotImplementedError, match="both a segmentation head and a keypoint head"):
+            metadata_source.write_export_metadata(artifact, format="openvino")
+
+        assert not artifact.with_name("model.xml.rfdetr.json").exists()
+
 
 class _TinyDetector(torch.nn.Module):
     """Provide deterministic linear layers for real ONNX export and calibration.

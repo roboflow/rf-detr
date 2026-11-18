@@ -59,6 +59,7 @@ __all__ = [
     "TrainConfig",
     "SegmentationTrainConfig",
     "KeypointTrainConfig",
+    "SegmentationKeypointTrainConfig",
 ]
 
 #: Legacy augmentation-backend string aliases, mapped to their current form.
@@ -1934,6 +1935,57 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_nll_loss_coef: float = 1.0
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
+
+
+class SegmentationKeypointTrainConfig(KeypointTrainConfig, SegmentationTrainConfig):
+    """Training configuration for models with both a segmentation head and a keypoint head.
+
+    Combines the mask loss fields of :class:`SegmentationTrainConfig` with the keypoint loss fields of
+    :class:`KeypointTrainConfig`. Best-model selection follows the segmentation metric, so the checkpoint-selection
+    defaults are the :class:`TrainConfig` ones rather than the keypoint overrides.
+
+    Attributes:
+        cls_loss_coef: Classification loss weight; the segmentation default.
+        smooth_alpha: EMA smoothing factor for :class:`BestModelCallback`; ``0.0`` (disabled) as for segmentation.
+        skip_best_epochs: Number of epochs to skip before checkpoint selection begins; ``0`` as for segmentation.
+    """
+
+    # Pydantic takes every field from the first base, inherited ones included, so KeypointTrainConfig comes first:
+    # the other order would take the zero keypoint loss weights TrainConfig declares. Fields both bases override
+    # are declared here.
+    cls_loss_coef: float = 1.0
+    smooth_alpha: float = 0.0
+    skip_best_epochs: int = Field(default=0, ge=0)
+
+
+def _resolve_train_config_class(config_class: type[TrainConfig], model_config: ModelConfig | None) -> type[TrainConfig]:
+    """Return the train config class matching the model's segmentation and keypoint heads.
+
+    Args:
+        config_class: The class the model variant declares.
+        model_config: Architecture configuration; ``None`` keeps *config_class*.
+
+    Returns:
+        *config_class* unless the model has a keypoint head it does not cover: then
+        :class:`KeypointTrainConfig`, or :class:`SegmentationKeypointTrainConfig` with a segmentation head too.
+
+    Examples:
+        >>> from rfdetr.config import RFDETRNanoConfig, RFDETRSegNanoConfig
+        >>> _resolve_train_config_class(TrainConfig, RFDETRNanoConfig()).__name__
+        'TrainConfig'
+        >>> _resolve_train_config_class(TrainConfig, RFDETRNanoConfig(use_grouppose_keypoints=True)).__name__
+        'KeypointTrainConfig'
+        >>> seg_keypoints = RFDETRSegNanoConfig(use_grouppose_keypoints=True)
+        >>> _resolve_train_config_class(SegmentationTrainConfig, seg_keypoints).__name__
+        'SegmentationKeypointTrainConfig'
+    """
+    if model_config is None or not model_config.use_grouppose_keypoints:
+        return config_class
+    with_masks = bool(model_config.segmentation_head)
+    required = (KeypointTrainConfig, SegmentationTrainConfig) if with_masks else (KeypointTrainConfig,)
+    if all(issubclass(config_class, base) for base in required):
+        return config_class
+    return SegmentationKeypointTrainConfig if with_masks else KeypointTrainConfig
 
 
 def _resolve_amp_dtype(

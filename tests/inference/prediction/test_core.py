@@ -95,6 +95,52 @@ class TestPredictReturnTypes:
         assert isinstance(batch, list)
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
+    @pytest.mark.parametrize("use_snapshot", [False, True])
+    def test_segmentation_model_with_keypoint_head_returns_masks_and_keypoints(self, use_snapshot: bool) -> None:
+        """A real model with both heads returns ``sv.Detections`` carrying masks and keypoints for the same rows.
+
+        The ``inference()`` snapshot runs the export forward, whose tuple holds masks and keypoints in that order.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = RFDETRSegNano(
+            pretrain_weights=None,
+            device="cpu",
+            num_classes=1,
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=[2],
+        )
+        predictor = model.inference(compile=False) if use_snapshot else model
+
+        detections = predictor.predict(img, threshold=0.0)
+
+        assert isinstance(detections, sv.Detections)
+        assert len(detections) > 0
+        assert detections.mask is not None
+        assert detections.mask.shape == (len(detections), 48, 64)
+        assert detections.data["keypoints"].shape == (len(detections), 2, 3)
+        assert detections.data["keypoint_precision_cholesky"].shape == (len(detections), 2, 3)
+
+    def test_masks_and_keypoints_return_sv_detections_with_keypoint_data(self) -> None:
+        """A model with both heads returns Detections whose mask and (N, K, 3) keypoints share the row order."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(
+            labels=[0, 1, 0], scores=[0.9, 0.2, 0.8], include_keypoints=True, num_keypoints=2, include_masks=True
+        )
+
+        result = model.predict(img, threshold=0.5)
+
+        assert isinstance(result, sv.Detections)
+        assert result.xyxy.shape == (2, 4)
+        np.testing.assert_allclose(result.confidence, [0.9, 0.8])
+        np.testing.assert_array_equal(result.class_id, [0, 0])
+        assert result.mask is not None
+        assert result.mask.shape[0] == 2
+        assert result.mask.dtype == bool
+        assert result.data["keypoints"].shape == (2, 2, 3)
+        assert result.data["keypoints"].dtype == np.float32
+        assert result.data["keypoint_precision_cholesky"].shape == (2, 2, 3)
+
     @pytest.mark.parametrize("use_facade", [False, True])
     def test_generator_input_returns_one_result_per_image(self, use_facade: bool) -> None:
         """An iterable that is not a list or tuple is read into a list and predicted like one.
@@ -333,6 +379,57 @@ class TestPredictOptimizedInferenceKeypoints:
         assert len(result) == num_detections
         np.testing.assert_allclose(result.detection_confidence, expected_score, rtol=0.005)
         np.testing.assert_array_equal(result.xy, np.tile([[[32.0, 24.0], [32.0, 24.0]]], (num_detections, 1, 1)))
+
+
+class TestPredictOptimizedInferenceMasksAndKeypoints:
+    """The export-mode 4-tuple of a model with both heads maps to masks and keypoints."""
+
+    def test_four_tuple_output_labels_masks_then_keypoints(self) -> None:
+        """Slots 3 and 4 of the tuple are ``pred_masks`` and ``pred_keypoints``."""
+        model, stub = _make_optimized_keypoint_model()
+        masks = torch.zeros((1, 1, 7, 7))
+        keypoints = torch.full((1, 1, 17, 3), 0.5)
+        stub.inference_model = lambda batch: (
+            torch.tensor([[[0.5, 0.5, 0.2, 0.2]]]),
+            torch.full((1, 1, 1), 10.0),
+            masks,
+            keypoints,
+        )
+
+        model.predict(PIL.Image.new("RGB", (64, 48)))
+
+        assert stub.captured_predictions is not None
+        assert stub.captured_predictions["pred_masks"] is masks
+        assert stub.captured_predictions["pred_keypoints"] is keypoints
+
+    def test_real_postprocess_returns_aligned_masks_and_keypoints(self) -> None:
+        """PostProcess plus predict keep each kept row's mask and keypoints from the same query."""
+        model, stub = _make_optimized_keypoint_model()
+        stub.args.num_keypoints_per_class = [2]
+        stub.postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2], trace_alpha=0.0)
+        masks = torch.full((1, 3, 4, 4), -1.0)
+        keypoints = torch.zeros((1, 3, 2, 8))
+        for query in range(3):
+            masks[0, query, :, query] = 1.0
+            keypoints[0, query, :, 0] = (query + 1) / 10
+        stub.inference_model = lambda batch: (
+            torch.tensor([[[0.5, 0.5, 0.2, 0.2]] * 3]),
+            torch.tensor([[[2.0], [-3.0], [1.0]]]),
+            masks,
+            keypoints,
+        )
+
+        result = model.predict(PIL.Image.new("RGB", (40, 4)), threshold=0.5)
+
+        assert isinstance(result, sv.Detections)
+        assert len(result) == 2
+        assert result.mask.shape == (2, 4, 40)
+        assert result.data["keypoints"].shape == (2, 2, 3)
+        # Queries 0 and 2 survive: keypoint x is (q + 1) / 10 of the width, the mask covers tenth-of-width band q.
+        np.testing.assert_allclose(result.data["keypoints"][:, 0, 0], [4.0, 12.0])
+        np.testing.assert_allclose(result.data["keypoints"][:, 0, 2], 0.5)
+        assert result.mask[0, 0, 2] and not result.mask[0, 0, 22]
+        assert result.mask[1, 0, 22] and not result.mask[1, 0, 2]
 
 
 class TestPredictSourceData:

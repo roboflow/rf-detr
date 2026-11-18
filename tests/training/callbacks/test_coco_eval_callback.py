@@ -264,14 +264,24 @@ class TestSetup:
         assert cb.map_metric_ema.device.type == "cpu"
 
     def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
-        """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
+        """Keypoint mode must not hand torchmetrics a keypoint iou_type; OKS has its own metric."""
         cb = COCOEvalCallback(segmentation=True)
         module = _make_pl_module()
         module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
         cb.setup(_make_trainer(), module, stage="fit")
         assert "bbox" in cb.map_metric.iou_type
-        assert "segm" not in cb.map_metric.iou_type
         assert "keypoints" not in cb.map_metric.iou_type
+
+    @pytest.mark.parametrize("segmentation", [False, True])
+    def test_keypoint_mode_keeps_segmentation_metrics(self, segmentation: bool) -> None:
+        """A model with both heads evaluates mask mAP beside the OKS keypoint metric."""
+        cb = COCOEvalCallback(segmentation=segmentation)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        cb.setup(_make_trainer(), module, stage="fit")
+        assert cb._keypoint_mode is True
+        assert cb._use_segm_metrics is segmentation
+        assert ("segm" in cb.map_metric.iou_type) is segmentation
 
 
 class TestOnFitStart:

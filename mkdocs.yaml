@@ -103,6 +103,7 @@ nav:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md
           - Keypoint Train Config: reference/keypoint_train_config.md
+          - Segmentation Keypoint Train Config: reference/segmentation_keypoint_train_config.md
       - Lightning Training:
           - Training Primitives: reference/training.md
   - Resources:
