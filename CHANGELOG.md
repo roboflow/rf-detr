@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Training and fine-tuning with `num_channels != 3`, for example RGB plus a motion or optical-flow channel stored as RGBA images. `model.train()` used to build a 3-channel patch embedding whatever `num_channels` said, and the COCO loader converted every image to RGB.
-    - `CocoDetection(num_channels=4)` keeps an image file that has a fourth channel (`RGBA`, `LA`, `CMYK`, or a palette with transparency) as RGBA; `build_coco` and `build_roboflow_from_coco` pass the model's `num_channels`. Any other value, including the default `3`, still converts every image to RGB. YOLO-format datasets and WebDataset shards still load RGB.
+    - `CocoDetection(num_channels=4)` keeps an image file that has an alpha plane (`RGBA`, `LA`, or a palette with transparency) as RGBA, with that plane as the fourth channel; `build_coco` and `build_roboflow_from_coco` pass the model's `num_channels`. Any other value, including the default `3`, still converts every image to RGB. YOLO-format datasets and WebDataset shards still load RGB. The torchvision `Resize` transform resamples the planes of such an image independently, because Pillow would weight the color planes by the fourth one as if it were transparency.
     - `rfdetr.datasets.transforms.Normalize` and the Kornia GPU normalization cycle the RGB mean and standard deviation over the channels of the image, as `RFDETR.means` and `RFDETR.stds` already do for prediction.
     - `RFDETRModelModule` adapts the DINOv2 patch embedding to `num_channels`, through the new `rfdetr.models.weights.adapt_input_channels`, which the inference model builder now shares.
 

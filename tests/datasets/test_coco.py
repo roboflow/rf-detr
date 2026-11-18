@@ -36,9 +36,11 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
     scale_coco_annotation,
 )
+from rfdetr.datasets.transforms import AlbumentationsWrapper
 from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.detr import RFDETR
 from rfdetr.utilities import PackedTargets, pack_targets
+from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_albumentations
 
 # Minimal image shared across all tests
@@ -1332,7 +1334,6 @@ class TestCocoDetectionFourChannelImages:
         [
             pytest.param("LA", ".png", id="grayscale-alpha"),
             pytest.param("P", ".png", id="palette-transparency"),
-            pytest.param("CMYK", ".jpg", id="cmyk"),
         ],
     )
     def test_other_four_channel_modes_load_as_rgba(self, tmp_path: Path, mode: str, suffix: str) -> None:
@@ -1416,6 +1417,112 @@ class TestCocoDetectionFourChannelImages:
         builder("train", args, resolution=512)
 
         assert dataset.call_args.kwargs["num_channels"] == expected
+
+
+def _write_pixel_split(root: Path, pixels: np.ndarray) -> Path:
+    """Write a one-image COCO split holding ``pixels`` losslessly as a PNG, with one box annotation.
+
+    Args:
+        root: Directory receiving ``frame.png`` and ``annotations.json``, created if missing.
+        pixels: ``(H, W, 3)`` or ``(H, W, 4)`` uint8 array, saved as an RGB or RGBA PNG.
+
+    Returns:
+        Path of the written ``annotations.json``.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _write_pixel_split(root, np.zeros((4, 6, 4), dtype=np.uint8)).name
+        'annotations.json'
+        >>> Image.open(root / "frame.png").mode
+        'RGBA'
+    """
+    height, width = pixels.shape[:2]
+    annotation = {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0}
+    ann_file = _write_coco_split(root, {"frame.png": (width, height)}, [annotation], [_cat(1, "fish")])
+    Image.fromarray(pixels).save(root / "frame.png")
+    return ann_file
+
+
+def _motion_pixels() -> np.ndarray:
+    """Return a ``(64, 96, 4)`` image with random RGB and a fourth plane that is zero on the left half.
+
+    A fourth plane read as transparency would erase the RGB values of the left half and weight the right half's.
+
+    Examples:
+        >>> pixels = _motion_pixels()
+        >>> pixels.shape, int(pixels[:, :48, 3].max()), bool(pixels[:, :48, :3].any())
+        ((64, 96, 4), 0, True)
+    """
+    pixels = np.random.default_rng(0).integers(0, 256, size=(64, 96, 4), dtype=np.uint8)
+    pixels[:, :48, 3] = 0
+    return pixels
+
+
+class TestFourChannelPixelValues:
+    """The transform pipelines treat the fourth channel of an RGBA sample as data, never as transparency."""
+
+    @pytest.mark.parametrize(
+        "aug_config",
+        [
+            pytest.param(None, id="torchvision"),
+            pytest.param({}, id="torchvision-no-augmentation"),
+            pytest.param({"HorizontalFlip": {"p": 0.5}}, marks=_requires_albumentations, id="albumentations"),
+            pytest.param(AUG_CONFIG, marks=_requires_albumentations, id="albumentations-default-config"),
+        ],
+    )
+    @pytest.mark.parametrize("image_set", ["train", "val", "test", "val_speed"])
+    @pytest.mark.parametrize("multi_scale", [False, True])
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
+    @pytest.mark.filterwarnings("ignore:RF-DETR has changed the default training augmentation backend:UserWarning")
+    def test_each_channel_matches_the_same_plane_run_as_rgb(
+        self, tmp_path: Path, make_transforms: object, multi_scale: bool, image_set: str, aug_config: object
+    ) -> None:
+        """Every output channel equals the one the pipeline produces for that plane stored in an RGB file."""
+        pixels = _motion_pixels()
+        fourth_as_gray = np.repeat(pixels[:, :, 3:], 3, axis=2)
+        sources = {"rgba": pixels, "rgb": np.ascontiguousarray(pixels[:, :, :3]), "fourth": fourth_as_gray}
+        outputs = {}
+        for name, source in sources.items():
+            ann_file = _write_pixel_split(tmp_path / name, source)
+            transforms = make_transforms(
+                image_set, 128, multi_scale=multi_scale, skip_random_resize=not multi_scale, aug_config=aug_config
+            )
+            dataset = CocoDetection(tmp_path / name, ann_file, transforms=transforms, num_channels=source.shape[2])
+            # The same seed gives each source the same random resize, crop and flip. Albumentations draws from a
+            # generator of its own, held by each wrapped pipeline.
+            seed_all(7)
+            for transform in transforms.transforms:
+                if isinstance(transform, AlbumentationsWrapper):
+                    transform.transform.set_random_seed(7)
+            outputs[name], _ = dataset[0]
+
+        assert outputs["rgba"].shape[0] == 4
+        torch.testing.assert_close(outputs["rgba"][:3], outputs["rgb"], rtol=0, atol=1e-6)
+        # The fourth channel and the gray file's red channel are both normalized with the red statistics.
+        torch.testing.assert_close(outputs["rgba"][3], outputs["fourth"][0], rtol=0, atol=1e-6)
+
+    def test_cmyk_file_is_not_given_a_fourth_channel(self, tmp_path: Path) -> None:
+        """A CMYK file has no channel to keep next to RGB, so it loads as RGB like any three-channel file."""
+        ann_file = _write_four_channel_split(tmp_path, mode="CMYK", suffix=".jpg")
+
+        image, _ = CocoDetection(tmp_path, ann_file, transforms=None, num_channels=4)[0]
+        expected, _ = CocoDetection(tmp_path, ann_file, transforms=None)[0]
+
+        assert image.mode == "RGB"
+        assert image.tobytes() == expected.tobytes()
+
+    def test_grayscale_alpha_file_keeps_both_planes(self, tmp_path: Path) -> None:
+        """An ``LA`` file comes back with its gray plane in red, green and blue and its second plane as the fourth."""
+        ann_file = _write_four_channel_split(tmp_path, mode="LA")
+        source = Image.open(tmp_path / "frame.png")
+        gray, fourth = source.getpixel((0, 0))
+
+        image, _ = CocoDetection(tmp_path, ann_file, transforms=None, num_channels=4)[0]
+
+        assert source.mode == "LA"
+        assert image.getpixel((0, 0)) == (gray, gray, gray, fourth)
+        assert fourth == 40
 
 
 _PHANTOM_ROOT_CATEGORIES = [

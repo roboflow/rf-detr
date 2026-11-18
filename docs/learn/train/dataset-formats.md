@@ -199,7 +199,7 @@ The keypoint preview model is pretrained on COCO person-style keypoints. Its def
 
 ### Four-Channel Images
 
-A model built with `num_channels=4` trains on COCO-format datasets whose image files carry a fourth channel, for example RGB with a motion or optical-flow channel stored as the alpha channel of an RGBA PNG. With `num_channels=4`, the loader keeps an image whose file is `RGBA`, grayscale with alpha, `CMYK` or a palette with transparency as four channels; with any other `num_channels` it converts every image to RGB, as before. Every image in the dataset must have the fourth channel: a file without one loads as RGB and fails in the backbone with a channel mismatch.
+A model built with `num_channels=4` trains on COCO-format datasets whose image files carry a fourth channel, for example RGB with a motion or optical-flow channel stored as the alpha channel of an RGBA PNG. With `num_channels=4`, the loader keeps an image whose file is `RGBA`, grayscale with alpha, or a palette with transparency as four channels, with the alpha plane as the fourth; with any other `num_channels` it converts every image to RGB, as before. Every image in the dataset must have the fourth channel: a file without an alpha plane, `CMYK` files included, loads as RGB and fails in the backbone with a channel mismatch. The fourth channel is treated as data, not as transparency: resizing, cropping and flipping handle each channel on its own, so the RGB values are kept wherever the fourth channel is zero.
 
 ```python
 from rfdetr import RFDETRMedium

@@ -52,8 +52,9 @@ logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
 
-#: PIL modes that carry a fourth channel; a 4-channel dataset loads images in these modes as RGBA instead of RGB.
-_FOUR_CHANNEL_MODES = frozenset({"RGBA", "LA", "CMYK"})
+#: PIL modes with an alpha plane; a 4-channel dataset loads images in these modes as RGBA, keeping that plane as the
+#: fourth channel. ``CMYK`` is not one of them: converting it yields RGB and a constant plane, not a stored channel.
+_ALPHA_MODES = frozenset({"RGBA", "LA"})
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -769,10 +770,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
         """Decode one image through :func:`decode_pil_image`, drafting when ``draft_size`` is set.
 
-        With ``num_channels=4``, a file whose header reports a four-channel mode (``RGBA``, ``LA``, ``CMYK``, or a
-        palette with transparency) is returned as full-size ``RGBA`` instead, so a channel stored next to RGB (for
-        example motion or optical flow in the alpha channel) reaches the model. A file without a fourth channel is
-        still returned as RGB.
+        With ``num_channels=4``, a file whose header reports an alpha plane (``RGBA``, ``LA``, or a palette with
+        transparency) is returned as full-size ``RGBA`` instead, so a channel stored next to RGB (for example motion
+        or optical flow in the alpha channel) reaches the model as the fourth channel. A file without an alpha plane,
+        ``CMYK`` included, is still returned as RGB.
 
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
         deliberately not named the same: it returns a decode scale alongside the image.
@@ -786,9 +787,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         """
         path = Path(self.root) / self.coco.loadImgs(image_id)[0]["file_name"]
         if self._num_channels == 4:
-            # Opening reads only the header; the pixels are decoded here only for a four-channel file.
+            # Opening reads only the header; the pixels are decoded here only for a file with an alpha plane.
             with Image.open(path) as image:
-                if image.mode in _FOUR_CHANNEL_MODES or (image.mode == "P" and "transparency" in image.info):
+                if image.mode in _ALPHA_MODES or (image.mode == "P" and "transparency" in image.info):
                     return image.convert("RGBA"), (1.0, 1.0)
         return decode_pil_image(path, self._draft_size)
 
