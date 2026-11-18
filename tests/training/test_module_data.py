@@ -1976,6 +1976,35 @@ class TestOnAfterBatchTransfer:
         torch.testing.assert_close(samples_out.tensors[0, :, 30, 30], (0.0 - mean) / std, rtol=0, atol=1e-5)
 
     @_requires_kornia
+    @pytest.mark.parametrize("num_channels", [1, 3, 4])
+    def test_normalization_cycles_statistics_over_model_channels(self, tmp_path: Path, num_channels: int) -> None:
+        """The transfer hook flips and normalizes a non-RGB batch, cycling the ImageNet statistics over its channels."""
+        dm = RFDETRDataModule(
+            _base_model_config(num_channels=num_channels),
+            _base_train_config(tmp_path, aug_config={"HorizontalFlip": {"p": 1.0}}, augmentation_backend="kornia"),
+        )
+        dm._resolved_augmentation_backend = AugmentationBackend.KORNIA
+        dm._setup_kornia_pipeline()
+        dm = self._attach_mock_trainer(dm, training=True)
+        image = torch.full((1, num_channels, 32, 32), 0.5)
+        image[..., 0] = 0.0
+        target = {
+            "boxes": torch.tensor([[8.0, 8.0, 16.0, 16.0]]),
+            "labels": torch.tensor([1]),
+            "area": torch.tensor([64.0]),
+            "iscrowd": torch.tensor([0]),
+        }
+
+        samples_out, _ = dm.on_after_batch_transfer((NestedTensor(image, None), [target]), 0)
+
+        mean = torch.tensor([IMAGENET_MEAN[c % 3] for c in range(num_channels)])
+        std = torch.tensor([IMAGENET_STD[c % 3] for c in range(num_channels)])
+        assert samples_out.tensors.shape == image.shape
+        # The left column (input 0.0) is flipped to the right edge; every other column holds 0.5.
+        torch.testing.assert_close(samples_out.tensors[0, :, 4, 31], (0.0 - mean) / std, rtol=0, atol=1e-5)
+        torch.testing.assert_close(samples_out.tensors[0, :, 4, 4], (0.5 - mean) / std, rtol=0, atol=1e-5)
+
+    @_requires_kornia
     def test_pixel_affine_drops_box_and_mask_shifted_out_of_frame(self, tmp_path: Path) -> None:
         """A translated-out object must not remain as a zero-area training target."""
         dm = RFDETRDataModule(

@@ -2471,6 +2471,27 @@ class TestNormalize:
         assert isinstance(out_img, torch.Tensor)
         assert out_tgt is None
 
+    @pytest.mark.parametrize("channels", [1, 3, 4, 7])
+    def test_statistics_cycle_over_image_channels(self, channels: int) -> None:
+        """Each channel is normalized with the RGB statistics cycled to the image's channel count."""
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+        image = torch.full((channels, 4, 5), 0.5)
+
+        out_img, _ = Normalize()(image, None)
+
+        expected = torch.stack([torch.full((4, 5), (0.5 - mean[c % 3]) / std[c % 3]) for c in range(channels)])
+        torch.testing.assert_close(out_img, expected)
+
+    def test_one_instance_normalizes_images_of_different_channel_counts(self) -> None:
+        """A normalizer that has seen a 4-channel image still normalizes a 3-channel one with RGB statistics."""
+        normalize = Normalize()
+        four, _ = normalize(torch.zeros(4, 2, 2), None)
+        three, _ = normalize(torch.zeros(3, 2, 2), None)
+
+        assert four.shape == torch.Size([4, 2, 2])
+        torch.testing.assert_close(three[:, 0, 0], torch.tensor([-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225]))
+
     @pytest.mark.parametrize(
         "boxes,image_hw,expected_cxcywh_norm",
         [
