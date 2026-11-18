@@ -74,6 +74,9 @@ class RFDETRInference:
 
         The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
 
+        The ExecuTorch TensorRT delegate runs on the current CUDA device: ``auto`` and ``cuda`` mean that device, and
+        ``cuda:N`` is accepted only when ``N`` is the current CUDA device; any other index is refused.
+
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
 

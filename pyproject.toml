@@ -181,7 +181,8 @@ executorch-tensorrt = [
     # runtime needs to load that .pte. Validated on 2.15.0 (ExecuTorch 1.6.0, TensorRT 11.4). It pins torch 2.15 and
     # executorch 1.6, so this extra conflicts with [executorch] (see [tool.uv] conflicts). Linux only: Torch-TensorRT
     # and its delegate need Python 3.11-3.14 and a CUDA 13 torch, which PyPI ships for Linux but not for Windows. The
-    # extra is empty elsewhere.
+    # extra is empty elsewhere. Validated on Linux x86-64; aarch64 untested: the marker does not exclude aarch64, but no
+    # export or prediction has been run there.
     "torch-tensorrt[executorch]>=2.15,<2.16; python_version >= '3.11' and python_version < '3.15' and sys_platform == 'linux'",
 ]
 coreai = [

@@ -363,12 +363,7 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path, *, 
     elif format_name == "openvino":
         settings["openvino_precision"] = "float32"
     artifact = native.export(format=format_name, output_dir=str(tmp_path), verbose=False, **settings)
-    if format_name == "tensorrt":
-        device = "cuda:0"
-    elif settings.get("backend") == "tensorrt":
-        device = "cuda"
-    else:
-        device = "cpu"
+    device = "cuda:0" if format_name == "tensorrt" or settings.get("backend") == "tensorrt" else "cpu"
     exported = RFDETRInference(artifact, device=device)
     actual = exported.predict(image, threshold=0.0, include_source_image=False)
 

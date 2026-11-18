@@ -60,8 +60,47 @@ def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward"
     return Runtime.get().load_program(str(pte_path)).load_method(method_name)
 
 
+def _check_tensorrt_device(device: str) -> None:
+    """Refuse a device the ExecuTorch TensorRT delegate cannot run on, before the delegate or the program loads.
+
+    The delegate runs its engine on the current CUDA device and takes no device argument. ``cuda:N`` is therefore
+    accepted only as an assertion that ``N`` is the current device; selecting another GPU here would change
+    process-wide CUDA state for every other caller.
+
+    Args:
+        device: Requested device: ``auto``, ``cuda`` or ``cuda:N``.
+
+    Raises:
+        ValueError: If *device* has another form, or ``N`` is not the current CUDA device.
+        RuntimeError: If no CUDA device is available.
+
+    Examples:
+        >>> _check_tensorrt_device("cpu")
+        Traceback (most recent call last):
+        ...
+        ValueError: ExecuTorch TensorRT requires cuda or auto (or cuda:N naming the current CUDA device); got 'cpu'.
+    """
+    if not (device in {"auto", "cuda"} or (device.startswith("cuda:") and device[5:].isdigit())):
+        raise ValueError(
+            f"ExecuTorch TensorRT requires cuda or auto (or cuda:N naming the current CUDA device); got {device!r}."
+        )
+    if not torch.cuda.is_available():
+        raise RuntimeError("ExecuTorch TensorRT requires an available CUDA device.")
+    if device.startswith("cuda:"):
+        current = torch.cuda.current_device()
+        if int(device[5:]) != current:
+            raise ValueError(
+                f"ExecuTorch TensorRT runs on the current CUDA device, cuda:{current}; got {device!r}. "
+                f"Request auto, cuda or cuda:{current}, or restrict the visible GPUs with CUDA_VISIBLE_DEVICES."
+            )
+
+
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
-    """Load an ExecuTorch method with its embedded delegate policy; it reads no runtime options."""
+    """Load an ExecuTorch method with its embedded delegate policy; it reads no runtime options.
+
+    Each delegate accepts its own *device* values: XNNPACK ``auto`` or ``cpu``, CoreML ``auto``, QNN ``auto`` or
+    ``qnn``, and TensorRT ``auto``, ``cuda`` or ``cuda:N`` where ``N`` is the current CUDA device.
+    """
     _runtime_options("ExecuTorch", options, ())
 
     delegate = (metadata.backend or "xnnpack").lower()
@@ -79,10 +118,7 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
             raise ValueError("ExecuTorch QNN requires auto or qnn.")
         target = "qnn"
     elif delegate == "tensorrt":
-        if device not in {"auto", "cuda"}:
-            raise ValueError("ExecuTorch TensorRT requires cuda or auto.")
-        if not torch.cuda.is_available():
-            raise RuntimeError("ExecuTorch TensorRT requires an available CUDA device.")
+        _check_tensorrt_device(device)
         try:
             # Importing the package registers the TensorRT delegate with ExecuTorch's runtime.
             import torch_tensorrt_executorch_runtime  # noqa: F401

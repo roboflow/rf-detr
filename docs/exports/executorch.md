@@ -103,7 +103,7 @@ The `soc` parameter is required for QNN and must be a `QcomChipset` name matchin
 
 The `"tensorrt"` backend targets NVIDIA GPUs. Torch-TensorRT builds a TensorRT engine from the `torch.export` graph and stores it in the `.pte`, so there is no ONNX step. For the models we checked (detection Nano to Large, segmentation Nano and the keypoint preview model), TensorRT converts every operator, so the program runs as one TensorRT engine. It takes and returns CPU tensors, like the other backends.
 
-It needs its own extra, on Linux with Python 3.11 or newer. The extra installs Torch-TensorRT and the ExecuTorch release it was built with, which is newer than the one `rfdetr[executorch]` pins, so the two extras cannot share an environment. Use this environment for `backend="tensorrt"`; the other backends are tested with `rfdetr[executorch]`.
+It needs its own extra, on Linux with Python 3.11 or newer. It is validated on Linux x86-64; aarch64 is untested. The extra installs Torch-TensorRT and the ExecuTorch release it was built with, which is newer than the one `rfdetr[executorch]` pins, so the two extras cannot share an environment. Use this environment for `backend="tensorrt"`; the other backends are tested with `rfdetr[executorch]`.
 
 ```bash
 pip install "rfdetr[executorch-tensorrt]"
@@ -119,7 +119,7 @@ model = RFDETRSmall()
 model.export(format="executorch", backend="tensorrt")
 ```
 
-This produces `output/rfdetr-small_tensorrt.pte`. [`RFDETRInference`](#predict-with-rfdetrinference) loads it on the GPU. To use the ExecuTorch runtime directly, import the TensorRT delegate first, because it ships outside the `executorch` wheel:
+This produces `output/rfdetr-small_tensorrt.pte`. [`RFDETRInference`](#predict-with-rfdetrinference) loads it on the current CUDA device: pass `device="auto"` or `device="cuda"`, or `device="cuda:N"` only when `N` is the current CUDA device (any other index is refused, because the delegate takes no device argument). To run on another GPU, restrict the visible GPUs with `CUDA_VISIBLE_DEVICES` before starting Python. To use the ExecuTorch runtime directly, import the TensorRT delegate first, because it ships outside the `executorch` wheel:
 
 ```python
 import torch_tensorrt_executorch_runtime  # registers the TensorRT delegate
