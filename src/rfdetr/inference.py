@@ -305,7 +305,7 @@ class ModelContext:
         device: Device the model lives on. An index-less ``torch.device("cuda")`` is replaced by the concrete
             device (e.g. ``cuda:0``) that ``rfdetr.detr._move_model_context_to_device`` resolves on the deferred
             first-use move, so every later caller targets that same GPU whatever its own thread selected.
-        resolution: Input resolution (square side length in pixels).
+        resolution: Input resolution in pixels: a square side length, or ``(height, width)``.
         args: Namespace of resolved training/model configuration.
         class_names: Optional list of class name strings loaded from checkpoint.
     """
@@ -315,7 +315,7 @@ class ModelContext:
         model: LWDETR,
         postprocess: PostProcess,
         device: torch.device,
-        resolution: int,
+        resolution: int | tuple[int, int],
         args: Any,
         class_names: list[str] | None = None,
     ) -> None:

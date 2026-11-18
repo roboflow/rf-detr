@@ -669,6 +669,63 @@ class TestResolutionKwarg:
             RFDETR.train(mock_self, resolution=bad_resolution)
         assert "resolution must be a positive integer" in str(exc_info.value)
 
+    @pytest.mark.parametrize("bad_resolution", [(560, 560, 3), (560,), (560, 0), (560.0, 560), (True, 560), [560, -56]])
+    @pytest.mark.usefixtures("patch_lit")
+    def test_invalid_pair_raises_value_error(self, tmp_path, bad_resolution):
+        """A pair must hold exactly two positive integers."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        with pytest.raises(ValueError, match="resolution must be a positive integer or a"):
+            RFDETR.train(mock_self, resolution=bad_resolution)
+
+    @pytest.mark.parametrize("resolution", [(512, 672), [672, 512]])
+    @pytest.mark.usefixtures("patch_lit")
+    def test_pair_updates_resolution_and_positional_encoding_size(self, tmp_path, resolution):
+        """A ``(height, width)`` override reaches the config, the model context and its args as pairs."""
+        # RFDETRSmallConfig: patch_size=16, num_windows=2, formula-derived PE.
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        height, width = resolution
+
+        RFDETR.train(mock_self, resolution=resolution)
+
+        assert mock_self.model_config.resolution == (height, width)
+        assert mock_self.model_config.positional_encoding_size == (height // 16, width // 16)
+        assert mock_self.model.resolution == (height, width)
+        assert mock_self.model.args.resolution == (height, width)
+        assert mock_self.model.args.positional_encoding_size == (height // 16, width // 16)
+
+    @pytest.mark.usefixtures("patch_lit")
+    def test_square_pair_keeps_int_positional_encoding_size(self, tmp_path):
+        """A pair with equal sides derives the grid in its ``int`` form."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+
+        RFDETR.train(mock_self, resolution=(672, 672))
+
+        assert mock_self.model_config.positional_encoding_size == 42
+
+    @pytest.mark.usefixtures("patch_lit")
+    def test_pair_from_a_non_square_config_goes_back_to_square(self, tmp_path):
+        """An ``int`` override of a non-square model gives a square grid again."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(
+            pretrain_weights=None, num_classes=3, device="cpu", resolution=(512, 672)
+        )
+
+        RFDETR.train(mock_self, resolution=640)
+
+        assert mock_self.model_config.resolution == 640
+        assert mock_self.model_config.positional_encoding_size == 40
+
+    @pytest.mark.parametrize("resolution", [(512, 680), (520, 672)])
+    @pytest.mark.usefixtures("patch_lit")
+    def test_pair_indivisible_on_either_side_raises_value_error(self, tmp_path, resolution):
+        """Each side of a pair must be divisible by patch_size * num_windows."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        with pytest.raises(ValueError, match="is not divisible by"):
+            RFDETR.train(mock_self, resolution=resolution)
+
     @pytest.mark.usefixtures("patch_lit")
     def test_syncs_model_resolution_attribute(self, tmp_path):
         """Resolution kwarg sets model.resolution so predict()/export() see the new resolution.

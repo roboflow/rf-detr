@@ -55,7 +55,7 @@ class Backbone(BackboneBase):
         load_dinov2_weights: bool = True,
         patch_size: int = 14,
         num_windows: int = 4,
-        positional_encoding_size: int = 0,
+        positional_encoding_size: int | tuple[int, int] = 0,
         dual_projector: bool = False,
     ) -> None:
         super().__init__()
@@ -118,7 +118,7 @@ class Backbone(BackboneBase):
         load_pretrained_weights: bool,
         patch_size: int,
         num_windows: int,
-        positional_encoding_size: int,
+        positional_encoding_size: int | tuple[int, int],
         drop_path: float,
         window_block_indexes: list[int] | None,
     ) -> nn.Module:
@@ -145,7 +145,8 @@ class Backbone(BackboneBase):
                 when the detector itself has no ``pretrain_weights``).
             patch_size: Patch size of the encoder's patch embedding.
             num_windows: Windows per side for windowed attention.
-            positional_encoding_size: Side length, in patches, of the encoder's position-embedding grid.
+            positional_encoding_size: Size, in patches, of the encoder's position-embedding grid: a side length for
+                a square grid, or ``(height, width)``.
             drop_path: Stochastic-depth rate.
             window_block_indexes: Layers using windowed attention, or ``None`` to derive them.
 

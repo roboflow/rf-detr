@@ -20,9 +20,9 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, cast
+from typing import Any, Dict, List, NamedTuple, Optional, TypeAlias, cast
 
 import torch
 import torch.utils.data
@@ -47,10 +47,14 @@ from rfdetr.datasets.io_utils import decode_pil_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.shapes import as_pair
 
 logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
+
+#: A resolution or resize target: a side length, or ``(height, width)``.
+_Resolution: TypeAlias = int | tuple[int, int]
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -277,25 +281,55 @@ def _build_keypoint_cat2label(coco: Any, num_keypoints_per_class: list[int] | No
 
 
 def compute_multi_scale_scales(
-    resolution: int,
+    resolution: _Resolution,
     expanded_scales: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-) -> list[int]:
-    # round to the nearest multiple of 4*patch_size to enable both patching and windowing
-    base_num_patches_per_window = resolution // (patch_size * num_windows)
+) -> list[_Resolution]:
+    """Return the multi-scale training scales around *resolution*.
+
+    Scales are whole multiples of ``patch_size * num_windows``, so each one can be split into patches and windows. For
+    a ``(height, width)`` resolution the shorter side takes the same steps as a side length would, and the longer side
+    follows it at the resolution's aspect ratio, rounded to a whole multiple.
+
+    Args:
+        resolution: Base resolution: a side length, or ``(height, width)``.
+        expanded_scales: Whether to widen the range of scales.
+        patch_size: Model patch size.
+        num_windows: Windows per spatial dimension.
+
+    Returns:
+        Side lengths for an ``int`` resolution, or ``(height, width)`` pairs for a pair, in increasing order.
+
+    Examples:
+        >>> compute_multi_scale_scales(512)
+        [320, 384, 448, 512, 576, 640, 704, 768]
+        >>> compute_multi_scale_scales((384, 768))[:2]
+        [(192, 384), (256, 512)]
+    """
+    block_size = patch_size * num_windows
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
-    scales = [base_num_patches_per_window + offset for offset in offsets]
-    proposed_scales = [scale * patch_size * num_windows for scale in scales]
-    proposed_scales = [
-        scale for scale in proposed_scales if scale >= patch_size * num_windows * 2
-    ]  # ensure minimum image size
-    return proposed_scales
+    if isinstance(resolution, int):
+        # round to the nearest multiple of 4*patch_size to enable both patching and windowing
+        proposed_scales = [(resolution // block_size + offset) * block_size for offset in offsets]
+        return [scale for scale in proposed_scales if scale >= block_size * 2]  # ensure minimum image size
+
+    height, width = as_pair(resolution)
+    short_side, long_side = min(height, width), max(height, width)
+    proposed_pairs: list[_Resolution] = []
+    for offset in offsets:
+        short_blocks = short_side // block_size + offset
+        if short_blocks < 2:  # ensure minimum image size
+            continue
+        short_scale = short_blocks * block_size
+        long_scale = round(short_blocks * long_side / short_side) * block_size
+        proposed_pairs.append((short_scale, long_scale) if height <= width else (long_scale, short_scale))
+    return proposed_pairs
 
 
 def draft_size_for_transforms(
     image_set: str,
-    resolution: int,
+    resolution: _Resolution,
     *,
     multi_scale: bool = False,
     expanded_scales: bool = False,
@@ -320,7 +354,8 @@ def draft_size_for_transforms(
 
     Args:
         image_set: Dataset split name.  Only ``"train"`` is decoded at a reduced scale.
-        resolution: Base square resolution the split is built for.
+        resolution: Base resolution the split is built for: a side length, or ``(height, width)``. A pair counts
+            as its longer side, the largest extent a resize can ask of either source axis.
         multi_scale: Whether multi-scale training is enabled.
         expanded_scales: Whether the multi-scale range is widened.
         patch_size: Patch size used to derive multi-scale candidates.
@@ -340,14 +375,17 @@ def draft_size_for_transforms(
         512
         >>> draft_size_for_transforms("train", 512, multi_scale=True)
         768
+        >>> draft_size_for_transforms("train", (384, 768))
+        768
     """
     if image_set != "train" or include_masks:
         return None
-    direct_branch_size = (
-        max(compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows))
+    scales: Sequence[_Resolution] = (
+        compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
         if multi_scale
-        else resolution
+        else [resolution]
     )
+    direct_branch_size = max(max(as_pair(scale)) for scale in scales)
     return max(direct_branch_size, 600) if scale_jitter else direct_branch_size
 
 
@@ -935,7 +973,7 @@ class ConvertCoco:
 
 
 def _build_train_resize_config(
-    scales: list[int],
+    scales: Sequence[_Resolution],
     *,
     square: bool,
     max_size: int | None = None,
@@ -956,10 +994,11 @@ def _build_train_resize_config(
     collator via :func:`~rfdetr.utilities.tensors.make_collate_fn`, not here.
 
     Args:
-        scales: Target resize scales in pixels.
-        square: If ``True``, produce square output using ``A.Resize``
-            (one random scale from *scales*).  If ``False``, preserve aspect ratio using ``A.SmallestMaxSize`` with an
-            optional long-side cap.
+        scales: Target resize scales in pixels, each a side length or a ``(height, width)`` pair.
+        square: If ``True``, resize to exactly the target scale using ``A.Resize``
+            (one random scale from *scales*): a square for a side length, ``(height, width)`` for a pair.  If
+            ``False``, preserve aspect ratio using ``A.SmallestMaxSize`` on the scale's shorter side with an optional
+            long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
         scale_jitter: If ``True`` (default), both Option A and Option B are randomly
@@ -969,10 +1008,11 @@ def _build_train_resize_config(
         A single-element list. By default the entry wraps a ``OneOf`` over both
         branches; when ``scale_jitter=False``, the entry is Option A directly.
     """
+    pairs = [as_pair(scale) for scale in scales]
     if square:
         option_a: dict[str, Any] = {
             "OneOf": {
-                "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
+                "transforms": [{"Resize": {"height": h, "width": w}} for h, w in pairs],
             }
         }
         option_b: dict[str, Any] = {
@@ -982,8 +1022,8 @@ def _build_train_resize_config(
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
-                                for s in scales
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": h, "width": w}}
+                                for h, w in pairs
                             ],
                         }
                     },
@@ -992,8 +1032,10 @@ def _build_train_resize_config(
         }
     else:
         cap = max_size or _COCO_MAX_SIZE
+        # The aspect-preserving resize is driven by the shorter side alone.
+        short_sides = [min(pair) for pair in pairs]
         # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
-        size_param: Any = scales[0] if len(scales) == 1 else scales
+        size_param: Any = short_sides[0] if len(short_sides) == 1 else short_sides
         option_a = {
             "Sequential": {
                 "transforms": [
@@ -1019,8 +1061,8 @@ def _build_train_resize_config(
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
-                                for s in scales
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": h, "width": w}}
+                                for h, w in pairs
                             ],
                         }
                     },
@@ -1035,7 +1077,7 @@ def _build_train_resize_config(
 
 
 def _build_train_resize_transforms(
-    scales: List[int],
+    scales: Sequence[_Resolution],
     *,
     square: bool,
     max_size: Optional[int] = None,
@@ -1044,8 +1086,8 @@ def _build_train_resize_transforms(
     """Build the default torchvision-native training resize pipeline.
 
     Args:
-        scales: Candidate target scales.
-        square: Whether to force square resize outputs.
+        scales: Candidate target scales, each a side length or a ``(height, width)`` pair.
+        square: Whether to resize to exactly the target scale instead of preserving the aspect ratio.
         max_size: Optional maximum long-side size for non-square resizing.
         scale_jitter: If ``True`` (default), randomly picks between a direct resize
             (Option A) and a resize → crop → resize sequence (Option B). If ``False``,
@@ -1055,33 +1097,35 @@ def _build_train_resize_transforms(
         Random two-branch resize transform matching the historical DETR-style pipeline,
         or just Option A when ``scale_jitter=False``.
     """
+    pairs = [as_pair(scale) for scale in scales]
     if square:
-        square_resize = RandomChoice([Resize((scale, scale)) for scale in scales])
+        square_resize = RandomChoice([Resize(pair) for pair in pairs])
         if not scale_jitter:
             return square_resize
         resize_b = Compose(
             [
                 RandomResize([400, 500, 600]),
                 RandomChoice(
-                    [RandomSizedCrop((384, 600), (scale, scale)) for scale in scales],
+                    [RandomSizedCrop((384, 600), pair) for pair in pairs],
                 ),
             ]
         )
         return RandomSelect(square_resize, resize_b)
 
     cap = max_size or _COCO_MAX_SIZE
-    resize = RandomResize(scales, max_size=cap)
+    # The aspect-preserving resize is driven by the shorter side alone.
+    resize = RandomResize([min(pair) for pair in pairs], max_size=cap)
     if not scale_jitter:
         return resize
     # Resize each crop directly to the selected target scale, capped as the removed final RandomResize did. Previously
     # the crop was resized to a fixed 384x384 output and then resized again to `scales`, needlessly resampling it twice.
     # The Albumentations backend already dropped that extra hop (see _build_train_resize_config), so both backends now
     # express the same recipe while retaining the historical non-square maximum size.
-    capped_scales = [min(scale, cap) for scale in scales]
+    capped_pairs = [(min(height, cap), min(width, cap)) for height, width in pairs]
     resize_b = Compose(
         [
             RandomResize([400, 500, 600]),
-            RandomChoice([RandomSizedCrop((384, 600), (scale, scale)) for scale in capped_scales]),
+            RandomChoice([RandomSizedCrop((384, 600), pair) for pair in capped_pairs]),
         ]
     )
     return RandomSelect(resize, resize_b)
@@ -1089,8 +1133,8 @@ def _build_train_resize_transforms(
 
 def _build_albumentations_pipeline(
     image_set: str,
-    resolution: int,
-    scales: List[int],
+    resolution: _Resolution,
+    scales: Sequence[_Resolution],
     *,
     square: bool,
     aug_config: Optional[Dict[str, Dict[str, Any]]],
@@ -1102,9 +1146,9 @@ def _build_albumentations_pipeline(
 
     Args:
         image_set: Dataset split name.
-        resolution: Target resolution.
+        resolution: Target resolution: a side length, or ``(height, width)``.
         scales: Candidate train resize scales.
-        square: Whether to use square resize.
+        square: Whether to resize to exactly the target resolution instead of preserving the aspect ratio.
         aug_config: Custom Albumentations config.
         scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
             a direct resize (Option A) and a resize → crop → resize sequence (Option B). Set to
@@ -1140,13 +1184,14 @@ def _build_albumentations_pipeline(
             pipeline += [normalize]
         return Compose(pipeline)
 
+    height, width = as_pair(resolution)
     if square or image_set == "val_speed":
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": height, "width": width}}])
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     resize_wrappers = AlbumentationsWrapper.from_config(
         [
-            {"SmallestMaxSize": {"max_size": resolution}},
+            {"SmallestMaxSize": {"max_size": min(height, width)}},
             # CappedLongestMaxSize only shrinks (never upscales) -- see the matching comment in
             # _build_train_resize_config's option_a.
             {"CappedLongestMaxSize": {"max_size": _COCO_MAX_SIZE}},
@@ -1157,8 +1202,8 @@ def _build_albumentations_pipeline(
 
 def _build_torchvision_pipeline(
     image_set: str,
-    resolution: int,
-    scales: List[int],
+    resolution: _Resolution,
+    scales: Sequence[_Resolution],
     *,
     square: bool,
     aug_config: Optional[Dict[str, Dict[str, Any]]],
@@ -1170,9 +1215,9 @@ def _build_torchvision_pipeline(
 
     Args:
         image_set: Dataset split name.
-        resolution: Target resolution.
+        resolution: Target resolution: a side length, or ``(height, width)``.
         scales: Candidate train resize scales.
-        square: Whether to use square resize.
+        square: Whether to resize to exactly the target resolution instead of preserving the aspect ratio.
         aug_config: ``None`` for default augmentation, ``{}`` to disable it.
         scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
             a direct resize (Option A) and a resize → crop → resize sequence (Option B). Set to
@@ -1224,15 +1269,16 @@ def _build_torchvision_pipeline(
             pipeline += [normalize]
         return Compose(pipeline)
 
+    height, width = as_pair(resolution)
     if square or image_set == "val_speed":
-        return Compose([Resize((resolution, resolution)), to_image, to_float, normalize])
-    return Compose([RandomResize([resolution], max_size=_COCO_MAX_SIZE), to_image, to_float, normalize])
+        return Compose([Resize((height, width)), to_image, to_float, normalize])
+    return Compose([RandomResize([min(height, width)], max_size=_COCO_MAX_SIZE), to_image, to_float, normalize])
 
 
 def _route_transforms(
     image_set: str,
-    resolution: int,
-    scales: List[int],
+    resolution: _Resolution,
+    scales: Sequence[_Resolution],
     *,
     square: bool,
     aug_config: Optional[Dict[str, Dict[str, Any]]],
@@ -1244,7 +1290,7 @@ def _route_transforms(
 
     Args:
         image_set: Dataset split name.
-        resolution: Target resolution in pixels.
+        resolution: Target resolution in pixels: a side length, or ``(height, width)``.
         scales: Candidate resize scales.
         square: Whether to use square resize.
         aug_config: Augmentation config; ``None`` or ``{}`` routes to torchvision.
@@ -1282,7 +1328,7 @@ def _route_transforms(
 
 def make_coco_transforms(
     image_set: str,
-    resolution: int,
+    resolution: _Resolution,
     multi_scale: bool = False,
     expanded_scales: bool = False,
     skip_random_resize: bool = False,
@@ -1312,7 +1358,8 @@ def make_coco_transforms(
         image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
             or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
-            longest side is capped at 1333 px to preserve aspect ratio.
+            longest side is capped at 1333 px to preserve aspect ratio.  A ``(height, width)`` pair counts as its
+            shorter side, except for ``"val_speed"``, which resizes to exactly ``(height, width)``.
         multi_scale: If ``True``, sample the resize target from a range of scales
             computed by :func:`compute_multi_scale_scales` instead of using a single fixed size.
         expanded_scales: Passed to :func:`compute_multi_scale_scales`; broadens the
@@ -1366,7 +1413,7 @@ def make_coco_transforms(
     Raises:
         ValueError: If ``image_set`` is not one of the recognised split names.
     """
-    scales = [resolution]
+    scales: Sequence[_Resolution] = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
         scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
@@ -1391,7 +1438,7 @@ def make_coco_transforms(
 
 def make_coco_transforms_square_div_64(
     image_set: str,
-    resolution: int,
+    resolution: _Resolution,
     multi_scale: bool = False,
     expanded_scales: bool = False,
     skip_random_resize: bool = False,
@@ -1417,7 +1464,8 @@ def make_coco_transforms_square_div_64(
         image_set: Dataset split identifier. Expected values are "train", "val",
             "test", or "val_speed". Each split uses a slightly different transform pipeline suited for training or
             evaluation.
-        resolution: Base square resolution (in pixels) to which images are resized.
+        resolution: Base resolution (in pixels) to which images are resized: a side length for a square output, or
+            ``(height, width)``.
         multi_scale: If True, enable multi-scale training by sampling from a set of
             square resolutions instead of a single fixed size.
         expanded_scales: If True, expand the range of scales used during
@@ -1453,7 +1501,7 @@ def make_coco_transforms_square_div_64(
     Returns:
         A ``Compose`` object containing the composed image transforms appropriate for the specified ``image_set``.
     """
-    scales = [resolution]
+    scales: Sequence[_Resolution] = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
         scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
@@ -1476,7 +1524,7 @@ def make_coco_transforms_square_div_64(
     )
 
 
-def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
+def build_coco(image_set: str, args: Any, resolution: _Resolution) -> CocoDetection:
     """Build a COCO dataset from an explicit configuration namespace.
 
     Direct callers must provide either ``dataset_dir`` or ``coco_path``, plus
@@ -1487,7 +1535,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     Args:
         image_set: COCO split identifier.
         args: Dataset, model, and transform configuration namespace.
-        resolution: Target image resolution in pixels.
+        resolution: Target image resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         The configured COCO dataset.
@@ -1603,7 +1651,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     return dataset
 
 
-def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
+def build_roboflow_from_coco(image_set: str, args: Any, resolution: _Resolution) -> CocoDetection:
     """Build a Roboflow COCO-format dataset.
 
     This uses Roboflow's standard directory structure (train/valid/test folders with _annotations.coco.json).
@@ -1621,7 +1669,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     Args:
         image_set: Roboflow split identifier.
         args: Dataset, model, and transform configuration namespace.
-        resolution: Target image resolution in pixels.
+        resolution: Target image resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         The configured Roboflow COCO-format dataset.

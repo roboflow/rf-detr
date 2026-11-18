@@ -23,6 +23,7 @@ from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
@@ -1260,6 +1261,23 @@ class TestOnTrainBatchStart:
 
         new_h, new_w = samples.tensors.shape[2], samples.tensors.shape[3]
         assert new_h == new_w, "Multi-scale should produce square outputs"
+
+    def test_multi_scale_resize_uses_height_width_scales_for_a_non_square_model(self, tmp_path):
+        """A non-square model resizes the batch and its padding mask to one of its ``(height, width)`` scales."""
+        model_config = _base_model_config(resolution=(448, 672))
+        train_config = _base_train_config(tmp_path, multi_scale="per-batch")
+        module, _, _, _ = _build_module(model_config=model_config, train_config=train_config)
+        _attach_trainer(module, global_step=0)
+        samples, targets = _make_batch(batch_size=2, h=16, w=24)
+
+        module.on_train_batch_start((samples, targets), batch_idx=0)
+
+        scales = compute_multi_scale_scales(
+            (448, 672), train_config.expanded_scales, model_config.patch_size, model_config.num_windows
+        )
+        assert tuple(samples.tensors.shape[2:]) in scales
+        assert samples.mask.shape[1:] == samples.tensors.shape[2:]
+        assert samples.tensors.shape[2] < samples.tensors.shape[3]
 
     def test_multi_scale_skipped_when_per_sample(self, tmp_path):
         """Per-sample scaling happens in the dataset, so the batch-level resize must be a no-op."""
@@ -4122,6 +4140,28 @@ class TestOnLoadCheckpoint:
             expected_tokens,
             16,
         ), f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
+
+    @pytest.mark.parametrize(
+        ("target", "resized"),
+        [pytest.param((4, 9), False, id="same-grid"), pytest.param((9, 4), True, id="transposed-grid")],
+    )
+    def test_recorded_non_square_grid_decides_interpolation(self, target, resized, build_module):
+        """A checkpoint that records a non-square grid is resized only for a model with another grid.
+
+        A 4x9 grid has 36 tokens, like a 6x6 one and like the transposed 9x4 one, so the token count cannot decide.
+        """
+        pe = torch.randn(1, 4 * 9 + 1, 16)
+        checkpoint = {
+            "state_dict": {self._PE_KEY: pe.clone()},
+            "model_config": {"positional_encoding_size": (4, 9)},
+        }
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=target))
+        module.on_load_checkpoint(checkpoint)
+
+        pe_after = checkpoint["state_dict"][self._PE_KEY]
+        assert pe_after.shape == pe.shape
+        assert torch.equal(pe_after, pe) is not resized
 
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.

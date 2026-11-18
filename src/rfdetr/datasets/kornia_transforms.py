@@ -1117,7 +1117,7 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
 
 def build_kornia_pipeline(
     aug_config: dict[str, dict[str, Any]],
-    resolution: int,
+    resolution: int | tuple[int, int],
     with_masks: bool = False,
     include_keypoints: bool = False,
     with_keypoints: bool = False,

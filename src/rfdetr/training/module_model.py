@@ -40,7 +40,12 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
-from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
+from rfdetr.models.weights import (
+    _recorded_pe_grid,
+    apply_lora,
+    interpolate_position_embeddings,
+    load_pretrain_weights,
+)
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
@@ -2045,6 +2050,7 @@ class RFDETRModelModule(LightningModule):
             interpolate_position_embeddings(
                 checkpoint["state_dict"],
                 self.model_config.positional_encoding_size,
+                source_pe_size=_recorded_pe_grid(checkpoint, checkpoint["state_dict"]),
             )
 
         # Drop Transformer Engine's `_extra_state` entries before PTL applies the state dict.

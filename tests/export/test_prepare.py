@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 import torch
 
-from rfdetr.export.prepare import ExportGraph, prepare_export_graph, resolve_output_names
+from rfdetr.export.prepare import ExportGraph, prepare_export_graph, resolve_output_names, validate_export_shape
 
 
 class _DetectorStub(torch.nn.Module):
@@ -233,3 +233,35 @@ class TestExportShapeFreezeThroughWrappers:
         prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
 
         assert encoder.export_shapes == [(32, 48)]
+
+
+class TestValidateExportShapeDefault:
+    """With no ``shape``, ``validate_export_shape`` exports at the model's resolution."""
+
+    @staticmethod
+    def _default_shape(resolution: int | tuple[int, int]) -> tuple[int, int]:
+        """Return the shape an export without ``shape`` gets for a patch-16, two-window model."""
+        return validate_export_shape(
+            None,
+            None,
+            types.SimpleNamespace(patch_size=16, num_windows=2),
+            resolution,
+            resolve_patch_size=lambda patch_size, model_config, caller: model_config.patch_size,
+            validate_shape_dims=lambda shape, block_size, patch_size, num_windows: shape,
+        )
+
+    @pytest.mark.parametrize(
+        ("resolution", "expected"),
+        [pytest.param(64, (64, 64), id="int"), pytest.param((64, 96), (64, 96), id="pair")],
+    )
+    def test_default_shape_is_the_model_resolution(
+        self, resolution: int | tuple[int, int], expected: tuple[int, int]
+    ) -> None:
+        """A side length exports as a square; a ``(height, width)`` resolution exports at that shape."""
+        assert self._default_shape(resolution) == expected
+
+    @pytest.mark.parametrize("resolution", [(64, 80), (80, 64)])
+    def test_non_square_default_must_be_divisible_on_both_sides(self, resolution: tuple[int, int]) -> None:
+        """Either side of a ``(height, width)`` resolution can make the default shape invalid."""
+        with pytest.raises(ValueError, match="default resolution"):
+            self._default_shape(resolution)

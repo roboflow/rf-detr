@@ -1084,6 +1084,16 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="default resolution"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path))
 
+    @pytest.mark.parametrize("resolution", [(84, 50), (50, 84)])
+    def test_non_square_default_resolution_is_checked_on_both_sides(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, resolution: tuple[int, int]
+    ) -> None:
+        """Export() with shape=None checks the height and the width of a ``(height, width)`` resolution."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=3)
+        model.model.resolution = resolution
+        with pytest.raises(ValueError, match="default resolution"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path))
+
 
 def test_make_infer_image_keeps_rectangular_shape() -> None:
     """make_infer_image must produce a (B, C, H, W) tensor for non-square shapes.

@@ -86,7 +86,7 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     )
 
 
-def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
+def build_roboflow(image_set: str, args: Any, resolution: int | tuple[int, int]) -> Dataset[Any]:
     """Build a Roboflow dataset, auto-detecting COCO or YOLO format.
 
     This function detects the dataset format and delegates to the appropriate builder function.
@@ -112,13 +112,13 @@ _DATASET_BUILDERS: dict[DatasetFile, Callable[[str, Any, int], Dataset[Any]]] = 
 }
 
 
-def build_dataset(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
+def build_dataset(image_set: str, args: Any, resolution: int | tuple[int, int]) -> Dataset[Any]:
     """Build the dataset for *image_set* using the builder registered for ``args.dataset_file``.
 
     Args:
         image_set: Split to build, e.g. ``"train"``, ``"val"`` or ``"test"``.
         args: Merged model/train config namespace; ``args.dataset_file`` selects the builder.
-        resolution: Target square resolution in pixels.
+        resolution: Target resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         The dataset produced by the registered builder.

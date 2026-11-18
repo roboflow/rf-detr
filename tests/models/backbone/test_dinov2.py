@@ -51,6 +51,82 @@ def test_compiled_embeddings_preserve_interpolated_outputs_and_gradients() -> No
             model.zero_grad(set_to_none=True)
 
 
+class TestNonSquarePositionalEncodingSize:
+    """``DinoV2`` builds and exports its position embeddings on a ``(height, width)`` grid."""
+
+    @staticmethod
+    def _backbone(shape: tuple[int, int], positional_encoding_size: int | tuple[int, int]) -> DinoV2:
+        """Return a randomly initialized windowed backbone with patch size 16 and 2x2 windows."""
+        return DinoV2(
+            shape=shape,
+            out_feature_indexes=[2, 5],
+            size="small",
+            use_registers=False,
+            load_dinov2_weights=False,
+            patch_size=16,
+            num_windows=2,
+            positional_encoding_size=positional_encoding_size,
+        )
+
+    def test_pair_builds_a_height_width_grid(self) -> None:
+        """A ``(height, width)`` size gives a grid with that layout and feature maps of that shape."""
+        backbone = self._backbone((64, 128), (4, 8)).eval()
+
+        with torch.no_grad():
+            features = backbone(torch.zeros(1, 3, 64, 128))
+
+        assert backbone.encoder.embeddings.patch_grid_size == (4, 8)
+        assert backbone.encoder.embeddings.position_embeddings.shape[1] == 4 * 8 + 1
+        assert [tuple(feature.shape[-2:]) for feature in features] == [(4, 8), (4, 8)]
+
+    def test_square_pair_builds_the_same_backbone_as_a_side_length(self) -> None:
+        """A pair with equal sides is the square grid of that side, parameter for parameter."""
+        torch.manual_seed(0)
+        from_int = self._backbone((64, 64), 4)
+        torch.manual_seed(0)
+        from_pair = self._backbone((64, 64), (4, 4))
+
+        assert from_int.encoder.config.image_size == from_pair.encoder.config.image_size == 64
+        for (name, expected), actual in zip(from_int.state_dict().items(), from_pair.state_dict().values()):
+            assert torch.equal(actual, expected), name
+
+    def test_export_bakes_a_non_square_table_from_a_square_grid(self) -> None:
+        """Exporting a square-grid backbone at a non-square shape bakes the table for that shape."""
+        backbone = self._backbone((64, 128), 4).eval()
+        pixels = torch.randn(1, 3, 64, 128)
+        with torch.no_grad():
+            expected = backbone(pixels)
+
+        backbone.export()
+        with torch.no_grad():
+            actual = backbone(pixels)
+
+        embeddings = backbone.encoder.embeddings
+        assert embeddings.patch_grid_size == (4, 8)
+        assert embeddings.position_embeddings.shape[1] == 4 * 8 + 1
+        for actual_feature, expected_feature in zip(actual, expected):
+            torch.testing.assert_close(actual_feature, expected_feature, rtol=1e-4, atol=1e-5)
+
+    def test_exported_non_square_table_is_not_reused_for_the_transposed_input(self) -> None:
+        """After a non-square export, a transposed input is interpolated from the baked grid, not served as is."""
+        backbone = self._backbone((64, 128), (4, 8)).eval()
+        backbone.export()
+        embeddings = backbone.encoder.embeddings
+        tokens = torch.zeros(1, 8 * 4 + 1, embeddings.position_embeddings.shape[-1])
+
+        position = embeddings.interpolate_pos_encoding(tokens, 128, 64)
+
+        assert position is not embeddings.position_embeddings
+        expected = torch.nn.functional.interpolate(
+            embeddings.position_embeddings[:, 1:].reshape(1, 4, 8, -1).permute(0, 3, 1, 2),
+            size=(8, 4),
+            mode="bicubic",
+            align_corners=False,
+            antialias=True,
+        )
+        torch.testing.assert_close(position[:, 1:], expected.permute(0, 2, 3, 1).reshape(1, 32, -1))
+
+
 class TestComputeWindowBlockIndexes:
     """Tests for compute_window_block_indexes default-derivation and override paths."""
 

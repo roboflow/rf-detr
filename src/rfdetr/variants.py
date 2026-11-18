@@ -65,8 +65,8 @@ from rfdetr.detr import RFDETR
 class RFDETRBase(RFDETR):
     """Train an RF-DETR Base model.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-base"
@@ -76,8 +76,8 @@ class RFDETRBase(RFDETR):
 class RFDETRNano(RFDETR):
     """Train an RF-DETR Nano model.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-nano"
@@ -87,8 +87,8 @@ class RFDETRNano(RFDETR):
 class RFDETRKeypointPreview(RFDETR):
     """Train or run inference with the RF-DETR keypoint preview model.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-keypoint-preview"
@@ -99,8 +99,8 @@ class RFDETRKeypointPreview(RFDETR):
 class RFDETRSmall(RFDETR):
     """Train an RF-DETR Small model.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-small"
@@ -110,8 +110,8 @@ class RFDETRSmall(RFDETR):
 class RFDETRMedium(RFDETR):
     """Train an RF-DETR Medium model.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-medium"
@@ -126,8 +126,8 @@ class RFDETRMedium(RFDETR):
 class RFDETRLargeDeprecated(RFDETR):
     """Train an RF-DETR Large model using the legacy config.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-large"
@@ -137,8 +137,8 @@ class RFDETRLargeDeprecated(RFDETR):
 class RFDETRLarge(RFDETR):
     """Train an RF-DETR Large model.
 
-    Training accepts custom square integer ``resolution`` values. The value must be divisible by ``patch_size *
-    num_windows``.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Each side
+    must be divisible by ``patch_size * num_windows``.
     """
 
     size = "rfdetr-large"
@@ -150,8 +150,8 @@ class RFDETRLarge(RFDETR):
 class RFDETRSeg(RFDETR):
     """Base class for all RF-DETR segmentation models.
 
-    Training accepts custom square integer ``resolution`` values. Most segmentation variants use multiples of 24;
-    ``RFDETRSegNano`` uses multiples of 12.
+    Training accepts a custom ``resolution``: an integer for a square input, or a ``(height, width)`` pair. Most
+    segmentation variants use multiples of 24 for each side; ``RFDETRSegNano`` uses multiples of 12.
     """
 
     _train_config_class = SegmentationTrainConfig

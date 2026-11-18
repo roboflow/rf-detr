@@ -1234,7 +1234,7 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         return prepared_image, prepared_target
 
 
-def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
+def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int | tuple[int, int]) -> YoloDetection:
     """Build a YOLO-format dataset from Roboflow or Ultralytics directory layouts.
 
     Supports both Roboflow (``train/valid/test``) and Ultralytics (``train/val/test``,
@@ -1250,7 +1250,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             ``patch_size``, and ``num_windows`` are required. ``aug_config``,
             ``scale_jitter``, keypoint fields, and ``augmentation_backend`` are
             optional and retain documented safe defaults.
-        resolution: Target square resolution in pixels.
+        resolution: Target resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         A :class:`YoloDetection` dataset instance ready for use with a DataLoader.

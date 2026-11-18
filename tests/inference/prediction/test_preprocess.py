@@ -1686,6 +1686,15 @@ class TestPredictPatchSize:
         with pytest.raises(ValueError, match="default resolution"):
             model.predict(img)
 
+    @pytest.mark.parametrize("resolution", [(28, 25), (25, 28)])
+    def test_non_square_default_resolution_is_checked_on_both_sides(self, resolution: tuple[int, int]) -> None:
+        """Predict() with shape=None checks the height and the width of a ``(height, width)`` resolution."""
+        model = self._make_model_with_config(patch_size=14, num_windows=1)
+        model.model.resolution = resolution
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match=r"default resolution \(25\)"):
+            model.predict(img)
+
 
 class TestPredictNonRGBAutoConvert:
     """Predict() must silently convert non-RGB PIL images and file paths to RGB.

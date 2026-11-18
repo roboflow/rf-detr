@@ -21,7 +21,14 @@ import torch
 
 from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
-from rfdetr.models.weights import _slice_query_param_per_group, _warn_on_partial_load, apply_lora, load_pretrain_weights
+from rfdetr.models.weights import (
+    _recorded_pe_grid,
+    _slice_query_param_per_group,
+    _warn_on_partial_load,
+    apply_lora,
+    interpolate_position_embeddings,
+    load_pretrain_weights,
+)
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_peft
@@ -1257,3 +1264,181 @@ class TestPartialLoadWiring(_PatchWeightsIO):
         load_pretrain_weights(nn_model, _base_config())
 
         assert any("partially" in m for m in captured) is expect_warning, f"Unexpected warnings: {captured}"
+
+
+_PE_KEY = "backbone.0.encoder.encoder.embeddings.position_embeddings"
+
+
+def _pe_state(grid: tuple[int, int], dim: int = 8) -> dict[str, torch.Tensor]:
+    """Return a state dict whose position embeddings lie on ``grid``, each token holding its own index.
+
+    Examples:
+        >>> _pe_state((2, 3))[_PE_KEY].shape
+        torch.Size([1, 7, 8])
+    """
+    tokens = grid[0] * grid[1] + 1
+    return {_PE_KEY: torch.arange(tokens * dim, dtype=torch.float32).reshape(1, tokens, dim)}
+
+
+def _resized(position_embeddings: torch.Tensor, source: tuple[int, int], target: tuple[int, int]) -> torch.Tensor:
+    """Return ``position_embeddings`` laid out on ``source`` and bicubic-resized to ``target``.
+
+    Examples:
+        >>> _resized(_pe_state((2, 3))[_PE_KEY], (2, 3), (4, 6)).shape
+        torch.Size([1, 25, 8])
+    """
+    dim = position_embeddings.shape[-1]
+    patches = position_embeddings[:, 1:].reshape(1, *source, dim).permute(0, 3, 1, 2)
+    patches = torch.nn.functional.interpolate(patches, size=target, mode="bicubic", align_corners=False, antialias=True)
+    patches = patches.permute(0, 2, 3, 1).reshape(1, target[0] * target[1], dim)
+    return torch.cat([position_embeddings[:, :1], patches], dim=1)
+
+
+class TestInterpolatePositionEmbeddingsGrids:
+    """``interpolate_position_embeddings`` works on ``(height, width)`` grids, not on token counts."""
+
+    @pytest.mark.parametrize("target", [(6, 10), (10, 6)])
+    def test_square_source_is_resized_to_a_non_square_target(self, target: tuple[int, int]) -> None:
+        """A square checkpoint grid is resized to the target's height and width, in that order."""
+        state = _pe_state((4, 4))
+        original = state[_PE_KEY].clone()
+
+        interpolate_position_embeddings(state, target)
+
+        torch.testing.assert_close(state[_PE_KEY], _resized(original, (4, 4), target))
+
+    def test_square_source_with_the_token_count_of_the_target_is_resized(self) -> None:
+        """A 4x4 grid has the 16 tokens of a 2x8 grid and is still resized to it."""
+        state = _pe_state((4, 4))
+        original = state[_PE_KEY].clone()
+
+        interpolate_position_embeddings(state, (2, 8))
+
+        assert not torch.equal(state[_PE_KEY], original)
+        torch.testing.assert_close(state[_PE_KEY], _resized(original, (4, 4), (2, 8)))
+
+    def test_transposed_source_grid_is_resized(self) -> None:
+        """With its grid given, a source is resized to the transposed target although the token counts match."""
+        state = _pe_state((2, 6))
+        original = state[_PE_KEY].clone()
+
+        interpolate_position_embeddings(state, (6, 2), source_pe_size=(2, 6))
+
+        assert not torch.equal(state[_PE_KEY], original)
+        torch.testing.assert_close(state[_PE_KEY], _resized(original, (2, 6), (6, 2)))
+
+    @pytest.mark.parametrize("source_pe_size", [(2, 6), None])
+    def test_matching_non_square_grid_is_left_untouched(self, source_pe_size: tuple[int, int] | None) -> None:
+        """A source on the target grid is not resampled, whether its grid is given or assumed from the count."""
+        state = _pe_state((2, 6))
+        original = state[_PE_KEY]
+
+        interpolate_position_embeddings(state, (2, 6), source_pe_size=source_pe_size)
+
+        assert state[_PE_KEY] is original
+
+    def test_non_square_source_is_resized_to_a_square_target(self) -> None:
+        """A non-square checkpoint loads into a square model when its grid is given."""
+        state = _pe_state((2, 6))
+        original = state[_PE_KEY].clone()
+
+        interpolate_position_embeddings(state, 4, source_pe_size=(2, 6))
+
+        torch.testing.assert_close(state[_PE_KEY], _resized(original, (2, 6), (4, 4)))
+
+    def test_source_grid_that_does_not_match_the_token_count_raises(self) -> None:
+        """A given source grid must account for every patch token."""
+        with pytest.raises(ValueError, match="source_pe_size"):
+            interpolate_position_embeddings(_pe_state((4, 4)), (2, 6), source_pe_size=(3, 5))
+
+    def test_square_grids_keep_the_int_behaviour(self) -> None:
+        """An ``int`` target gives the result the same square pair gives."""
+        from_int, from_pair = _pe_state((4, 4)), _pe_state((4, 4))
+
+        interpolate_position_embeddings(from_int, 6)
+        interpolate_position_embeddings(from_pair, (6, 6))
+
+        assert torch.equal(from_int[_PE_KEY], from_pair[_PE_KEY])
+
+
+class TestRecordedPeGrid:
+    """``_recorded_pe_grid`` reads a checkpoint's grid and refuses one its weights contradict."""
+
+    @pytest.mark.parametrize(
+        ("checkpoint", "expected"),
+        [
+            pytest.param({"model_config": {"positional_encoding_size": (2, 6)}}, (2, 6), id="model-config-pair"),
+            pytest.param({"model_config": {"positional_encoding_size": [6, 2]}}, (6, 2), id="model-config-list"),
+            pytest.param({"args": SimpleNamespace(positional_encoding_size=(2, 6))}, (2, 6), id="args-namespace"),
+            pytest.param({"args": {"positional_encoding_size": (2, 6)}}, (2, 6), id="args-dict"),
+            pytest.param({"args": {"lr": 1e-4}}, None, id="not-recorded"),
+            pytest.param({}, None, id="no-metadata"),
+            pytest.param({"model_config": {"positional_encoding_size": 4}}, None, id="contradicts-token-count"),
+            pytest.param({"model_config": {"positional_encoding_size": "(2, 6)"}}, None, id="not-a-size"),
+        ],
+    )
+    def test_reads_the_grid_the_weights_agree_with(
+        self, checkpoint: dict[str, Any], expected: tuple[int, int] | None
+    ) -> None:
+        """The grid comes from ``model_config`` or ``args`` and must have the token count of the weights."""
+        assert _recorded_pe_grid(checkpoint, _pe_state((2, 6))) == expected
+
+
+class TestLoadPretrainWeightsNonSquareGrid(_PatchWeightsIO):
+    """``load_pretrain_weights`` resizes position embeddings between square and non-square grids."""
+
+    @staticmethod
+    def _load(monkeypatch, resolution: tuple[int, int], grid: tuple[int, int], **metadata: Any) -> torch.Tensor:
+        """Load a checkpoint whose position embeddings lie on ``grid`` into a Nano config at ``resolution``."""
+        state = _pe_state(grid)
+        state["class_embed.bias"] = torch.zeros(91)
+        _serve_checkpoint(monkeypatch, {"model": state, **metadata})
+        model_config = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu", resolution=resolution)
+
+        load_pretrain_weights(_fake_nn_model(), model_config)
+
+        return state[_PE_KEY]
+
+    def test_square_checkpoint_loads_into_a_non_square_model(self, monkeypatch) -> None:
+        """A 24x24 checkpoint is resized to the 20x28 grid of a 320x448 model."""
+        original = _pe_state((24, 24))[_PE_KEY]
+
+        loaded = self._load(monkeypatch, (320, 448), (24, 24))
+
+        torch.testing.assert_close(loaded, _resized(original, (24, 24), (20, 28)))
+
+    def test_square_checkpoint_with_the_token_count_of_the_model_is_resized(self, monkeypatch) -> None:
+        """A 288x512 Nano has an 18x32 grid: 576 tokens, like the 24x24 checkpoint, which must still be resized."""
+        original = _pe_state((24, 24))[_PE_KEY]
+
+        loaded = self._load(monkeypatch, (288, 512), (24, 24))
+
+        torch.testing.assert_close(loaded, _resized(original, (24, 24), (18, 32)))
+
+    @pytest.mark.parametrize(
+        ("resolution", "warned"),
+        [pytest.param((288, 512), True, id="same-token-count"), pytest.param((320, 448), False, id="other-count")],
+    )
+    def test_warns_when_only_the_token_count_matches(
+        self, monkeypatch, captured: list[str], resolution: tuple[int, int], warned: bool
+    ) -> None:
+        """Reading an unrecorded grid as square is reported when the model's grid has the same token count."""
+        self._load(monkeypatch, resolution, (24, 24))
+
+        assert any("reading it as a square 24x24 grid" in message for message in captured) is warned
+
+    def test_non_square_checkpoint_loads_unchanged_into_the_same_grid(self, monkeypatch) -> None:
+        """A checkpoint that records its 18x32 grid is not mistaken for a 24x24 one."""
+        original = _pe_state((18, 32))[_PE_KEY]
+
+        loaded = self._load(monkeypatch, (288, 512), (18, 32), model_config={"positional_encoding_size": (18, 32)})
+
+        assert torch.equal(loaded, original)
+
+    def test_non_square_checkpoint_loads_into_the_transposed_model(self, monkeypatch) -> None:
+        """A recorded 18x32 grid is resized for a 512x288 model, whose 32x18 grid has the same token count."""
+        original = _pe_state((18, 32))[_PE_KEY]
+
+        loaded = self._load(monkeypatch, (512, 288), (18, 32), model_config={"positional_encoding_size": (18, 32)})
+
+        torch.testing.assert_close(loaded, _resized(original, (18, 32), (32, 18)))
