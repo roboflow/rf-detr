@@ -194,6 +194,12 @@ coreai = [
     # AIProgram.optimize(), so _coreai/exporter.py no longer calls it; with 0.4.2 it would now save an
     # unoptimized program. Bump this pin only after re-running the e2e_coreai suite against the new version.
     "coreai-torch==0.4.3; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
+    # coreai-torch 0.4.3 pins coreai-core==1.0.0b3, a pre-release. Since coreai-core 1.0.0 was published (2026-11-18), uv 0.9.26
+    # no longer picks a transitive pre-release, and every extra's install-plan check failed with "no version of
+    # coreai-core==1.0.0b3". A direct requirement carrying a pre-release bound makes uv consider pre-releases for this
+    # package. The bound is "<1.0.0rc1", not "<1.0.0": PEP 440 excludes the pre-releases of 1.0.0 from "<1.0.0", which
+    # would exclude 1.0.0b3 itself. Drop this line together with the coreai-torch bump to a release that needs 1.0.0.
+    "coreai-core<1.0.0rc1; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
 ]
 coreml = [
     # torch.export (ExportedProgram) support added in coremltools 8.0 (see
