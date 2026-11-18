@@ -173,3 +173,5 @@ predictions = RFDETRInference(artifact, device="cpu").predict("image.jpg")
 ```
 
 The compact ONNX file takes one normalized NCHW float image and returns normalized center-format boxes (`dets`) and class logits (`labels`). The prediction API handles preprocessing and postprocessing. Compare AP on your held-out images and latency on the deployment CPU against the standard FP32 export before choosing a format.
+
+To enforce an 8 MB storage budget, pass `size_limit_bytes=8_000_000` to `export_cpu_onnx`. The complete uncompressed artifact must be strictly smaller. The released COCO checkpoints produced 7.13 MB for Atto, 11.77 MB for Femto and 13.10 MB for Pico in the [CPU export qualification](https://github.com/roboflow/rf-detr_plus/pull/83). A fine-tuned model can have a different artifact size.
