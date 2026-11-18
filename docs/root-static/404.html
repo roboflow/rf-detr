@@ -20,7 +20,13 @@
   <script>
     (function () {
       var path = window.location.pathname;
-      if (/^\/(latest|develop|\d+\.\d+\.\d+)(\/|$)/.test(path)) {
+      var version = path.split("/", 2)[1];
+      try {
+        version = decodeURIComponent(version);
+      } catch (error) {
+        // A malformed escape is not a version prefix. Keep the original path.
+      }
+      if (/^(latest|develop|\d+\.\d+\.\d+)$/.test(version)) {
         return;
       }
       window.location.replace("/latest" + path + window.location.search + window.location.hash);

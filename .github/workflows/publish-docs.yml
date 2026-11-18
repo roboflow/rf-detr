@@ -84,7 +84,6 @@ jobs:
           sparse-checkout: |
             docs/theme/main.html
             docs/root-static/robots.txt
-            docs/root-static/404.html
           sparse-checkout-cone-mode: false
 
       - name: 📥 Checkout the repository
@@ -103,7 +102,24 @@ jobs:
         run: |
           cp .docs-index-policy/docs/theme/main.html docs/theme/main.html
           cp .docs-index-policy/docs/root-static/robots.txt docs/root-static/robots.txt
-          cp .docs-index-policy/docs/root-static/404.html docs/root-static/404.html
+
+      # A manual deploy can build a content revision that predates the handler.
+      # Stage the workflow's copy before any push and keep it through the gh-pages branch switch.
+      - name: Check out root 404 from the workflow revision
+        if: github.event_name != 'release' || !github.event.release.prerelease
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .docs-root-404
+          sparse-checkout: docs/root-static/404.html
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Prepare the root 404 page
+        if: github.event_name != 'release' || !github.event.release.prerelease
+        run: |
+          cp .docs-root-404/docs/root-static/404.html "$RUNNER_TEMP/docs-root-404.html"
+          test -s "$RUNNER_TEMP/docs-root-404.html"
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -187,14 +203,13 @@ jobs:
           github.event_name == 'workflow_dispatch'
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
-          cp docs/root-static/404.html /tmp/404.html
           cp docs/root-static/llms.txt /tmp/llms.txt
           cp docs/root-static/llms-full.txt /tmp/llms-full.txt
           cp docs/root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
           git fetch origin gh-pages:refs/remotes/origin/gh-pages
           git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
-          cp /tmp/404.html 404.html
+          cp "$RUNNER_TEMP/docs-root-404.html" 404.html
           cp /tmp/llms.txt llms.txt
           cp /tmp/llms-full.txt llms-full.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
