@@ -37,12 +37,6 @@ def torch_tensorrt_api(mocker: MockerFixture) -> mock.MagicMock:
     """Install a mocked ``torch_tensorrt`` package and a no-op ``torch.export.export``, and return the package mock.
 
     The package's ``executorch`` submodule is the ``executorch`` attribute of the returned mock.
-
-    Examples:
-        Skipped: a pytest fixture, so it cannot run standalone.
-
-        >>> torch_tensorrt_api.dynamo.compile  # doctest: +SKIP
-        <MagicMock name='mock.dynamo.compile' id='...'>
     """
     package = mock.MagicMock()
     mocker.patch.dict("sys.modules", {"torch_tensorrt": package, "torch_tensorrt.executorch": package.executorch})
@@ -102,12 +96,6 @@ class TestExportDeviceScope:
         Returns:
             The mocked ``torch.cuda.device`` class, and one entry per conversion saying whether the scope it returned
             was entered and not yet left while the conversion ran.
-
-        Examples:
-            Skipped: a pytest fixture, so it cannot run standalone.
-
-            >>> cuda_scope  # doctest: +SKIP
-            (<MagicMock name='device' id='...'>, [])
         """
         cuda_device = mocker.patch("torch.cuda.device")
         mocker.patch("torch.cuda.is_available", return_value=True)
@@ -174,13 +162,8 @@ class TestTensorRTIntegrationCheck:
 
     @pytest.fixture
     def exporter(self, mocker: MockerFixture, tmp_path: Path) -> ExecuTorchExporter:
-        """A ``backend="tensorrt"`` exporter on a host that has Torch-TensorRT, its delegate package and a CUDA device.
-
-        Examples:
-            Skipped: a pytest fixture, so it cannot run standalone.
-
-            >>> exporter.check_environment()  # doctest: +SKIP
-        """
+        """A ``backend="tensorrt"`` exporter on a host that has Torch-TensorRT, its delegate package and a CUDA
+        device."""
         mocker.patch(f"{_EXPORTER_MODULE}.is_installed", return_value=True)
         mocker.patch("torch.cuda.is_available", return_value=True)
         return ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="tensorrt"))

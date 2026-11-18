@@ -53,14 +53,7 @@ def _tensorrt_metadata() -> ExportMetadata:
 
 @pytest.fixture
 def pte_path(tmp_path: Path) -> Path:
-    """Write a placeholder ``.pte``; the mocked program loader never reads it.
-
-    Examples:
-        Skipped: a pytest fixture, so it cannot run standalone.
-
-        >>> pte_path.read_bytes()  # doctest: +SKIP
-        b'pte'
-    """
+    """Write a placeholder ``.pte``; the mocked program loader never reads it."""
     path = tmp_path / "model.pte"
     path.write_bytes(b"pte")
     return path
@@ -68,13 +61,7 @@ def pte_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def program_loader(mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Make CUDA device 1 current, register a stub delegate and return the mocked program loader.
-
-    Examples:
-        Skipped: a pytest fixture, so it cannot run standalone.
-
-        >>> program_loader.assert_not_called()  # doctest: +SKIP
-    """
+    """Make CUDA device 1 current, register a stub delegate and return the mocked program loader."""
     mocker.patch("torch.cuda.is_available", return_value=True)
     mocker.patch("torch.cuda.current_device", return_value=_CURRENT_DEVICE)
     monkeypatch.setitem(sys.modules, "torch_tensorrt_executorch_runtime", types.ModuleType("stub_delegate"))

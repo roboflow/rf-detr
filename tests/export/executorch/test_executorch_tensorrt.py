@@ -45,14 +45,8 @@ _EXPECTED_D2H_COPIES = {"detect": 2, "segment": 3, "keypoints": 3}
 def tensorrt_pte(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
     """Lower an untrained model of one task through the TensorRT delegate and return the task and its ``.pte``.
 
-    Detection is the default ``RFDETRNano``; segmentation and keypoints are the small random models the prediction
-    round trips use.
-
-    Examples:
-        Skipped: a pytest fixture needing the executorch-tensorrt extra and a GPU, so it cannot run standalone.
-
-        >>> tensorrt_pte[1].suffix  # doctest: +SKIP
-        '.pte'
+    Detection is the default ``RFDETRNano``; segmentation and keypoints are the small random models the prediction round
+    trips use.
     """
     task = request.param
     seed_all(_EXPORT_SEED)
