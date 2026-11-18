@@ -6,8 +6,8 @@
 """The patch-embedding projection follows ``num_channels`` when a model is built and when a checkpoint is loaded.
 
 ``adapt_input_channels`` derives a ``num_channels`` projection from a 3-channel one and runs after
-``load_pretrain_weights``. A checkpoint saved from a model with ``num_channels != 3`` already holds a projection of
-that width, so ``_align_stem_to_checkpoint`` widens the model before the state dict is loaded and the later
+``load_pretrain_weights``. A checkpoint saved from a model with ``num_channels != 3`` already holds a projection of that
+width, so ``_align_stem_to_checkpoint`` widens the model before the state dict is loaded and the later
 ``adapt_input_channels`` call must leave the loaded weights alone.
 """
 
@@ -220,7 +220,10 @@ class TestAlignStemToCheckpoint:
         assert _stem(model).weight.shape[1] == 3
 
     def test_state_dict_loads_after_alignment_and_survives_adaptation(self) -> None:
-        """The call order of the builders: align, load, adapt. The loaded weights come out unchanged."""
+        """The call order of the builders: align, load, adapt.
+
+        The loaded weights come out unchanged.
+        """
         model = _fake_model(3)
         state = _fake_model(4).state_dict()
 
