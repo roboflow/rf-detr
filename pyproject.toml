@@ -220,6 +220,10 @@ litert = [
     # pre-1.0 and `convert(...).export(...)` is the only surface this package calls. litert-torch's own
     # metadata pins torch<2.14, which the [tool.uv] conflicts below declare against the typing group.
     "litert-torch>=0.9.4,<1.0",
+    # litert-torch lowers through JAX's StableHLO, and jax/jaxlib 0.12.1 emit a vhlo.fma op that the converter's
+    # StableHLO plugin (v1.19.0) cannot serialize, so every LiteRT export fails with "failed to legalize operation
+    # 'vhlo.fma_v1'". 0.12.0.1 exports fine. Drop this cap once litert-torch or its StableHLO plugin handles the op.
+    "jax<0.12.1",
 ]
 loggers = [
     "tensorboard>=2.13.0",
