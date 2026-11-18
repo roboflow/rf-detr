@@ -107,6 +107,27 @@ class TestNonSquarePositionalEncodingSize:
         for actual_feature, expected_feature in zip(actual, expected):
             torch.testing.assert_close(actual_feature, expected_feature, rtol=1e-4, atol=1e-5)
 
+    def test_export_reads_a_square_grid_from_embeddings_that_record_none(self) -> None:
+        """Embeddings without ``patch_grid_size``, as the non-windowed encoder's, export from a square grid."""
+        backbone = self._backbone((64, 128), 4).eval()
+        embeddings = backbone.encoder.embeddings
+        del embeddings.patch_grid_size
+        stored = embeddings.position_embeddings.detach().clone()
+
+        backbone.export()
+
+        expected = torch.nn.functional.interpolate(
+            stored[:, 1:].reshape(1, 4, 4, -1).permute(0, 3, 1, 2),
+            size=(4, 8),
+            mode="bicubic",
+            align_corners=False,
+            antialias=True,
+        )
+        assert not hasattr(embeddings, "patch_grid_size")
+        torch.testing.assert_close(
+            embeddings.position_embeddings[:, 1:], expected.permute(0, 2, 3, 1).reshape(1, 32, -1)
+        )
+
     def test_exported_non_square_table_is_not_reused_for_the_transposed_input(self) -> None:
         """After a non-square export, a transposed input is interpolated from the baked grid, not served as is."""
         backbone = self._backbone((64, 128), (4, 8)).eval()

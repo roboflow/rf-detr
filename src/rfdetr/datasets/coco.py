@@ -997,8 +997,8 @@ def _build_train_resize_config(
         scales: Target resize scales in pixels, each a side length or a ``(height, width)`` pair.
         square: If ``True``, resize to exactly the target scale using ``A.Resize``
             (one random scale from *scales*): a square for a side length, ``(height, width)`` for a pair.  If
-            ``False``, preserve aspect ratio using ``A.SmallestMaxSize`` on the scale's shorter side with an optional
-            long-side cap.
+            ``False``, preserve aspect ratio using ``A.SmallestMaxSize`` with an optional long-side cap; a pair then
+            counts as its shorter side, exactly as that side length would.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
         scale_jitter: If ``True`` (default), both Option A and Option B are randomly
@@ -1032,7 +1032,7 @@ def _build_train_resize_config(
         }
     else:
         cap = max_size or _COCO_MAX_SIZE
-        # The aspect-preserving resize is driven by the shorter side alone.
+        # The aspect-preserving pipeline treats a (height, width) scale as its shorter side, in both branches.
         short_sides = [min(pair) for pair in pairs]
         # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
         size_param: Any = short_sides[0] if len(short_sides) == 1 else short_sides
@@ -1061,8 +1061,8 @@ def _build_train_resize_config(
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": h, "width": w}}
-                                for h, w in pairs
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
+                                for s in short_sides
                             ],
                         }
                     },
@@ -1087,7 +1087,8 @@ def _build_train_resize_transforms(
 
     Args:
         scales: Candidate target scales, each a side length or a ``(height, width)`` pair.
-        square: Whether to resize to exactly the target scale instead of preserving the aspect ratio.
+        square: Whether to resize to exactly the target scale instead of preserving the aspect ratio. When
+            ``False``, a pair counts as its shorter side, exactly as that side length would.
         max_size: Optional maximum long-side size for non-square resizing.
         scale_jitter: If ``True`` (default), randomly picks between a direct resize
             (Option A) and a resize → crop → resize sequence (Option B). If ``False``,
@@ -1113,19 +1114,20 @@ def _build_train_resize_transforms(
         return RandomSelect(square_resize, resize_b)
 
     cap = max_size or _COCO_MAX_SIZE
-    # The aspect-preserving resize is driven by the shorter side alone.
-    resize = RandomResize([min(pair) for pair in pairs], max_size=cap)
+    # The aspect-preserving pipeline treats a (height, width) scale as its shorter side, in both branches.
+    short_sides = [min(pair) for pair in pairs]
+    resize = RandomResize(short_sides, max_size=cap)
     if not scale_jitter:
         return resize
     # Resize each crop directly to the selected target scale, capped as the removed final RandomResize did. Previously
     # the crop was resized to a fixed 384x384 output and then resized again to `scales`, needlessly resampling it twice.
     # The Albumentations backend already dropped that extra hop (see _build_train_resize_config), so both backends now
     # express the same recipe while retaining the historical non-square maximum size.
-    capped_pairs = [(min(height, cap), min(width, cap)) for height, width in pairs]
+    capped_scales = [min(scale, cap) for scale in short_sides]
     resize_b = Compose(
         [
             RandomResize([400, 500, 600]),
-            RandomChoice([RandomSizedCrop((384, 600), pair) for pair in capped_pairs]),
+            RandomChoice([RandomSizedCrop((384, 600), (scale, scale)) for scale in capped_scales]),
         ]
     )
     return RandomSelect(resize, resize_b)
@@ -1359,7 +1361,8 @@ def make_coco_transforms(
             or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
             longest side is capped at 1333 px to preserve aspect ratio.  A ``(height, width)`` pair counts as its
-            shorter side, except for ``"val_speed"``, which resizes to exactly ``(height, width)``.
+            shorter side in every training and validation branch, the scale-jitter crop included, except for
+            ``"val_speed"``, which resizes to exactly ``(height, width)``.
         multi_scale: If ``True``, sample the resize target from a range of scales
             computed by :func:`compute_multi_scale_scales` instead of using a single fixed size.
         expanded_scales: Passed to :func:`compute_multi_scale_scales`; broadens the

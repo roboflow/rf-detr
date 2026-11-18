@@ -103,6 +103,14 @@ class TestTrainResizeConfig:
 
         assert entry["Sequential"]["transforms"][0] == {"SmallestMaxSize": {"max_size": [64, 128]}}
 
+    @pytest.mark.parametrize("scale_jitter", [True, False])
+    def test_aspect_preserving_config_treats_a_pair_as_its_short_side(self, scale_jitter: bool) -> None:
+        """Without exact resize, a pair builds the config of its shorter side, crop branch included."""
+        from_pairs = _build_train_resize_config([(64, 96), (192, 128)], square=False, scale_jitter=scale_jitter)
+        from_short_sides = _build_train_resize_config([64, 128], square=False, scale_jitter=scale_jitter)
+
+        assert from_pairs == from_short_sides
+
     def test_int_scales_build_the_same_config_as_square_pairs(self) -> None:
         """A side length and the square pair of that side build one config."""
         from_ints = _build_train_resize_config([64, 128], square=True)
@@ -154,6 +162,18 @@ class TestNonSquareTransforms:
         image, _ = transforms(*_sample())
 
         assert tuple(image.shape[-2:]) == (60, 100)
+
+    @pytest.mark.parametrize("aug_config", _BACKENDS)
+    @pytest.mark.parametrize("resolution", [(60, 96), (96, 60)])
+    def test_aspect_preserving_scale_jitter_never_stretches_to_the_pair(
+        self, aug_config: Any, resolution: tuple[int, int]
+    ) -> None:
+        """With scale jitter, both branches act on the shorter side: a 60x100 resize or a 60x60 crop, as for 60."""
+        transforms = _build(make_coco_transforms, "train", resolution, aug_config=aug_config, scale_jitter=True)
+
+        shapes = {tuple(transforms(*_sample())[0].shape[-2:]) for _ in range(40)}
+
+        assert shapes == {(60, 100), (60, 60)}
 
     @pytest.mark.parametrize("aug_config", _BACKENDS)
     def test_val_speed_resizes_to_exact_height_width(self, aug_config: Any) -> None:

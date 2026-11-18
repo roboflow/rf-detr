@@ -4163,6 +4163,42 @@ class TestOnLoadCheckpoint:
         assert pe_after.shape == pe.shape
         assert torch.equal(pe_after, pe) is not resized
 
+    @pytest.mark.parametrize(
+        ("source", "target"),
+        [pytest.param((4, 9), (9, 4), id="transposed-grid"), pytest.param((4, 9), (6, 8), id="other-token-count")],
+    )
+    def test_ema_weights_are_resized_with_the_live_weights(self, source, target, build_module):
+        """The EMA callback state and legacy EMA weights of a checkpoint move to the model's grid too.
+
+        A transposed grid keeps the tensor shape, so EMA weights left on the old grid would load without an error.
+        """
+        pe = torch.randn(1, source[0] * source[1] + 1, 16)
+        checkpoint = {
+            "state_dict": {self._PE_KEY: pe.clone()},
+            "model_config": {"positional_encoding_size": source},
+            "callbacks": {
+                "RFDETREMACallback": {
+                    "latest_update_step": 3,
+                    "average_model_state_dict": {"module." + self._PE_KEY: pe.clone(), "n_averaged": torch.tensor(3)},
+                },
+                "OtherCallback": {"monitor": "val/mAP"},
+            },
+            "legacy_ema_state_dict": {self._PE_KEY[len("model.") :]: pe.clone()},
+        }
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=target))
+        with pytest.warns(UserWarning, match="legacy EMA weights"):
+            module.on_load_checkpoint(checkpoint)
+
+        live = checkpoint["state_dict"][self._PE_KEY]
+        ema = checkpoint["callbacks"]["RFDETREMACallback"]["average_model_state_dict"]
+        assert live.shape == (1, target[0] * target[1] + 1, 16)
+        assert not torch.equal(live, pe) if live.shape == pe.shape else True
+        assert torch.equal(ema["module." + self._PE_KEY], live)
+        assert torch.equal(checkpoint["legacy_ema_state_dict"][self._PE_KEY[len("model.") :]], live)
+        assert ema["n_averaged"].item() == 3
+        assert checkpoint["callbacks"]["OtherCallback"] == {"monitor": "val/mAP"}
+
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.
 

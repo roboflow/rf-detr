@@ -481,11 +481,8 @@ class Dinov2WithRegistersPatchEmbeddings(nn.Module):
         image_size_cfg, patch_size_cfg = config.image_size, config.patch_size
         num_channels, hidden_size = config.num_channels, config.hidden_size
 
-        image_size = cast(
-            "tuple[int, int]",
-            image_size_cfg
-            if isinstance(image_size_cfg, collections.abc.Iterable)
-            else (image_size_cfg, image_size_cfg),
+        image_size = (
+            image_size_cfg if isinstance(image_size_cfg, collections.abc.Iterable) else (image_size_cfg, image_size_cfg)
         )
         patch_size = cast(
             "tuple[int, int]",

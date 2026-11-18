@@ -103,7 +103,7 @@ def build_roboflow(image_set: str, args: Any, resolution: int | tuple[int, int])
 
 #: Dataset builder per ``TrainConfig.dataset_file`` value. Adding a layout means one entry here plus its name in
 #: :data:`rfdetr.config.DatasetFile`; ``tests/datasets/test_builder_options.py`` keeps the two in sync.
-_DATASET_BUILDERS: dict[DatasetFile, Callable[[str, Any, int], Dataset[Any]]] = {
+_DATASET_BUILDERS: dict[DatasetFile, Callable[[str, Any, int | tuple[int, int]], Dataset[Any]]] = {
     "coco": build_coco,
     "o365": build_o365,
     "roboflow": build_roboflow,

@@ -2006,7 +2006,8 @@ class RFDETRModelModule(LightningModule):
            saved at a different image resolution than the current model, the DINOv2 ``position_embeddings`` tensor shape
            will mismatch. :func:`~rfdetr.models.weights.interpolate_position_embeddings` is called to bicubic-resize the
            PE to ``model_config.positional_encoding_size`` before PTL applies the state dict.  Regression fix for
-           :issue:`998`.
+           :issue:`998`. The EMA weights the checkpoint carries (the EMA callback's state and
+           ``"legacy_ema_state_dict"``) are resized the same way.
 
         3. **FP8 extra-state removal** — under Transformer Engine (``amp_dtype="fp8"``), the live module's
            ``state_dict()`` carries ``_extra_state`` entries recording FP8 scaling history. Since ``strict_loading``
@@ -2047,11 +2048,21 @@ class RFDETRModelModule(LightningModule):
         # checkpoint["state_dict"] immediately after this hook, so the shapes
         # must already match at this point.  Regression: #998.
         if "state_dict" in checkpoint:
-            interpolate_position_embeddings(
-                checkpoint["state_dict"],
-                self.model_config.positional_encoding_size,
-                source_pe_size=_recorded_pe_grid(checkpoint, checkpoint["state_dict"]),
-            )
+            # The EMA weights lie on the checkpoint's grid like the live ones. A grid with the same token count
+            # (a transposed one) keeps their shape, so left alone they would load without an error.
+            ema_states = [
+                callback_state.get("average_model_state_dict")
+                for callback_state in (checkpoint.get("callbacks") or {}).values()
+                if isinstance(callback_state, dict)
+            ]
+            ema_states.append(checkpoint.get("legacy_ema_state_dict"))
+            for state in (checkpoint["state_dict"], *ema_states):
+                if isinstance(state, dict):
+                    interpolate_position_embeddings(
+                        state,
+                        self.model_config.positional_encoding_size,
+                        source_pe_size=_recorded_pe_grid(checkpoint, state),
+                    )
 
         # Drop Transformer Engine's `_extra_state` entries before PTL applies the state dict.
         # `strict_loading=False` (set in __init__) only tolerates a missing or unexpected key

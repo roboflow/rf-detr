@@ -283,6 +283,8 @@ def _recorded_pe_grid(checkpoint: Mapping[str, Any], state: Mapping[str, Any]) -
         recorded = model_config.get("positional_encoding_size")
     if recorded is None and checkpoint.get("args") is not None:
         recorded = _ckpt_args_get(checkpoint["args"], "positional_encoding_size")
+    if recorded is None:
+        return None
     try:
         height, width = as_pair(recorded)
     except (TypeError, ValueError):
