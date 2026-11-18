@@ -341,11 +341,14 @@ def test_ddp_spawn_gated_and_agnostic_eval_completes(patched_ddp_builders, base_
     Both add cross-rank collectives at epoch end (the class-agnostic metric's vote and state merge, and the matching
     data merge the support counts are read from), and best-model selection then monitors the gated key. The 300 s
     timeout turns a rank that skipped one of those collectives into a failure instead of a hang.
+
+    ``BestModelCallback.on_fit_end`` skips its ``trainer.test()`` inside spawn workers, so the distributed test loop is
+    entered from the parent process after ``fit`` returns.
     """
     mc = base_model_config()
     tc = base_train_config(
         use_ema=False,
-        run_test=True,
+        run_test=False,
         devices=2,
         strategy="ddp_spawn",
         epochs=1,
@@ -369,6 +372,11 @@ def test_ddp_spawn_gated_and_agnostic_eval_completes(patched_ddp_builders, base_
     metrics_csv = (Path(tc.output_dir) / "metrics.csv").read_text()
     assert "val/mAP_50_95_gated" in metrics_csv
     assert "val/mAP_50_95_agnostic" in metrics_csv
+
+    (test_metrics,) = trainer.test(module, datamodule=datamodule)
+
+    assert "test/mAP_50_95_gated" in test_metrics
+    assert "test/mAP_50_95_agnostic" in test_metrics
 
 
 @pytest.mark.ddp
