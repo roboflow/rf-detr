@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 import torch
 from PIL import Image
+from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
 from rfdetr.datasets._torchvision import (
@@ -612,3 +613,42 @@ class TestDefaultAugBackendWarning:
             w for w in caught if issubclass(w.category, UserWarning) and "torchvision" in str(w.message).lower()
         ]
         assert len(backend_warnings) == 0
+
+
+class TestResizeFourChannelImage:
+    """``Resize`` resamples the planes of an RGBA image independently, without alpha weighting."""
+
+    @pytest.mark.parametrize("size", [pytest.param((32, 48), id="downscale"), pytest.param((128, 200), id="upscale")])
+    @pytest.mark.parametrize("mode", ["RGBA", "LA"])
+    def test_each_plane_matches_its_own_resize(self, size: tuple[int, int], mode: str) -> None:
+        """Each resized plane equals that plane resized alone, including where the last plane is zero."""
+        generator = torch.Generator().manual_seed(0)
+        pixels = torch.randint(0, 256, (64, 96, len(mode)), generator=generator, dtype=torch.uint8)
+        pixels[:, :48, -1] = 0
+        image = Image.fromarray(pixels.numpy(), mode=mode)
+
+        resized, _ = Resize(size)(image, None)
+
+        assert resized.mode == mode
+        assert resized.size == (size[1], size[0])
+        for resized_band, band in zip(resized.split(), image.split(), strict=True):
+            expected, _ = Resize(size)(band, None)
+            assert resized_band.tobytes() == expected.tobytes()
+
+    def test_rgb_planes_survive_where_the_fourth_plane_is_zero(self) -> None:
+        """A zero fourth plane does not erase the colour planes, as a transparency-weighted resize would."""
+        image = Image.new("RGBA", (96, 64), (200, 100, 50, 0))
+
+        resized, _ = Resize((32, 48))(image, None)
+
+        assert resized.getpixel((10, 10)) == (200, 100, 50, 0)
+
+    def test_rgb_image_resize_is_unchanged(self) -> None:
+        """A three-channel image takes torchvision's resize as before."""
+        generator = torch.Generator().manual_seed(0)
+        image = Image.fromarray(torch.randint(0, 256, (64, 96, 3), generator=generator, dtype=torch.uint8).numpy())
+
+        resized, _ = Resize((32, 48))(image, None)
+
+        expected = functional.resize(image, [32, 48], interpolation=InterpolationMode.BILINEAR, antialias=True)
+        assert resized.tobytes() == expected.tobytes()

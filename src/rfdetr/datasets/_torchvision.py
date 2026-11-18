@@ -36,6 +36,8 @@ from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, keypoint_flip_
 # Albumentations' ``category_ids`` label_field and therefore keeps ``labels`` global there.
 # ``boxes`` is global here only because it is reassigned explicitly, never sliced in the loop.
 _GLOBAL_TARGET_FIELDS = frozenset({"boxes"}) | IMAGE_LEVEL_TARGET_FIELDS
+#: PIL modes whose last plane Pillow reads as transparency when it resamples the image.
+_ALPHA_MODES = frozenset({"RGBA", "LA"})
 _ImageInput: TypeAlias = Image.Image | torch.Tensor
 _Target: TypeAlias = Optional[Dict[str, Any]]
 _TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
@@ -395,12 +397,13 @@ class Resize:
         # ~1.52 ms (identical); it only changes tensor input (~0.55 vs 0.45 ms). Kept True so tensor
         # inputs match PIL's always-on antialiasing rather than as a perf lever -- do not flip it to
         # speed up the CPU path; it would not (the cost is PIL.resize itself, not antialiasing).
-        image = functional.resize(
-            image,
-            [new_height, new_width],
-            interpolation=InterpolationMode.BILINEAR,
-            antialias=True,
-        )
+        if isinstance(image, Image.Image) and image.mode in _ALPHA_MODES:
+            # Pillow weights the other planes of these modes by the last one when it resamples. The last plane is
+            # a data channel here (see CocoDetection's num_channels), so each plane is resampled on its own.
+            bands = [self._resize_image(band, new_height, new_width) for band in image.split()]
+            image = Image.merge(image.mode, cast("list[Image.Image]", bands))
+        else:
+            image = self._resize_image(image, new_height, new_width)
         if target is None:
             return image, None
 
@@ -428,6 +431,28 @@ class Resize:
         if "area" in target_out:
             target_out["area"] = target_out["area"] * (ratio_width * ratio_height)
         return image, _update_size(target_out, new_height, new_width)
+
+
+    @staticmethod
+    def _resize_image(image: _ImageInput, new_height: int, new_width: int) -> _ImageInput:
+        """Resize an image with antialiased bilinear interpolation.
+
+        Args:
+            image: PIL image or tensor image.
+            new_height: Output height.
+            new_width: Output width.
+
+        Returns:
+            The resized image, of the same type as ``image``.
+
+        Examples:
+            >>> Resize._resize_image(Image.new("RGB", (8, 6)), 3, 4).size
+            (4, 3)
+        """
+        return cast(
+            "_ImageInput",
+            functional.resize(image, [new_height, new_width], interpolation=InterpolationMode.BILINEAR, antialias=True),
+        )
 
 
 class RandomSizedCrop:
