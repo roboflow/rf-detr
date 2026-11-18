@@ -21,9 +21,11 @@ that :func:`decode_pil_image` avoids for its own callers, a scope call deferred 
 from __future__ import annotations
 
 import io
+import time
 import warnings
+from collections.abc import Callable
 from pathlib import Path
-from typing import IO
+from typing import IO, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,7 +36,20 @@ except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to
     simplejpeg = None
 from PIL import Image
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
+_T = TypeVar("_T")
+
 _JPEG_SOI = b"\xff\xd8"
+
+# Reads of one image before it is judged unreadable: a short read off network storage raises the same ``OSError``
+# Pillow raises for a file that is truncated on disk, and only a second read tells the two apart.
+_IMAGE_READ_ATTEMPTS = 3
+_IMAGE_READ_BACKOFF_SECONDS = 0.5
+# Following samples tried in place of an unreadable one; bounded so that a broken dataset or filesystem still raises.
+_MAX_SUBSTITUTIONS = 10
 
 
 def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> int:
@@ -309,3 +324,73 @@ def decode_pil_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[
         pixels, scales = decoded
         return Image.fromarray(pixels), scales
     return _decode_with_pillow(io.BytesIO(data), draft_size)
+
+
+def read_image_or_substitute(
+    read: Callable[[int], _T],
+    index: int,
+    num_samples: int,
+    path_of: Callable[[int], str | Path],
+) -> tuple[int, _T]:
+    """Read the image of one dataset sample, retrying a failed read and then falling back to a later sample.
+
+    Only ``OSError`` counts as a failed read: a missing file, an I/O error, and the truncated or unidentifiable file
+    errors Pillow raises (``PIL.UnidentifiedImageError`` is an ``OSError``).  Every other exception propagates from the
+    first attempt.  A failed read is repeated up to ``_IMAGE_READ_ATTEMPTS`` times with a growing pause, each failure
+    logged as a warning naming the file.  If every attempt fails, the following samples, wrapping around the end of
+    the dataset, are read once each until one succeeds, and one error naming the unreadable file and the sample used
+    instead is logged.  The caller must then load the annotations of the returned index, so the image and its targets
+    stay consistent and the dataset keeps its length.  At most ``_MAX_SUBSTITUTIONS`` samples are tried.
+
+    Args:
+        read: Reads the image of the sample at a dataset index.
+        index: Dataset index of the requested sample.
+        num_samples: Number of samples in the dataset.
+        path_of: Returns the image path of the sample at a dataset index, for log and error messages.
+
+    Returns:
+        The index of the sample that was read, equal to ``index`` unless a substitution happened, and what ``read``
+        returned for it.
+
+    Raises:
+        RuntimeError: If the requested image and every substitute tried are unreadable, which means the dataset or the
+            filesystem holding it is broken, not a single file.
+
+    Examples:
+        >>> read_image_or_substitute(lambda i: f"pixels-{i}", 3, 10, lambda i: f"{i}.jpg")
+        (3, 'pixels-3')
+    """
+    failure: OSError | None = None
+    for attempt in range(1, _IMAGE_READ_ATTEMPTS + 1):
+        try:
+            return index, read(index)
+        except OSError as exc:
+            failure = exc
+            logger.warning(
+                "Could not read image %s (attempt %d of %d): %s", path_of(index), attempt, _IMAGE_READ_ATTEMPTS, exc
+            )
+            if attempt < _IMAGE_READ_ATTEMPTS:
+                time.sleep(_IMAGE_READ_BACKOFF_SECONDS * attempt)
+    assert failure is not None
+
+    num_candidates = min(_MAX_SUBSTITUTIONS, num_samples - 1)
+    for step in range(1, num_candidates + 1):
+        candidate = (index + step) % num_samples
+        try:
+            result = read(candidate)
+        except OSError:
+            continue
+        logger.error(
+            "Image %s (sample %d) is unreadable: %s. Using sample %d (%s) in its place.",
+            path_of(index),
+            index,
+            failure,
+            candidate,
+            path_of(candidate),
+        )
+        return candidate, result
+
+    raise RuntimeError(
+        f"{num_candidates + 1} consecutive samples were unreadable starting at sample {index} ({path_of(index)}): "
+        f"{failure}. The dataset or the filesystem holding it is broken, not a single file."
+    ) from failure

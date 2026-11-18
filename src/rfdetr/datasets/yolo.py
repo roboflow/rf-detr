@@ -30,7 +30,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
-from rfdetr.datasets.io_utils import decode_image
+from rfdetr.datasets.io_utils import decode_image, read_image_or_substitute
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
 
@@ -168,10 +168,15 @@ class _LazyYoloDetectionDataset:
     def __getitem__(self, idx: int) -> tuple[str, NDArray[np.uint8], Detections]:
         sample = self._samples[idx]
         try:
-            rgb_image, _ = decode_image(Path(sample.image_path))
+            rgb_image = self.read_image(idx)
         except (FileNotFoundError, OSError, UnidentifiedImageError) as exc:
             raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
         return sample.image_path, rgb_image, sample.to_detections()
+
+    def read_image(self, idx: int) -> NDArray[np.uint8]:
+        """Decode the RGB pixels of one sample, raising the decoder's own ``OSError`` when the file is unreadable."""
+        rgb_image, _ = decode_image(Path(self._samples[idx].image_path))
+        return rgb_image
 
     def get_image_info(self, idx: int) -> _LazyYoloSample:
         """Return lightweight metadata without loading pixels or dense masks."""
@@ -1160,6 +1165,11 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             When True polygons are parsed and rasterized on demand; when False only bounding-box coordinates are stored.
         include_keypoints: Whether to load Ultralytics YOLO pose keypoints.
         num_keypoints_per_class: Optional keypoint schema used by RF-DETR.
+        skip_unreadable: If ``True``, a failed image read is retried, and an image that stays unreadable is replaced
+            by the next readable sample, image and labels together, with an error naming the file logged (see
+            :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises ``ValueError``
+            on the first failed read.  Meant for training splits only: a substituted sample is a duplicate, which
+            would distort evaluation.
     """
 
     def __init__(
@@ -1171,11 +1181,13 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         include_masks: bool = False,
         include_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
+        skip_unreadable: bool = False,
     ):
         if include_masks and include_keypoints:
             raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
         super().__init__(img_folder)
         self._transforms = transforms
+        self._skip_unreadable = skip_unreadable
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         self.keypoint_schema: YoloKeypointSchema | None
@@ -1218,8 +1230,18 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         return len(self.sv_dataset)
 
     def __getitem__(self, idx: int) -> tuple[Image.Image | torch.Tensor, dict[str, Any] | None]:
+        if self._skip_unreadable:
+            # Only the image read is retried and substituted; label and transform errors below still raise.
+            idx, rgb_image = read_image_or_substitute(
+                self.sv_dataset.read_image,
+                idx,
+                len(self.sv_dataset),
+                lambda index: self.sv_dataset.get_image_info(index).image_path,
+            )
+            detections = self.sv_dataset.get_image_info(idx).to_detections()
+        else:
+            image_path, rgb_image, detections = self.sv_dataset[idx]
         image_id = self.ids[idx]
-        image_path, rgb_image, detections = self.sv_dataset[idx]
 
         img = Image.fromarray(rgb_image)
 
@@ -1295,6 +1317,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
     resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
 
     if include_keypoints:
         try:
@@ -1323,6 +1346,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            skip_unreadable=skip_unreadable,
         )
     else:
         dataset = YoloDetection(
@@ -1345,5 +1369,6 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            skip_unreadable=skip_unreadable,
         )
     return dataset

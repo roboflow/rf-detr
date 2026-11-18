@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TrainConfig.skip_unreadable_images` (default `False`) lets a training run survive an image that cannot be read: a missing file, an I/O error, or a truncated or unidentifiable file. When it is `True`, the read is tried three times with a short pause; if it still fails, the next readable sample is used in its place and one error naming the file is logged. Without it the DataLoader worker raises, as before, and under DDP the other processes then wait until the backend's watchdog aborts the job. A substituted sample changes that batch, so repair the files the log names if exact reproducibility matters; when the 10 following samples are unreadable as well, a `RuntimeError` reports a broken dataset or filesystem. Validation and test splits always raise. Applies to COCO and YOLO datasets (`CocoDetection` and `YoloDetection` gain a `skip_unreadable` argument), not to WebDataset shards.
+
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.

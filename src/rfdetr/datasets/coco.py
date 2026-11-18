@@ -43,7 +43,7 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.io_utils import decode_pil_image
+from rfdetr.datasets.io_utils import decode_pil_image, read_image_or_substitute
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
@@ -702,6 +702,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, used to enable
             JPEG DCT-domain downscaling during decode (see :meth:`_decode_image`).  ``None`` (the default) decodes at
             full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
+        skip_unreadable: If ``True``, a failed image read is retried, and an image that stays unreadable is replaced
+            by the next readable sample, image and annotations together, with an error naming the file logged (see
+            :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises the decoder's
+            ``OSError`` on the first failed read.  Meant for training splits only: a substituted sample is a
+            duplicate, which would distort evaluation.
     """
 
     def __init__(
@@ -715,10 +720,12 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         remap_category_ids: bool = False,
         cat2label: dict[int, int] | None = None,
         draft_size: int | None = None,
+        skip_unreadable: bool = False,
     ) -> None:
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self._draft_size = draft_size
+        self._skip_unreadable = skip_unreadable
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         if cat2label is not None and not remap_category_ids:
@@ -770,12 +777,25 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         Returns:
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
-        path = self.coco.loadImgs(image_id)[0]["file_name"]
-        return decode_pil_image(Path(self.root) / path, self._draft_size)
+        return decode_pil_image(self._image_path(image_id), self._draft_size)
+
+    def _image_path(self, image_id: int) -> Path:
+        """Return the path of the image file of a COCO image id."""
+        return Path(self.root) / self.coco.loadImgs(image_id)[0]["file_name"]
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
-        image_id = self.ids[idx]
-        img, (x_scale, y_scale) = self._decode_image(image_id)
+        if self._skip_unreadable:
+            # Only the image read is retried and substituted; annotation and transform errors below still raise.
+            idx, (img, (x_scale, y_scale)) = read_image_or_substitute(
+                lambda index: self._decode_image(self.ids[index]),
+                idx,
+                len(self.ids),
+                lambda index: self._image_path(self.ids[index]),
+            )
+            image_id = self.ids[idx]
+        else:
+            image_id = self.ids[idx]
+            img, (x_scale, y_scale) = self._decode_image(image_id)
         annotations = self._load_target(image_id)
         if (x_scale, y_scale) != (1.0, 1.0):
             annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
@@ -1535,6 +1555,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "unavailable; disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
@@ -1572,6 +1593,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
+            skip_unreadable=skip_unreadable,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -1599,6 +1621,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
+            skip_unreadable=skip_unreadable,
         )
     return dataset
 
@@ -1664,6 +1687,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     # train but not in valid shift every later label index of that split. The keypoint path maps categories onto
     # schema slots instead of annotation coverage, so it keeps its own derivation.
     cat2label = None if split == "train" or include_keypoints else _train_split_cat2label(root)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
@@ -1699,6 +1723,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             remap_category_ids=True,
             cat2label=cat2label,
             draft_size=draft_size,
+            skip_unreadable=skip_unreadable,
         )
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
@@ -1724,5 +1749,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             remap_category_ids=True,
             cat2label=cat2label,
             draft_size=draft_size,
+            skip_unreadable=skip_unreadable,
         )
     return dataset
