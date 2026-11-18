@@ -432,7 +432,6 @@ class Resize:
             target_out["area"] = target_out["area"] * (ratio_width * ratio_height)
         return image, _update_size(target_out, new_height, new_width)
 
-
     @staticmethod
     def _resize_image(image: _ImageInput, new_height: int, new_width: int) -> _ImageInput:
         """Resize an image with antialiased bilinear interpolation.
