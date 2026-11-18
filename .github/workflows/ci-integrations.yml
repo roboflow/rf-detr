@@ -490,10 +490,6 @@ jobs:
     concurrency:
       group: pytest-executorch-tensorrt-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    env:
-      # UV_TORCH_BACKEND=auto (GPU) works only with uv pip, not uv sync; overrides the workflow-level
-      # "cpu" default which is wrong for this GPU job.
-      UV_TORCH_BACKEND: "auto"
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
@@ -512,7 +508,11 @@ jobs:
         timeout-minutes: 10
         # Only this extra, never executorch, tflite, xla, litert or the ci-executorch-pin group: they conflict with it.
         # train/augment/cli/visual are what the segmentation and keypoint prediction round trips build their models from.
-        run: uv pip install -e ".[executorch-tensorrt,train,augment,cli,visual]" --group tests
+        # UV_TORCH_BACKEND is unset here, not "auto": any backend routes torch-tensorrt to the PyTorch index, whose newest
+        # build is 2.14.0+cu130, so the extra's torch-tensorrt>=2.15 cannot resolve there. PyPI carries torch 2.15 and
+        # Torch-TensorRT 2.15, both built for CUDA 13, which is what this job needs; the workflow-level "cpu" default
+        # is wrong for it as well.
+        run: env -u UV_TORCH_BACKEND uv pip install -e ".[executorch-tensorrt,train,augment,cli,visual]" --group tests
 
       - name: 🔎 Verify the Torch-TensorRT and ExecuTorch imports
         # The test module's skip gate only checks that torch_tensorrt is installed, so a missing exporter or delegate
