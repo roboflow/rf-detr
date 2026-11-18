@@ -353,8 +353,6 @@ class PostProcess(nn.Module):
             precision-Cholesky parameters, all row-aligned.
         """
         keypoint_results = self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
-        if not keypoint_results:
-            return keypoint_results
         fused_scores = torch.stack([result["scores"] for result in keypoint_results])
         results = self._postprocess_masks(
             out_masks,
