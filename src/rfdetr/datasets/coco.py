@@ -781,7 +781,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
 
     def _image_path(self, image_id: int) -> Path:
         """Return the path of the image file of a COCO image id."""
-        return Path(self.root) / self.coco.loadImgs(image_id)[0]["file_name"]
+        file_name: str = self.coco.loadImgs(image_id)[0]["file_name"]
+        return Path(self.root) / file_name
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         if self._skip_unreadable:
