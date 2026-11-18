@@ -197,6 +197,25 @@ The `keypoints` array above is shortened for readability. In a valid COCO person
 
 The keypoint preview model is pretrained on COCO person-style keypoints. Its default COCO schema is `[17]`, so keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. Legacy checkpoints may still report a background-first `[0, 17]` schema, which RF-DETR accepts for compatibility. Custom keypoint training can also use YOLO pose labels, described below.
 
+### Four-Channel Images
+
+A model built with `num_channels=4` trains on COCO-format datasets whose image files carry a fourth channel, for example RGB with a motion or optical-flow channel stored as the alpha channel of an RGBA PNG. With `num_channels=4`, the loader keeps an image whose file is `RGBA`, grayscale with alpha, `CMYK` or a palette with transparency as four channels; with any other `num_channels` it converts every image to RGB, as before. Every image in the dataset must have the fourth channel: a file without one loads as RGB and fails in the backbone with a channel mismatch.
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(num_channels=4)
+model.train(dataset_dir="<DATASET_PATH>", epochs=50)
+```
+
+The pretrained 3-channel patch embedding is adapted to four channels by repeating its RGB kernels and scaling them by `3 / 4`, and the fourth channel is normalized with the first (red) mean and standard deviation. To fine-tune or predict from a checkpoint of such a run, pass the same `num_channels` with `pretrain_weights`; the checkpoint's own 4-channel patch embedding is loaded as it is. Loading it with a different `num_channels` raises a `ValueError` that names both counts.
+
+```python
+model = RFDETRMedium(num_channels=4, pretrain_weights="<CHECKPOINT_PATH>")
+```
+
+Four-channel loading covers COCO-format datasets only: YOLO-format datasets and WebDataset shards load RGB. Custom Albumentations or Kornia color transforms that require RGB input, such as `HueSaturationValue`, do not accept a four-channel image, and dataset sample grids (`save_dataset_grids`) support RGB only.
+
 ---
 
 ## YOLO Format
