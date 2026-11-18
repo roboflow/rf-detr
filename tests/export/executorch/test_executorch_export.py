@@ -1782,7 +1782,8 @@ class TestLowerTensorRTFailures:
         """A ``torch_tensorrt.dynamo.compile`` failure surfaces as ``RuntimeError("ExecuTorch export failed: ...")``."""
         executorch_api = mock.MagicMock()
         torch_tensorrt = mock.MagicMock(executorch=executorch_api)
-        torch_tensorrt.dynamo.compile.side_effect = ValueError("engine build failed")
+        # ValueError and ImportError pass through ``_lower`` unchanged, so the simulated failure must be neither.
+        torch_tensorrt.dynamo.compile.side_effect = RuntimeError("engine build failed")
         mocker.patch.dict(sys.modules, {"torch_tensorrt": torch_tensorrt, "torch_tensorrt.executorch": executorch_api})
         mocker.patch("torch.export.export")
         graph = dataclasses.replace(_export_graph(), input_tensors=mock.MagicMock())
