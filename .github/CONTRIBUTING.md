@@ -313,6 +313,15 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 
 Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`, named after the pip extra it needs (for example, `e2e_onnx` for the `[onnx]` extra). The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnx`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
 
+**ExecuTorch TensorRT (`e2e_executorch_tensorrt`):** the suite behind `format="executorch", backend="tensorrt"` exports real models through Torch-TensorRT and runs the `.pte` with ExecuTorch's TensorRT delegate, so it needs an NVIDIA GPU and the `executorch-tensorrt` extra. The `ExecuTorch TensorRT parity` job (`executorch-tensorrt-parity`) in `.github/workflows/ci-integrations.yml` is the only CI job that runs it; `ci-tests-gpu.yml` deselects it. The extra pins torch 2.15 and conflicts with `executorch`, so the job installs it in an isolated environment of its own. To run it locally, use a Linux machine with an NVIDIA GPU and Python 3.11 or newer, install the extra into a fresh environment, and select the marker:
+
+```bash
+uv pip install -e ".[executorch-tensorrt,train,augment,cli,visual]" --group tests
+uv run --no-sync pytest tests/ -m e2e_executorch_tensorrt -n 1 --timeout=600 -rs
+```
+
+A skipped test here means the extra or a CUDA device is missing, not that the suite passed.
+
 ### CI Testing
 
 > [!NOTE]
