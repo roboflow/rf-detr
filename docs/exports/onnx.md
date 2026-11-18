@@ -155,3 +155,21 @@ The [latency cookbook](../../cookbooks/measure-latency/) times ONNX Runtime FP32
 - No accuracy was scored for these CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.
 
 No earlier x86 CPU table remains here: the earlier run had `RFDETRInference`'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is also a measured route.
+
+### Compact PE models on CPU
+
+Install `pip install "rfdetr-plus[cpu-export]"` to export Atto, Femto or Pico with ONNX Runtime's CPU operators. Export a released detector or reload a fine-tuned checkpoint to retain its trained weights, class head and resolution.
+
+```python
+from rfdetr import RFDETRInference, from_checkpoint
+from rfdetr_plus import RFDETRFemto
+
+pretrained = RFDETRFemto(device="cpu")
+pretrained.export_cpu_onnx("output/pretrained")
+
+trained = from_checkpoint("checkpoint_best_total.pth", device="cpu")
+artifact = trained.export_cpu_onnx("output/finetuned")
+predictions = RFDETRInference(artifact, device="cpu").predict("image.jpg")
+```
+
+The compact ONNX file takes one normalized NCHW float image and returns normalized center-format boxes (`dets`) and class logits (`labels`). The prediction API handles preprocessing and postprocessing. Compare AP on your held-out images and latency on the deployment CPU against the standard FP32 export before choosing a format.
