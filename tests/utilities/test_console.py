@@ -116,6 +116,40 @@ class TestRenderOverallMerged:
         result = _render_overall_merged("Val", _minimal_overall(100), 100)
         assert "@100" in result
 
+    def test_optional_groups_absent_by_default(self) -> None:
+        """Without gated or agnostic keys the table is the one rendered before those groups existed."""
+        result = _render_overall_merged("Val", _minimal_overall(), 500)
+        assert "N≥" not in result
+        assert "agnostic" not in result
+        assert result == _render_overall_merged("Val", _minimal_overall(), 500, min_class_support=10)
+
+    @pytest.mark.parametrize(
+        ("extra", "expected", "unexpected"),
+        [
+            pytest.param({"gated mAP 50:95": 0.6111}, ["mAP N≥10", "0.6111"], ["segm 50:95", "agnostic"], id="gated"),
+            pytest.param(
+                {"gated mAP 50:95": 0.6111, "gated segm mAP 50:95": 0.5222},
+                ["mAP N≥10", "0.6111", "segm 50:95", "0.5222"],
+                ["agnostic"],
+                id="gated-segm",
+            ),
+            pytest.param(
+                {"agnostic mAP 50:95": 0.7333, "agnostic mAP 50": 0.8444},
+                ["agnostic mAP", "0.7333", "0.8444"],
+                ["N≥"],
+                id="agnostic",
+            ),
+            pytest.param({"gated mAP 50:95": float("nan")}, ["mAP N≥10", "—"], [], id="gated-nan"),
+        ],
+    )
+    def test_gated_and_agnostic_groups(self, extra: dict, expected: list[str], unexpected: list[str]) -> None:
+        """Gated and class-agnostic scores each render as their own column group, only when present."""
+        result = _render_overall_merged("Val", {**_minimal_overall(), **extra}, 500, min_class_support=10)
+        assert all(text in result for text in expected)
+        assert not any(text in result for text in unexpected)
+        # Every box row keeps the same width, so the added groups did not break the merged-header layout.
+        assert len({len(line) for line in result.splitlines()[1:]}) == 1
+
 
 # ---------------------------------------------------------------------------
 # _has_progress_bar
@@ -241,6 +275,21 @@ class TestBuildSummaryRenderable:
         with console.capture() as capture:
             console.print(result)
         assert "—" in capture.get()
+
+    @pytest.mark.parametrize(("support", "shown"), [(12, True), (None, False)])
+    def test_support_column_only_when_rows_carry_it(self, support: int | None, shown: bool) -> None:
+        """Rows with a ``support`` count add a Support column; rows without it render the original columns."""
+        from rich.console import Console
+
+        row = {"name": "cat", "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}
+        if support is not None:
+            row["support"] = support
+        console = Console(width=200, color_system=None)
+        with console.capture() as capture:
+            console.print(_build_summary_renderable("Val", "overall-text", [row]))
+        printed = capture.get()
+        assert ("Support" in printed) is shown
+        assert ("12" in printed) is shown
 
     @pytest.mark.parametrize(
         "name",

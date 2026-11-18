@@ -201,6 +201,14 @@ class COCOEvalCallback(Callback):
             it arrives; all of them ship with ``rfdetr[train]`` and return identical metrics.
             Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
             positional callers keep binding the arguments they always did.
+        min_class_support: Minimum ground-truth instances a class needs before it counts toward the gated headline
+            ``<split>/mAP_50_95_gated`` (``segm_mAP_50_95_gated`` too for segmentation, and the ``ema_`` variants)
+            and toward the macro-F1 the threshold sweep maximises. Classes below the floor still appear in the
+            per-class table and in ``<split>/AP/<name>``. ``0`` disables gating. Forces per-class AP on in the
+            metric even when ``log_per_class_metrics`` is ``False``.
+        class_agnostic: Also evaluate with every label collapsed to one class, logged as
+            ``<split>/mAP_50_95_agnostic`` and ``<split>/mAP_50_agnostic`` for val and test. Boxes only, and only
+            for the model ``validation_step`` forwarded (the same track the macro-F1 sweep follows).
     """
 
     def __init__(
@@ -214,6 +222,8 @@ class COCOEvalCallback(Callback):
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
         eval_backend: CocoEvalBackend = "vernier",
+        min_class_support: int = 0,
+        class_agnostic: bool = False,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
@@ -221,6 +231,10 @@ class COCOEvalCallback(Callback):
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
         self._eval_backend = eval_backend
+        self._min_class_support = max(0, int(min_class_support))
+        self._class_agnostic = bool(class_agnostic)
+        # Built in setup(), alongside map_metric and for the same DDP reason.
+        self.map_metric_agnostic: Any = None
         self._num_classes: int | None = None
         if eval_ema_only is not None:
             warnings.warn(
@@ -281,7 +295,8 @@ class COCOEvalCallback(Callback):
             # Per-class AP is genuinely skipped (compute + state memory) when per-class logging is
             # off — with class_metrics=True the metric would still pay the per-class cost and the
             # flag would only gate result consumption (#416).
-            class_metrics=self._log_per_class_metrics,
+            # A support floor needs per-class AP to average over, whatever the logging flag says.
+            class_metrics=self._per_class_ap_enabled,
             max_detection_thresholds=[1, 10, self._max_dets],
             # Disable torchmetrics' built-in cross-rank sync: its `gather_all_tensors` requires every
             # state tensor to have the same ndim on all ranks, but DDP seg validation produces
@@ -313,8 +328,25 @@ class COCOEvalCallback(Callback):
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
         # cross-rank compute() sync is issued symmetrically and cannot deadlock DDP val.
         self.map_metric_ema: Any = None
+        # Class-agnostic metric: boxes only even under segmentation, and never streamed (one class, one batch).
+        self.map_metric_agnostic = (
+            OnePassCocoMeanAveragePrecision(
+                iou_type="bbox",
+                class_metrics=False,
+                max_detection_thresholds=[1, 10, self._max_dets],
+                backend=train_backend,
+                sync_on_compute=False,
+            )
+            if self._class_agnostic
+            else None
+        )
         # A new fit/validate/test run may bring a different datamodule; resolve crowd regions afresh.
         self._crowd_regions = {}
+
+    @property
+    def _per_class_ap_enabled(self) -> bool:
+        """Whether the mAP metrics must compute per-class AP (for logging, or for the support-gated mean)."""
+        return self._log_per_class_metrics or self._min_class_support > 0
 
     def teardown(self, trainer: Any, pl_module: Any, stage: str) -> None:
         """Release the notebook output widget when the trainer exits.
@@ -405,6 +437,7 @@ class COCOEvalCallback(Callback):
             pl_module: The LightningModule.
         """
         self.map_metric.reset()
+        self._reset_agnostic_metric()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("val")
         self._reset_keypoint_split("val_ema")
@@ -425,6 +458,7 @@ class COCOEvalCallback(Callback):
             pl_module: The LightningModule.
         """
         self.map_metric.reset()
+        self._reset_agnostic_metric()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("test")
         self._reset_padding_filter(getattr(trainer, "test_dataloaders", None))
@@ -579,6 +613,8 @@ class COCOEvalCallback(Callback):
                 self._ema_has_updates = True
         else:
             self.map_metric.update(preds, targets)
+        # Follows validation_step's own forward (base or EMA), like the macro-F1 sweep below.
+        self._update_agnostic_metric(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -641,6 +677,7 @@ class COCOEvalCallback(Callback):
                 self.map_metric.reset()
                 if self.map_metric_ema is not None:
                     self.map_metric_ema.reset()
+                self._reset_agnostic_metric()
                 self._f1_local = init_matching_accumulator()
                 self._reset_keypoint_split("val")
                 self._reset_keypoint_split("val_ema")
@@ -688,6 +725,7 @@ class COCOEvalCallback(Callback):
         )
 
         self.map_metric.update(preds, targets)
+        self._update_agnostic_metric(preds, targets)
 
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
@@ -770,7 +808,7 @@ class COCOEvalCallback(Callback):
         torch_xla.sync(wait=True)
 
     def _compute_and_log_ema_metrics(
-        self, trainer: Any, pl_module: Any, split: str, pfx: str, mar_key: str
+        self, trainer: Any, pl_module: Any, split: str, pfx: str, mar_key: str, eligible_cids: set[int] | None = None
     ) -> tuple[bool, dict[str, Any] | None]:
         """Compute, log, and reset ``map_metric_ema`` if every rank agrees it has data this epoch.
 
@@ -790,6 +828,7 @@ class COCOEvalCallback(Callback):
             split: Metric namespace — ``"val"`` or ``"test"``.
             pfx: torchmetrics key prefix (``"bbox_"`` when ``iou_type`` is a list, else ``""``).
             mar_key: Prefixed AR metric key for ``self._max_dets``.
+            eligible_cids: Category ids meeting ``min_class_support``; the gated EMA keys are logged when given.
 
         Returns:
             ``(should_compute_ema, ema_metrics)`` — whether the EMA metrics were actually computed
@@ -827,6 +866,8 @@ class COCOEvalCallback(Callback):
                 )
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
+            if eligible_cids is not None:
+                self._log_gated_map(trainer, pl_module, split, ema_metrics, pfx, eligible_cids, metric_prefix="ema_")
             self.map_metric_ema.reset()
             self._ema_has_updates = False
         elif self.map_metric_ema is not None:
@@ -871,7 +912,12 @@ class COCOEvalCallback(Callback):
             pl_module.log(primary_key, value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
 
     def _compute_and_log_f1_metrics(
-        self, trainer: Any, pl_module: Any, split: str, f1_local: dict[int, dict[str, Any]]
+        self,
+        trainer: Any,
+        pl_module: Any,
+        split: str,
+        f1_local: dict[int, dict[str, Any]],
+        merged: dict[int, dict[str, Any]] | None = None,
     ) -> tuple[dict[str, float], dict[int, dict[str, float]]]:
         """Sweep confidence thresholds over ``f1_local``, log ``{split}/F1`` (+precision/recall), return per-class F1.
 
@@ -887,18 +933,27 @@ class COCOEvalCallback(Callback):
             pl_module: The LightningModule.
             split: Metric namespace — ``"val"``, ``"test"``, or ``"train"``.
             f1_local: Per-category matching accumulator for this split.
+            merged: ``f1_local`` already merged across ranks by the caller (who needed the per-class ground-truth
+                counts first); ``None`` merges it here.
 
         Returns:
             ``(overall, f1_by_cid)`` — ``overall`` has keys ``"F1"``, ``"Precision"``, ``"Recall"``; ``f1_by_cid``
             maps category_id to its per-class ``f1``/``precision``/``recall`` at the best macro-F1 threshold
             (empty when no matching data was accumulated).
         """
-        merged = distributed_merge_matching_data(f1_local)
+        if merged is None:
+            merged = distributed_merge_matching_data(f1_local)
         f1_by_cid: dict[int, dict[str, float]] = {}
         if merged:
             sorted_ids = sorted(merged.keys())
             per_class_list = [merged[cid] for cid in sorted_ids]
             classes_with_gt = [i for i, cid in enumerate(sorted_ids) if merged[cid]["total_gt"] > 0]
+            if self._min_class_support > 0:
+                # Sweep for the classes with enough ground truth to measure; per-class rows still cover every class.
+                gated_idx = [
+                    i for i, cid in enumerate(sorted_ids) if merged[cid]["total_gt"] >= self._min_class_support
+                ]
+                classes_with_gt = gated_idx or classes_with_gt
             f1_results = sweep_confidence_thresholds(per_class_list, np.linspace(0, 1, 101), classes_with_gt)
             best = max(f1_results, key=lambda x: x["macro_f1"])
             overall = {
@@ -974,6 +1029,8 @@ class COCOEvalCallback(Callback):
         if not self._any_rank_has_updates(metric, pl_module):
             metric.reset()
             self._reset_keypoint_split(split)
+            if split not in ("val", "train"):
+                self._reset_agnostic_metric()
             # Unless `eval_base_model` is set, on_validation_batch_end routes every prediction to
             # map_metric_ema instead of `metric` (see its docstring), so `metric` never
             # accumulates any update this epoch — that must not also suppress the EMA metrics,
@@ -982,9 +1039,13 @@ class COCOEvalCallback(Callback):
             # test, and on_train_epoch_end never reaches this branch with stale EMA state from a
             # prior validation epoch under normal use), so this is scoped to "val" only.
             if split == "val":
+                # Merged ahead of the EMA metrics: its per-class ground-truth counts decide the gated set.
+                merged = distributed_merge_matching_data(f1_local)
+                support_by_cid, eligible_cids = self._class_support(merged)
                 should_compute_ema, ema_metrics = self._compute_and_log_ema_metrics(
-                    trainer, pl_module, split, pfx, mar_key
+                    trainer, pl_module, split, pfx, mar_key, eligible_cids
                 )
+                agnostic_overall = self._compute_and_log_agnostic_map(trainer, pl_module, split)
                 if should_compute_ema:
                     self._compute_and_log_keypoint_map(
                         "val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_"
@@ -998,13 +1059,23 @@ class COCOEvalCallback(Callback):
                 # When the base model is not evaluated `metric` never updates but f1_local does — computing it here
                 # instead of via the unconditional _reset_f1_local below prevents val/F1 from
                 # silently going unlogged even though real matching data was collected (#1285).
-                f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
+                f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(
+                    trainer, pl_module, split, f1_local, merged=merged
+                )
                 # The normal per-class/table path below only ever reads from the base `metric`,
                 # which never has data here — without this, an EMA-only epoch prints no console table
                 # for the whole run even though ema_metrics has real per-class data (#1285).
                 if should_compute_ema and ema_metrics is not None:
                     self._print_ema_only_summary(
-                        trainer, pl_module, split, pfx, mar_key, ema_metrics, f1_overall, f1_by_cid
+                        trainer,
+                        pl_module,
+                        split,
+                        pfx,
+                        mar_key,
+                        ema_metrics,
+                        {**f1_overall, **agnostic_overall},
+                        f1_by_cid,
+                        support_by_cid=support_by_cid,
                     )
             self._reset_f1_local(split)
             logger.debug("Skipping %s COCO metric compute because no predictions were accumulated.", split)
@@ -1016,6 +1087,10 @@ class COCOEvalCallback(Callback):
         # has updates, so the collectives stay symmetric even on a rank whose own shard was empty.
         metric.merge_distributed_state()
         metrics = self._compute_map_metric(trainer, metric)
+        # Merged ahead of the metrics that consume it: per-class ground-truth counts decide the gated set. A
+        # collective, so it stays unconditional and in the same position on every rank.
+        merged = distributed_merge_matching_data(f1_local)
+        support_by_cid, eligible_cids = self._class_support(merged)
 
         overall: dict[str, float] = {
             "mAP 50:95": float(metrics[f"{pfx}map"]),
@@ -1042,7 +1117,14 @@ class COCOEvalCallback(Callback):
         trainer.callback_metrics[f"{split}/mAP_75"] = metrics[f"{pfx}map_75"].detach().cpu()
         trainer.callback_metrics[f"{split}/mAR"] = metrics[mar_key].detach().cpu()
 
-        should_compute_ema, _ema_metrics = self._compute_and_log_ema_metrics(trainer, pl_module, split, pfx, mar_key)
+        if eligible_cids is not None:
+            overall.update(self._log_gated_map(trainer, pl_module, split, metrics, pfx, eligible_cids))
+        if split != "train":
+            overall.update(self._compute_and_log_agnostic_map(trainer, pl_module, split))
+
+        should_compute_ema, _ema_metrics = self._compute_and_log_ema_metrics(
+            trainer, pl_module, split, pfx, mar_key, eligible_cids
+        )
 
         if self._use_segm_metrics:
             overall["segm mAP 50:95"] = float(metrics["segm_map"])
@@ -1054,7 +1136,7 @@ class COCOEvalCallback(Callback):
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
-        f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local)
+        f1_overall, f1_by_cid = self._compute_and_log_f1_metrics(trainer, pl_module, split, f1_local, merged=merged)
         overall.update(f1_overall)
 
         # Defensive normalization, not currently triggered: OnePassCocoMeanAveragePrecision.compute()
@@ -1089,7 +1171,13 @@ class COCOEvalCallback(Callback):
         # returns -1 for AP and torchmetrics returns NaN for AR on such classes,
         # so they would show as all dashes in the table).
         per_class = self._build_per_class_rows(
-            metrics=metrics, pfx=pfx, split=split, pl_module=pl_module, ar_by_cid=ar_by_cid, f1_by_cid=f1_by_cid
+            metrics=metrics,
+            pfx=pfx,
+            split=split,
+            pl_module=pl_module,
+            ar_by_cid=ar_by_cid,
+            f1_by_cid=f1_by_cid,
+            support_by_cid=support_by_cid,
         )
 
         self._print_metrics_tables(trainer, split, overall, per_class)
@@ -1100,6 +1188,132 @@ class COCOEvalCallback(Callback):
             self._reset_keypoint_split("val_ema")
         metric.reset()
         self._reset_f1_local(split)
+
+    def _class_support(self, merged: dict[int, dict[str, Any]]) -> tuple[dict[int, int] | None, set[int] | None]:
+        """Read per-class ground-truth counts off the rank-merged matching data.
+
+        Args:
+            merged: Output of ``distributed_merge_matching_data``.
+
+        Returns:
+            ``(support_by_cid, eligible_cids)`` — non-crowd ground-truth instances per ``category_id`` and the ids
+            meeting ``min_class_support``; ``(None, None)`` when no floor is set.
+        """
+        if self._min_class_support <= 0:
+            return None, None
+        support_by_cid = {int(cid): int(data["total_gt"]) for cid, data in merged.items()}
+        return support_by_cid, {cid for cid, n in support_by_cid.items() if n >= self._min_class_support}
+
+    def _gated_map(self, metrics: dict[str, Any], pfx: str, eligible: set[int], split: str) -> float:
+        """Macro-average AP 50:95 over only the classes clearing the support floor.
+
+        Recomputed from ``map_per_class``, because ``map`` is the mean over every class carrying ground truth. Falls
+        back to that all-class ``map`` when no class clears the floor, so a monitored metric never goes NaN.
+
+        Args:
+            metrics: Output of the mAP metric's ``compute()`` (base or EMA).
+            pfx: Key prefix selecting the IoU type (``""``, ``"bbox_"`` or ``"segm_"``).
+            eligible: Category ids meeting ``min_class_support``.
+            split: Metric namespace, used only in the fallback warning.
+
+        Returns:
+            Macro AP 50:95 across the eligible classes.
+        """
+        pc_key = f"{pfx}map_per_class"
+        values: list[float] = []
+        if eligible and pc_key in metrics and "classes" in metrics:
+            classes = metrics["classes"].reshape(-1)
+            per_class = metrics[pc_key].reshape(-1)
+            # Lengths differ only when per-class AP was off, where the metric returns a single sentinel.
+            if len(classes) == len(per_class):
+                # -1 is the COCO sentinel for a class with no ground truth in this split.
+                values = [float(ap) for cid, ap in zip(classes, per_class) if int(cid) in eligible and float(ap) >= 0]
+        if not values:
+            logger.warning(
+                "%s: no class reached min_class_support=%d, falling back to the all-class %smAP",
+                split,
+                self._min_class_support,
+                pfx,
+            )
+            return float(metrics[f"{pfx}map"])
+        return float(np.mean(values))
+
+    def _log_gated_map(
+        self,
+        trainer: Any,
+        pl_module: Any,
+        split: str,
+        metrics: dict[str, Any],
+        pfx: str,
+        eligible: set[int],
+        metric_prefix: str = "",
+    ) -> dict[str, float]:
+        """Log ``{split}/{metric_prefix}mAP_50_95_gated`` (and the ``segm_`` variant under segmentation).
+
+        Args:
+            trainer: The PTL Trainer, whose ``callback_metrics`` receives the gated values for monitors.
+            pl_module: The LightningModule used for metric logging.
+            split: Metric namespace.
+            metrics: Output of the mAP metric's ``compute()`` (base or EMA).
+            pfx: Key prefix for bbox metrics when segmentation mode is enabled.
+            eligible: Category ids meeting ``min_class_support``.
+            metric_prefix: ``"ema_"`` for the EMA track.
+
+        Returns:
+            Summary-table entries keyed by label.
+        """
+        overall: dict[str, float] = {}
+        variants = [(pfx, "", "mAP")]
+        if self._use_segm_metrics and "segm_map" in metrics:
+            variants.append(("segm_", "segm_", "segm mAP"))
+        for key_pfx, name_pfx, label in variants:
+            gated = self._gated_map(metrics, key_pfx, eligible, split)
+            log_key = f"{split}/{metric_prefix}{name_pfx}mAP_50_95_gated"
+            pl_module.log(log_key, gated, logger=True, on_step=False, on_epoch=True)
+            trainer.callback_metrics[log_key] = torch.tensor(gated)
+            overall[f"gated {label} 50:95"] = gated
+        return overall
+
+    def _update_agnostic_metric(self, preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]) -> None:
+        """Feed one batch to the class-agnostic metric, when enabled."""
+        if self.map_metric_agnostic is not None:
+            self.map_metric_agnostic.update(self._collapse_labels(preds), self._collapse_labels(targets))
+
+    def _reset_agnostic_metric(self) -> None:
+        """Clear the class-agnostic metric's state, when enabled."""
+        if self.map_metric_agnostic is not None:
+            self.map_metric_agnostic.reset()
+
+    def _compute_and_log_agnostic_map(self, trainer: Any, pl_module: Any, split: str) -> dict[str, float]:
+        """Compute, log and reset the class-agnostic mAP for a val/test *split*.
+
+        Every rank issues the same collectives here: the has-updates vote, then (if any rank voted yes) the state
+        merge. An epoch that accumulated nothing logs no key instead of a ``-1`` sentinel.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            split: Metric namespace — ``"val"`` or ``"test"``.
+
+        Returns:
+            Summary-table entries ``"agnostic mAP 50:95"`` / ``"agnostic mAP 50"``; empty when disabled or nothing
+            was accumulated.
+        """
+        metric = self.map_metric_agnostic
+        if metric is None:
+            return {}
+        if not self._any_rank_has_updates(metric, pl_module):
+            metric.reset()
+            return {}
+        metric.merge_distributed_state()
+        agnostic_metrics = self._compute_map_metric(trainer, metric)
+        metric.reset()
+        overall: dict[str, float] = {}
+        for name, label, key in (("mAP_50_95_agnostic", "50:95", "map"), ("mAP_50_agnostic", "50", "map_50")):
+            pl_module.log(f"{split}/{name}", agnostic_metrics[key], logger=True, on_step=False, on_epoch=True)
+            trainer.callback_metrics[f"{split}/{name}"] = agnostic_metrics[key].detach().cpu()
+            overall[f"agnostic mAP {label}"] = float(agnostic_metrics[key])
+        return overall
 
     def _reset_f1_local(self, split: str) -> None:
         """Reset the F1 accumulator for a metric split."""
@@ -1153,7 +1367,7 @@ class COCOEvalCallback(Callback):
             ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
             self.map_metric_ema = OnePassCocoMeanAveragePrecision(
                 iou_type=ema_iou_type,
-                class_metrics=self._log_per_class_metrics,
+                class_metrics=self._per_class_ap_enabled,
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend=self._eval_backend,
                 num_classes=self._num_classes,
@@ -1351,6 +1565,7 @@ class COCOEvalCallback(Callback):
         ema_metrics: dict[str, Any],
         f1_overall: dict[str, float],
         f1_by_cid: dict[int, dict[str, float]],
+        support_by_cid: dict[int, int] | None = None,
     ) -> None:
         """Print the Rich summary table from ``ema_metrics`` when it is the epoch's only track with data.
 
@@ -1374,6 +1589,7 @@ class COCOEvalCallback(Callback):
                 EMA-prefixed by existing design (see ``TrainConfig.eval_base_model`` docstring) since
                 ``f1_local`` has no parallel EMA-tracked accumulator.
             f1_by_cid: Per-class F1/precision/recall keyed by ``category_id``, from the same call.
+            support_by_cid: Ground-truth instance count keyed by ``category_id``.
         """
         if "classes" in ema_metrics and ema_metrics["classes"].ndim == 0:
             ema_metrics = dict(ema_metrics)
@@ -1393,6 +1609,11 @@ class COCOEvalCallback(Callback):
             overall_ema["segm mAP 50:95"] = float(ema_metrics["segm_map"])
             overall_ema["segm mAP 50"] = float(ema_metrics["segm_map_50"])
         overall_ema.update(f1_overall)
+        # Already logged by _compute_and_log_ema_metrics; read back so the fallback warning is not repeated.
+        for name_pfx, label in (("", "mAP"), ("segm_", "segm mAP")):
+            gated = trainer.callback_metrics.get(f"{split}/ema_{name_pfx}mAP_50_95_gated")
+            if self._min_class_support > 0 and gated is not None:
+                overall_ema[f"gated {label} 50:95"] = float(gated)
 
         ar_pc_key = f"{pfx}mar_{self._max_dets}_per_class"
         ar_by_cid: dict[int, float] = {}
@@ -1408,6 +1629,7 @@ class COCOEvalCallback(Callback):
             ar_by_cid=ar_by_cid,
             f1_by_cid=f1_by_cid,
             metric_prefix="ema_",
+            support_by_cid=support_by_cid,
         )
         for row in per_class_ema:
             pl_module.log(f"{split}/AP/{row['name']}", row["ap"], logger=True, on_step=False, on_epoch=True)
@@ -1422,6 +1644,7 @@ class COCOEvalCallback(Callback):
         ar_by_cid: dict[int, float],
         f1_by_cid: dict[int, dict[str, float]],
         metric_prefix: str = "",
+        support_by_cid: dict[int, int] | None = None,
     ) -> list[dict[str, Any]]:
         """Build per-class rows and emit per-class AP metrics.
 
@@ -1435,6 +1658,8 @@ class COCOEvalCallback(Callback):
             metric_prefix: Prepended to the logged key (``f"{split}/{metric_prefix}AP/{name}"``), e.g.
                 ``"ema_"`` so per-class EMA AP (see ``_print_ema_only_summary``) never collides with
                 the regular track's ``{split}/AP/{name}`` keys.
+            support_by_cid: Ground-truth instance count keyed by ``category_id``; adds a ``support`` entry to
+                each row when given.
 
         Returns:
             Per-class rows for table rendering.
@@ -1456,6 +1681,8 @@ class COCOEvalCallback(Callback):
             name = self._cat_id_to_name.get(idx, str(idx))
             pl_module.log(f"{split}/{metric_prefix}AP/{name}", ap)
             row: dict[str, Any] = {"name": name, "ap": ap_f, "ar": ar_f}
+            if support_by_cid is not None:
+                row["support"] = support_by_cid.get(idx, 0)
             row.update(f1_by_cid.get(idx, {"f1": float("nan"), "precision": float("nan"), "recall": float("nan")}))
             per_class.append(row)
         return per_class
@@ -1498,7 +1725,9 @@ class COCOEvalCallback(Callback):
             else f" (Epoch {current_epoch})"
         )
         title_pfx = split.capitalize() + epoch_sfx
-        overall_rendered = _render_overall_merged(title_pfx, overall, self._max_dets)
+        overall_rendered = _render_overall_merged(
+            title_pfx, overall, self._max_dets, min_class_support=self._min_class_support
+        )
 
         if self._in_notebook:
             # Lazily create an ipywidgets.Output on the first table print so it
@@ -1658,5 +1887,35 @@ class COCOEvalCallback(Callback):
                 entry["iscrowd"] = torch.cat([iscrowd, iscrowd.new_ones(len(regions))])
             elif "iscrowd" in t:
                 entry["iscrowd"] = t["iscrowd"]
+            out.append(entry)
+        return out
+
+    @staticmethod
+    def _collapse_labels(items: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
+        """Copy detection or target dicts with every label rewritten to class 0.
+
+        Only the keys the bbox metric reads are carried over, so masks are dropped. The originals are rebuilt rather
+        than mutated because other accumulators read the same dicts.
+
+        Args:
+            items: Per-image prediction or target dicts.
+
+        Returns:
+            Per-image dicts holding ``boxes``, zeroed ``labels``, and ``scores`` / ``iscrowd`` where the source had
+            them.
+
+        Examples:
+            >>> import torch
+            >>> items = [{"boxes": torch.zeros(2, 4), "labels": torch.tensor([3, 7]), "masks": torch.zeros(2, 4, 4)}]
+            >>> collapsed = COCOEvalCallback._collapse_labels(items)
+            >>> collapsed[0]["labels"].tolist(), sorted(collapsed[0])
+            ([0, 0], ['boxes', 'labels'])
+        """
+        out = []
+        for item in items:
+            entry: dict[str, Tensor] = {"boxes": item["boxes"], "labels": torch.zeros_like(item["labels"])}
+            for key in ("scores", "iscrowd"):
+                if key in item:
+                    entry[key] = item[key]
             out.append(entry)
         return out

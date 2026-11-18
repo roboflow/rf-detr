@@ -415,6 +415,11 @@ def _append_training_callbacks(
     else:
         monitor_regular = f"val/{det_key}"
         early_stopping_monitor_ema = f"val/ema_{det_key}"
+    # Under a support floor, selection follows the gated mAP COCOEvalCallback logs beside the all-class one.
+    # Only box/mask mAP has a gated variant: mAR and the OKS keypoint metrics stay ungated.
+    if tc.min_class_support > 0 and tc.best_model_metric == "map" and not has_keypoints:
+        monitor_regular += "_gated"
+        early_stopping_monitor_ema += "_gated"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
     # Validation evaluates the base model only when explicitly asked for it, or when there is no EMA
     # model to prefer (see TrainConfig.eval_base_model). Otherwise monitor_regular carries the EMA
@@ -943,6 +948,8 @@ def build_trainer(
             eval_backend=tc.eval_backend,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
             eval_base_model=tc.eval_base_model,
+            min_class_support=tc.min_class_support,
+            class_agnostic=tc.class_agnostic_eval,
         )
     )
 

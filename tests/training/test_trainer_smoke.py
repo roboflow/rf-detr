@@ -334,6 +334,45 @@ def test_ddp_spawn_run_test_completes(patched_ddp_builders, base_model_config, b
 
 @pytest.mark.ddp
 @_requires_gloo_spawn
+@pytest.mark.timeout(300)
+def test_ddp_spawn_gated_and_agnostic_eval_completes(patched_ddp_builders, base_model_config, base_train_config):
+    """``min_class_support`` and ``class_agnostic_eval`` under ``ddp_spawn`` must finish validation and test.
+
+    Both add cross-rank collectives at epoch end (the class-agnostic metric's vote and state merge, and the matching
+    data merge the support counts are read from), and best-model selection then monitors the gated key. The 300 s
+    timeout turns a rank that skipped one of those collectives into a failure instead of a hang.
+    """
+    mc = base_model_config()
+    tc = base_train_config(
+        use_ema=False,
+        run_test=True,
+        devices=2,
+        strategy="ddp_spawn",
+        epochs=1,
+        min_class_support=1,
+        class_agnostic_eval=True,
+    )
+
+    fake_dataset = _FakeDataset(length=20)
+
+    module = _DDPModule(mc, tc)
+
+    datamodule = RFDETRDataModule(mc, tc)
+    datamodule._dataset_train = fake_dataset
+    datamodule._dataset_val = fake_dataset
+    datamodule._dataset_test = fake_dataset
+
+    trainer = build_trainer(tc, mc, accelerator="cpu", limit_train_batches=2, limit_val_batches=2, limit_test_batches=2)
+    trainer.fit(module, datamodule=datamodule)
+
+    assert (Path(tc.output_dir) / "checkpoint_best_total.pth").exists()
+    metrics_csv = (Path(tc.output_dir) / "metrics.csv").read_text()
+    assert "val/mAP_50_95_gated" in metrics_csv
+    assert "val/mAP_50_95_agnostic" in metrics_csv
+
+
+@pytest.mark.ddp
+@_requires_gloo_spawn
 def test_ddp_spawn_multi_scale_mutation_propagates(patched_ddp_builders, base_model_config, base_train_config):
     """ddp_spawn with multi_scale=True must propagate on_train_batch_start resize to training_step.
 

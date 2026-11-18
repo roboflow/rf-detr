@@ -459,6 +459,90 @@ class TestBuildTrainerCallbacks:
         assert best_cb.monitor == expected_monitor
         assert best_cb._monitor_ema == expected_monitor_ema
 
+    @pytest.mark.parametrize(
+        ("make_tc", "make_mc", "expected_monitor", "expected_monitor_ema"),
+        [
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, min_class_support=5),
+                _mc,
+                "val/mAP_50_95_gated",
+                "val/ema_mAP_50_95_gated",
+                id="detection-map-gated",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=False, min_class_support=5),
+                _mc,
+                "val/mAP_50_95_gated",
+                None,
+                id="detection-map-gated-without-ema",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, min_class_support=5),
+                lambda: _mc(segmentation_head=True),
+                "val/segm_mAP_50_95_gated",
+                "val/ema_segm_mAP_50_95_gated",
+                id="segmentation-map-gated",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, min_class_support=0),
+                _mc,
+                "val/mAP_50_95",
+                "val/ema_mAP_50_95",
+                id="no-floor-keeps-ungated-keys",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, min_class_support=5, best_model_metric="mar"),
+                _mc,
+                "val/mAR",
+                "val/ema_mAR",
+                id="mar-has-no-gated-variant",
+            ),
+            pytest.param(
+                lambda p: _kp_tc(p, use_ema=True, min_class_support=5),
+                _kp_preview_mc,
+                "val/keypoint_map_50_95",
+                "val/ema_keypoint_map_50_95",
+                id="keypoint-oks-map-has-no-gated-variant",
+            ),
+        ],
+    )
+    def test_min_class_support_selects_gated_monitor(
+        self, tmp_path, make_tc, make_mc, expected_monitor, expected_monitor_ema
+    ):
+        """Under a support floor, best-model selection and early stopping follow the gated box/mask mAP."""
+        trainer = build_trainer(make_tc(tmp_path), make_mc())
+        best_cb = _find_callback(trainer, BestModelCallback)
+        assert best_cb.monitor == expected_monitor
+        assert best_cb._monitor_ema == expected_monitor_ema
+
+    def test_min_class_support_early_stopping_monitors_gated_keys(self, tmp_path):
+        """RFDETREarlyStopping reads the same gated keys BestModelCallback selects on."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, min_class_support=5, early_stopping=True), _mc())
+        early = _find_callback(trainer, RFDETREarlyStopping)
+        assert early._monitor_regular == "val/mAP_50_95_gated"
+        assert early._monitor_ema == "val/ema_mAP_50_95_gated"
+
+    @pytest.mark.parametrize(
+        ("tc_kwargs", "expected_support", "expected_agnostic"),
+        [
+            pytest.param({}, 0, False, id="defaults"),
+            pytest.param({"min_class_support": 7, "class_agnostic_eval": True}, 7, True, id="both-set"),
+        ],
+    )
+    def test_support_floor_and_agnostic_flag_reach_coco_eval_callback(
+        self, tmp_path, tc_kwargs, expected_support, expected_agnostic
+    ):
+        """TrainConfig.min_class_support / class_agnostic_eval are forwarded to COCOEvalCallback."""
+        trainer = build_trainer(_tc(tmp_path, **tc_kwargs), _mc())
+        coco_cb = _find_callback(trainer, COCOEvalCallback)
+        assert coco_cb._min_class_support == expected_support
+        assert coco_cb._class_agnostic is expected_agnostic
+
+    def test_min_class_support_rejects_negative_values(self, tmp_path):
+        """A negative support floor is a configuration error, not a silently disabled gate."""
+        with pytest.raises(ValueError, match="min_class_support"):
+            _tc(tmp_path, min_class_support=-1)
+
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc())
@@ -1909,6 +1993,121 @@ class TestEvalIntervalValidationGating:
         assert validated_epochs == [2, 3], (
             f"expected validation on eval_interval epoch 2 and forced final epoch 3, got {validated_epochs}"
         )
+
+
+class _LongTailDataset(torch.utils.data.Dataset):
+    """Four images that each hold one class-1 box; image 0 also holds the only class-2 box.
+
+    ``orig_size`` is ``(32, 32 + idx)``, so a scripted postprocessor can tell from the width which image it scores.
+    """
+
+    def __len__(self) -> int:
+        return 4
+
+    def __getitem__(self, idx: int):
+        boxes = [[0.5, 0.5, 0.5, 0.5]] + ([[0.15, 0.15, 0.2, 0.2]] if idx == 0 else [])
+        target = {
+            "boxes": torch.tensor(boxes),
+            "labels": torch.tensor([1, 2][: len(boxes)]),
+            "image_id": torch.tensor(idx),
+            "orig_size": torch.tensor([32, 32 + idx]),
+            "size": torch.tensor([32, 32]),
+        }
+        return torch.randn(3, 32, 32), target
+
+
+class TestMinClassSupportModelSelection:
+    """A real fit keeps the checkpoint the gated mAP prefers, not the one a two-instance class would pick."""
+
+    @pytest.mark.parametrize(
+        ("min_class_support", "expected_monitor", "expected_best_epoch", "expected_best_score"),
+        [
+            pytest.param(0, "val/mAP_50_95", 0, 0.5, id="ungated-ties-and-keeps-first-epoch"),
+            pytest.param(2, "val/mAP_50_95_gated", 1, 1.0, id="gated-prefers-common-class-epoch"),
+        ],
+    )
+    def test_real_fit_selects_best_epoch_on_gated_map(
+        self,
+        base_model_config,
+        base_train_config,
+        mocker: MockerFixture,
+        min_class_support,
+        expected_monitor,
+        expected_best_epoch,
+        expected_best_score,
+    ):
+        """Epoch 0 finds only the single class-2 box, epoch 1 only the four class-1 boxes.
+
+        All-class mAP is 0.5 on both epochs, so it cannot tell them apart and keeps the first. With a floor of 2 the
+        one-instance class leaves the monitored mean, which then reads 0.0 and 1.0.
+        """
+        from rfdetr.training.module_data import RFDETRDataModule
+        from rfdetr.training.module_model import RFDETRModelModule
+        from tests.training.helpers import _FakeCriterion, _make_param_dicts, _TinyModel
+
+        mc = base_model_config()
+        tc = base_train_config(epochs=2, use_ema=False, run_test=False, min_class_support=min_class_support)
+        module_holder: list[RFDETRModelModule] = []
+
+        def _scripted_postprocess(outputs, orig_sizes):
+            epoch = module_holder[0].trainer.current_epoch
+            results = []
+            for height, width in orig_sizes.tolist():
+                if epoch == 0:
+                    found = width == 32
+                    boxes = [[0.05 * width, 0.05 * height, 0.25 * width, 0.25 * height]] if found else []
+                    labels = [2] if found else []
+                else:
+                    boxes = [[0.25 * width, 0.25 * height, 0.75 * width, 0.75 * height]]
+                    labels = [1]
+                results.append(
+                    {
+                        "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
+                        "scores": torch.full((len(labels),), 0.9),
+                        "labels": torch.tensor(labels, dtype=torch.long),
+                    }
+                )
+            return results
+
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), MagicMock(side_effect=_scripted_postprocess)),
+        )
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_LongTailDataset())
+        mocker.patch(
+            "rfdetr.training.module_model.get_param_dict",
+            side_effect=lambda args, model: _make_param_dicts(model),
+        )
+
+        module = RFDETRModelModule(mc, tc)
+        module_holder.append(module)
+        trainer = build_trainer(
+            tc,
+            mc,
+            accelerator="cpu",
+            num_sanity_val_steps=0,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+        )
+        best_cb = _find_callback(trainer, BestModelCallback)
+        saved_epochs: list[int] = []
+        save_checkpoint = best_cb._save_checkpoint
+
+        def _recording_save_checkpoint(trainer, filepath):
+            saved_epochs.append(trainer.current_epoch)
+            save_checkpoint(trainer, filepath)
+
+        mocker.patch.object(best_cb, "_save_checkpoint", side_effect=_recording_save_checkpoint)
+
+        trainer.fit(module, datamodule=RFDETRDataModule(mc, tc))
+
+        assert best_cb.monitor == expected_monitor
+        assert float(trainer.callback_metrics["val/mAP_50_95"]) == pytest.approx(0.5, abs=1e-4)
+        assert ("val/mAP_50_95_gated" in trainer.callback_metrics) is (min_class_support > 0)
+        assert float(best_cb.best_model_score) == pytest.approx(expected_best_score, abs=1e-4)
+        assert saved_epochs[-1] == expected_best_epoch
 
 
 class TestFloat32MatmulPrecision:
