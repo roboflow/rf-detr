@@ -83,8 +83,8 @@ def _make_synthetic_batch(
     """Build a minimal (samples, targets) batch for probing.
 
     Uses max_targets_per_image targets per image so memory reflects worst-case matcher and loss. When segmentation_head
-    is True, each target dict includes "masks" of shape (max_targets_per_image, height, width). ``resolution`` is a
-    side length or a ``(height, width)`` pair.
+    is True, each target dict includes "masks" of shape (max_targets_per_image, height, width). ``resolution`` is a side
+    length or a ``(height, width)`` pair.
     """
     height, width = as_pair(resolution)
     tensors = torch.randn(micro_batch_size, num_channels, height, width, device=device)

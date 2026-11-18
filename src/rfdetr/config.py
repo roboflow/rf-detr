@@ -760,9 +760,9 @@ class ModelConfig(BaseConfig):
     def _validate_non_square_resolution(self) -> "ModelConfig":
         """Reject a ``(height, width)`` resolution the windowed backbone cannot split into whole windows.
 
-        The backbone splits the input into ``num_windows`` x ``num_windows`` windows of whole patches, so each side
-        must be divisible by ``patch_size * num_windows``. An ``int`` resolution is not checked here: it keeps being
-        checked where the model is built and run.
+        The backbone splits the input into ``num_windows`` x ``num_windows`` windows of whole patches, so each side must
+        be divisible by ``patch_size * num_windows``. An ``int`` resolution is not checked here: it keeps being checked
+        where the model is built and run.
         """
         if isinstance(self.resolution, int):
             return self
