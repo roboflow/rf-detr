@@ -5,9 +5,9 @@
 # ------------------------------------------------------------------------
 """Tests for the opt-in retry and substitution of unreadable images in the loose-file dataset readers.
 
-An ``OSError`` that escapes ``__getitem__`` in a DataLoader worker ends that process's training run; under DDP the
-other ranks then wait in their next collective operation until the backend's watchdog aborts the job, without naming
-the file. These tests pin the behaviour that keeps one bad read from doing that.
+An ``OSError`` that escapes ``__getitem__`` in a DataLoader worker ends that process's training run; under DDP the other
+ranks then wait in their next collective operation until the backend's watchdog aborts the job, without naming the file.
+These tests pin the behaviour that keeps one bad read from doing that.
 """
 
 from __future__ import annotations
