@@ -10,7 +10,8 @@
 #   workflow_dispatch target=<version tag>   → mike deploy <tag>
 #
 # Every deploy also:
-#   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
+#   - Copies robots.txt, 404.html, llms.txt, llms-full.txt to gh-pages root
+#     (404.html redirects version-less paths such as /cookbooks/ to /latest/cookbooks/)
 #   - Regenerates sitemap.xml normalising versioned paths to /latest/
 #   - Pings IndexNow (Bing) with canonical /latest/ URLs
 #
@@ -83,6 +84,7 @@ jobs:
           sparse-checkout: |
             docs/theme/main.html
             docs/root-static/robots.txt
+            docs/root-static/404.html
           sparse-checkout-cone-mode: false
 
       - name: 📥 Checkout the repository
@@ -101,6 +103,7 @@ jobs:
         run: |
           cp .docs-index-policy/docs/theme/main.html docs/theme/main.html
           cp .docs-index-policy/docs/root-static/robots.txt docs/root-static/robots.txt
+          cp .docs-index-policy/docs/root-static/404.html docs/root-static/404.html
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -184,16 +187,18 @@ jobs:
           github.event_name == 'workflow_dispatch'
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
+          cp docs/root-static/404.html /tmp/404.html
           cp docs/root-static/llms.txt /tmp/llms.txt
           cp docs/root-static/llms-full.txt /tmp/llms-full.txt
           cp docs/root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
           git fetch origin gh-pages:refs/remotes/origin/gh-pages
           git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
+          cp /tmp/404.html 404.html
           cp /tmp/llms.txt llms.txt
           cp /tmp/llms-full.txt llms-full.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
-          git add robots.txt llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          git add robots.txt 404.html llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
           # not blocked by the User-agent: * Disallow rules in robots.txt.
           # latest/ may be a mike alias redirect (no sitemap.xml) — fall back to highest versioned dir.
