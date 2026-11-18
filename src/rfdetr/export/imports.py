@@ -42,3 +42,6 @@ _IS_TENSORFLOW_INSTALLED = is_installed("tensorflow")
 _IS_COREAI_INSTALLED = is_installed("coreai")
 #: Whether Torch-TensorRT, which builds the engine of an ExecuTorch ``backend="tensorrt"`` export, is installed.
 _IS_TORCH_TENSORRT_INSTALLED = is_installed("torch_tensorrt")
+#: Whether the delegate package (``torch_tensorrt_executorch_runtime``) that ``torch-tensorrt[executorch]`` installs,
+#: and that a TensorRT ``.pte`` loads through, is installed. Torch-TensorRT alone does not bring it.
+_IS_TORCH_TENSORRT_EXECUTORCH_RUNTIME_INSTALLED = is_installed("torch_tensorrt_executorch_runtime")

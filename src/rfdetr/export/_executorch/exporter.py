@@ -57,6 +57,7 @@ Note:
 
 from __future__ import annotations
 
+import importlib.metadata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,6 +108,18 @@ _COREML_HINT = "CoreML export requires `coremltools`. Install it with: pip insta
 _TENSORRT_HINT = (
     "ExecuTorch TensorRT export requires Torch-TensorRT with ExecuTorch support (Linux, Python 3.11 or newer). "
     "Install it with: pip install rfdetr[executorch-tensorrt]"
+)
+# The delegate package `torch-tensorrt[executorch]` installs next to the ExecuTorch release it was built with, and the
+# oldest ExecuTorch the `executorch-tensorrt` extra was validated with (pyproject.toml); the plain `executorch` extra
+# pins an older one, so the two extras do not share an environment.
+_TENSORRT_RUNTIME_MODULE = "torch_tensorrt_executorch_runtime"
+_TENSORRT_MIN_EXECUTORCH: tuple[int, int] = (1, 6)
+_TENSORRT_PARTIAL_CONVERSION_HINT = (
+    "Torch-TensorRT could not convert every op of this model to TensorRT ({reason}). An ExecuTorch TensorRT export "
+    "must hold the whole graph in one TensorRT engine, so a model it converts only in part is refused instead of "
+    "written as a hybrid program. Detection Nano to Large, segmentation Nano and the keypoint preview model converted "
+    "fully when checked; other models may not. For such a model, export with backend='xnnpack' (portable CPU) "
+    "instead, or with format='tensorrt' for a native TensorRT engine."
 )
 _RUNTIME_ABI_HINT = (
     "executorch's compiled runtime extension (executorch.runtime) failed to load against the installed "
@@ -184,6 +197,32 @@ def _check_executorch_available(*, require_runtime: bool = False) -> None:
             except importlib.metadata.PackageNotFoundError:
                 _torch_version = "unknown"
             raise ImportError(_RUNTIME_ABI_HINT.format(torch_version=_torch_version, exc=exc)) from exc
+
+
+def _check_tensorrt_executorch_integration() -> None:
+    """Verify that Torch-TensorRT was installed with its ExecuTorch integration, not just on its own.
+
+    Torch-TensorRT imports without it: ``torch-tensorrt[executorch]`` adds the delegate package that loads a TensorRT
+    ``.pte`` and the ExecuTorch release it was built with. A host with Torch-TensorRT beside the plain ``executorch``
+    extra has neither, so the export is refused here instead of failing, or yielding a ``.pte`` that cannot load, later.
+
+    Raises:
+        ImportError: If the delegate package is not installed, or the installed ``executorch`` is older than the release
+            the ``executorch-tensorrt`` extra was validated with (see :data:`_TENSORRT_MIN_EXECUTORCH`).
+    """
+    if not is_installed(_TENSORRT_RUNTIME_MODULE):
+        raise ImportError(_TENSORRT_HINT)
+    try:
+        version = importlib.metadata.version("executorch")
+    except importlib.metadata.PackageNotFoundError:
+        return  # Source-build install -- skip version check.
+    if tuple(int(part) for part in version.split(".")[:2]) < _TENSORRT_MIN_EXECUTORCH:
+        minimum = ".".join(str(part) for part in _TENSORRT_MIN_EXECUTORCH)
+        raise ImportError(
+            f"{_TENSORRT_HINT} Found executorch {version}, but the ExecuTorch TensorRT export was validated with "
+            f"executorch {minimum}; rfdetr[executorch] pins an older release, so the two extras cannot share an "
+            "environment."
+        )
 
 
 def _build_partitioner(backend: str) -> list[Any]:
@@ -316,9 +355,13 @@ def _lower_tensorrt(model: nn.Module, input_tensors: torch.Tensor) -> Any:
     """Lower an RF-DETR model to an ExecuTorch program whose graph runs as a TensorRT engine.
 
     Torch-TensorRT compiles the exported graph into TensorRT engines on the current CUDA device, and its ExecuTorch
-    exporter turns each engine into a TensorRT delegate call.  For the models checked (detection Nano to Large,
+    exporter turns each engine into a TensorRT delegate call.  That device is the GPU the engine is built for:
+    :meth:`rfdetr.detr.RFDETR.export` makes the CUDA device of the model being exported current around the export, and
+    a direct call builds on ``torch.cuda.current_device()``.  For the models checked (detection Nano to Large,
     segmentation Nano, keypoint preview) TensorRT converts every op, so the program is one delegate call plus the
-    copies that move the input to the GPU and the outputs back to the CPU.
+    copies that move the input to the GPU and the outputs back to the CPU.  The compilation requires that full
+    conversion (``require_full_compilation=True``): a model TensorRT converts only in part fails the export instead of
+    yielding a hybrid program.
 
     Args:
         model: RF-DETR module in export mode, on CPU; it is moved to the current CUDA device.
@@ -329,6 +372,8 @@ def _lower_tensorrt(model: nn.Module, input_tensors: torch.Tensor) -> Any:
 
     Raises:
         ImportError: If Torch-TensorRT is not installed.
+        RuntimeError: If Torch-TensorRT cannot convert every op of the model; the message names the models known to
+            convert fully and the alternatives.
     """
     try:
         import torch_tensorrt.executorch
@@ -341,7 +386,18 @@ def _lower_tensorrt(model: nn.Module, input_tensors: torch.Tensor) -> Any:
     example = input_tensors.cuda()
     # Non-strict capture, as for the other backends; parity and the one-engine structure were measured this way.
     exported_program = torch.export.export(model.cuda(), (example,), strict=False)
-    trt_module = torch_tensorrt.dynamo.compile(exported_program, arg_inputs=[example])
+    try:
+        # require_full_compilation turns a partial conversion into an error: without it Torch-TensorRT returns a hybrid
+        # graph, and the .pte would run the unconverted ops outside TensorRT without a word.
+        trt_module = torch_tensorrt.dynamo.compile(
+            exported_program, arg_inputs=[example], require_full_compilation=True
+        )
+    except AssertionError as exc:
+        # Torch-TensorRT 2.15's partitioners raise AssertionError("require_full_compilation=True was specified, but
+        # ..."). Any other assertion is not about how much of the graph converted and keeps its own message.
+        if "require_full_compilation" not in str(exc):
+            raise
+        raise RuntimeError(_TENSORRT_PARTIAL_CONVERSION_HINT.format(reason=exc)) from exc
     return torch_tensorrt.executorch.export(trt_module).to_executorch()
 
 
@@ -469,19 +525,21 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         from executorch.exir import to_edge_transform_and_lower  # noqa: F401
 
     def check_environment(self) -> None:
-        """Refuse a TensorRT export without Torch-TensorRT or a CUDA device, before the forward pass.
+        """Refuse a TensorRT export without Torch-TensorRT's ExecuTorch integration or a CUDA device.
 
         Torch-TensorRT ships outside ``executorch`` and builds its engine on the current CUDA device, so the
         ``tensorrt`` backend cannot export without both. The other backends lower on the CPU and need nothing here.
 
         Raises:
-            ImportError: If the backend is ``tensorrt`` and Torch-TensorRT is not installed.
+            ImportError: If the backend is ``tensorrt`` and Torch-TensorRT, its ExecuTorch delegate package, or an
+                ``executorch`` release new enough for it is not installed.
             RuntimeError: If the backend is ``tensorrt`` and no CUDA device is available.
         """
         if self._resolve_backend() != "tensorrt":
             return
         if not is_installed("torch_tensorrt"):
             raise ImportError(_TENSORRT_HINT)
+        _check_tensorrt_executorch_integration()
         if not torch.cuda.is_available():
             raise RuntimeError("ExecuTorch TensorRT export requires an available CUDA device.")
 

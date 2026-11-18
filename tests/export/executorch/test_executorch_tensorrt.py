@@ -18,10 +18,10 @@ import pytest
 
 from rfdetr import RFDETRNano
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
-from rfdetr.export.imports import _IS_TORCH_TENSORRT_INSTALLED
+from rfdetr.export.imports import _IS_TORCH_TENSORRT_EXECUTORCH_RUNTIME_INSTALLED, _IS_TORCH_TENSORRT_INSTALLED
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_cuda
-from tests.export.conftest import assert_prediction_roundtrip
+from tests.export.conftest import _prediction_model_for_task, assert_prediction_roundtrip
 from tests.export.executorch.test_executorch_export import _portable_kernel_call_names
 
 # Same reason as test_executorch_coreml.py's `_EXPORT_SEED`: the module-scoped fixture runs before the function-scoped
@@ -29,25 +29,36 @@ from tests.export.executorch.test_executorch_export import _portable_kernel_call
 _EXPORT_SEED = 0
 
 _requires_executorch_tensorrt = pytest.mark.skipif(
-    not _IS_EXECUTORCH_AVAILABLE or not _IS_TORCH_TENSORRT_INSTALLED,
+    not _IS_EXECUTORCH_AVAILABLE
+    or not _IS_TORCH_TENSORRT_INSTALLED
+    or not _IS_TORCH_TENSORRT_EXECUTORCH_RUNTIME_INSTALLED,
     reason="needs the executorch-tensorrt extra",
 )
 
 
-@pytest.fixture(scope="module")
-def nano_tensorrt_pte(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Lower an untrained RFDETRNano through the TensorRT delegate and return the ``.pte``.
+#: Device-to-host copies the ``.pte`` of each task holds: one per model output (detection ``dets`` and ``labels``;
+#: segmentation adds ``masks``; keypoints add ``keypoints``). Every ``.pte`` also holds one host-to-device input copy.
+_EXPECTED_D2H_COPIES = {"detect": 2, "segment": 3, "keypoints": 3}
+
+
+@pytest.fixture(scope="module", params=list(_EXPECTED_D2H_COPIES))
+def tensorrt_pte(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
+    """Lower an untrained model of one task through the TensorRT delegate and return the task and its ``.pte``.
+
+    Detection is the default ``RFDETRNano``; segmentation and keypoints are the small random models the prediction
+    round trips use.
 
     Examples:
         Skipped: a pytest fixture needing the executorch-tensorrt extra and a GPU, so it cannot run standalone.
 
-        >>> nano_tensorrt_pte.name  # doctest: +SKIP
-        'rfdetr-nano_tensorrt.pte'
+        >>> tensorrt_pte[1].suffix  # doctest: +SKIP
+        '.pte'
     """
+    task = request.param
     seed_all(_EXPORT_SEED)
-    detector = RFDETRNano(pretrain_weights=None)
-    out_dir = tmp_path_factory.mktemp("executorch_tensorrt")
-    return Path(detector.export(output_dir=str(out_dir), format="executorch", backend="tensorrt", verbose=False))
+    detector = RFDETRNano(pretrain_weights=None) if task == "detect" else _prediction_model_for_task(task)
+    out_dir = tmp_path_factory.mktemp(f"executorch_tensorrt_{task}")
+    return task, Path(detector.export(output_dir=str(out_dir), format="executorch", backend="tensorrt", verbose=False))
 
 
 def _delegate_ids(pte_path: Path) -> list[str]:
@@ -79,20 +90,20 @@ def _delegate_ids(pte_path: Path) -> list[str]:
 class TestExecuTorchTensorRTDelegate:
     """The TensorRT delegate must take the whole graph and produce a ``.pte`` that predicts like the PyTorch model."""
 
-    def test_shipped_pte_is_one_tensorrt_engine(self, nano_tensorrt_pte: Path) -> None:
-        """The exported ``.pte`` holds a single TensorRT delegate, so no op of the model runs outside the engine."""
-        assert _delegate_ids(nano_tensorrt_pte) == ["TensorRTBackend"]
+    def test_shipped_pte_is_one_tensorrt_engine(self, tensorrt_pte: tuple[str, Path]) -> None:
+        """The exported ``.pte`` of every task holds a single TensorRT delegate, so no op runs outside the engine."""
+        _, pte = tensorrt_pte
+        assert _delegate_ids(pte) == ["TensorRTBackend"]
 
-    def test_shipped_pte_only_copies_outside_the_engine(self, nano_tensorrt_pte: Path) -> None:
-        """The only kernel calls outside the engine move the input to the GPU and the two outputs back to the CPU.
+    def test_shipped_pte_only_copies_outside_the_engine(self, tensorrt_pte: tuple[str, Path]) -> None:
+        """The only kernel calls outside the engine move the input to the GPU and each output back to the CPU.
 
-        Any other kernel call would be a model op TensorRT did not convert, running on ExecuTorch's CPU kernels.
+        Any other kernel call would be a model op TensorRT did not convert, running on ExecuTorch's CPU kernels. A task
+        with more outputs holds more device-to-host copies.
         """
-        assert sorted(_portable_kernel_call_names(nano_tensorrt_pte)) == [
-            "et_copy::_d2h_copy.out",
-            "et_copy::_d2h_copy.out",
-            "et_copy::_h2d_copy.out",
-        ]
+        task, pte = tensorrt_pte
+        expected = ["et_copy::_d2h_copy.out"] * _EXPECTED_D2H_COPIES[task] + ["et_copy::_h2d_copy.out"]
+        assert sorted(_portable_kernel_call_names(pte)) == sorted(expected)
 
     @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
     def test_prediction_matches_native(self, task: str, tmp_path: Path) -> None:

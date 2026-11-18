@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import dataclasses
 import functools
 import importlib.metadata
 import os
@@ -45,7 +46,13 @@ from rfdetr.export._executorch.inference import load_executorch_method
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.reproducibility import seed_all
 from tests._online import is_online
-from tests.export.conftest import _make_rfdetr, _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
+from tests.export.conftest import (
+    _make_rfdetr,
+    _prediction_model_for_task,
+    _structured_parity_input,
+    eager_reference_tensors,
+    max_abs_output_diffs,
+)
 from tests.export.coreml.test_coreml_export import _MULTICLASS_KEYPOINT_SCHEMA, _assert_well_conditioned
 
 _requires_executorch = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
@@ -244,6 +251,7 @@ class TestExecuTorchExporterValidation:
     def test_tensorrt_without_cuda_is_refused(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """The tensorrt backend is refused before the forward pass on a host with no CUDA device."""
         mocker.patch(f"{_EXPORTER_MODULE}.is_installed", return_value=True)
+        mocker.patch(f"{_EXPORTER_MODULE}._check_tensorrt_executorch_integration")
         mocker.patch("torch.cuda.is_available", return_value=False)
         exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="tensorrt"))
 
@@ -739,7 +747,7 @@ class TestLowerTensorRT:
 
         export.assert_called_once_with(model.cuda.return_value, (example.cuda.return_value,), strict=False)
         torch_tensorrt.dynamo.compile.assert_called_once_with(
-            export.return_value, arg_inputs=[example.cuda.return_value]
+            export.return_value, arg_inputs=[example.cuda.return_value], require_full_compilation=True
         )
         executorch_api.export.assert_called_once_with(torch_tensorrt.dynamo.compile.return_value)
         assert result is executorch_api.export.return_value.to_executorch.return_value
@@ -946,6 +954,7 @@ class TestExecuTorchExporterBody:
         exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="tensorrt"))
         mocker.patch.dict(sys.modules, self._generic_modules())
         mocker.patch(f"{_EXPORTER_MODULE}.is_installed", return_value=True)
+        mocker.patch(f"{_EXPORTER_MODULE}._check_tensorrt_executorch_integration")
         mocker.patch("torch.cuda.is_available", return_value=True)
         mock_lower = mocker.patch(f"{_EXPORTER_MODULE}._lower_tensorrt", return_value=program)
 
@@ -1707,3 +1716,76 @@ class TestTFLiteRank5Regression:
         assert not module._export
         module.export()
         assert module._export
+
+
+# ---------------------------------------------------------------------------
+# TensorRT backend: refusal at the public entry point and lowering failures (Torch-TensorRT mocked)
+# ---------------------------------------------------------------------------
+
+
+class TestExecuTorchTensorRTPublicRefusal:
+    """``RFDETR.export(format="executorch", backend="tensorrt")`` refuses an unfit host before any forward pass."""
+
+    @pytest.mark.parametrize(
+        ("torch_tensorrt_installed", "cuda_available", "error", "message"),
+        [
+            pytest.param(False, True, ImportError, r"Torch-TensorRT .*rfdetr\[executorch-tensorrt\]", id="no-torch-tensorrt"),
+            pytest.param(True, False, RuntimeError, "requires an available CUDA device", id="no-cuda"),
+        ],
+    )
+    def test_refuses_before_the_forward_pass(
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
+        torch_tensorrt_installed: bool,
+        cuda_available: bool,
+        error: type[Exception],
+        message: str,
+    ) -> None:
+        """Without Torch-TensorRT or a CUDA device the export fails early and never builds the export graph."""
+        model = _prediction_model_for_task("detect")
+        # The CPU job has no executorch; its own check runs before the one under test, so keep it out of the way.
+        mocker.patch(f"{_EXPORTER_MODULE}.ExecuTorchExporter.check_dependencies")
+        mocker.patch(f"{_EXPORTER_MODULE}.is_installed", return_value=torch_tensorrt_installed)
+        mocker.patch("torch.cuda.is_available", return_value=cuda_available)
+        prepare = mocker.patch("rfdetr.export.prepare.prepare_export_graph")
+
+        with pytest.warns(UserWarning, match="experimental"), pytest.raises(error, match=message):
+            model.export(output_dir=str(tmp_path), format="executorch", backend="tensorrt", verbose=False)
+
+        prepare.assert_not_called()
+
+
+class TestLowerTensorRTFailures:
+    """Failures of the Torch-TensorRT steps reach the user as documented errors (Torch-TensorRT mocked)."""
+
+    @pytest.mark.parametrize("missing_module", ["torch_tensorrt.executorch", "executorch"])
+    def test_missing_dependency_of_the_exporter_names_the_extra(
+        self, monkeypatch: pytest.MonkeyPatch, missing_module: str
+    ) -> None:
+        """A missing ExecuTorch exporter module of Torch-TensorRT, or ExecuTorch itself, names the extra to install."""
+        real_import = builtins.__import__
+
+        def import_without_module(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "torch_tensorrt.executorch":
+                raise ModuleNotFoundError(f"No module named {missing_module!r}", name=missing_module)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_without_module)
+
+        with pytest.raises(ImportError, match=r"Torch-TensorRT .*rfdetr\[executorch-tensorrt\]"):
+            _lower_tensorrt(mock.MagicMock(), torch.zeros(1, 3, 8, 8))
+
+    def test_compile_failure_is_wrapped_in_a_runtime_error(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """A ``torch_tensorrt.dynamo.compile`` failure surfaces as ``RuntimeError("ExecuTorch export failed: ...")``."""
+        executorch_api = mock.MagicMock()
+        torch_tensorrt = mock.MagicMock(executorch=executorch_api)
+        torch_tensorrt.dynamo.compile.side_effect = ValueError("engine build failed")
+        mocker.patch.dict(sys.modules, {"torch_tensorrt": torch_tensorrt, "torch_tensorrt.executorch": executorch_api})
+        mocker.patch("torch.export.export")
+        graph = dataclasses.replace(_export_graph(), input_tensors=mock.MagicMock())
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="tensorrt"))
+
+        with pytest.raises(RuntimeError, match="ExecuTorch export failed: engine build failed"):
+            exporter._convert(graph)
+        executorch_api.export.assert_not_called()

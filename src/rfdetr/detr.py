@@ -2200,7 +2200,9 @@ class RFDETR:
                 When ``"executorch"`` is selected the model is exported
                 directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
-                ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
+                ``pip install rfdetr[executorch]``, or ``rfdetr[executorch-tensorrt]`` (Linux, Python 3.11 or newer)
+                for ``backend="tensorrt"``; the two extras cannot share an environment. ``"openvino"`` converts
+                directly from PyTorch to OpenVINO IR
                 format (requires ``pip install rfdetr[openvino]``). ``"litert"`` converts directly from PyTorch to
                 a LiteRT ``.tflite`` file via ``litert-torch`` (``torch.export`` capture, no ONNX or TensorFlow
                 step; requires ``pip install rfdetr[litert]``) — the same file type as ``"tflite"``, reached
@@ -2279,7 +2281,9 @@ class RFDETR:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
                 ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
                 QAIRT SDK — not available via pip), and ``"tensorrt"`` (NVIDIA GPUs, fp32; requires
-                ``pip install rfdetr[executorch-tensorrt]`` and a CUDA device at export time).
+                ``pip install rfdetr[executorch-tensorrt]`` and a CUDA device at export time; the engine is built on
+                the CUDA device of the model being exported, or on the current CUDA device when the model is on the
+                CPU, and runs only on GPUs and TensorRT releases compatible with it).
             soc: Target SoC (System on Chip) — the specific Qualcomm Snapdragon chip the exported model will run
                 on.  Required when ``backend="qnn"``: the QNN backend compiles the ``.pte`` ahead-of-time for one
                 chip's Hexagon Tensor Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which run on any device of
@@ -2593,7 +2597,19 @@ class RFDETR:
                 backbone_only=backbone_only,
                 metadata=metadata,
             )
-            return exporter(graph)
+            # The graph is on CPU by contract and carries no device, so an exporter that builds on the GPU follows
+            # torch.cuda.current_device(): Torch-TensorRT's default device is that one, and the native TensorRT
+            # exporter's capability and metadata probes read it. Make it the GPU the model is configured for, so a model
+            # on cuda:1 is not built on GPU 0. A no-op when it is already current; a CPU-configured model keeps the
+            # caller's current device.
+            export_device = torch.device(device)
+            cuda_ctx = (
+                torch.cuda.device(export_device)
+                if export_device.type == "cuda" and torch.cuda.is_available()
+                else contextlib.nullcontext()
+            )
+            with cuda_ctx:
+                return exporter(graph)
         finally:
             self.model.model = _locked_move(self.model.model, device)
 
