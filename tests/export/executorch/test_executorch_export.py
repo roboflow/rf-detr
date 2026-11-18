@@ -1729,7 +1729,9 @@ class TestExecuTorchTensorRTPublicRefusal:
     @pytest.mark.parametrize(
         ("torch_tensorrt_installed", "cuda_available", "error", "message"),
         [
-            pytest.param(False, True, ImportError, r"Torch-TensorRT .*rfdetr\[executorch-tensorrt\]", id="no-torch-tensorrt"),
+            pytest.param(
+                False, True, ImportError, r"Torch-TensorRT .*rfdetr\[executorch-tensorrt\]", id="no-torch-tensorrt"
+            ),
             pytest.param(True, False, RuntimeError, "requires an available CUDA device", id="no-cuda"),
         ],
     )

@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Check which devices the ExecuTorch TensorRT loader accepts, with CUDA, the delegate and the program mocked.
 
-The delegate runs on the current CUDA device and takes no device argument, so ``cuda:N`` is only an assertion that
-``N`` is that device. Every test makes device 1 current, so an accepted ``cuda:1`` cannot be a hardcoded ``cuda:0``.
+The delegate runs on the current CUDA device and takes no device argument, so ``cuda:N`` is only an assertion that ``N``
+is that device. Every test makes device 1 current, so an accepted ``cuda:1`` cannot be a hardcoded ``cuda:0``.
 """
 
 from __future__ import annotations
