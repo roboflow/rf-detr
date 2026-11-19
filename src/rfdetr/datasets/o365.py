@@ -25,7 +25,7 @@ Image.MAX_IMAGE_PIXELS = 2_000_000_000
 logger = get_logger()
 
 
-def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
+def build_o365_raw(image_set: str, args: Any, resolution: int | tuple[int, int]) -> CocoDetection:
     """Build one Object365 detection split.
 
     Object365 currently uses detection annotations only and does not consume
@@ -38,7 +38,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     Args:
         image_set: Object365 split, either ``"train"`` or ``"val"``.
         args: Dataset and transform configuration namespace.
-        resolution: Target square resolution in pixels.
+        resolution: Target resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         The configured Object365 detection dataset.
@@ -110,14 +110,14 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     return dataset
 
 
-def build_o365(image_set: str, args: Any, resolution: int) -> CocoDetection:
+def build_o365(image_set: str, args: Any, resolution: int | tuple[int, int]) -> CocoDetection:
     """Build a supported Object365 detection split.
 
     Args:
         image_set: Object365 split, either ``"train"`` or ``"val"``.
         args: Dataset and transform configuration namespace accepted by
             :func:`build_o365_raw`.
-        resolution: Target square resolution in pixels.
+        resolution: Target resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         The configured Object365 detection dataset.

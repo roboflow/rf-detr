@@ -21,6 +21,7 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersConfig,
 )
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.shapes import as_pair
 
 logger = get_logger()
 
@@ -174,7 +175,7 @@ class DinoV2(nn.Module):
         load_dinov2_weights: bool = True,
         patch_size: int = 14,
         num_windows: int = 4,
-        positional_encoding_size: int = 37,
+        positional_encoding_size: int | tuple[int, int] = 37,
         drop_path_rate: float = 0.0,
         window_block_indexes: list[int] | None = None,
     ) -> None:
@@ -224,7 +225,15 @@ class DinoV2(nn.Module):
             dino_config["out_features"] = [f"stage{i}" for i in out_feature_indexes]
             dino_config["drop_path_rate"] = drop_path_rate
 
-            implied_resolution = positional_encoding_size * patch_size
+            # A side length is kept as one, so a square grid is configured exactly as before.
+            implied_resolution: int | tuple[int, int]
+            if isinstance(positional_encoding_size, int):
+                implied_resolution = positional_encoding_size * patch_size
+            else:
+                grid_height, grid_width = as_pair(positional_encoding_size)
+                implied_resolution = (grid_height * patch_size, grid_width * patch_size)
+                if grid_height == grid_width:
+                    implied_resolution = implied_resolution[0]
             # `load_dinov2_weights` is False when RF-DETR pretrained weights overwrite the backbone or pretraining
             # is disabled, so only warn when DINOv2 weights were requested. Snapshot before the checks below clear
             # `load_dinov2_weights`, so each check sees the caller's request.
@@ -282,13 +291,19 @@ class DinoV2(nn.Module):
         if self._export:
             return
         self._export = True
-        shape = self.shape
+        shape = as_pair(self.shape)
+        embeddings = self.encoder.embeddings
+        # The windowed encoder records the (height, width) grid of its position embeddings. The non-windowed
+        # `transformers` encoder does not, and its grid is always square.
+        grid_size = getattr(embeddings, "patch_grid_size", None)
+        if grid_size is None:
+            grid_side = math.isqrt(embeddings.position_embeddings.shape[1] - 1)
+            grid_size = (grid_side, grid_side)
 
         def make_new_interpolated_pos_encoding(
             position_embeddings: Tensor, patch_size: int, height: int, width: int
         ) -> Tensor:
 
-            num_positions = position_embeddings.shape[1] - 1
             dim = position_embeddings.shape[-1]
             height = height // patch_size
             width = width // patch_size
@@ -297,9 +312,7 @@ class DinoV2(nn.Module):
             patch_pos_embed = position_embeddings[:, 1:]
 
             # Reshape and permute
-            patch_pos_embed = patch_pos_embed.reshape(
-                1, int(math.sqrt(num_positions)), int(math.sqrt(num_positions)), dim
-            )
+            patch_pos_embed = patch_pos_embed.reshape(1, grid_size[0], grid_size[1], dim)
             patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
 
             # Use bicubic interpolation, disabling antialias only on MPS devices
@@ -336,6 +349,10 @@ class DinoV2(nn.Module):
             return cast(Tensor, old_interpolate_pos_encoding(embeddings, height, width))
 
         self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
+        if hasattr(embeddings, "patch_grid_size"):
+            # The table now lies on the export grid, which is what the fallback interpolation must reshape it to.
+            patch_size = self.encoder.config.patch_size
+            embeddings.patch_grid_size = (shape[0] // patch_size, shape[1] // patch_size)
         self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
             new_interpolate_pos_encoding, self.encoder.embeddings
         )

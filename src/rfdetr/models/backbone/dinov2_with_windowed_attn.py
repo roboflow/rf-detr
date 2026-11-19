@@ -192,8 +192,8 @@ class WindowedDinov2WithRegistersConfig:
             The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
         layer_norm_eps (`float`, *optional*, defaults to 1e-06):
             The epsilon used by the layer normalization layers.
-        image_size (`int`, *optional*, defaults to 224):
-            The size (resolution) of each image.
+        image_size (`int` or `tuple[int, int]`, *optional*, defaults to 224):
+            The size (resolution) of each image: a side length, or `(height, width)`.
         patch_size (`int`, *optional*, defaults to 16):
             The size (resolution) of each patch.
         num_channels (`int`, *optional*, defaults to 3):
@@ -276,7 +276,7 @@ class WindowedDinov2WithRegistersConfig:
         attention_probs_dropout_prob: float = 0.0,
         initializer_range: float = 0.02,
         layer_norm_eps: float = 1e-6,
-        image_size: int = 224,
+        image_size: int | tuple[int, int] = 224,
         patch_size: int = 16,
         num_channels: int = 3,
         qkv_bias: bool = True,
@@ -481,11 +481,8 @@ class Dinov2WithRegistersPatchEmbeddings(nn.Module):
         image_size_cfg, patch_size_cfg = config.image_size, config.patch_size
         num_channels, hidden_size = config.num_channels, config.hidden_size
 
-        image_size = cast(
-            "tuple[int, int]",
-            image_size_cfg
-            if isinstance(image_size_cfg, collections.abc.Iterable)
-            else (image_size_cfg, image_size_cfg),
+        image_size = (
+            image_size_cfg if isinstance(image_size_cfg, collections.abc.Iterable) else (image_size_cfg, image_size_cfg)
         )
         patch_size = cast(
             "tuple[int, int]",
@@ -493,11 +490,14 @@ class Dinov2WithRegistersPatchEmbeddings(nn.Module):
             if isinstance(patch_size_cfg, collections.abc.Iterable)
             else (patch_size_cfg, patch_size_cfg),
         )
-        num_patches = (image_size[1] // patch_size[1]) * (image_size[0] // patch_size[0])
+        grid_size = (image_size[0] // patch_size[0], image_size[1] // patch_size[1])
+        num_patches = grid_size[0] * grid_size[1]
         self.image_size = image_size
         self.patch_size = patch_size
         self.num_channels = num_channels
         self.num_patches = num_patches
+        # (height, width) of the patch grid: a token count alone cannot tell a grid from its transpose.
+        self.grid_size = grid_size
 
         self.projection = nn.Conv2d(num_channels, hidden_size, kernel_size=patch_size, stride=patch_size)
 
@@ -530,6 +530,8 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         self.position_embeddings = nn.Parameter(torch.randn(1, num_patches + 1, config.hidden_size))
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.patch_size = config.patch_size
+        # (height, width) of the grid `position_embeddings` is laid out on.
+        self.patch_grid_size = self.patch_embeddings.grid_size
         self.config = config
 
     @torch.compiler.disable  # type: ignore[untyped-decorator]
@@ -550,11 +552,18 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         num_patches = embeddings.shape[1] - 1
         num_positions = self.position_embeddings.shape[1] - 1
 
-        # Skip interpolation for matching dimensions (unless tracing)
+        # Calculate new dimensions
+        height = height // self.config.patch_size
+        width = width // self.config.patch_size
+        grid_height, grid_width = self.patch_grid_size
+
+        # Skip interpolation when the input grid is the stored grid (unless tracing). The grids are compared, not
+        # only the token counts: a transposed grid has the same token count.
         if (
             not torch.jit.is_tracing()  # type: ignore[attr-defined,no-untyped-call]
             and num_patches == num_positions
-            and height == width
+            and height == grid_height
+            and width == grid_width
         ):
             return cast(Tensor, self.position_embeddings)
 
@@ -563,13 +572,8 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         patch_pos_embed = self.position_embeddings[:, 1:]
         dim = embeddings.shape[-1]
 
-        # Calculate new dimensions
-        height = height // self.config.patch_size
-        width = width // self.config.patch_size
-
         # Reshape for interpolation
-        sqrt_num_positions = _torch_int(num_positions**0.5)
-        patch_pos_embed = patch_pos_embed.reshape(1, sqrt_num_positions, sqrt_num_positions, dim)
+        patch_pos_embed = patch_pos_embed.reshape(1, grid_height, grid_width, dim)
         patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
 
         # Store original dtype for restoration after interpolation

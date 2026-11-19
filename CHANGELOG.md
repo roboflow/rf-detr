@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `resolution` accepts a `(height, width)` pair for a non-square input, such as `RFDETRMedium(resolution=(384, 672))`; an integer still means a square and behaves as before. Each side must be divisible by `patch_size * num_windows`. `ModelConfig.positional_encoding_size` takes the matching `(height, width)` patch grid and is derived from a pair `resolution` as it is from an integer one. Training (`train(resolution=...)`, the dataset transforms, multi-scale training and `batch_size="auto"`), `evaluate()`, `predict()`, `inference()` and the default `export()` shape use the pair. Pretrained and fine-tuned checkpoints load into a non-square model by interpolating the backbone's positional embeddings to its grid, including when the two grids hold the same number of patches.
+
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.

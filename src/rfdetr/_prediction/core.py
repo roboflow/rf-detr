@@ -997,8 +997,8 @@ def _prepare_batch(
     block_size = patch_size * num_windows
 
     if shape is None:
-        default_res = context.default_shape[0]
-        if default_res % block_size != 0:
+        default_res = next((side for side in context.default_shape if side % block_size != 0), None)
+        if default_res is not None:
             raise ValueError(
                 f"Model's default resolution ({default_res}) is not divisible by "
                 f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "

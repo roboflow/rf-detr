@@ -50,6 +50,7 @@ from rfdetr.models.math import MLP
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.models.transformer import Transformer, build_transformer
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.shapes import as_pair
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
 logger = get_logger()
@@ -877,7 +878,7 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         target_shape=(
             args.shape
             if hasattr(args, "shape")
-            else ((args.resolution, args.resolution) if hasattr(args, "resolution") else (640, 640))
+            else (as_pair(args.resolution) if hasattr(args, "resolution") else (640, 640))
         ),
         rms_norm=args.rms_norm,
         backbone_lora=args.backbone_lora,

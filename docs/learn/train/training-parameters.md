@@ -109,6 +109,25 @@ Common resolution values for currently documented checkpoints:
 
 For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is divisible by `24`.
 
+### Non-square resolution
+
+`resolution` also accepts a `(height, width)` pair, so that wide or tall imagery is not squashed into a square. Each side must be divisible by `patch_size * num_windows` for the selected model.
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(resolution=(384, 672))  # height 384, width 672
+
+model.train(dataset_dir="path/to/dataset", epochs=20)
+detections = model.predict("frame.jpg")
+```
+
+- The pair is `(height, width)`, the order of an image tensor's last two dimensions. `(384, 672)` and `(672, 384)` are different models.
+- Pretrained weights load into a non-square model: the backbone's positional embeddings are interpolated from the checkpoint's grid to the model's `(height / patch_size, width / patch_size)` grid, as they are for a custom square resolution.
+- `predict()`, `inference()`, `export()` and `evaluate()` default to the model's `(height, width)`. `train(resolution=(height, width))` and `evaluate(resolution=(height, width))` accept a pair as well.
+- With the default `square_resize_div_64=True`, training and validation images are resized to exactly `(height, width)` without keeping their aspect ratio, as they are resized to a square for an integer resolution. Pick a pair close to the aspect ratio of your images. With `square_resize_div_64=False` the pipeline keeps each image's aspect ratio and treats the pair as its shorter side: `(384, 672)` resizes and crops training and validation images exactly as `384` does, and the model still builds its positional embeddings for 384x672.
+- Multi-scale training steps the shorter side by `patch_size * num_windows` and scales the longer side with it, rounded to a multiple of `patch_size * num_windows`.
+
 ## Regularization Parameters
 
 | Parameter      | Type    | Default | Description                                                                           |

@@ -1063,6 +1063,76 @@ class TestSyncPEWithResolutionAtConstruction:
         assert cfg.positional_encoding_size == 44  # 704 // 16
 
 
+class TestNonSquareResolution:
+    """``resolution`` and ``positional_encoding_size`` accept an explicit ``(height, width)``."""
+
+    @pytest.mark.parametrize(
+        ("config_cls", "resolution", "expected_pe"),
+        [
+            pytest.param(RFDETRNanoConfig, (320, 448), (20, 28), id="nano_320x448"),
+            pytest.param(RFDETRNanoConfig, (448, 320), (28, 20), id="nano_448x320"),
+            pytest.param(RFDETRLargeConfig, (960, 1728), (60, 108), id="large_960x1728"),
+            pytest.param(RFDETRSegNanoConfig, (312, 432), (26, 36), id="seg_nano_312x432"),
+        ],
+    )
+    def test_pair_resolution_derives_pair_positional_encoding_size(
+        self, config_cls: type, resolution: tuple[int, int], expected_pe: tuple[int, int]
+    ) -> None:
+        """A ``(height, width)`` resolution gives a ``(height, width)`` grid in the same order."""
+        cfg = config_cls(resolution=resolution, pretrain_weights=None)
+
+        assert cfg.resolution == resolution
+        assert cfg.positional_encoding_size == expected_pe
+
+    def test_square_pair_resolution_derives_int_positional_encoding_size(self) -> None:
+        """A pair with equal sides keeps the grid in its ``int`` form."""
+        cfg = RFDETRNanoConfig(resolution=(416, 416), pretrain_weights=None)
+
+        assert cfg.positional_encoding_size == 26
+
+    def test_int_resolution_stays_int(self) -> None:
+        """An ``int`` resolution is stored and serialized as an ``int``, as before."""
+        cfg = RFDETRNanoConfig(resolution=416, pretrain_weights=None)
+
+        dumped = cfg.model_dump()
+        assert type(dumped["resolution"]) is int
+        assert type(dumped["positional_encoding_size"]) is int
+
+    def test_pair_resolution_survives_a_json_round_trip(self) -> None:
+        """A dumped config, where the pairs are JSON lists, validates back to the same pairs."""
+        cfg = RFDETRNanoConfig(resolution=(320, 448), pretrain_weights=None)
+
+        restored = RFDETRNanoConfig(**json.loads(json.dumps(cfg.model_dump())))
+
+        assert restored.resolution == (320, 448)
+        assert restored.positional_encoding_size == (20, 28)
+
+    def test_pretrained_specific_positional_encoding_size_is_kept(self) -> None:
+        """A grid that is not derived from the resolution is left alone for a pair resolution too."""
+        cfg = RFDETRBaseConfig(resolution=(448, 672), pretrain_weights=None)
+
+        assert cfg.positional_encoding_size == 37
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [
+            pytest.param((320, 450), id="width-indivisible"),
+            pytest.param((330, 448), id="height-indivisible"),
+            pytest.param((0, 448), id="zero-height"),
+            pytest.param((320, -448), id="negative-width"),
+        ],
+    )
+    def test_pair_resolution_must_be_divisible_on_both_sides(self, resolution: tuple[int, int]) -> None:
+        """Each side of a pair must be a positive multiple of ``patch_size * num_windows`` (32 for Nano)."""
+        with pytest.raises(ValidationError, match="both divisible by"):
+            RFDETRNanoConfig(resolution=resolution, pretrain_weights=None)
+
+    def test_resolution_with_three_sides_is_rejected(self) -> None:
+        """A resolution is one side length or exactly two."""
+        with pytest.raises(ValidationError):
+            RFDETRNanoConfig(resolution=(320, 448, 3), pretrain_weights=None)
+
+
 class TestDetectDevice:
     """Tests for _detect_device() covering PyTorch accelerator detection paths."""
 

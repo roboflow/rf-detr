@@ -59,10 +59,10 @@ class BuilderArgs(Protocol):
     num_classes: int
     pretrain_weights: str | None
     device: str
-    resolution: int
+    resolution: int | tuple[int, int]
     group_detr: int
     gradient_checkpointing: bool
-    positional_encoding_size: int
+    positional_encoding_size: int | tuple[int, int]
     ia_bce_loss: bool
     cls_loss_coef: float
     segmentation_head: bool

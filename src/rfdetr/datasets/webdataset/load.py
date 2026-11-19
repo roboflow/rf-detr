@@ -704,7 +704,7 @@ def build_webdataset_loader(
     return DataLoader(dataset, **loader_kwargs)
 
 
-def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDetection:
+def build_webdataset(image_set: str, args: Any, resolution: int | tuple[int, int]) -> WebDatasetDetection:
     """Build the WebDataset-backed dataset for *image_set*.
 
     Reuses the loose-file transform pipeline unchanged, so a packed split trains through exactly the same CPU
@@ -717,7 +717,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
     Args:
         image_set: Split identifier, optionally suffixed (``"val_speed"`` reads the ``val`` shards).
         args: Merged model/train namespace, as built by :func:`rfdetr._namespace._namespace_from_configs`.
-        resolution: Target square resolution in pixels.
+        resolution: Target resolution in pixels: a side length, or ``(height, width)``.
 
     Returns:
         The streaming dataset for that split.
@@ -797,7 +797,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         scale_jitter=scale_jitter,
         include_masks=include_masks,
     )
-    logger.info("Building WebDataset %s dataset at resolution %d from %s", image_set, resolution, root)
+    logger.info("Building WebDataset %s dataset at resolution %s from %s", image_set, resolution, root)
     dataset = WebDatasetDetection(
         root,
         split,

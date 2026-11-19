@@ -37,6 +37,7 @@ from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.shapes import as_pair
 
 logger = get_logger()
 
@@ -149,7 +150,7 @@ def validate_export_shape(
     shape: tuple[int, int] | None,
     patch_size: int | None,
     model_config: object,
-    resolution: int,
+    resolution: int | tuple[int, int],
     *,
     resolve_patch_size: Callable[[int | None, object, str], int],
     validate_shape_dims: Callable[[object, int, int, int], tuple[int, int]],
@@ -161,10 +162,11 @@ def validate_export_shape(
     copies instead of duplicating or publicizing them.
 
     Args:
-        shape: ``(height, width)`` supplied by the caller, or ``None`` to default to a square at *resolution*.
+        shape: ``(height, width)`` supplied by the caller, or ``None`` to default to *resolution*.
         patch_size: Backbone patch size supplied by the caller, or ``None`` to read it from *model_config*.
         model_config: The model's configuration object; read for ``patch_size`` and ``num_windows``.
-        resolution: The model's default resolution, used when *shape* is ``None``.
+        resolution: The model's default resolution, a side length or ``(height, width)``, used when *shape* is
+            ``None``.
         resolve_patch_size: ``rfdetr.detr._resolve_patch_size``.
         validate_shape_dims: ``rfdetr.detr._validate_shape_dims``.
 
@@ -182,8 +184,8 @@ def validate_export_shape(
         raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
     block_size = patch_size * num_windows
     if shape is None:
-        shape = (resolution, resolution)
-        if shape[0] % block_size != 0:
+        shape = as_pair(resolution)
+        if shape[0] % block_size != 0 or shape[1] % block_size != 0:
             raise ValueError(
                 f"Model's default resolution ({resolution}) is not divisible by "
                 f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
