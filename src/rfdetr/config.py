@@ -881,11 +881,9 @@ class ModelConfig(BaseConfig):
             "num_channels",
         )
         # Fields where only an *increase* above the variant default is load-breaking:
-        # num_queries / group_detr add slots whose shape differs — decrease is fine.
-        breaking_on_increase: tuple[str, ...] = (
-            "num_queries",
-            "group_detr",
-        )
+        # group_detr adds groups whose shape differs — decrease is fine. num_queries is not listed: the loader pads
+        # a larger value with freshly initialised slots and warns itself (see load_pretrain_weights).
+        breaking_on_increase: tuple[str, ...] = ("group_detr",)
 
         for name in breaking_fields:
             if name not in fields_set:
