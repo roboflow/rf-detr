@@ -459,6 +459,31 @@ def gen_encoder_output_proposals(
     return output_memory.to(memory.dtype), output_proposals.to(memory.dtype)
 
 
+def invalid_proposal_mask(output_proposals: Tensor, unsigmoid: bool) -> Tensor:
+    """Return where :func:`gen_encoder_output_proposals` marked a proposal invalid (near the border, or padding).
+
+    That function zeroes the memory of these tokens, so they all share one two-stage score, and fills their proposal
+    with ``+inf`` (``unsigmoid=True``) or ``0`` (``unsigmoid=False``), from which the decoder can never grow a usable
+    box. No valid proposal holds these values. The two-stage top-k must never select these tokens.
+
+    Args:
+        output_proposals: Proposals of shape ``(bs, S, 4)`` from :func:`gen_encoder_output_proposals`.
+        unsigmoid: The same ``unsigmoid`` passed to :func:`gen_encoder_output_proposals`.
+
+    Returns:
+        A ``(bs, S)`` boolean tensor, ``True`` for invalid proposals.
+
+    Examples:
+        >>> memory = torch.zeros(1, 3600, 8)
+        >>> _, proposals = gen_encoder_output_proposals(memory, spatial_shapes=[(60, 60)], unsigmoid=False)
+        >>> invalid_proposal_mask(proposals, unsigmoid=False).sum().item()  # the outer ring of the 60x60 grid
+        236
+    """
+    if unsigmoid:
+        return torch.isinf(output_proposals).any(-1)
+    return (output_proposals == 0).all(-1)
+
+
 def _stack_linear_params(modules: Sequence[nn.Linear]) -> tuple[Tensor, Tensor]:
     """Stack same-shaped ``nn.Linear`` modules' live parameters for a batched matmul.
 
@@ -824,7 +849,9 @@ class Transformer(nn.Module):
         class_weight, class_bias = _stack_linear_params(class_embeds)
         class_logits_all = _batched_group_linear(output_memory_all, class_weight, class_bias)
         # (group, bs, S) -> (group, bs, nq); torch.topk batches over every leading dim natively.
-        topk_proposals_all = torch.topk(class_logits_all.max(-1)[0], topk, dim=-1)[1]
+        invalid = invalid_proposal_mask(output_proposals, unsigmoid=not self.bbox_reparam)
+        scores_all = class_logits_all.max(-1)[0].masked_fill(invalid, float("-inf"))
+        topk_proposals_all = torch.topk(scores_all, topk, dim=-1)[1]
 
         # enc_out_class_embed is a plain per-position Linear, so gathering its already-computed
         # output at the same indices used below is exactly what re-running it on the gathered
@@ -1023,13 +1050,15 @@ class Transformer(nn.Module):
                 )
             else:
                 refpoint_embed_ts_parts, memory_ts_parts, boxes_ts_parts = [], [], []
+                invalid = invalid_proposal_mask(output_proposals, unsigmoid=not self.bbox_reparam)
                 for g_idx in range(group_detr):
                     output_memory_prenorm_gidx = self.enc_output[g_idx](output_memory)
                     output_memory_gidx = self.enc_output_norm[g_idx](output_memory_prenorm_gidx)
 
                     enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
                     topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
-                    select_rows = self.select_top_rows(enc_outputs_class_unselected_gidx.max(-1)[0], topk)
+                    scores_gidx = enc_outputs_class_unselected_gidx.max(-1)[0].masked_fill(invalid, float("-inf"))
+                    select_rows = self.select_top_rows(scores_gidx, topk)
 
                     # get memory tgt. LayerNorm acts per token, so gathering the pre-norm rows and normalizing
                     # only the selected ones is mathematically the same as gathering the normalized rows. It

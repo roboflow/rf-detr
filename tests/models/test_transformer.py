@@ -1250,6 +1250,61 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(
     assert torch.equal(boxes_ts, expected_coord)
 
 
+class TestTwoStageSkipsInvalidProposals:
+    """The two-stage top-k never selects a token whose proposal ``gen_encoder_output_proposals`` marks invalid."""
+
+    @pytest.mark.parametrize("bbox_reparam", [False, True])
+    @pytest.mark.parametrize("group_detr", [1, 2])
+    def test_selected_queries_never_come_from_invalid_proposals(self, bbox_reparam: bool, group_detr: int) -> None:
+        """Invalid tokens (here the outer ring of a 60x60 level) must lose the top-k even when they score highest.
+
+        ``gen_encoder_output_proposals`` zeroes the memory of a token whose proposal centre lies within 0.01 of the
+        image border, and gives it a ``0`` (``bbox_reparam=True``) or ``+inf`` (``bbox_reparam=False``) proposal, from
+        which the decoder can never grow a usable box. Every invalid token therefore shares one score. The weights below
+        give that shared score ``0`` and every valid token a negative score, so a top-k that does not exclude invalid
+        tokens fills every query with one. ``group_detr=1`` covers the eval/export loop and ``group_detr=2`` the batched
+        training path.
+        """
+        hidden_dim, num_queries, side = 16, 10, 60
+        transformer = Transformer(
+            d_model=hidden_dim,
+            num_queries=num_queries,
+            num_decoder_layers=1,
+            sa_nhead=4,
+            ca_nhead=4,
+            num_feature_levels=1,
+            dec_n_points=1,
+            return_intermediate_dec=True,
+            lite_refpoint_refine=True,
+            two_stage=True,
+            bbox_reparam=bbox_reparam,
+            group_detr=group_detr,
+        )
+        # A zero-mean feature, so LayerNorm keeps its direction: valid tokens hold -feature and score -hidden_dim.
+        feature = torch.tensor([1.0, -1.0]).repeat(hidden_dim // 2)
+        class_embed = nn.Linear(hidden_dim, 1)
+        with torch.no_grad():
+            class_embed.weight.copy_(feature.unsqueeze(0))
+            class_embed.bias.zero_()
+            for enc_output in transformer.enc_output:
+                enc_output.weight.copy_(torch.eye(hidden_dim))
+                enc_output.bias.zero_()
+        transformer.enc_out_class_embed = nn.ModuleList(copy.deepcopy(class_embed) for _ in range(group_detr))
+        transformer.enc_out_bbox_embed = nn.ModuleList(MLP(hidden_dim, hidden_dim, 4, 3) for _ in range(group_detr))
+        transformer.train(group_detr > 1)
+
+        src = (-feature).view(1, hidden_dim, 1, 1).expand(2, -1, side, side).contiguous()
+        mask = torch.zeros(2, side, side, dtype=torch.bool)
+        # Training runs group_detr query groups, each with its own embeddings.
+        total_queries = num_queries * group_detr
+        _, _, memory_ts, _, _ = transformer(
+            [src], [mask], [torch.zeros_like(src)], torch.rand(total_queries, 4), torch.randn(total_queries, hidden_dim)
+        )
+
+        # An invalid token's memory is zero before and after enc_output and enc_output_norm, a valid token's is not.
+        assert (memory_ts.abs().sum(-1) > 0).all()
+
+
 def test_two_stage_topk_gather_reads_pre_norm_memory(gather_calls) -> None:
     """The eval-path two-stage gather must read ``enc_output``'s output, never ``enc_output_norm``'s.
 
