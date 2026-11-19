@@ -14,7 +14,7 @@ import os
 import re
 from collections.abc import Callable, Generator, Iterable, Sequence
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlparse
@@ -34,6 +34,13 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
+from rfdetr._prediction.shift_tta import (
+    fuse_passes,
+    map_to_image,
+    place_on_canvas,
+    shift_offsets,
+    validate_shift_tta,
+)
 from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source
 from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
@@ -42,6 +49,8 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_t
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
+    from supervision import Detections
+
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
 
 logger = get_logger()
@@ -886,6 +895,7 @@ def _predict_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
+    shift_tta: int = 1,
 ) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -902,6 +912,8 @@ def _predict_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+        shift_tta: Number of sub-patch shifted passes to average; 1 runs a single plain pass. See
+            :func:`_predict_shifted`.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -917,7 +929,70 @@ def _predict_batch(
             ``0..num_classes``).
     """
     prepared = _prepare_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+    if shift_tta != 1:
+        return _predict_shifted(prepared, shift_tta, patch_size)
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
+
+
+@torch.inference_mode()
+def _predict_shifted(prepared: _PreparedBatch, shift_tta: int, patch_size: int | None) -> _PredictionOutput:
+    """Run a prepared batch at ``shift_tta`` sub-patch offsets and average the matching detections.
+
+    Each pass places the batch at an offset of ``i * patch_size / shift_tta`` pixels (down and right) on a canvas
+    one ``patch_size * num_windows`` block larger, then maps the outputs back to the image. Each pass keeps the
+    detections above ``threshold / shift_tta``; the passes are then fused by
+    :func:`~rfdetr._prediction.shift_tta.fuse_passes` and the fused scores are held to ``threshold``.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        shift_tta: Number of passes, from 2 to the patch size.
+        patch_size: Backbone patch size, or ``None`` for the model's own.
+
+    Returns:
+        One Supervision result or a list matching the input container.
+
+    Raises:
+        ValueError: If ``shift_tta`` is out of range, the model predicts keypoints, or the runtime has a fixed shape.
+    """
+    context = prepared.context
+    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
+    shift_tta = validate_shift_tta(shift_tta, patch_size)
+    if any(context.num_keypoints_per_class):
+        raise ValueError("shift_tta does not support keypoint models.")
+    if context.fixed_shape:
+        raise ValueError("shift_tta needs a runtime that accepts a larger input shape; this export has a fixed shape.")
+    margin = patch_size * getattr(context.config, "num_windows", 1)
+    size = (prepared.batch_tensor.shape[2], prepared.batch_tensor.shape[3])
+    # Decode every pass as a list at the loosest bound, without source images; the real thresholds apply after fusion.
+    per_pass = replace(
+        prepared,
+        include_source_image=False,
+        single_input=False,
+        score_floor=prepared.score_floor / shift_tta,
+        threshold_by_class_id=None,
+    )
+    passes = []
+    for offset in shift_offsets(patch_size, shift_tta):
+        outputs = context.run(place_on_canvas(prepared.batch_tensor, offset, margin))
+        passes.append(cast("list[Any]", _decode_batch(per_pass, map_to_image(outputs, offset, size, margin))))
+
+    thresholds = (
+        None if prepared.threshold_by_class_id is None else prepared.threshold_by_class_id.float().cpu().numpy()
+    )
+    results: list[_PredictionResult] = []
+    for i, image_passes in enumerate(zip(*passes)):
+        fused = fuse_passes(list(image_passes))
+        scores = np.asarray(fused.confidence)
+        if thresholds is None:
+            keep = scores > prepared.score_floor
+        else:
+            # -1 and every id past the table read the trailing inf sentinel, as in _decode_batch.
+            keep = scores > thresholds[np.clip(np.asarray(fused.class_id), -1, len(thresholds) - 1)]
+        kept = cast("Detections", fused[keep])
+        if prepared.include_source_image:
+            kept.metadata["source_image"] = prepared.source_images[i]
+        results.append(kept)
+    return results[0] if prepared.single_input else results
 
 
 @dataclass(frozen=True)
