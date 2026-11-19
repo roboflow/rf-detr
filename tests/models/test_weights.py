@@ -1039,6 +1039,69 @@ class TestLoadPretrainWeightsPadsQueryGrowth(_PatchWeightsIO):
         assert passed_state["refpoint_embed.weight"][:, 0].int().tolist() == expected
         assert passed_state["query_feat.weight"][:, 0].int().tolist() == expected
 
+    def test_saved_model_config_preserves_custom_group_layout(self, monkeypatch, captured) -> None:
+        """Saved architecture metadata takes precedence over the variant default group count."""
+        checkpoint = _query_checkpoint(4, 3, args={}, model_config={"num_queries": 4, "group_detr": 3})
+        _serve_checkpoint(monkeypatch, checkpoint)
+        nn_model = self._model_with_query_init(6, 3)
+
+        load_pretrain_weights(nn_model, _query_config(6, 3))
+
+        expected = [0, 1, 2, 3, -5, -6, 100, 101, 102, 103, -11, -12, 200, 201, 202, 203, -17, -18]
+        assert nn_model.load_state_dict.call_args[0][0]["query_feat.weight"][:, 0].int().tolist() == expected
+
+    def test_infers_groups_for_query_growth_with_fewer_groups(self, monkeypatch, captured) -> None:
+        """Encoder heads identify checkpoint groups even when the target has fewer total rows."""
+        checkpoint = _query_checkpoint(4, 3, args={})
+        for group in range(3):
+            checkpoint["model"][f"transformer.enc_out_class_embed.{group}.weight"] = torch.zeros(1)
+            checkpoint["model"][f"transformer.enc_out_bbox_embed.{group}.layers.0.weight"] = torch.zeros(1)
+        _serve_checkpoint(monkeypatch, checkpoint)
+        nn_model = self._model_with_query_init(5, 2)
+
+        mc = _query_config(5, 2)
+        mc.pretrain_weights = "rf-detr-nano.pth"
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: True)
+        load_pretrain_weights(nn_model, mc)
+
+        assert nn_model.load_state_dict.call_args[0][0]["query_feat.weight"][:, 0].int().tolist() == [
+            0,
+            1,
+            2,
+            3,
+            -5,
+            100,
+            101,
+            102,
+            103,
+            -10,
+        ]
+
+    def test_rejects_ambiguous_query_growth(self, monkeypatch, captured) -> None:
+        """A divisible row count alone cannot establish the checkpoint group layout."""
+        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 13, args={}))
+
+        with pytest.raises(ValueError, match="layout"):
+            load_pretrain_weights(self._model_with_query_init(6, 13), _query_config(6, 13))
+
+    def test_rejects_unknown_layout_when_total_rows_shrink(self, monkeypatch, captured) -> None:
+        """A smaller target total does not prove queries per group did not grow."""
+        _serve_checkpoint(monkeypatch, _query_checkpoint(100, 13, args={}))
+
+        with pytest.raises(ValueError, match="layout"):
+            load_pretrain_weights(self._model_with_query_init(200, 6), _query_config(200, 6))
+
+    def test_rejects_partial_encoder_heads_as_layout_proof(self, monkeypatch, captured) -> None:
+        """Matching incomplete encoder heads cannot establish the original group count."""
+        checkpoint = _query_checkpoint(3, 4, args={})
+        for group in range(3):
+            checkpoint["model"][f"transformer.enc_out_class_embed.{group}.weight"] = torch.zeros(1)
+            checkpoint["model"][f"transformer.enc_out_bbox_embed.{group}.layers.0.weight"] = torch.zeros(1)
+        _serve_checkpoint(monkeypatch, checkpoint)
+
+        with pytest.raises(ValueError, match="layout"):
+            load_pretrain_weights(self._model_with_query_init(6, 3), _query_config(6, 3))
+
     def test_warns_that_new_queries_are_untrained(self, monkeypatch, captured) -> None:
         """The padding is announced, so a user knows the extra slots need fine-tuning before they are useful."""
         mc = _query_config(6, 3)
@@ -1051,9 +1114,15 @@ class TestLoadPretrainWeightsPadsQueryGrowth(_PatchWeightsIO):
     def test_recovers_layout_of_checkpoint_without_args(self, monkeypatch, captured) -> None:
         """Published checkpoints that record no layout are padded too, splitting their rows by the default groups."""
         mc = _query_config(6, 13)
-        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 13, args={}))
+        checkpoint = _query_checkpoint(4, 13, args={})
+        for group in range(13):
+            checkpoint["model"][f"transformer.enc_out_class_embed.{group}.weight"] = torch.zeros(1)
+            checkpoint["model"][f"transformer.enc_out_bbox_embed.{group}.layers.0.weight"] = torch.zeros(1)
+        _serve_checkpoint(monkeypatch, checkpoint)
         nn_model = self._model_with_query_init(6, 13)
 
+        mc.pretrain_weights = "rf-detr-nano.pth"
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: True)
         load_pretrain_weights(nn_model, mc)
 
         passed_state = nn_model.load_state_dict.call_args[0][0]
@@ -1088,9 +1157,6 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
                 [0, 1, 2, 3, 100, 101, 102, 103],
                 id="group_detr_decrease_drops_tail_groups",
             ),
-            # Legacy checkpoints carry no (or incomplete) layout info → flat slice of the first 2*3=6 rows.
-            pytest.param((2, 3), (4, 3), {}, [0, 1, 2, 3, 100, 101], id="legacy_without_args_flat_slice"),
-            pytest.param((2, 1), (4, 1), {"args": {}}, [0, 1], id="args_without_query_keys_flat_slice"),
         ],
     )
     def test_query_embeddings_follow_target_layout(
@@ -1135,88 +1201,33 @@ class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
         with pytest.raises(ValueError, match=r"num_queries.*pretrain_weights=None"):
             load_pretrain_weights(_fake_nn_model(), mc)
 
-    def test_legacy_fallback_multigroup_emits_warning(self, monkeypatch, captured) -> None:
-        """group_detr > 1 legacy checkpoint (no num_queries/group_detr in args) emits scramble-risk warning."""
-        mc = _query_config(2, 3)
-        _serve_checkpoint(monkeypatch, _query_checkpoint(4, 3, args={}))  # no num_queries / group_detr keys
-
-        load_pretrain_weights(_fake_nn_model(), mc)
-
-        assert any("group_detr" in msg and ("scramble" in msg or "flat slice" in msg) for msg in captured), (
-            f"Expected scramble-risk warning for group_detr > 1; got: {captured}"
-        )
-
-    def test_legacy_fallback_mixed_truncating_and_non_truncating_tensors(self, monkeypatch, captured) -> None:
-        """One query tensor truncates against target rows while its sibling does not — only the former is sliced.
-
-        ``legacy_fallback_truncates`` is computed via ``any(...)`` across every query-suffix tensor, so it stays
-        True even when only one of ``refpoint_embed.weight`` / ``query_feat.weight`` actually exceeds
-        ``target_query_rows``. The warning must still fire (``any`` sees the truncating tensor), but each tensor is
-        sliced independently in the per-tensor loop: the truncating one is shortened, the non-truncating one passes
-        through unchanged.
-        """
-        mc = _query_config(2, 3)
-        # target_query_rows = 2 * 3 = 6. refpoint has 8 rows (> 6, truncates); query_feat has 6 rows (== 6, no-op).
-        checkpoint = _query_checkpoint(8, 1, args={})
-        checkpoint["model"]["query_feat.weight"] = _labelled_query_tensor(num_queries=6, group_detr=1, dim=256)
-        labelled_refpoint = checkpoint["model"]["refpoint_embed.weight"]
-        labelled_query_feat = checkpoint["model"]["query_feat.weight"]
-        _serve_checkpoint(monkeypatch, checkpoint)
-
-        nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
-
-        assert any("group_detr" in msg and ("scramble" in msg or "flat slice" in msg) for msg in captured), (
-            f"Expected scramble-risk warning when at least one query tensor truncates; got: {captured}"
-        )
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        refpoint = passed_state["refpoint_embed.weight"]
-        query_feat = passed_state["query_feat.weight"]
-        assert refpoint.shape[0] == 6, (
-            f"Truncating tensor must be shortened to target_query_rows=6, got {refpoint.shape[0]}"
-        )
-        assert torch.equal(refpoint, labelled_refpoint[:6]), "Truncated tensor must keep the first 6 original rows."
-        assert torch.equal(query_feat, labelled_query_feat), (
-            "Non-truncating sibling tensor (already 6 rows) must pass through unchanged."
-        )
-
     @pytest.mark.parametrize(
         ("config_shape", "checkpoint_shape"),
         [
-            # The flat slice changes nothing because row counts already match (group_detr > 1, nothing truncates).
-            pytest.param((4, 3), (4, 3), id="matching_rows_group_detr_gt1"),
-            # group_detr == 1 has no groups to scramble even though the flat slice truncates rows.
-            pytest.param((4, 1), (8, 1), id="truncating_rows_group_detr_eq1"),
-            # (150, 2) and (100, 3) both have 300 rows, so nothing truncates and no warning fires, yet the flat slice
-            # is a no-op on row values while the target reinterprets them under its own partition.
-            pytest.param((100, 3), (150, 2), id="matching_total_rows_different_factorization"),
+            pytest.param((2, 3), (4, 3), id="shorter_query_count"),
+            pytest.param((4, 1), (8, 1), id="single_target_group"),
+            pytest.param((100, 3), (150, 2), id="same_total_different_layout"),
         ],
     )
-    def test_legacy_fallback_is_silent_when_no_scramble_risk(
-        self, monkeypatch, captured, config_shape: tuple, checkpoint_shape: tuple
+    def test_unknown_layout_rejects_changed_configuration(
+        self, monkeypatch, config_shape: tuple, checkpoint_shape: tuple
     ) -> None:
-        """Missing layout metadata needs no warning when the flat slice truncates nothing or has no groups to scramble.
+        """Changed layouts cannot be inferred from the total number of checkpoint rows."""
+        _serve_checkpoint(monkeypatch, _query_checkpoint(*checkpoint_shape, args={}))
 
-        The flat slice is ``tensor[:target_query_rows]``: a true no-op when the checkpoint has no more rows than the
-        target, and a plain truncation when ``group_detr == 1``. Either way the rows reach ``load_state_dict`` exactly
-        as the flat slice leaves them, in checkpoint order, and the scramble-risk warning stays silent.
-        """
-        mc = _query_config(*config_shape)
-        checkpoint = _query_checkpoint(*checkpoint_shape, args={})  # no num_queries / group_detr keys
+        with pytest.raises(ValueError, match="layout"):
+            load_pretrain_weights(_fake_nn_model(), _query_config(*config_shape))
+
+    def test_unknown_layout_with_default_configuration_keeps_rows(self, monkeypatch) -> None:
+        """An unchanged legacy default continues to load its query tensors without repartitioning."""
+        checkpoint = _query_checkpoint(300, 13, args={})
+        expected = checkpoint["model"]["query_feat.weight"].clone()
         _serve_checkpoint(monkeypatch, checkpoint)
-
         nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc)
 
-        passed_state = nn_model.load_state_dict.call_args[0][0]
-        target_query_rows = config_shape[0] * config_shape[1]
-        assert torch.equal(
-            passed_state["refpoint_embed.weight"], checkpoint["model"]["refpoint_embed.weight"][:target_query_rows]
-        )
-        assert torch.equal(
-            passed_state["query_feat.weight"], checkpoint["model"]["query_feat.weight"][:target_query_rows]
-        )
-        assert not any("scramble" in msg or "flat slice" in msg for msg in captured), captured
+        load_pretrain_weights(nn_model, _query_config(300, 13))
+
+        assert torch.equal(nn_model.load_state_dict.call_args[0][0]["query_feat.weight"], expected)
 
 
 _REMOVED_KEYPOINT_PROJECTION_KEYS = [
