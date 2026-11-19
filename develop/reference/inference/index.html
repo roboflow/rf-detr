@@ -3921,11 +3921,13 @@ batching request. The returned dictionary is independent of the source.</p>
 </tr>
 <tr>
 <td>ExecuTorch</td>
-<td>By delegate: XNNPACK <code>auto</code>/<code>cpu</code>, CoreML <code>auto</code>, QNN <code>auto</code>/<code>qnn</code></td>
+<td>XNNPACK <code>auto</code>/<code>cpu</code>, CoreML <code>auto</code>, QNN <code>auto</code>/<code>qnn</code>, TensorRT <code>auto</code>/<code>cuda</code></td>
 </tr>
 </tbody>
 </table>
 <p>The CoreML <code>cpu_and_gpu</code> and <code>cpu_and_ne</code> values are preferences; Core ML may still run on the CPU.</p>
+<p>The ExecuTorch TensorRT delegate runs on the current CUDA device: <code>auto</code> and <code>cuda</code> mean that device, and
+<code>cuda:N</code> is accepted only when <code>N</code> is the current CUDA device; any other index is refused.</p>
 <p>A live model owns its device policy. Omit <code>device</code> for that source;
 configure the native model itself to select its device.</p>
 <p>A checkpoint loaded on MPS takes the MPS rewrites of :meth:<code>RFDETR.inference</code>: fused deformable sampling and
