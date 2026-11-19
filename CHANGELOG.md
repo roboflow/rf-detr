@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `RFDETR.predict(..., shift_tta=N)` averages `N` passes with the image moved by fractions of a backbone patch, for confidence scores that change less when objects move by a few pixels ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). Detections match across passes by class and box IoU above 0.6; a pass that missed the object counts as score 0, and `threshold` applies to the averaged score. It costs `N` forward passes. On RF-DETR-N fine-tuned on RF100-VL `deeppcb`, moving test images by up to one patch flipped the keep-or-drop decision of 21.0% of the defects with one pass and 3.7% with `shift_tta=4`, while test mAP50-95 went from 0.702 to 0.708. Detection and segmentation models; keypoint models raise a `ValueError`.
+
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.

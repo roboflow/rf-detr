@@ -219,6 +219,20 @@ detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=thres
 
 The [per-class confidence thresholds cookbook](../../../cookbooks/per-class-confidence-thresholds/) shows how to choose the values from held-out images, and measures when a list of thresholds beats a single one and when it does not.
 
+## Steadier scores with shift test-time augmentation
+
+The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `shift_tta=N` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
+
+```python
+detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)
+```
+
+- Each pass costs one forward pass, so `shift_tta=4` takes about 4 times as long. `2` is the cheaper middle ground.
+- Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score, with a pass that missed the object counting as 0, so `threshold` applies to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with `shift_tta` on.
+- Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models and models optimized for one fixed resolution do not support `shift_tta`.
+
+On RF-DETR-N fine-tuned on the `deeppcb` dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with `shift_tta=2` and 3.7% with `shift_tta=4`, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.
+
 ## Run on video, webcam, or RTSP stream
 
 !!! tip "Built-in video and stream sources"
