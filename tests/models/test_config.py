@@ -1408,6 +1408,7 @@ class TestPretrainWeightsCompatibilityWarning:
         [
             ("num_queries", 200),
             ("num_queries", 300),
+            ("num_queries", 400),
             ("group_detr", 8),
             ("num_classes", 5),
             ("resolution", 448),
@@ -1421,7 +1422,6 @@ class TestPretrainWeightsCompatibilityWarning:
     @pytest.mark.parametrize(
         "field, value",
         [
-            ("num_queries", 400),
             ("group_detr", 20),
         ],
     )
@@ -1468,11 +1468,11 @@ class TestPretrainWeightsCompatibilityWarning:
             RFDETRNanoConfig,
             encoder="dinov2_registers_windowed_small",
             hidden_dim=384,
-            num_queries=400,
+            group_detr=20,
         )
         assert len(captured) == 1
         message = str(captured[0].message)
-        for needle in ("encoder", "hidden_dim", "num_queries"):
+        for needle in ("encoder", "hidden_dim", "group_detr"):
             assert needle in message, f"expected {needle!r} in consolidated warning message"
 
     def test_warning_is_user_warning_subclass(self) -> None:
@@ -1494,20 +1494,20 @@ class TestPretrainWeightsCompatibilityWarning:
         assert self._capture(_DefaultFactoryConfig, encoder="dinov2_registers_windowed_small") == []
 
     def test_increase_field_when_required_skips_comparison(self) -> None:
-        """A subclass where ``num_queries`` becomes required (no default) must be skipped."""
+        """A subclass where ``group_detr`` becomes required (no default) must be skipped."""
 
-        class _RequiredNumQueriesConfig(RFDETRNanoConfig):
-            num_queries: int  # type: ignore[misc]  # no default → required
+        class _RequiredGroupDetrConfig(RFDETRNanoConfig):
+            group_detr: int  # type: ignore[misc]  # no default → required
 
-        assert self._capture(_RequiredNumQueriesConfig, num_queries=400) == []
+        assert self._capture(_RequiredGroupDetrConfig, group_detr=20) == []
 
     def test_increase_field_with_non_int_default_skips_comparison(self) -> None:
-        """A subclass where ``num_queries`` has a non-int default must be skipped (can't ``>`` compare)."""
+        """A subclass where ``group_detr`` has a non-int default must be skipped (can't ``>`` compare)."""
 
         class _NonIntDefaultConfig(RFDETRNanoConfig):
-            num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
+            group_detr: Any = "13"  # type: ignore[assignment]  # non-int default
 
-        assert self._capture(_NonIntDefaultConfig, num_queries="400") == []
+        assert self._capture(_NonIntDefaultConfig, group_detr="20") == []
 
     def test_explicit_variant_default_path_runs_arch_override_check(self) -> None:
         """Passing the variant's own published-default path string must still check arch overrides.

@@ -1092,7 +1092,7 @@ class TestFromCheckpointStrippedBestTotal:
             ),
             pytest.param(
                 {"best_total_source": "ema"},
-                {"resolution": 224, "num_select": 50, "dec_layers": 3},
+                {"resolution": 224, "num_queries": 100, "num_select": 50, "dec_layers": 3},
                 None,
                 id="caller-passes-every-silent-field",
             ),
@@ -1140,7 +1140,9 @@ class TestFromCheckpointStrippedBestTotal:
 
         messages = [record.message for record in caplog.records if "no model_config" in record.message]
         assert messages, "expected the missing model_config warning"
-        assert "defaults: num_select, dec_layers." in messages[0], f"missing settings not listed: {messages[0]}"
+        assert "defaults: num_queries, num_select, dec_layers." in messages[0], (
+            f"missing settings not listed: {messages[0]}"
+        )
         assert "resolution" not in messages[0], f"resolution was passed but is still listed: {messages[0]}"
 
     def test_strip_checkpoint_without_model_config_key_still_warns_on_reload(
