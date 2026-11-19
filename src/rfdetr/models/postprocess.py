@@ -25,7 +25,7 @@ class PostProcess(nn.Module):
 
     The postprocessor is shared by detection, segmentation, and keypoint inference. It selects top scoring query/class
     pairs, scales boxes back to the requested image sizes, and then delegates to the head-specific private helper for
-    masks, keypoints, or box-only results.
+    masks, keypoints, masks with keypoints, or box-only results.
     """
 
     def __init__(
@@ -51,13 +51,14 @@ class PostProcess(nn.Module):
 
         Args:
             outputs: Model output dictionary containing ``pred_logits`` and ``pred_boxes`` plus optional
-                ``pred_masks`` or ``pred_keypoints``.
+                ``pred_masks`` and ``pred_keypoints``.
             target_sizes: Per-image ``(height, width)`` tensor. For inference and evaluation this should be the
                 original image size so normalized boxes and keypoints are returned in source-image pixel coordinates.
             score_threshold: Optional confidence threshold already known to the caller. Detections scoring at or
                 below it are dropped before masks are resized, so the upsample only runs on detections the caller
                 keeps. The keypoint path ignores it: it rewrites scores after selection (uncertainty fusion), so
-                filtering on the pre-fusion scores would not match the caller's own filter. The box-only path acts
+                filtering on the pre-fusion scores would not match the caller's own filter. With both masks and
+                keypoints it is applied to the scores after fusion, to every field. The box-only path acts
                 on it for CPU outputs, where it sorts only the scores above the threshold instead of every
                 query/class pair; on an accelerator the full sort is cheap and every selected row is kept. ``None``
                 (the default) keeps every selected detection, which is what evaluation relies on.
@@ -65,7 +66,8 @@ class PostProcess(nn.Module):
         Returns:
             One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
             pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
-            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``. With
+            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``; a model
+            with both heads returns all of them, row-aligned. With
             ``score_threshold`` set, segmentation dictionaries, and box-only dictionaries computed on the CPU, hold
             only the detections above it — fewer rows, never different ones.
         """
@@ -85,6 +87,10 @@ class PostProcess(nn.Module):
         scores, labels, topk_boxes = self._select_topk(out_logits)
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
+        if out_masks is not None and out_keypoints is not None:
+            return self._postprocess_masks_and_keypoints(
+                out_masks, out_keypoints, scores, labels, boxes, topk_boxes, target_sizes, score_threshold
+            )
         if out_masks is not None:
             return self._postprocess_masks(
                 out_masks,
@@ -107,7 +113,7 @@ class PostProcess(nn.Module):
         out_keypoints: torch.Tensor | None,
         target_sizes: torch.Tensor,
     ) -> None:
-        """Validate mutually exclusive output heads and per-image target sizes.
+        """Validate per-image target sizes against the model outputs.
 
         Args:
             out_logits: Classification logits with shape ``(B, Q, C)``.
@@ -117,13 +123,8 @@ class PostProcess(nn.Module):
                 ``(B, 2)``.
 
         Raises:
-            ValueError: If both masks and keypoints are present in the model
-                outputs at the same time. Mask and keypoint heads are mutually
-                exclusive at inference.
             AssertionError: If batch dimensions do not match ``target_sizes``.
         """
-        if out_masks is not None and out_keypoints is not None:
-            raise ValueError("masks and keypoints cannot be used together in postprocessing.")
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
@@ -318,6 +319,59 @@ class PostProcess(nn.Module):
                 masks_i = masks_resized  # [K,1,H,W] bool
             res_i["masks"] = masks_i
             results.append(res_i)
+        return results
+
+    def _postprocess_masks_and_keypoints(
+        self,
+        out_masks: torch.Tensor,
+        out_keypoints: torch.Tensor,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        boxes: torch.Tensor,
+        topk_boxes: torch.Tensor,
+        target_sizes: torch.Tensor,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Attach both keypoints and segmentation masks for selected detections.
+
+        Keypoints are decoded first because they may rewrite the object scores (uncertainty fusion); the masks are
+        then selected with those final scores, so ``score_threshold`` acts on the scores that are returned.
+
+        Args:
+            out_masks: Raw mask logits with shape ``(B, Q, Hm, Wm)``.
+            out_keypoints: Raw keypoint predictions with shape ``(B, Q, C * max(K_c), D)``.
+            scores: Selected object scores before uncertainty fusion.
+            labels: Selected class labels.
+            boxes: Selected absolute boxes.
+            topk_boxes: Selected query indices.
+            target_sizes: Per-image ``(height, width)`` tensor.
+            score_threshold: Optional confidence threshold; detections whose final score is at or below it are
+                dropped from every field.
+
+        Returns:
+            One result dict per image containing scores, labels, boxes, masks, keypoints, and raw
+            precision-Cholesky parameters, all row-aligned.
+        """
+        keypoint_results = self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
+        fused_scores = torch.stack([result["scores"] for result in keypoint_results])
+        results = self._postprocess_masks(
+            out_masks,
+            fused_scores,
+            labels,
+            boxes,
+            topk_boxes,
+            target_sizes,
+            self.upsample_masks_to_image_size,
+            score_threshold=score_threshold,
+        )
+        for result, keypoint_result, scores_i in zip(results, keypoint_results, fused_scores):
+            keypoints, precision = keypoint_result["keypoints"], keypoint_result["keypoint_precision_cholesky"]
+            if score_threshold is not None:
+                # Same predicate as `_postprocess_masks`, so the rows stay aligned with its masks.
+                sel = (scores_i > score_threshold).nonzero(as_tuple=True)[0]
+                keypoints, precision = keypoints[sel], precision[sel]
+            result["keypoints"] = keypoints
+            result["keypoint_precision_cholesky"] = precision
         return results
 
     def _postprocess_keypoints(

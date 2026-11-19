@@ -258,6 +258,38 @@ def make_infer_image(
     return inps
 
 
+def reject_masks_with_keypoints(model_config: ExportModelConfig, *, backbone_only: bool) -> None:
+    """Raise when the full detector to export has both a segmentation head and a keypoint head.
+
+    The export contract (output names, inference metadata and the runtime decoders) describes one task-specific
+    output beside ``dets`` and ``labels``. A model with both heads returns masks and keypoints, which that contract
+    cannot name, so the export is refused instead of writing an artifact whose fourth output no runtime reads.
+
+    Args:
+        model_config: Configuration of the model being exported.
+        backbone_only: Whether only the backbone is exported; the heads then play no part.
+
+    Raises:
+        NotImplementedError: If the model has both heads and *backbone_only* is not set.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> config = SimpleNamespace(segmentation_head=True, use_grouppose_keypoints=True)
+        >>> reject_masks_with_keypoints(config, backbone_only=True)
+        >>> try:
+        ...     reject_masks_with_keypoints(config, backbone_only=False)
+        ... except NotImplementedError as error:
+        ...     print(str(error).split(". ")[0])
+        Export does not support a model with both a segmentation head and a keypoint head
+    """
+    if backbone_only or not (model_config.segmentation_head and model_config.use_grouppose_keypoints):
+        return
+    raise NotImplementedError(
+        "Export does not support a model with both a segmentation head and a keypoint head. "
+        "Predict with the PyTorch model (`predict()` or `inference()`), or export with `backbone_only=True`."
+    )
+
+
 def resolve_output_names(
     model_config: ExportModelConfig, *, backbone_only: bool, backbone: Backbone | None
 ) -> list[str]:
@@ -274,6 +306,10 @@ def resolve_output_names(
 
     Returns:
         Output names, in the order the traced model returns them.
+
+    Raises:
+        ValueError: If *backbone_only* is set without a *backbone*.
+        NotImplementedError: If the full detector has both a segmentation head and a keypoint head.
 
     Examples:
         >>> from types import SimpleNamespace
@@ -293,6 +329,7 @@ def resolve_output_names(
                 for index in range(len(model_config.projector_scale))
             )
         return names
+    reject_masks_with_keypoints(model_config, backbone_only=False)
     if model_config.segmentation_head:
         return ["dets", "labels", "masks"]
     if model_config.use_grouppose_keypoints:

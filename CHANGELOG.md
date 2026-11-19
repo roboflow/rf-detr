@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Any model class trains a keypoint head when it is built with `use_grouppose_keypoints=True` and `num_keypoints_per_class=[...]`, for example `RFDETRNano(use_grouppose_keypoints=True, num_keypoints_per_class=[17])`. `model.train()` and `RFDETR.get_train_config()` now choose the train config class from the model's heads: `KeypointTrainConfig` for a keypoint head, whatever the model class declares. Such a model used to fail in `build_trainer` with `Config/model mismatch`. `RFDETRKeypointPreview`, detection models and segmentation models keep their config classes.
+- A segmentation model built with a keypoint head, for example `RFDETRSegNano(use_grouppose_keypoints=True, num_keypoints_per_class=[17])`, trains and predicts boxes, instance masks and keypoints together.
+    - It trains with the new `rfdetr.config.SegmentationKeypointTrainConfig`, which has the mask loss fields of `SegmentationTrainConfig` and the keypoint loss fields of `KeypointTrainConfig`. Validation logs mask mAP (`val/segm_mAP_50_95`) and OKS keypoint AP (`val/keypoint_map_50_95`) in one pass, and the best checkpoint and early stopping follow the segmentation metric.
+    - `predict()` returns `sv.Detections` with `mask` set, `detections.data["keypoints"]` as a `(N, K, 3)` array of pixel `x`, `y` and keypoint confidence, and `detections.data["keypoint_precision_cholesky"]`. A keypoint-only model still returns `sv.KeyPoints`. `threshold` applies to the detection score after keypoint uncertainty fusion, as for keypoint-only models.
+    - `RFDETR.export()` and `RFDETR.write_export_metadata()` raise `NotImplementedError` for such a model: exported artifacts and their inference metadata describe one task-specific output. `backbone_only=True` still exports. Predict with the PyTorch model or `model.inference()`.
+    - The COCO dataset loader reads masks and keypoints together. The YOLO loader does not: it still raises `YOLO segmentation masks and keypoints cannot be loaded at the same time`.
+
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.
@@ -14,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - On a core install, building a non-windowed `DinoV2(use_windowed_attn=False)` raises an `ImportError` that asks for `transformers`.
 
 ### Changed
+
+- `PostProcess` no longer raises `ValueError("masks and keypoints cannot be used together in postprocessing.")` for model outputs that hold both `pred_masks` and `pred_keypoints`; it returns `masks`, `keypoints` and `keypoint_precision_cholesky` for the same rows. `LWDETR.forward_export` returns `(boxes, logits, masks, keypoints)` for a model with both heads; it used to drop the keypoints.
 
 - `import rfdetr`, building a model, prediction and checkpoint loading no longer import `transformers`. The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are plain `torch.nn.Module` subclasses instead of Hugging Face `PreTrainedModel` subclasses, so `from_pretrained`, `save_pretrained`, `push_to_hub` and `transformers` `isinstance` checks no longer apply to them; their outputs are dataclasses read by attribute; `WindowedDinov2WithRegistersConfig` rejects keywords it does not use; and the unused `WindowedDinov2WithRegistersForImageClassification` and head-pruning methods are removed. State-dict keys, initialization for a fixed seed, and outputs are unchanged.
 

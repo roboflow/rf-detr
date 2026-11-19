@@ -34,12 +34,10 @@ _TORN_READ_FILL = 7.0
 class _CudaDummyRFDETR(_BaseFakeRFDETR):
     """Weight-free RFDETR whose model lives on CUDA, for exercising the async transfer path.
 
-    ``predict()`` always wraps its result into ``sv.KeyPoints`` (never ``sv.Detections``) whenever
-    keypoints are present — a pre-existing, unrelated branch — so a dummy requesting masks *and*
-    keypoints together can only ever be read back as a ``KeyPoints`` object, which has no ``mask``
-    field. ``include_masks``/``include_keypoints`` default to the mutually exclusive shapes real
-    segmentation vs. keypoint models actually produce; pass both ``True`` only when a test genuinely
-    needs to exercise every optional transfer branch without reading the mask back afterward.
+    ``predict()`` wraps a keypoint-only result into ``sv.KeyPoints``, and a result with masks *and*
+    keypoints into ``sv.Detections`` whose ``data["keypoints"]`` holds the keypoints.
+    ``include_masks``/``include_keypoints`` default to the shapes a segmentation-only or keypoint-only
+    model produces; pass both ``True`` when a test needs to exercise every optional transfer branch.
 
     Examples:
         >>> m = _CudaDummyRFDETR.__new__(_CudaDummyRFDETR)  # doctest: +SKIP

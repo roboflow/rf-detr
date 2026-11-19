@@ -264,14 +264,24 @@ class TestSetup:
         assert cb.map_metric_ema.device.type == "cpu"
 
     def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
-        """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
+        """Keypoint mode must not hand torchmetrics a keypoint iou_type; OKS has its own metric."""
         cb = COCOEvalCallback(segmentation=True)
         module = _make_pl_module()
         module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
         cb.setup(_make_trainer(), module, stage="fit")
         assert "bbox" in cb.map_metric.iou_type
-        assert "segm" not in cb.map_metric.iou_type
         assert "keypoints" not in cb.map_metric.iou_type
+
+    @pytest.mark.parametrize("segmentation", [False, True])
+    def test_keypoint_mode_keeps_segmentation_metrics(self, segmentation: bool) -> None:
+        """A model with both heads evaluates mask mAP beside the OKS keypoint metric."""
+        cb = COCOEvalCallback(segmentation=segmentation)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        cb.setup(_make_trainer(), module, stage="fit")
+        assert cb._keypoint_mode is True
+        assert cb._use_segm_metrics is segmentation
+        assert ("segm" in cb.map_metric.iou_type) is segmentation
 
 
 class TestOnFitStart:
@@ -729,6 +739,75 @@ class TestOnTrainBatchEnd:
 
         cb.map_metric_train.compute.assert_not_called()
         cb.map_metric_train.reset.assert_called_once()
+
+    def test_train_keypoint_metric_accumulates_when_masks_are_missing(self) -> None:
+        """A model with both heads still accumulates train keypoint predictions when the mask metric is skipped.
+
+        Training results carry no ``masks`` key (sparse mask forward), so the segmentation mAP update is skipped; the
+        OKS keypoint metric does not need masks and must be updated regardless.
+        """
+        cb = COCOEvalCallback(segmentation=True)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        cb.setup(_make_trainer(), module, stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        keypoint_metric = MagicMock(name="keypoint_oks_metric")
+        cb._keypoint_oks_metrics["train"] = keypoint_metric
+        results = _detection_preds(1)
+        results[0]["keypoints"] = torch.zeros(1, 2, 3)
+        targets = _detection_targets()
+        targets[0]["image_id"] = torch.tensor(7)
+
+        cb.on_train_batch_end(_make_trainer(), module, {"results": results, "targets": targets}, None, 0)
+
+        cb.map_metric_train.update.assert_not_called()
+        keypoint_metric.update.assert_called_once()
+        assert set(keypoint_metric.update.call_args.args[0]) == {7}
+
+    def test_train_keypoint_metrics_logged_when_mask_metric_has_no_updates(self) -> None:
+        """Train keypoint AP/AR are computed even though the skipped mask metric accumulated nothing."""
+        cb = COCOEvalCallback(segmentation=True)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        cb.map_metric_train.has_updates = False
+        keypoint_metric = MagicMock(name="keypoint_oks_metric")
+        keypoint_metric.has_updates = True
+        keypoint_metric.compute.return_value = {"map": 0.42, "map_50": 0.72, "map_75": 0.31, "mar": 0.55}
+        cb._keypoint_oks_metrics["train"] = keypoint_metric
+
+        cb.on_train_epoch_end(trainer, module)
+
+        cb.map_metric_train.compute.assert_not_called()
+        logged = {call.args[0]: call.args[1] for call in module.log.call_args_list}
+        assert float(logged["train/keypoint_map_50_95"]) == pytest.approx(0.42)
+        assert float(logged["train/keypoint_mAR"]) == pytest.approx(0.55)
+        assert "train/mAP_50_95" not in logged
+        keypoint_metric.reset.assert_called()
+
+    def test_train_epoch_end_without_keypoint_updates_logs_no_keypoint_metrics(self) -> None:
+        """A keypoint-only model with no train updates still resets its keypoint state and logs nothing."""
+        cb = COCOEvalCallback()
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        cb.setup(_make_trainer(), module, stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        cb.map_metric_train.has_updates = False
+        keypoint_metric = MagicMock(name="keypoint_oks_metric")
+        keypoint_metric.has_updates = False
+        cb._keypoint_oks_metrics["train"] = keypoint_metric
+
+        cb.on_train_epoch_end(_make_trainer(), module)
+
+        keypoint_metric.compute.assert_not_called()
+        keypoint_metric.reset.assert_called_once()
+        module.log.assert_not_called()
 
     def test_validation_start_does_not_clear_train_metric_state(self) -> None:
         """In-fit validation should reset only validation accumulators, leaving train metrics isolated."""

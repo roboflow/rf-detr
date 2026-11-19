@@ -329,18 +329,88 @@ def test_trace_alpha_uses_log_space_for_extreme_trace() -> None:
     torch.testing.assert_close(results[0]["scores"], expected_score, rtol=1e-4, atol=1e-12)
 
 
-def test_rejects_masks_and_keypoints_together() -> None:
-    """PostProcess should raise ValueError when both pred_masks and pred_keypoints are present."""
-    postprocess = PostProcess(num_select=10)
-    outputs = {
-        "pred_logits": torch.zeros((1, 2, 2)),
-        "pred_boxes": torch.zeros((1, 2, 4)),
-        "pred_masks": torch.zeros((1, 2, 4, 4)),
-        "pred_keypoints": torch.zeros((1, 2, 17, 8)),
+def _mask_and_keypoint_outputs() -> dict[str, torch.Tensor]:
+    """Return PostProcess outputs for three one-class queries whose mask and keypoints encode the query index.
+
+    Query ``q`` has object logit ``[2, 0, 1][q]``, a mask that is positive only in column ``q``, and keypoint
+    ``x = (q + 1) / 10``. Query 0 alone has a broad keypoint covariance, so trace fusion ranks it below query 2.
+
+    Examples:
+        >>> outputs = _mask_and_keypoint_outputs()
+        >>> outputs["pred_masks"].shape, outputs["pred_keypoints"].shape
+        (torch.Size([1, 3, 4, 4]), torch.Size([1, 3, 2, 8]))
+    """
+    masks = torch.full((1, 3, 4, 4), -1.0)
+    keypoints = torch.zeros((1, 3, 2, 8))
+    for query in range(3):
+        masks[0, query, :, query] = 1.0
+        keypoints[0, query, :, 0] = (query + 1) / 10
+    keypoints[0, 0, :, 4] = -10.0
+    keypoints[0, 0, :, 6] = -10.0
+    return {
+        "pred_logits": torch.tensor([[[2.0], [0.0], [1.0]]]),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2]] * 3]),
+        "pred_masks": masks,
+        "pred_keypoints": keypoints,
     }
-    target_sizes = torch.tensor([[100, 200]], dtype=torch.int64)
 
-    with pytest.raises(ValueError) as exc_info:
-        postprocess(outputs, target_sizes)
 
-    assert "cannot be used together" in str(exc_info.value)
+class TestMasksAndKeypointsTogether:
+    """A model with both heads gets one row-aligned result holding masks and keypoints."""
+
+    def test_returns_every_field_for_every_selected_row(self) -> None:
+        """Without a threshold all selected rows carry masks, keypoints and precision parameters."""
+        postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2])
+
+        (result,) = postprocess(_mask_and_keypoint_outputs(), torch.tensor([[4, 4]]))
+
+        assert set(result) == {"scores", "labels", "boxes", "masks", "keypoints", "keypoint_precision_cholesky"}
+        assert result["scores"].shape == (3,)
+        assert result["boxes"].shape == (3, 4)
+        assert result["masks"].shape == (3, 1, 4, 4)
+        assert result["keypoints"].shape == (3, 2, 3)
+        assert result["keypoint_precision_cholesky"].shape == (3, 2, 3)
+
+    def test_scores_match_the_keypoint_only_path(self) -> None:
+        """The returned scores are the uncertainty-fused ones the keypoint path reports."""
+        postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2])
+        outputs = _mask_and_keypoint_outputs()
+        keypoint_only = {key: value for key, value in outputs.items() if key != "pred_masks"}
+
+        (result,) = postprocess(outputs, torch.tensor([[4, 4]]))
+        (expected,) = postprocess(keypoint_only, torch.tensor([[4, 4]]))
+
+        torch.testing.assert_close(result["scores"], expected["scores"], rtol=0.0, atol=0.0)
+        torch.testing.assert_close(result["keypoints"], expected["keypoints"], rtol=0.0, atol=0.0)
+
+    @pytest.mark.parametrize("score_threshold", [None, 0.0, 0.3, 0.45, 0.99])
+    def test_rows_stay_aligned_under_score_threshold(self, score_threshold: float | None) -> None:
+        """Masks and keypoints of a kept row come from the same query, and the fused score decides what is kept."""
+        postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2])
+        outputs = _mask_and_keypoint_outputs()
+        (unfiltered,) = postprocess(outputs, torch.tensor([[4, 4]]))
+        keep = unfiltered["scores"] > (-1.0 if score_threshold is None else score_threshold)
+
+        (result,) = postprocess(outputs, torch.tensor([[4, 4]]), score_threshold=score_threshold)
+
+        for key, value in unfiltered.items():
+            torch.testing.assert_close(result[key], value[keep], rtol=0.0, atol=0.0, equal_nan=True)
+        # Column q of the mask and keypoint x = (q + 1) / 10 * width both identify query q.
+        mask_query = result["masks"][:, 0, 0, :].int().argmax(dim=1)
+        keypoint_query = (result["keypoints"][:, 0, 0] / 4 * 10).round().long() - 1
+        torch.testing.assert_close(mask_query, keypoint_query)
+
+    def test_threshold_uses_fused_scores(self) -> None:
+        """A row whose raw score passes the threshold but whose fused score does not is dropped."""
+        postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2])
+        outputs = _mask_and_keypoint_outputs()
+        raw_top_score = outputs["pred_logits"].sigmoid().max().item()
+
+        (unfiltered,) = postprocess(outputs, torch.tensor([[4, 4]]))
+        (result,) = postprocess(outputs, torch.tensor([[4, 4]]), score_threshold=0.3)
+
+        # Query 0 has the highest raw score and the lowest fused score.
+        assert raw_top_score > 0.3
+        assert unfiltered["scores"][0].item() < 0.3
+        assert result["scores"].shape == (2,)
+        assert (result["scores"] > 0.3).all()

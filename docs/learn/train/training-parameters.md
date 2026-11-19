@@ -170,7 +170,7 @@ During training, multiple checkpoints are saved:
 | `checkpoint_best_total.pth`   | Final best model; lightweight callback state when available  |
 | `last_ema.pth`                | Final EMA weights; lightweight callback state when available |
 
-Best validation performance uses the task metric for the model family (`best_model_metric="map"`, the default): box mAP for detection, mask mAP for segmentation, and COCO keypoint AP for keypoint models. Set `best_model_metric="mar"` to rank checkpoints by mAR instead: detection and segmentation use box mAR, while keypoint models use keypoint mAR. mAR for detection and segmentation is evaluated using the configured `eval_max_dets` limit; keypoint mAR uses fixed COCO `maxDets=20`.
+Best validation performance uses the task metric for the model family (`best_model_metric="map"`, the default): box mAP for detection, mask mAP for segmentation, and COCO keypoint AP for keypoint models. A model with both a segmentation head and a keypoint head is ranked as a segmentation model. Set `best_model_metric="mar"` to rank checkpoints by mAR instead: detection and segmentation use box mAR, while keypoint models use keypoint mAR. mAR for detection and segmentation is evaluated using the configured `eval_max_dets` limit; keypoint mAR uses fixed COCO `maxDets=20`.
 
 ## Early Stopping Parameters
 
