@@ -7,13 +7,21 @@
 import hashlib
 import os
 import stat
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Iterable, Iterator, Optional
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 import requests
+import torch
+from pytest_mock import MockerFixture
 
+from rfdetr.assets import ModelWeightAsset
+from rfdetr.assets.model_weights import download_pretrain_weights
+from rfdetr.utilities import files
 from rfdetr.utilities.files import _compute_file_md5, _download_file, _mkstemp_default_mode, _validate_file_md5
 from tests._markers import _requires_posix_permissions, _requires_symlink_privilege
 
@@ -83,6 +91,28 @@ def _assert_no_download_temp_files(tmp_path: Path, filename: str = "weights.bin"
         ...     _assert_no_download_temp_files(Path(d))
     """
     assert not list(tmp_path.glob(f"{filename}.*.tmp"))
+
+
+def _partial_chunks_then_error(error: BaseException) -> Iterator[bytes]:
+    """Yield a partial response before raising the supplied failure.
+
+    Args:
+        error: Failure to propagate after the first chunk.
+
+    Yields:
+        The partial response bytes.
+
+    Examples:
+        >>> chunks = _partial_chunks_then_error(ValueError("stopped"))
+        >>> next(chunks)
+        b'partial'
+        >>> next(chunks)
+        Traceback (most recent call last):
+        ...
+        ValueError: stopped
+    """
+    yield b"partial"
+    raise error
 
 
 _CONTENT = "Test content"
@@ -311,3 +341,180 @@ class TestMkstempDefaultMode:
         fd, path = _mkstemp_default_mode(tmp_path)
         os.close(fd)
         assert stat.S_IMODE(os.stat(path).st_mode) == 0o666 & ~process_umask
+
+
+class TestDownloadReplacement:
+    """Keep an existing destination until a complete, verified replacement is ready."""
+
+    def test_http_error_keeps_previous_file(self, mock_get: Mock, tmp_path: Path) -> None:
+        """A rejected request cannot delete the existing checkpoint."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        response = _FakeResponse([], raise_error=requests.HTTPError("unavailable"))
+        mock_get.return_value = response
+        with pytest.raises(requests.HTTPError, match="unavailable"):
+            _download_file(_URL, str(target), expected_md5="0" * 32)
+        assert target.read_bytes() == b"old"
+        _assert_no_download_temp_files(tmp_path)
+        response.close.assert_called_once()
+
+    @pytest.mark.parametrize("existing", [False, True])
+    @pytest.mark.parametrize(
+        "error_type",
+        [
+            pytest.param(OSError, id="io-error"),
+            pytest.param(KeyboardInterrupt, id="interrupt"),
+            pytest.param(SystemExit, id="exit"),
+        ],
+    )
+    def test_stream_error_or_cancellation_cleans_up(
+        self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path, existing: bool, error_type: type[BaseException]
+    ) -> None:
+        """Partial data is removed and the original failure propagates, including cancellation."""
+        target = tmp_path / "weights.bin"
+        if existing:
+            target.write_bytes(b"old")
+        response = _FakeResponse([])
+        mocker.patch.object(response, "iter_content", return_value=_partial_chunks_then_error(error_type("stopped")))
+        mock_get.return_value = response
+        with pytest.raises(error_type, match="stopped"):
+            _download_file(_URL, str(target), expected_md5="0" * 32)
+        assert list(tmp_path.iterdir()) == ([target] if existing else [])
+        if existing:
+            assert target.read_bytes() == b"old"
+        response.close.assert_called_once()
+
+    def test_bad_checksum_keeps_previous_file(self, mock_get: Mock, tmp_path: Path) -> None:
+        """A complete response with the wrong digest cannot replace the existing checkpoint."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        mock_get.return_value = _FakeResponse([b"new"])
+        with pytest.raises(ValueError, match="MD5 mismatch"):
+            _download_file(_URL, str(target), expected_md5="0" * 32)
+        assert target.read_bytes() == b"old"
+        _assert_no_download_temp_files(tmp_path)
+
+    def test_hash_read_error_cleans_up(self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A failure reading the completed temporary file preserves the destination and removes the temp."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        mock_get.return_value = _FakeResponse([b"new"])
+        mocker.patch.object(files, "_compute_file_md5", side_effect=["1" * 32, OSError("hash read failed")])
+        with pytest.raises(OSError, match="hash read failed"):
+            _download_file(_URL, str(target), expected_md5="0" * 32)
+        assert target.read_bytes() == b"old"
+        _assert_no_download_temp_files(tmp_path)
+
+    def test_replace_error_keeps_previous_file(self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path) -> None:
+        """A failed atomic replacement leaves the previous file intact and cleans the new payload."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        mock_get.return_value = _FakeResponse([b"new"])
+        mocker.patch.object(files.os, "replace", side_effect=PermissionError("replace denied"))
+        expected = hashlib.md5(b"new").hexdigest()
+        with pytest.raises(PermissionError, match="replace denied"):
+            _download_file(_URL, str(target), expected_md5=expected)
+        assert target.read_bytes() == b"old"
+        _assert_no_download_temp_files(tmp_path)
+
+    def test_fdopen_failure_closes_raw_descriptor(self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path) -> None:
+        """Failure to wrap the acquired descriptor does not leak it or its temporary path."""
+        mock_get.return_value = _FakeResponse([b"new"])
+        acquired = mocker.spy(files, "_mkstemp_default_mode")
+        closed = mocker.spy(files.os, "close")
+        mocker.patch.object(files.os, "fdopen", side_effect=OSError("fdopen failed"))
+        with pytest.raises(OSError, match="fdopen failed"):
+            _download_file(_URL, str(tmp_path / "weights.bin"))
+        descriptor = acquired.spy_return[0]
+        try:
+            closed.assert_called_once_with(descriptor)
+        finally:
+            # Only the leaking parent/mutant still owns this descriptor.
+            if call(descriptor) not in closed.call_args_list:
+                os.close(descriptor)
+        _assert_no_download_temp_files(tmp_path)
+
+    @_requires_posix_permissions
+    @pytest.mark.parametrize("mode", [0o600, 0o640])
+    def test_replacement_preserves_existing_permissions(self, mock_get: Mock, tmp_path: Path, mode: int) -> None:
+        """Refreshing a restricted checkpoint does not broaden its access permissions."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        target.chmod(mode)
+        mock_get.return_value = _FakeResponse([b"new"])
+        _download_file(_URL, str(target), expected_md5=hashlib.md5(b"new").hexdigest())
+        assert stat.S_IMODE(target.stat().st_mode) == mode
+        assert target.read_bytes() == b"new"
+
+    @pytest.mark.parametrize("uppercase", [False, True])
+    def test_matching_checksum_skips_request(self, mock_get: Mock, tmp_path: Path, uppercase: bool) -> None:
+        """The existing skip-on-matching-MD5 contract stays case insensitive."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"cached")
+        expected = hashlib.md5(b"cached").hexdigest()
+        _download_file(_URL, str(target), expected_md5=expected.upper() if uppercase else expected)
+        mock_get.assert_not_called()
+        assert target.read_bytes() == b"cached"
+
+
+@pytest.fixture
+def weight_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, bytes]]:
+    """Serve small checkpoint fixtures over loopback for the public download path.
+
+    Examples:
+        Pytest owns the server lifecycle; direct fixture calls are unsupported.
+        >>> weight_server()  # doctest: +SKIP
+    """
+    served = tmp_path / "served"
+    served.mkdir()
+    torch.save({"model": {"weight": torch.tensor([2.0])}}, served / "replacement.pth")
+    (served / "corrupt.pth").write_bytes(b"incorrect response")
+    payload = (served / "replacement.pth").read_bytes()
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(served)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+class TestPublicWeightRefresh:
+    """Exercise the actual registry-to-HTTP path with a loadable old checkpoint."""
+
+    @pytest.mark.parametrize("endpoint", ["missing.pth", "corrupt.pth"])
+    def test_failed_forced_refresh_preserves_loadable_checkpoint(
+        self, tmp_path: Path, weight_server: tuple[str, bytes], mocker: MockerFixture, endpoint: str
+    ) -> None:
+        """HTTP and checksum failures during explicit refresh preserve the user's existing checkpoint."""
+        base_url, payload = weight_server
+        target = tmp_path / "rf-detr-nano.pth"
+        torch.save({"model": {"weight": torch.tensor([1.0])}}, target)
+        original = target.read_bytes()
+        asset = ModelWeightAsset(target.name, f"{base_url}/{endpoint}", hashlib.md5(payload).hexdigest())
+        mocker.patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=asset)
+        error_type = requests.HTTPError if endpoint == "missing.pth" else ValueError
+        with pytest.raises(error_type):
+            download_pretrain_weights(str(target), redownload=True)
+        assert target.read_bytes() == original
+        assert torch.load(target, weights_only=True)["model"]["weight"].item() == 1.0
+        _assert_no_download_temp_files(tmp_path, target.name)
+
+    def test_successful_forced_refresh_installs_verified_checkpoint(
+        self, tmp_path: Path, weight_server: tuple[str, bytes], mocker: MockerFixture
+    ) -> None:
+        """A successful refresh replaces the old checkpoint with the verified loadable response."""
+        base_url, payload = weight_server
+        target = tmp_path / "rf-detr-nano.pth"
+        torch.save({"model": {"weight": torch.tensor([1.0])}}, target)
+        asset = ModelWeightAsset(target.name, f"{base_url}/replacement.pth", hashlib.md5(payload).hexdigest())
+        mocker.patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=asset)
+        download_pretrain_weights(str(target), redownload=True)
+        assert target.read_bytes() == payload
+        assert torch.load(target, weights_only=True)["model"]["weight"].item() == 2.0
+        _assert_no_download_temp_files(tmp_path, target.name)
