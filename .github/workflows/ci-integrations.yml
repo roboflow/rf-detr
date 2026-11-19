@@ -308,7 +308,9 @@ jobs:
     # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml).
     runs-on: Roboflow-GPU-VM-Runner
     # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
-    timeout-minutes: 35
+    # The tests alone took 24.5 minutes on TensorRT 11.4.0.106 (2026-11-15), and 11.5.0.63 ran slower still and hit the
+    # old 35-minute limit, so the limit is 40 to leave room for run-to-run variation on the pinned 11.4.
+    timeout-minutes: 40
     concurrency:
       group: pytest-tensorrt-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
