@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-13T18:33:15">
+  <meta property="article:modified_time" content="2026-11-19T16:45:47">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-13T18:33:15",
+    "dateModified": "2026-11-19T16:45:47",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3558,6 +3558,354 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#weightedmultisourcebatchsampler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WeightedMultiSourceBatchSampler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;WeightedMultiSourceBatchSampler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(source_sizes)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;source_sizes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(weights)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;weights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(drop_last)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;drop_last
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(shuffle)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;shuffle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(num_replicas)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;num_replicas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(rank)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;rank
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(seed)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;seed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(epoch_length)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;epoch_length
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_multiple)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_multiple
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.__init__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;__init__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;from_concat_dataset
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" from_concat_dataset">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(dataset)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(weights)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;weights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(drop_last)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;drop_last
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(shuffle)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;shuffle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(num_replicas)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;num_replicas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(rank)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(seed)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;seed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(epoch_length)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;epoch_length
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_multiple)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_multiple
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;set_epoch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" set_epoch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch(epoch)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;epoch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;compute_source_batch_sizes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes(batch_size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes(weights)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;weights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#build_trainer" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5194,6 +5542,354 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#weightedmultisourcebatchsampler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WeightedMultiSourceBatchSampler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;WeightedMultiSourceBatchSampler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(source_sizes)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;source_sizes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(weights)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;weights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(drop_last)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;drop_last
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(shuffle)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;shuffle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(num_replicas)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;num_replicas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(rank)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;rank
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(seed)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;seed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(epoch_length)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;epoch_length
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_multiple)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_multiple
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.__init__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;__init__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;from_concat_dataset
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" from_concat_dataset">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(dataset)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(weights)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;weights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(drop_last)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;drop_last
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(shuffle)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;shuffle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(num_replicas)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;num_replicas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(rank)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(seed)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;seed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(epoch_length)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;epoch_length
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_multiple)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_multiple
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;set_epoch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" set_epoch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch(epoch)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;epoch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;compute_source_batch_sizes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes(batch_size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes(weights)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;weights
+      
+    </span>
+  </a>
   
 </li>
       
@@ -7164,11 +7860,14 @@ dataset is only constructed once even if <code>setup</code> is called multiple t
     <div class="doc doc-contents ">
 
         <p>Return the training DataLoader.</p>
-<p>On one process, uses a replacement sampler when the dataset is too small to fill <code>_MIN_TRAIN_BATCHES</code>
-effective batches (matching legacy behaviour in <code>main.py</code>). In DDP, repeats short datasets through
-:class:<code>GradAccumAlignedDataset</code> so that Lightning can safely inject <code>DistributedSampler</code> without discarding
-the requested sample count. The wrapper also ensures the length is an exact multiple of
-<code>effective_batch_size * world_size</code> (workaround for
+<p>Consults :meth:<code>build_train_sampler</code> first: when it returns a sampler, that sampler is used as the
+DataLoader's <code>batch_sampler</code> and the logic below is skipped entirely (see that method's docstring
+for exactly which kwargs still apply).</p>
+<p>Otherwise, on one process, uses a replacement sampler when the dataset is too small to fill
+<code>_MIN_TRAIN_BATCHES</code> effective batches (matching legacy behaviour in <code>main.py</code>). In DDP, repeats short
+datasets through :class:<code>GradAccumAlignedDataset</code> so that Lightning can safely inject
+<code>DistributedSampler</code> without discarding the requested sample count. The wrapper also ensures the length is
+an exact multiple of <code>effective_batch_size * world_size</code> (workaround for
 https://github.com/Lightning-AI/pytorch-lightning/issues/19987).</p>
 
 
@@ -7218,6 +7917,30 @@ https://github.com/Lightning-AI/pytorch-lightning/issues/19987).</p>
             <td>
               <div class="doc-md-description">
                 <p>batch always packs (every sample already shares one shape) and every packed shape is fixed too.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="RuntimeError">RuntimeError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If :meth:<code>build_train_sampler</code> returns a sampler while Lightning is still set to wrap
+samplers for a distributed strategy; see :meth:<code>_check_custom_sampler_owns_ddp</code>.</p>
               </div>
             </td>
           </tr>
@@ -7334,6 +8057,753 @@ https://github.com/Lightning-AI/pytorch-lightning/issues/19987).</p>
 
 
   </div>
+
+    </div>
+
+</div><hr />
+<h2 id="weightedmultisourcebatchsampler">WeightedMultiSourceBatchSampler<a class="headerlink" href="#weightedmultisourcebatchsampler" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<a id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler"></a>
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="torch.utils.data.Sampler">Sampler</span>[<span title="list">list</span>[<span title="int">int</span>]]</code></p>
+
+
+        <p>Batch sampler that enforces a fixed per-source ratio in every batch.</p>
+<p>Each yielded batch is a flat list of indices into a :class:<code>~torch.utils.data.ConcatDataset</code> whose sub-datasets are
+the sources, composed of :func:<code>compute_source_batch_sizes</code> slots per source. Indices are shuffled within a source
+every epoch; a source whose samples run out mid-epoch is reshuffled and reused, so the ratio holds even when the
+sources differ wildly in size.</p>
+
+
+<details class="note" open>
+  <summary>Note</summary>
+  <p>Unlike torch's <code>drop_last</code>, this sampler never emits a short final batch. Setting <code>drop_last=False</code> appends
+one extra full batch, recycling source samples, after the driving source has been covered once. At an even
+<code>num_replicas</code> this extra batch is typically floored away by the per-rank division below, making
+<code>drop_last=False</code> a no-op there (warned about when it happens).</p>
+</details>
+
+<details class="note" open>
+  <summary>Note</summary>
+  <p>Has no <code>state_dict</code>/<code>load_state_dict</code>: like the default loader path, a mid-epoch checkpoint resume
+replays the epoch from batch 0 against the already-seeded shuffle rather than continuing partway through
+it.</p>
+</details>        <p>Under DDP each rank consumes a disjoint stride of the global batch stream (<code>rank</code>, <code>rank + num_replicas</code>, ...),
+mirroring :class:<code>~torch.utils.data.distributed.DistributedSampler</code>. The number of global batches is truncated to a
+multiple of <code>num_replicas</code> so every rank runs the same number of steps and no rank stalls in gradient all-reduce.
+<code>num_replicas</code> and <code>rank</code> default to the live <code>torch.distributed</code> process group, so a DDP run shards itself
+without extra wiring; passing them explicitly overrides that.</p>
+<p>Like :class:<code>~torch.utils.data.distributed.DistributedSampler</code>, :meth:<code>set_epoch</code> must be called at the start of
+each epoch, otherwise every epoch reuses the same shuffle.</p>
+<p>.. note::
+    Every rank is assumed to build the sampler over the same sources: the same number of sources, the same size
+    per source, in the same order. Ranks exchange nothing; each one replays the whole global batch stream from
+    <code>source_sizes</code>, <code>weights</code>, <code>seed</code> and the epoch, and yields only its own stride of it. A rank that
+    disagrees about the source layout therefore builds a <em>different</em> stream rather than a disjoint share of one
+    stream, and the mismatch is silent — no error, no hang. Deriving the sources from an unsorted directory
+    listing, a rank-dependent subsample, or a size limit applied only on rank 0 breaks this assumption.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(source_sizes)" class="doc doc-heading doc-heading-parameter">                  <code>source_sizes</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(source_sizes)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="collections.abc.Sequence">Sequence</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of samples in each source, in <code>ConcatDataset</code> order. Every source must be non-empty.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(weights)" class="doc doc-heading doc-heading-parameter">                  <code>weights</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(weights)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="collections.abc.Sequence">Sequence</span>[<span title="float">float</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Relative sampling weight per source, in the same order. Normalised internally; must be positive.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_size)" class="doc doc-heading doc-heading-parameter">                  <code>batch_size</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_size)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of samples per batch on a single rank. This is the mini-batch the model sees per forward
+pass, so it is neither multiplied by gradient-accumulation steps nor by the world size.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(drop_last)" class="doc doc-heading doc-heading-parameter">                  <code>drop_last</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(drop_last)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to omit the extra full batch needed to cover the driving source's remainder. At least one
+batch is always produced (even when the driving source is smaller than its per-batch slot count), so
+<code>drop_last=True</code> will not reduce an epoch to zero batches for tiny datasets.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(shuffle)" class="doc doc-heading doc-heading-parameter">                  <code>shuffle</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(shuffle)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to shuffle indices within each source.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(num_replicas)" class="doc doc-heading doc-heading-parameter">                  <code>num_replicas</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(num_replicas)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of DDP processes participating. <code>None</code> (the default) reads the world size from the live
+<code>torch.distributed</code> process group, which is 1 outside DDP; pass an integer to override.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(rank)" class="doc doc-heading doc-heading-parameter">                  <code>rank</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(rank)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Rank of the current process, in <code>[0, num_replicas)</code>. <code>None</code> (the default) reads the rank from the
+live <code>torch.distributed</code> process group, which is 0 outside DDP; pass an integer to override.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(seed)" class="doc doc-heading doc-heading-parameter">                  <code>seed</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(seed)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Base seed shared by all ranks; combined with the epoch to shuffle identically across ranks.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(epoch_length)" class="doc doc-heading doc-heading-parameter">                  <code>epoch_length</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(epoch_length)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="rfdetr.datasets.multi_source.EpochLength">EpochLength</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Which source defines the length of an epoch — <code>"largest"</code> (every sample of the biggest source
+is seen roughly once per epoch, smaller sources cycle), <code>"smallest"</code> (the smallest source is seen once
+and larger sources are sub-sampled), or the integer index of a specific source.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;largest&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_multiple)" class="doc doc-heading doc-heading-parameter">                  <code>batch_multiple</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler(batch_multiple)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Round the per-rank batch count down to a multiple of this value. Pass <code>grad_accum_steps</code>
+so every gradient-accumulation window is complete: PTL otherwise fires the optimizer on a short final
+window (Lightning-AI/pytorch-lightning#19987), which the default loader path avoids by padding the
+dataset — padding a batch sampler owns its own batches and cannot use. <code>1</code> (the default) leaves the
+epoch length untouched.</p>
+              </div>
+            </td>
+            <td>
+                  <code>1</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ValueError">ValueError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If the arguments are inconsistent, a source is empty, <code>epoch_length</code> is invalid, or
+<code>batch_multiple</code> is below 1 or larger than the epoch it would align.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="example" open>
+  <summary>Example</summary>
+  <blockquote>
+<blockquote>
+<blockquote>
+<p>import torch
+from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
+sources = [TensorDataset(torch.zeros(n)) for n in (500, 200, 40)]
+dataset = ConcatDataset(sources)
+sampler = WeightedMultiSourceBatchSampler.from_concat_dataset(dataset, [0.6, 0.3, 0.1], batch_size=16)
+sampler.source_batch_sizes
+[10, 5, 1]
+loader = DataLoader(dataset, batch_sampler=sampler)</p>
+</blockquote>
+</blockquote>
+</blockquote>
+</details>
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<h2 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler-functions">Functions<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler-functions" class="headerlink" title="Permanent link">&para;</a></h2>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.__init__" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">source_sizes</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">drop_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">num_replicas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">epoch_length</span><span class="o">=</span><span class="s1">'largest'</span><span class="p">,</span> <span class="n">batch_multiple</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">from_concat_dataset</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">drop_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">num_replicas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">epoch_length</span><span class="o">=</span><span class="s1">'largest'</span><span class="p">,</span> <span class="n">batch_multiple</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Build a sampler for a :class:<code>~torch.utils.data.ConcatDataset</code>.</p>
+<p>.. note::
+    Under DDP every rank must pass an identically laid-out <code>dataset</code>: the same sub-datasets, in the same
+    order, with the same lengths (see the cross-rank assumption in the class docstring). Only that layout is
+    read here, so sub-datasets that agree in length but differ in content across ranks stay undetected and
+    silently break the split of the batch stream.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(dataset)" class="doc doc-heading doc-heading-parameter">                  <code>dataset</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(dataset)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="torch.utils.data.ConcatDataset">ConcatDataset</span>[<span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Concatenated dataset whose sub-datasets are the sources.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(weights)" class="doc doc-heading doc-heading-parameter">                  <code>weights</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(weights)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="collections.abc.Sequence">Sequence</span>[<span title="float">float</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Relative sampling weight per source, ordered like <code>dataset.datasets</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_size)" class="doc doc-heading doc-heading-parameter">                  <code>batch_size</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_size)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of samples per batch on a single rank.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(drop_last)" class="doc doc-heading doc-heading-parameter">                  <code>drop_last</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(drop_last)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to omit the extra full batch covering the driving source's remainder; an epoch is
+never reduced to zero batches. See the class docstring.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(shuffle)" class="doc doc-heading doc-heading-parameter">                  <code>shuffle</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(shuffle)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to shuffle indices within each source.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(num_replicas)" class="doc doc-heading doc-heading-parameter">                  <code>num_replicas</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(num_replicas)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of DDP processes participating, or <code>None</code> to read the world size from the live
+<code>torch.distributed</code> process group.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(rank)" class="doc doc-heading doc-heading-parameter">                  <code>rank</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(rank)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Rank of the current process, in <code>[0, num_replicas)</code>, or <code>None</code> to read it from the live
+<code>torch.distributed</code> process group.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(seed)" class="doc doc-heading doc-heading-parameter">                  <code>seed</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(seed)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Base seed shared by all ranks.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(epoch_length)" class="doc doc-heading doc-heading-parameter">                  <code>epoch_length</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(epoch_length)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="rfdetr.datasets.multi_source.EpochLength">EpochLength</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Source that defines the epoch length; see the class docstring.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;largest&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_multiple)" class="doc doc-heading doc-heading-parameter">                  <code>batch_multiple</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.from_concat_dataset(batch_multiple)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Round the per-rank batch count down to a multiple of this value; pass
+<code>grad_accum_steps</code>. See the class docstring.</p>
+              </div>
+            </td>
+            <td>
+                  <code>1</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code>&#39;WeightedMultiSourceBatchSampler&#39;</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>A sampler whose index space matches <code>dataset</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ValueError">ValueError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If <code>weights</code> does not have one entry per sub-dataset.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">set_epoch</span><span class="p">(</span><span class="n">epoch</span><span class="p">)</span></code>
+
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Set the epoch used to seed shuffling.</p>
+<p>Call this before every epoch so the within-source shuffle changes, and changes identically on all ranks.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch(epoch)" class="doc doc-heading doc-heading-parameter">                  <code>epoch</code>
+<a href="#rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler.set_epoch(epoch)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Zero-based epoch number.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+
+<a id="rfdetr.datasets.multi_source.compute_source_batch_sizes"></a>
+    <div class="doc doc-contents first">
+
+        <p>Split a batch across sources in proportion to <code>weights</code>.</p>
+<p>Uses the largest-remainder (Hamilton) method, so the returned counts always sum to <code>batch_size</code> while staying as
+close as possible to the requested ratios. Every source receives at least one slot when <code>batch_size</code> is at least
+the number of sources; otherwise the lowest-weighted sources receive zero and are absent from each batch.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.compute_source_batch_sizes(batch_size)" class="doc doc-heading doc-heading-parameter">                  <code>batch_size</code>
+<a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes(batch_size)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of samples in one batch.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.datasets.multi_source.compute_source_batch_sizes(weights)" class="doc doc-heading doc-heading-parameter">                  <code>weights</code>
+<a href="#rfdetr.datasets.multi_source.compute_source_batch_sizes(weights)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="collections.abc.Sequence">Sequence</span>[<span title="float">float</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Relative sampling weight per source. Weights need not sum to 1; they are normalised internally. All
+weights must be finite, strictly positive, and no smaller than <code>1e-6</code>, which is the precision the
+allocation works at.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="list">list</span>[<span title="int">int</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Per-source sample counts, in the same order as <code>weights</code>, summing to <code>batch_size</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ValueError">ValueError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If <code>batch_size</code> is not positive, <code>weights</code> is empty, any weight is not finite and strictly
+positive, or any weight rounds to zero at 1e-6 precision.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="example" open>
+  <summary>Example</summary>
+  <blockquote>
+<blockquote>
+<blockquote>
+<p>compute_source_batch_sizes(16, [0.6, 0.3, 0.1])
+[10, 5, 1]
+compute_source_batch_sizes(8, [0.9, 0.04, 0.03, 0.03])  # the minimum of one slot each costs the leader
+[5, 1, 1, 1]</p>
+</blockquote>
+</blockquote>
+</blockquote>
+</details>
 
     </div>
 
@@ -9012,7 +10482,7 @@ As in <code>LightningCLI</code>, callbacks in <em>kwargs</em> take the place of 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 13, 2026 18:33:15 UTC">2026-10-13 18:33:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 19, 2026 16:45:47 UTC">2026-11-19 16:45:47</span>
   </span>
 
     

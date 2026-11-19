@@ -3215,7 +3215,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>RFDETR.export(format="executorch", backend="tensorrt")</code> writes an ExecuTorch <code>.pte</code> that runs on an NVIDIA GPU through TensorRT, built through Torch-TensorRT from the <code>torch.export</code> graph with no ONNX step. <code>RFDETRInference</code> loads it on the GPU. It needs the new <code>rfdetr[executorch-tensorrt]</code> extra (Linux, Python 3.11 or newer), which cannot share an environment with <code>rfdetr[executorch]</code>, and a CUDA device at export time. (<a href="https://github.com/roboflow/rf-detr/pull/1712">#1712</a>)</li>
+<li>
+<p><code>RFDETR.export(format="executorch", backend="tensorrt")</code> writes an ExecuTorch <code>.pte</code> that runs on an NVIDIA GPU through TensorRT, built through Torch-TensorRT from the <code>torch.export</code> graph with no ONNX step. <code>RFDETRInference</code> loads it on the GPU. It needs the new <code>rfdetr[executorch-tensorrt]</code> extra (Linux, Python 3.11 or newer), which cannot share an environment with <code>rfdetr[executorch]</code>, and a CUDA device at export time. (<a href="https://github.com/roboflow/rf-detr/pull/1712">#1712</a>)</p>
+</li>
+<li>
+<p><code>WeightedMultiSourceBatchSampler</code> (<code>rfdetr.datasets.multi_source</code>) fixes the per-source composition of every training batch when training on a <code>ConcatDataset</code> of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. (<a href="https://github.com/roboflow/rf-detr/pull/1287">#1287</a>)</p>
+</li>
+</ul>
+<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cookbook for joint training on three RF100-VL datasets 20x apart in size, with <code>WeightedMultiSourceBatchSampler</code> weights computed automatically as the inverse of each source's measured size (<code>docs/cookbooks/multi-source-rf100vl.ipynb</code>).</li>
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3524,7 +3533,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>COCO segmentation dataset mixing annotated and box-only instances now keeps every mask. <code>ConvertCoco</code> only checked the first annotation — a box-only first annotation dropped all masks for the image (e.g. 2 boxes, 0 masks); reversing order gave 2 masks. Masks now built for every annotation unconditionally, so <code>masks.shape[0] == boxes.shape[0]</code> always; box-only → empty mask (a real training target, not a placeholder). (<a href="https://github.com/roboflow/rf-detr/pull/1558">#1558</a>)</li>
 <li>Fixed JSON serialization in the COCO val-subset builder. (<a href="https://github.com/roboflow/rf-detr/commit/fd3bb991"><code>fd3bb991</code></a>, no PR — direct commit)</li>
 </ul>
-<h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
+<h3 id="documentation_1">Documentation<a class="headerlink" href="#documentation_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Documented <code>TrainConfig.eval_backend</code> in the advanced training guide: comparison table (<code>vernier</code>/<code>hotcoco</code>/<code>ufcoco</code>/<code>faster_coco_eval</code>), walkthrough for registering a new backend, runnable <code>compute()</code> timing skeleton. (<a href="https://github.com/roboflow/rf-detr/pull/1526">#1526</a>)</li>
 <li>Scoped the static (full-integer) INT8 export limit to TFLite specifically — <code>_tflite</code> exporter docstring + <code>docs/exports/tflite.md</code> now name the mechanism (full-integer mode: per-tensor 8-bit scale, no float fallback) and note other toolchains (ONNX Runtime QDQ <code>quantize_static</code>, OpenVINO NNCF) can keep transformer-sensitive ops in float. Behavior unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1559">#1559</a>)</li>
@@ -3797,7 +3806,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Fixed the Kornia augmentation builders (<code>GaussianBlur</code>, <code>GaussNoise</code>) rejecting scalars for range parameters; they now accept either a scalar or a <code>(min, max)</code> pair, matching the Albumentations path. A custom <code>aug_config</code> valid under Albumentations no longer raises a bare <code>TypeError</code> when <code>augmentation_backend="cpu"</code>/<code>"auto"</code> resolves to Kornia, i.e. Kornia installed and CUDA available. (<a href="https://github.com/roboflow/rf-detr/pull/1255">#1255</a>)</li>
 <li>Fixed <code>uv sync</code> failing to create <code>.venv</code>; an <code>executorch</code>/<code>tflite</code> extra conflict previously blocked resolution of the development environment. (<a href="https://github.com/roboflow/rf-detr/pull/1253">#1253</a>)</li>
 </ul>
-<h3 id="documentation_1">Documentation<a class="headerlink" href="#documentation_1" title="Permanent link">&para;</a></h3>
+<h3 id="documentation_2">Documentation<a class="headerlink" href="#documentation_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Corrected RF-DETR Keypoint Preview's parameter count (126.4 M → 40.7 M), added deployment parameter-count columns to the keypoint benchmark tables, and clarified that the new SAM 3 RF100-VL result is author-reported rather than measured in SAB. (<a href="https://github.com/roboflow/rf-detr/pull/1258">#1258</a>, <a href="https://github.com/roboflow/rf-detr/pull/1261">#1261</a>)</li>
 <li>Documented ONNX Runtime raw-output decoding and expanded the LLM keypoint task/model/benchmark/API reference. (<a href="https://github.com/roboflow/rf-detr/pull/1251">#1251</a>, <a href="https://github.com/roboflow/rf-detr/pull/1260">#1260</a>)</li>
