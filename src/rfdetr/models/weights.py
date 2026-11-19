@@ -15,6 +15,7 @@ name extraction from ``detr.py:_load_pretrain_weights_into``.
 
 from __future__ import annotations
 
+import copy
 import math
 import os
 import re
@@ -39,13 +40,155 @@ from rfdetr.utilities.state_dict import (
 
 logger = get_logger()
 
-__all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddings"]
+__all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddings", "adapt_input_channels"]
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
+#: State-dict key suffix of the DINOv2 patch-embedding projection, whose second dimension is the input channel count.
+_PATCH_PROJ_KEY_SUFFIX = "patch_embeddings.projection.weight"
 
 # Query-related parameters that LWDETR packs as nn.Embedding(num_queries * group_detr, ...).
 # Any new query parameter packed the same way must be added here.
 _QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
+
+
+def _adapt_input_conv(num_channels: int, conv_weight: Tensor) -> Tensor:
+    """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
+
+    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
+    original 3 channels.
+    Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
+    pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
+
+    Args:
+        num_channels: Target number of input channels.
+        conv_weight: Original weight tensor of shape ``[out_ch, 3, H, W]``.
+
+    Returns:
+        Adapted weight tensor of shape ``[out_ch, num_channels, H, W]``.
+
+    Examples:
+        >>> _adapt_input_conv(4, torch.ones(2, 3, 1, 1)).shape
+        torch.Size([2, 4, 1, 1])
+        >>> _adapt_input_conv(4, torch.ones(2, 3, 1, 1))[0, :, 0, 0].tolist()
+        [0.75, 0.75, 0.75, 0.75]
+    """
+    if num_channels == 3:
+        return conv_weight
+    if num_channels == 1:
+        return conv_weight.mean(dim=1, keepdim=True)
+    # General case: tile and scale
+    repeats = (num_channels + 2) // 3
+    weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
+    weight_out = weight_out * (3.0 / num_channels)
+    return weight_out
+
+
+def adapt_input_channels(model: torch.nn.Module, num_channels: int, *, encoder_name: str | None = None) -> None:
+    """Adapt the DINOv2 patch-embedding projection of *model* to a non-RGB channel count.
+
+    Replaces the 3-channel projection in place with a ``num_channels``-input ``Conv2d`` whose weights are derived
+    from the original ones (see :func:`_adapt_input_conv`). Does nothing for ``num_channels == 3``, or when the
+    projection is already ``num_channels`` wide, so calling it again never rescales weights that were adapted or
+    loaded before. The inference model builder and the training ``LightningModule`` both call it, so they build the
+    same stem.
+
+    Args:
+        model: Model whose ``backbone[0].encoder`` patch embedding is adapted in place. A PEFT-wrapped encoder
+            (``backbone_lora``) is supported.
+        num_channels: Number of input channels the model is configured for.
+        encoder_name: Configured encoder name (``ModelConfig.encoder``), used to reject a non-DINOv2 encoder by
+            name. When omitted, the encoder is rejected only if it has no DINOv2 patch embedding.
+
+    Raises:
+        ValueError: If ``num_channels != 3`` and the encoder is not a DINOv2 encoder.
+
+    Examples:
+        >>> from rfdetr.config import RFDETRNanoConfig
+        >>> from rfdetr.models import build_model_from_config
+        >>> model = build_model_from_config(RFDETRNanoConfig(pretrain_weights=None, device="cpu"))
+        >>> adapt_input_channels(model, 4, encoder_name="dinov2_windowed_small")
+        >>> model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection.in_channels
+        4
+    """
+    if num_channels == 3:
+        return
+    # Dispatch on the encoder name, as Backbone._build_encoder does: with backbone_lora the encoder is a PEFT
+    # wrapper, not a DinoV2 instance.
+    if encoder_name is not None and encoder_name.split("_")[0] != "dinov2":
+        raise ValueError(
+            f"num_channels={num_channels} is supported for DINOv2 encoders only, not encoder={encoder_name!r}."
+        )
+    # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
+    encoder = getattr(cast(Any, model).backbone[0], "encoder", None)
+    embeddings = getattr(getattr(encoder, "encoder", None), "embeddings", None)
+    patch_embeddings = getattr(embeddings, "patch_embeddings", None)
+    proj = getattr(patch_embeddings, "projection", None)
+    if patch_embeddings is None or proj is None:
+        raise ValueError(
+            f"num_channels={num_channels} is supported for DINOv2 encoders only, "
+            f"not encoder={encoder_name or type(encoder).__name__!r}."
+        )
+    if proj.weight.shape[1] == num_channels:
+        return
+    new_proj = copy.deepcopy(proj)
+    new_proj.in_channels = num_channels
+    new_proj.weight = torch.nn.Parameter(_adapt_input_conv(num_channels, proj.weight))
+    new_proj.weight.requires_grad = proj.weight.requires_grad
+    patch_embeddings.projection = new_proj
+    patch_embeddings.num_channels = num_channels
+
+
+def _checkpoint_stem_channels(checkpoint_state: dict[str, Any]) -> int | None:
+    """Return the input channel count of the patch-embedding projection stored in a checkpoint.
+
+    Args:
+        checkpoint_state: Model state dict from a checkpoint.
+
+    Returns:
+        The projection's input channel count, or ``None`` when the state dict holds no patch-embedding projection.
+
+    Examples:
+        >>> _checkpoint_stem_channels({"embeddings.patch_embeddings.projection.weight": torch.zeros(8, 4, 2, 2)})
+        4
+        >>> _checkpoint_stem_channels({"class_embed.weight": torch.zeros(2, 8)}) is None
+        True
+    """
+    for name, tensor in checkpoint_state.items():
+        if name.endswith(_PATCH_PROJ_KEY_SUFFIX) and getattr(tensor, "ndim", 0) == 4:
+            return int(tensor.shape[1])
+    return None
+
+
+def _align_stem_to_checkpoint(nn_model: torch.nn.Module, checkpoint_state: dict[str, Any], num_channels: int) -> None:
+    """Widen the model's patch-embedding projection before loading a checkpoint that is itself non-RGB.
+
+    :func:`adapt_input_channels` runs after the checkpoint load, because it derives the ``num_channels`` projection
+    from a 3-channel one. A checkpoint saved from a model trained with ``num_channels != 3`` already holds a
+    projection of that width, which a freshly built 3-channel projection cannot receive. When the checkpoint's width
+    equals the configured ``num_channels`` the model is adapted first, so the checkpoint's projection loads as it is
+    and the later :func:`adapt_input_channels` call does nothing.
+
+    Args:
+        nn_model: Model about to receive ``checkpoint_state``.
+        checkpoint_state: Model state dict from the checkpoint.
+        num_channels: Number of input channels the model is configured for.
+
+    Raises:
+        ValueError: If the checkpoint's projection is neither 3 channels wide nor ``num_channels`` wide.
+
+    Examples:
+        >>> _align_stem_to_checkpoint(torch.nn.Module(), {"class_embed.weight": torch.zeros(2, 8)}, num_channels=4)
+    """
+    checkpoint_channels = _checkpoint_stem_channels(checkpoint_state)
+    if checkpoint_channels is None or checkpoint_channels == 3:
+        return
+    if checkpoint_channels != num_channels:
+        raise ValueError(
+            f"The checkpoint was saved from a model with num_channels={checkpoint_channels}, but this model is "
+            f"configured with num_channels={num_channels}. Only a 3-channel checkpoint can be adapted to another "
+            f"channel count; pass num_channels={checkpoint_channels} to load this checkpoint."
+        )
+    adapt_input_channels(nn_model, checkpoint_channels)
 
 
 def _is_query_param(name: str) -> bool:
@@ -745,6 +888,8 @@ def load_pretrain_weights(
         )
         checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
+    # A checkpoint trained with num_channels != 3 needs the projection widened before its weights can load.
+    _align_stem_to_checkpoint(nn_model, checkpoint["model"], mc.num_channels)
     incompatible = _load_model_state(nn_model, checkpoint["model"], backbone_lora=mc.backbone_lora)
     _warn_on_partial_load(incompatible, pretrain_weights)
 

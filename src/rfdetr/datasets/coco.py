@@ -52,6 +52,10 @@ logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
 
+#: PIL modes with an alpha plane; a 4-channel dataset loads images in these modes as RGBA, keeping that plane as the
+#: fourth channel. ``CMYK`` is not one of them: converting it yields RGB and a constant plane, not a stored channel.
+_ALPHA_MODES = frozenset({"RGBA", "LA"})
+
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
@@ -702,6 +706,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, used to enable
             JPEG DCT-domain downscaling during decode (see :meth:`_decode_image`).  ``None`` (the default) decodes at
             full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
+        num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  With ``4``,
+            an image file that has a fourth channel is loaded as RGBA instead of being converted to RGB (see
+            :meth:`_decode_image`).  Any other value, including the default ``3``, loads every image as RGB.
     """
 
     def __init__(
@@ -715,10 +722,12 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         remap_category_ids: bool = False,
         cat2label: dict[int, int] | None = None,
         draft_size: int | None = None,
+        num_channels: int = 3,
     ) -> None:
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self._draft_size = draft_size
+        self._num_channels = num_channels
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         if cat2label is not None and not remap_category_ids:
@@ -761,6 +770,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
         """Decode one image through :func:`decode_pil_image`, drafting when ``draft_size`` is set.
 
+        With ``num_channels=4``, a file whose header reports an alpha plane (``RGBA``, ``LA``, or a palette with
+        transparency) is returned as full-size ``RGBA`` instead, so a channel stored next to RGB (for example motion
+        or optical flow in the alpha channel) reaches the model as the fourth channel. A file without an alpha plane,
+        ``CMYK`` included, is still returned as RGB.
+
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
         deliberately not named the same: it returns a decode scale alongside the image.
 
@@ -768,10 +782,16 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             image_id: COCO image id.
 
         Returns:
-            Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+            Decoded RGB or RGBA image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not
+            reduce.
         """
-        path = self.coco.loadImgs(image_id)[0]["file_name"]
-        return decode_pil_image(Path(self.root) / path, self._draft_size)
+        path = Path(self.root) / self.coco.loadImgs(image_id)[0]["file_name"]
+        if self._num_channels == 4:
+            # Opening reads only the header; the pixels are decoded here only for a file with an alpha plane.
+            with Image.open(path) as image:
+                if image.mode in _ALPHA_MODES or (image.mode == "P" and "transparency" in image.info):
+                    return image.convert("RGBA"), (1.0, 1.0)
+        return decode_pil_image(path, self._draft_size)
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]
@@ -1572,6 +1592,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -1599,6 +1620,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
         )
     return dataset
 
@@ -1699,6 +1721,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             remap_category_ids=True,
             cat2label=cat2label,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
         )
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
@@ -1724,5 +1747,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             remap_category_ids=True,
             cat2label=cat2label,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
         )
     return dataset

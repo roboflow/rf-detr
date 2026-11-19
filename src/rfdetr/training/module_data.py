@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import cycle, islice
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -1136,7 +1137,12 @@ class RFDETRDataModule(LightningDataModule):
         if not AugmentationBackend.KORNIA._is_available():
             raise ImportError("Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
-        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
+        from rfdetr.datasets.kornia_transforms import (
+            IMAGENET_MEAN,
+            IMAGENET_STD,
+            build_kornia_pipeline,
+            build_normalize,
+        )
 
         pipeline_kwargs: dict[str, Any] = {"with_masks": True}
         if self.model_config.use_grouppose_keypoints:
@@ -1148,7 +1154,12 @@ class RFDETRDataModule(LightningDataModule):
             self.model_config.resolution,
             **pipeline_kwargs,
         )
-        self._kornia_normalize = build_normalize()
+        # Cycle the RGB statistics over the model's channels, as the CPU ``Normalize`` transform does.
+        num_channels = self.model_config.num_channels
+        self._kornia_normalize = build_normalize(
+            mean=tuple(islice(cycle(IMAGENET_MEAN), num_channels)),
+            std=tuple(islice(cycle(IMAGENET_STD), num_channels)),
+        )
         logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
 
     def on_after_batch_transfer(self, batch: tuple[Any, Any], dataloader_idx: int) -> tuple[Any, Any]:

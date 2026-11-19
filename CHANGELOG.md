@@ -23,12 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - On a core install, building a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, raises an `ImportError` that asks for `huggingface_hub` and `safetensors`.
     - On a core install, building a non-windowed `DinoV2(use_windowed_attn=False)` raises an `ImportError` that asks for `transformers`.
 
+### Added
+
+- Training and fine-tuning with `num_channels != 3`, for example RGB plus a motion or optical-flow channel stored as RGBA images. `model.train()` used to build a 3-channel patch embedding whatever `num_channels` said, and the COCO loader converted every image to RGB.
+    - `CocoDetection(num_channels=4)` keeps an image file that has an alpha plane (`RGBA`, `LA`, or a palette with transparency) as RGBA, with that plane as the fourth channel; `build_coco` and `build_roboflow_from_coco` pass the model's `num_channels`. Any other value, including the default `3`, still converts every image to RGB. YOLO-format datasets and WebDataset shards still load RGB. The torchvision `Resize` transform resamples the planes of such an image independently, because Pillow would weight the color planes by the fourth one as if it were transparency.
+    - `rfdetr.datasets.transforms.Normalize` and the Kornia GPU normalization cycle the RGB mean and standard deviation over the channels of the image, as `RFDETR.means` and `RFDETR.stds` already do for prediction.
+    - `RFDETRModelModule` adapts the DINOv2 patch embedding to `num_channels`, through the new `rfdetr.models.weights.adapt_input_channels`, which the inference model builder now shares.
+
 ### Changed
 
 - `import rfdetr`, building a model, prediction and checkpoint loading no longer import `transformers`. The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are plain `torch.nn.Module` subclasses instead of Hugging Face `PreTrainedModel` subclasses, so `from_pretrained`, `save_pretrained`, `push_to_hub` and `transformers` `isinstance` checks no longer apply to them; their outputs are dataclasses read by attribute; `WindowedDinov2WithRegistersConfig` rejects keywords it does not use; and the unused `WindowedDinov2WithRegistersForImageClassification` and head-pruning methods are removed. State-dict keys, initialization for a fixed seed, and outputs are unchanged.
 
     - Loading DINOv2 hub weights (only for a patch-14 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs) reads `model.safetensors` through `huggingface_hub`, using pinned commits for `facebook/dinov2-small`, `facebook/dinov2-base`, and `facebook/dinov2-with-registers-small` and the `main` branch for other repositories, and raises if the file's keys differ from the backbone's instead of randomly initializing the missing ones. Without `huggingface_hub` and `safetensors` it raises an `ImportError` that names them.
     - A non-windowed `DinoV2(use_windowed_attn=False)` imports `transformers` when it is built, and raises an `ImportError` with the install command if `transformers` is missing.
+
+### Fixed
+
+- A checkpoint saved from a model with `num_channels != 3` loads back as `pretrain_weights` into a model with the same `num_channels`, keeping its patch-embedding weights. It used to fail in `load_state_dict` with a size mismatch on `patch_embeddings.projection.weight`, because the patch embedding was adapted only after the load. Loading it with a different `num_channels` raises a `ValueError` that names both channel counts.
 
 ## [1.12.1] — 2026-11-12
 

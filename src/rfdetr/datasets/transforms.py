@@ -19,6 +19,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Sequence
 from functools import cache
+from itertools import cycle, islice
 from typing import Any
 
 try:
@@ -53,7 +54,30 @@ class Normalize:
         mean: tuple[float, ...] = (0.485, 0.456, 0.406),
         std: tuple[float, ...] = (0.229, 0.224, 0.225),
     ) -> None:
-        self._normalize = _TVNormalize(mean, std)
+        self._mean = tuple(mean)
+        self._std = tuple(std)
+        # Built per channel count: an image with more channels than statistics reuses them by cycling, as
+        # ``RFDETR`` extends its ``means`` and ``stds`` for ``num_channels != 3``.
+        self._normalizers: dict[int, _TVNormalize] = {}
+
+    def _normalizer_for(self, channels: int) -> _TVNormalize:
+        """Return the normalizer for a ``channels``-channel image, cycling the configured statistics.
+
+        Args:
+            channels: Channel count of the image to normalize.
+
+        Returns:
+            A normalizer holding one mean and one standard deviation per channel.
+
+        Examples:
+            >>> Normalize()._normalizer_for(4).mean
+            [0.485, 0.456, 0.406, 0.485]
+        """
+        if channels not in self._normalizers:
+            mean = list(islice(cycle(self._mean), channels))
+            std = list(islice(cycle(self._std), channels))
+            self._normalizers[channels] = _TVNormalize(mean, std)
+        return self._normalizers[channels]
 
     def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
         """Normalize image and convert target coordinates to relative format.
@@ -62,6 +86,10 @@ class Normalize:
         bounding boxes from absolute xyxy pixel coordinates to normalized cxcywh
         format (divided by ``[w, h, w, h]``) and scales keypoint x/y by image
         width/height respectively.
+
+        The configured statistics are cycled over the image's channels, so a
+        4-channel image reuses the first mean and standard deviation for its
+        fourth channel.
 
         Args:
             image: CHW float tensor to normalize.
@@ -82,8 +110,10 @@ class Normalize:
             >>> out_img, out_tgt = normalize(img, None)
             >>> out_tgt is None
             True
+            >>> normalize(torch.zeros(4, 64, 64), None)[0].shape
+            torch.Size([4, 64, 64])
         """
-        image = self._normalize(image)
+        image = self._normalizer_for(image.shape[-3])(image)
         if target is None:
             return image, None
         target = target.copy()
