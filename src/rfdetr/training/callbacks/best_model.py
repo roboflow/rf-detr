@@ -15,14 +15,25 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from typing import Any
 
+    from rfdetr.config import TrainConfig
     from rfdetr.training.module_model import RFDETRModelModule
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.trainer.states import TrainerFn
 from torch import Tensor
 
+# _MultiProcessingLauncher is a private PTL API (leading underscore) that may change in minor PTL releases within the
+# >=2.6,<3 range; ``rfdetr.training.trainer`` guards the same import the same way. Without it, spawn workers are not
+# detected and ``run_test=True`` falls through to the collective path.
+try:
+    from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
+except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
+    _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
+
 from rfdetr.training.callbacks.ema import RFDETREMACallback
+from rfdetr.training.checkpoint import _weights_only_loadable
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
 from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
@@ -30,6 +41,25 @@ from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 logger = get_logger()
 
 ptl_version = get_version("pytorch-lightning") or "unknown"
+
+
+def _is_spawned_worker(trainer: Trainer) -> bool:
+    """Return whether *trainer* runs inside a process started by a spawn/fork launcher.
+
+    ``strategy="ddp_spawn"`` / ``"ddp_notebook"`` run ``fit`` in workers created by
+    ``_MultiProcessingLauncher``; a nested ``trainer.test()`` there launches again instead of joining the existing
+    process group. The subprocess launcher behind ``strategy="ddp"`` and single-device strategies run the loop
+    in-process.
+
+    Args:
+        trainer: The Lightning Trainer instance.
+
+    Returns:
+        ``True`` only for a multiprocessing (spawn/fork) launcher.
+    """
+    if _MultiProcessingLauncher is None:
+        return False
+    return isinstance(getattr(trainer.strategy, "launcher", None), _MultiProcessingLauncher)
 
 
 class BestModelCallback(ModelCheckpoint):
@@ -194,7 +224,6 @@ class BestModelCallback(ModelCheckpoint):
                             average_state[key] = model_state_dict[model_key]
         payload: dict[str, object] = {
             "model": model_state_dict,
-            "args": args_dict,
             "epoch": trainer.current_epoch,
             # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
             "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
@@ -218,19 +247,98 @@ class BestModelCallback(ModelCheckpoint):
             "optimizer_states": [],
             "lr_schedulers": [],
         }
+        payload.update(BestModelCallback._model_description(args_dict, model_name, model_config_dict))
+        return payload
+
+    @staticmethod
+    def _model_description(
+        args_dict: object,
+        model_name: str | None = None,
+        model_config_dict: object | None = None,
+    ) -> dict[str, object]:
+        """Return the checkpoint keys that let :meth:`rfdetr.detr.RFDETR.from_checkpoint` rebuild the model.
+
+        Shared by the best ``.pth`` payloads and by
+        :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_save_checkpoint`, so the Lightning ``.ckpt`` files
+        describe their model with the same keys (#1552).
+
+        A dict payload is passed through :func:`~rfdetr.training.checkpoint._weights_only_loadable` first, so every
+        writer records the same value for a config field a weights-only ``torch.load`` cannot read (a ``Path`` in
+        ``TrainConfig.notes``, say). Doing it here rather than in one writer is what keeps ``last.ckpt`` and
+        ``last_ema.pth`` of the same run describing their model identically.
+
+        Args:
+            args_dict: Serialized training args/config payload.
+            model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
+            model_config_dict: Serialized architecture config needed to reconstruct schema-dependent models.
+
+        Returns:
+            ``args``, plus ``model_name``, ``model_config`` and ``rfdetr_version`` for each one that is resolved.
+
+        Examples:
+            >>> description = BestModelCallback._model_description({"num_classes": 3}, model_name="RFDETRNano")
+            >>> description["args"], description["model_name"], "model_config" in description
+            ({'num_classes': 3}, 'RFDETRNano', False)
+        """
+        if isinstance(args_dict, dict):
+            args_dict = _weights_only_loadable(args_dict, "args")
+        if isinstance(model_config_dict, dict):
+            model_config_dict = _weights_only_loadable(model_config_dict, "model_config")
+        description: dict[str, object] = {"args": args_dict}
         # Only write model_name when resolved — omit the key entirely when None
         # so old-format and unresolved checkpoints are indistinguishable.
         if model_name is not None:
-            payload["model_name"] = model_name
+            description["model_name"] = model_name
         if model_config_dict is not None:
-            payload["model_config"] = model_config_dict
+            description["model_config"] = model_config_dict
         # Record the rfdetr package version for provenance / compatibility hints.
         # Omit the key when the version cannot be resolved (e.g. editable install
         # without package metadata) so old-format checkpoints are indistinguishable.
         version = get_version()
         if version is not None:
-            payload["rfdetr_version"] = version
-        return payload
+            description["rfdetr_version"] = version
+        return description
+
+    @staticmethod
+    def _resolve_model_description(
+        trainer: Trainer,
+        pl_module: LightningModule,
+        model_state_dict: dict[str, Tensor],
+        allow_deprecated: bool = False,
+    ) -> tuple[object, str | None, dict[str, object] | None]:
+        """Resolve the training args, model name and model config that describe a checkpoint of ``pl_module``.
+
+        The training config is enriched with the dataset class names so reloaded checkpoints return the correct labels
+        rather than COCO defaults (#509).
+
+        Args:
+            trainer: Active Lightning trainer; its datamodule supplies the dataset class names.
+            pl_module: The ``RFDETRModelModule`` being trained.
+            model_state_dict: Weights the checkpoint stores, with raw (non-prefixed) keys. Schema-critical
+                ``model_config`` fields are synced from them.
+            allow_deprecated: Passed to :meth:`_resolve_model_name`; see there for which caller sets it.
+
+        Returns:
+            ``(args_dict, model_name, model_config_dict)``, the arguments of :meth:`_model_description`.
+        """
+        train_config = cast("RFDETRModelModule", pl_module).train_config
+        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
+        if (
+            dataset_class_names is not None
+            and hasattr(train_config, "model_copy")
+            and getattr(train_config, "class_names", None) is None
+        ):
+            train_config = train_config.model_copy(update={"class_names": dataset_class_names})
+        # `RFDETRModelModule.__init__` types `train_config` as `TrainConfig`, so in production this always takes the
+        # `model_dump` branch. The fallback is reached only by tests, which assign a plain dict; keeping it means
+        # `args_dict` is still a dict either way, which is what `_model_description` needs to probe it for values a
+        # weights-only `torch.load` cannot read. An object that is neither is stored as it is.
+        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
+        return (
+            args_dict,
+            BestModelCallback._resolve_model_name(pl_module, allow_deprecated),
+            BestModelCallback._serialize_model_config(pl_module, model_state_dict),
+        )
 
     @staticmethod
     def _unwrap_model(pl_module: LightningModule) -> torch.nn.Module:
@@ -299,22 +407,16 @@ class BestModelCallback(ModelCheckpoint):
             Internal helper called by ``on_validation_end`` (best EMA) and ``on_fit_end``
             (guaranteed ``checkpoint_best_ema.pth`` and ``last_ema.pth``).
         """
-        ema_train_config = cast("RFDETRModelModule", pl_module).train_config
-        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
-        if (
-            dataset_class_names is not None
-            and hasattr(ema_train_config, "model_copy")
-            and getattr(ema_train_config, "class_names", None) is None
-        ):
-            ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
-        ema_args_dict = ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
+        ema_args_dict, model_name, model_config_dict = self._resolve_model_description(
+            trainer, pl_module, ema_state_dict
+        )
         torch.save(
             self._build_checkpoint_payload(
                 ema_state_dict,
                 ema_args_dict,
                 trainer,
-                model_name=self._resolve_model_name(pl_module),
-                model_config_dict=self._serialize_model_config(pl_module, ema_state_dict),
+                model_name=model_name,
+                model_config_dict=model_config_dict,
                 share_ema_model_state=True,
             ),
             dest,
@@ -363,11 +465,19 @@ class BestModelCallback(ModelCheckpoint):
         return dumped
 
     @staticmethod
-    def _resolve_model_name(pl_module: LightningModule) -> str | None:
+    def _resolve_model_name(pl_module: LightningModule, allow_deprecated: bool = False) -> str | None:
         """Resolve checkpoint model_name from model_config or config type.
 
         The CLI/PTL path does not call ``RFDETR.train()``, so ``model_config.model_name`` may be unset. In that case,
         infer the model class from concrete config names like ``RFDETRSmallConfig``.
+
+        Args:
+            pl_module: The Lightning module whose ``model_config`` names the model.
+            allow_deprecated: When ``True``, a ``*DeprecatedConfig`` resolves to its class name (e.g.
+                ``"RFDETRLargeDeprecated"``, which :meth:`rfdetr.detr.RFDETR.from_checkpoint` maps back to a class)
+                instead of raising. Only :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_save_checkpoint`
+                passes it: refusing to *name* a deprecated model there would stop a plain ``Trainer`` from writing
+                any checkpoint at all, while this callback's own best-``.pth`` files keep refusing.
 
         Note:
             The ``DeprecatedConfig`` ``RuntimeError`` guard is only reachable from the CLI/PTL path. ``RFDETR.train()``
@@ -383,7 +493,7 @@ class BestModelCallback(ModelCheckpoint):
 
         config_type_name = type(model_config).__name__ if model_config is not None else ""
 
-        if config_type_name.endswith("DeprecatedConfig"):
+        if config_type_name.endswith("DeprecatedConfig") and not allow_deprecated:
             raise RuntimeError(
                 f"Deprecated model config '{config_type_name}' is no longer supported. "
                 "Re-train your model using a current model variant."
@@ -457,19 +567,7 @@ class BestModelCallback(ModelCheckpoint):
         # checkpoint tied to live weights even when an EMA checkpoint is tracked in
         # parallel; checkpoint_best_ema.pth is the only file that should save EMA weights.
         model_state_dict = self._get_live_model_state_dict(pl_module)
-        # Enrich train_config with dataset class names so reloaded checkpoints
-        # return the correct labels, not COCO defaults (#509).
-        train_config = cast("RFDETRModelModule", pl_module).train_config
-        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
-        if (
-            dataset_class_names is not None
-            and hasattr(train_config, "model_copy")
-            and getattr(train_config, "class_names", None) is None
-        ):
-            train_config = train_config.model_copy(update={"class_names": dataset_class_names})
-        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
-        model_name = self._resolve_model_name(pl_module)
-        model_config_dict = self._serialize_model_config(pl_module, model_state_dict)
+        args_dict, model_name, model_config_dict = self._resolve_model_description(trainer, pl_module, model_state_dict)
         torch.save(
             self._build_checkpoint_payload(
                 model_state_dict,
@@ -502,20 +600,17 @@ class BestModelCallback(ModelCheckpoint):
 
         Delegates regular-model checkpoint management to the :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         parent (handles improvement detection, fast_dev_run/sanity guards, ``best_model_path`` and ``best_model_score``
-        bookkeeping).  EMA is tracked independently, so the pre-training sanity-check guard below applies to both:
-        neither should treat the sanity-check validation pass as a real epoch's result.
+        bookkeeping). EMA tracking and metric smoothing also skip fast-dev runs, standalone evaluation and the
+        pre-training sanity check, so those passes cannot overwrite checkpoints or seed training state.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        # PTL's pre-training sanity check runs this hook before any real epoch. The
-        # regular-checkpoint path below already no-ops during it via ModelCheckpoint's own
-        # trainer.sanity_checking guard (_should_skip_saving_checkpoint), but the EMA
-        # tracking and the smoothing accumulator are custom bookkeeping that don't inherit
-        # that guard, so a positive sanity-check score would otherwise get treated as a real
-        # improvement — see #1348.
-        if trainer.sanity_checking:
+        # Custom EMA/smoothing paths must honor the same lifecycle exclusions as ModelCheckpoint.
+        # Keep its duplicate-step guard local to the regular track: EMA tracking is independent,
+        # and _last_global_step_saved is only updated by regular saves on the main process.
+        if getattr(trainer, "fast_dev_run") or trainer.state.fn != TrainerFn.FITTING or trainer.sanity_checking:
             return
         # Stash before the skip guard — eligible epochs still need this reference
         # inside _save_checkpoint (which receives no pl_module param).
@@ -581,17 +676,88 @@ class BestModelCallback(ModelCheckpoint):
     def on_fit_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Select the overall best model and optionally run test evaluation.
 
-        Copies the winner (regular vs EMA, strict ``>`` for EMA) to ``checkpoint_best_total.pth``, strips
-        optimizer/scheduler state, then optionally runs ``trainer.test()``. EMA reload tolerates only missing
-        module extra state; all weight/key mismatches remain errors.
+        On the main process, copies the winner (regular vs EMA, strict ``>`` for EMA) to
+        ``checkpoint_best_total.pth`` and strips optimizer/scheduler state. With ``run_test=True`` every rank then
+        loads those weights and enters ``trainer.test()``: the call is collective under DDP, so the decision to test
+        and the winning source are broadcast from the main process rather than decided per rank. EMA reload tolerates
+        only missing module extra state; all weight/key mismatches remain errors.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        if not trainer.is_global_zero:
+        # A dry run must not backfill/promote checkpoints or reload/test an earlier run's files.
+        # Return on every rank before any of the collective test-evaluation operations below.
+        if getattr(trainer, "fast_dev_run"):
             return
+        total_path = self._output_dir / "checkpoint_best_total.pth"
+        chose_ema = self._promote_best_total(trainer, pl_module, total_path) if trainer.is_global_zero else False
 
+        if not self._run_test:
+            return
+        # Only call trainer.test() when the module actually defines test_step().
+        cls_test_step = getattr(type(pl_module), "test_step", None)
+        has_test_step = cls_test_step is not None and cls_test_step is not LightningModule.test_step
+        if not has_test_step:
+            return
+        if _is_spawned_worker(trainer):
+            # A spawn launcher has no notion of "already inside a worker": trainer.test() here would spawn a second
+            # set of processes and re-initialise the process group on the same port (EADDRINUSE). The subprocess
+            # launcher behind ``strategy="ddp"`` just runs the loop in-process, so only spawn strategies are skipped.
+            if trainer.is_global_zero:
+                logger.warning(
+                    "Skipping trainer.test() at fit end: run_test=True is not supported with spawn-based DDP "
+                    "(strategy='ddp_spawn' / 'ddp_notebook'). To score the best checkpoint afterwards, load it "
+                    f"first: RFDETR.from_checkpoint('{total_path}').evaluate(split='test', dataset_dir=...) "
+                    "(evaluate() scores the weights held in memory, not a checkpoint file)."
+                )
+            return
+        # The barrier orders the main process's checkpoint writes before any rank reads them; the broadcast keeps
+        # every rank on the same branch, since a rank that skips a collective trainer.test() hangs the others.
+        trainer.strategy.barrier()
+        should_test, chose_ema = trainer.strategy.broadcast(
+            (total_path.exists(), chose_ema) if trainer.is_global_zero else (False, False), src=0
+        )
+        if not should_test:
+            if trainer.is_global_zero:
+                logger.warning(
+                    "Skipping trainer.test() because no best checkpoint was produced. "
+                    "Ensure the monitored metric is logged on evaluation epochs, that evaluation "
+                    "runs often enough, and that skip_best_epochs is smaller than the number of "
+                    "training epochs."
+                )
+            return
+        self._load_best_total_weights(pl_module, total_path, chose_ema)
+        if trainer.is_global_zero:
+            logger.info("Loaded best weights from %s for test evaluation.", total_path)
+        # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
+        # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
+        # so standalone trainer.test() calls keep evaluating EMA weights.
+        ema_callbacks = [
+            cb
+            for cb in trainer.callbacks  # type: ignore[attr-defined]
+            if isinstance(cb, RFDETREMACallback)
+        ]
+        prior_flags = [cb.suppress_test_swap for cb in ema_callbacks]
+        for ema_callback in ema_callbacks:
+            ema_callback.suppress_test_swap = True
+        try:
+            trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)  # type: ignore[attr-defined]
+        finally:
+            for ema_callback, prior in zip(ema_callbacks, prior_flags):
+                ema_callback.suppress_test_swap = prior
+
+    def _promote_best_total(self, trainer: Trainer, pl_module: LightningModule, total_path: Path) -> bool:
+        """Copy the winning best checkpoint to ``total_path`` and refresh ``last_ema.pth``; main process only.
+
+        Args:
+            trainer: The Lightning Trainer instance.
+            pl_module: The ``RFDETRModelModule`` being trained.
+            total_path: Destination of the stripped ``checkpoint_best_total.pth``.
+
+        Returns:
+            Whether the copied source was the EMA checkpoint.
+        """
         # Use _best_raw_regular when smoothing is active: best_model_score tracks the
         # smoothed value, so comparing it directly against raw _best_ema is biased.
         # _best_raw_regular is the raw (un-smoothed) metric value at the epoch where the
@@ -605,7 +771,6 @@ class BestModelCallback(ModelCheckpoint):
         else:
             best_regular = self.best_model_score.item() if self.best_model_score is not None else 0.0
         ema_path = self._output_dir / "checkpoint_best_ema.pth"
-        total_path = self._output_dir / "checkpoint_best_total.pth"
 
         # Backfill before choosing the winner: a valid zero EMA score does not pass the strict improvement check, but
         # EMA-only runs still need a source checkpoint to promote to checkpoint_best_total.pth.
@@ -643,73 +808,54 @@ class BestModelCallback(ModelCheckpoint):
         # When EMA tracking is enabled, always leave last_ema.pth on disk, mirroring last.pth for the live model.
         if self._monitor_ema is not None and ema_state_dict is not None:
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "last_ema.pth")
+        return chose_ema
 
-        if self._run_test:
-            # Only call trainer.test() when the module actually defines test_step().
-            cls_test_step = getattr(type(pl_module), "test_step", None)
-            has_test_step = cls_test_step is not None and cls_test_step is not LightningModule.test_step
-            if has_test_step:
-                if not total_path.exists():
-                    logger.warning(
-                        "Skipping trainer.test() because no best checkpoint was produced. "
-                        "Ensure the monitored metric is logged on evaluation epochs, that evaluation "
-                        "runs often enough, and that skip_best_epochs is smaller than the number of "
-                        "training epochs."
-                    )
-                    return
-                # Load best weights before test — mirrors legacy main.py:602-609.
-                # trust=True: checkpoint_best_total.pth is produced locally; allow pickle fallback if needed.
-                from rfdetr.utilities.io import _safe_torch_load
+    @staticmethod
+    def _load_best_total_weights(pl_module: LightningModule, total_path: Path, chose_ema: bool) -> None:
+        """Load ``checkpoint_best_total.pth`` into the unwrapped module before test evaluation.
 
-                ckpt = _safe_torch_load(total_path, trust=True)
-                # Checkpoints always store plain keys; load into the unwrapped module
-                # so compiled (OptimizedModule) and non-compiled models both work.
-                raw = BestModelCallback._unwrap_model(pl_module)
-                if chose_ema:
-                    # EMA exports omit FP8 history; retain the live history without relaxing weight validation.
-                    incompatible = raw.load_state_dict(ckpt["model"], strict=False)
-                    missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
-                    if missing or incompatible.unexpected_keys:
-                        raise RuntimeError(
-                            f"Error loading best EMA weights: Missing keys: {missing}; "
-                            f"Unexpected keys: {incompatible.unexpected_keys}"
-                        )
-                else:
-                    # The regular checkpoint is saved directly from the live model's state_dict
-                    # (``_get_live_model_state_dict``), so under FP8 it still carries Transformer
-                    # Engine's ``_extra_state`` entries. Transformer Engine rejects their pickle
-                    # round-trip via ``set_extra_state()``, so they must be excluded from the dict —
-                    # tolerating them afterward via ``strict=False`` alone is not enough, since the
-                    # setter still runs for any key present in both the checkpoint and the module.
-                    filtered_model = {
-                        key: value
-                        for key, value in ckpt["model"].items()
-                        if not RFDETREMACallback._is_extra_state_key(key)
-                    }
-                    incompatible = raw.load_state_dict(filtered_model, strict=False)
-                    missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
-                    if missing or incompatible.unexpected_keys:
-                        raise RuntimeError(
-                            f"Error loading best regular weights: Missing keys: {missing}; "
-                            f"Unexpected keys: {incompatible.unexpected_keys}"
-                        )
-                logger.info("Loaded best weights from %s for test evaluation.", total_path)
-                # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
-                # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
-                # so standalone trainer.test() calls keep evaluating EMA weights.
-                ema_callbacks = [
-                    cb
-                    for cb in trainer.callbacks  # type: ignore[attr-defined]
-                    if isinstance(cb, RFDETREMACallback)
-                ]
-                prior_flags = [cb.suppress_test_swap for cb in ema_callbacks]
-                for ema_callback in ema_callbacks:
-                    ema_callback.suppress_test_swap = True
-                try:
-                    trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)  # type: ignore[attr-defined]
-                finally:
-                    for ema_callback, prior in zip(ema_callbacks, prior_flags):
-                        ema_callback.suppress_test_swap = prior
+        Mirrors legacy ``main.py:602-609``. ``trust=True``: the checkpoint is produced locally, so the pickle fallback
+        is allowed if needed. Checkpoints always store plain keys, so loading into the unwrapped module works for
+        compiled (``OptimizedModule``) and non-compiled models alike.
+
+        Args:
+            pl_module: The ``RFDETRModelModule`` to load into.
+            total_path: Path of ``checkpoint_best_total.pth``.
+            chose_ema: Whether the checkpoint holds EMA weights, which omit FP8 history.
+
+        Raises:
+            RuntimeError: If any weight key is missing or unexpected (module extra state excepted).
+        """
+        from rfdetr.utilities.io import _safe_torch_load
+
+        ckpt = _safe_torch_load(total_path, trust=True)
+        raw = BestModelCallback._unwrap_model(pl_module)
+        if chose_ema:
+            # EMA exports omit FP8 history; retain the live history without relaxing weight validation.
+            incompatible = raw.load_state_dict(ckpt["model"], strict=False)
+            missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
+            if missing or incompatible.unexpected_keys:
+                raise RuntimeError(
+                    f"Error loading best EMA weights: Missing keys: {missing}; "
+                    f"Unexpected keys: {incompatible.unexpected_keys}"
+                )
+            return
+        # The regular checkpoint is saved directly from the live model's state_dict
+        # (``_get_live_model_state_dict``), so under FP8 it still carries Transformer
+        # Engine's ``_extra_state`` entries. Transformer Engine rejects their pickle
+        # round-trip via ``set_extra_state()``, so they must be excluded from the dict —
+        # tolerating them afterward via ``strict=False`` alone is not enough, since the
+        # setter still runs for any key present in both the checkpoint and the module.
+        filtered_model = {
+            key: value for key, value in ckpt["model"].items() if not RFDETREMACallback._is_extra_state_key(key)
+        }
+        incompatible = raw.load_state_dict(filtered_model, strict=False)
+        missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
+        if missing or incompatible.unexpected_keys:
+            raise RuntimeError(
+                f"Error loading best regular weights: Missing keys: {missing}; "
+                f"Unexpected keys: {incompatible.unexpected_keys}"
+            )
 
 
 class RFDETREarlyStopping(EarlyStopping):
@@ -818,3 +964,43 @@ class RFDETREarlyStopping(EarlyStopping):
 
         trainer.callback_metrics[self._SYNTHETIC_MONITOR] = torch.tensor(effective)
         super().on_validation_end(trainer, pl_module)
+
+
+def _save_final_checkpoint(
+    module: RFDETRModelModule,
+    trainer: Trainer,
+    train_config: TrainConfig,
+    model_config: Any,
+    output_path: Path,
+    model_name: str,
+) -> Path:
+    """Save a final RF-DETR ``.pth`` checkpoint that ``from_checkpoint`` can load.
+
+    The fine-tuning cookbooks drive the Lightning trainer directly, so no :class:`BestModelCallback` writes the
+    self-contained checkpoint for them. This writes the same payload from the weights of the live model, unwrapping
+    a ``torch.compile`` wrapper first.
+
+    Args:
+        module: Trained module whose ``model`` holds the weights to save.
+        trainer: Trainer that ran the fit, providing the epoch and step counters.
+        train_config: Training configuration stored in the checkpoint.
+        model_config: Architecture configuration stored in the checkpoint.
+        output_path: File to write; missing parent directories are created.
+        model_name: Name of the model class, e.g. ``"RFDETRSmall"``.
+
+    Returns:
+        *output_path*.
+    """
+    raw_model: Any = getattr(module.model, "_orig_mod", module.model)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        BestModelCallback._build_checkpoint_payload(
+            raw_model.state_dict(),
+            train_config.model_dump(),
+            trainer,
+            model_name=model_name,
+            model_config_dict=model_config.model_dump(),
+        ),
+        output_path,
+    )
+    return output_path

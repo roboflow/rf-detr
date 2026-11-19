@@ -14,6 +14,7 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
+from rfdetr.datasets import save_grids
 from rfdetr.datasets.save_grids import DatasetGridSaver
 
 
@@ -82,10 +83,9 @@ def test_save_grid_writes_files(tmp_path: Path) -> None:
         assert img.shape[2] == 3
 
 
-def test_save_grid_passes_masks_to_supervision(tmp_path: Path, monkeypatch) -> None:
-    """Segmentation targets should be forwarded to supervision as instance masks."""
-    from rfdetr.datasets import save_grids
-
+@pytest.fixture
+def annotated_masks(mocker) -> list:
+    """Replace ``MaskAnnotator`` with a recorder and return the list of per-call instance masks."""
     captured_masks = []
 
     class _FakeMaskAnnotator:
@@ -93,46 +93,32 @@ def test_save_grid_passes_masks_to_supervision(tmp_path: Path, monkeypatch) -> N
             self.opacity = opacity
 
         def annotate(self, scene, detections):
-            captured_masks.append(detections.mask.copy())
+            captured_masks.append(None if detections.mask is None else detections.mask.copy())
             return scene
 
-    monkeypatch.setattr(save_grids, "MaskAnnotator", _FakeMaskAnnotator)
-
-    dataset = _FakeDataset(num_samples=1, include_masks=True)
-    loader = DataLoader(dataset, batch_size=1, collate_fn=_collate)
-
-    saver = DatasetGridSaver(loader, tmp_path, max_batches=1, dataset_type="train")
-    saver.save_grid()
-
-    assert len(captured_masks) == 1
-    assert captured_masks[0].shape == (2, 224, 224)
-    assert captured_masks[0].dtype == bool
-    assert captured_masks[0][0, 48:112, 48:112].all()
+    mocker.patch.object(save_grids, "MaskAnnotator", _FakeMaskAnnotator)
+    return captured_masks
 
 
-def test_save_grid_skips_mask_annotator_without_masks(tmp_path: Path, monkeypatch) -> None:
+def test_save_grid_passes_masks_to_supervision(tmp_path: Path, annotated_masks: list) -> None:
+    """Segmentation targets should be forwarded to supervision as instance masks."""
+    loader = DataLoader(_FakeDataset(num_samples=1, include_masks=True), batch_size=1, collate_fn=_collate)
+
+    DatasetGridSaver(loader, tmp_path, max_batches=1, dataset_type="train").save_grid()
+
+    assert len(annotated_masks) == 1
+    assert annotated_masks[0].shape == (2, 224, 224)
+    assert annotated_masks[0].dtype == bool
+    assert annotated_masks[0][0, 48:112, 48:112].all()
+
+
+def test_save_grid_skips_mask_annotator_without_masks(tmp_path: Path, annotated_masks: list) -> None:
     """Targets without a 'masks' entry must not trigger mask_annotator.annotate."""
-    from rfdetr.datasets import save_grids
+    loader = DataLoader(_FakeDataset(num_samples=1, include_masks=False), batch_size=1, collate_fn=_collate)
 
-    annotate_calls = []
+    DatasetGridSaver(loader, tmp_path, max_batches=1, dataset_type="train").save_grid()
 
-    class _FakeMaskAnnotator:
-        def __init__(self, opacity: float) -> None:
-            self.opacity = opacity
-
-        def annotate(self, scene, detections):
-            annotate_calls.append(detections)
-            return scene
-
-    monkeypatch.setattr(save_grids, "MaskAnnotator", _FakeMaskAnnotator)
-
-    dataset = _FakeDataset(num_samples=1, include_masks=False)
-    loader = DataLoader(dataset, batch_size=1, collate_fn=_collate)
-
-    saver = DatasetGridSaver(loader, tmp_path, max_batches=1, dataset_type="train")
-    saver.save_grid()
-
-    assert annotate_calls == []
+    assert annotated_masks == []
 
 
 class TestExtractMasks:
@@ -145,18 +131,14 @@ class TestExtractMasks:
             pytest.param(torch.zeros((1, 4, 4), dtype=torch.bool), 2, id="fewer_masks_than_instances"),
         ],
     )
-    def test_returns_none_and_logs_warning_on_invalid_input(self, masks, num_instances, monkeypatch) -> None:
+    def test_returns_none_and_logs_warning_on_invalid_input(self, masks, num_instances, mocker) -> None:
         """Malformed or insufficient masks fall back to None with a logged warning."""
-        from rfdetr.datasets import save_grids
+        warning = mocker.patch.object(save_grids.logger, "warning", side_effect=lambda msg, *args: msg % args)
 
-        warnings = []
-        monkeypatch.setattr(save_grids.logger, "warning", lambda msg, *args: warnings.append(msg % args))
-
-        target = {"masks": masks}
-        result = DatasetGridSaver._extract_masks(target, image_shape=(4, 4), num_instances=num_instances)
+        result = DatasetGridSaver._extract_masks({"masks": masks}, image_shape=(4, 4), num_instances=num_instances)
 
         assert result is None
-        assert len(warnings) == 1
+        warning.assert_called_once()
 
     def test_returns_none_silently_on_0d_masks(self) -> None:
         """A 0-d masks tensor is rejected before the len() call that would otherwise raise TypeError."""

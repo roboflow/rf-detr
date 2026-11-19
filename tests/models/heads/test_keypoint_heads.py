@@ -3,6 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Tests for the keypoint head helpers: conditional query initializer, L1/NLL keypoint loss, and matching cost."""
 
 import pytest
 import torch
@@ -33,7 +34,7 @@ def test_conditional_query_initializer_zero_adaln_identity() -> None:
     assert torch.equal(output, expected)
 
 
-def test_compute_l1_keypoint_loss_smoke() -> None:
+def test_compute_l1_keypoint_loss_returns_four_finite_vectors() -> None:
     """Loss helper should emit four finite vectors with matching target batch shape."""
     pred_keypoints = torch.randn(3, 17, 7)
     target_keypoints = torch.rand(3, 17, 3)
@@ -57,9 +58,9 @@ def test_compute_l1_keypoint_loss_smoke() -> None:
 @pytest.mark.parametrize(
     ("channel", "loss_index"),
     [
-        pytest.param(0, 0, id="x_coord_corrupts_location_loss"),
-        pytest.param(2, 1, id="findable_logit_corrupts_findable_loss"),
-        pytest.param(3, 2, id="visible_logit_corrupts_visible_loss"),
+        (0, 0),  # x coordinate -> location loss
+        (2, 1),  # findable logit -> findable loss
+        (3, 2),  # visible logit -> visible loss
     ],
 )
 def test_compute_l1_keypoint_loss_ignores_single_nonfinite_prediction_channel(channel: int, loss_index: int) -> None:
@@ -93,18 +94,8 @@ def test_compute_l1_keypoint_loss_ignores_single_nonfinite_prediction_channel(ch
     )
 
 
-@pytest.mark.parametrize(
-    "channel",
-    [
-        pytest.param(0, id="x_coord"),
-        pytest.param(1, id="y_coord"),
-        pytest.param(2, id="findable_logit"),
-        pytest.param(3, id="visible_logit"),
-        pytest.param(4, id="log_l11"),
-        pytest.param(5, id="l21"),
-        pytest.param(6, id="log_l22"),
-    ],
-)
+# Channels: 0 x_coord, 1 y_coord, 2 findable_logit, 3 visible_logit, 4 log_l11, 5 l21, 6 log_l22.
+@pytest.mark.parametrize("channel", [0, 1, 2, 3, 4, 5, 6])
 def test_compute_l1_keypoint_loss_gradient_ignores_single_nonfinite_prediction_channel(channel: int) -> None:
     """A single non-finite prediction must not poison the *gradient* of any loss term, not just its value.
 
@@ -225,11 +216,16 @@ def test_compute_l1_keypoint_loss_skips_nonfinite_target_area() -> None:
     assert torch.isfinite(grad).all(), f"a non-finite target area must not poison grad={grad}"
 
 
-def test_compute_l1_keypoint_loss_uses_raw_rflow_gaussian_nll() -> None:
-    """Perfect keypoints should use raw r-flow NLL without a floor shift."""
-    pred_keypoints = torch.zeros(1, 1, 7)
-    pred_keypoints[:, :, 4] = 0.3
-    pred_keypoints[:, :, 6] = -0.2
+@pytest.mark.parametrize(
+    ("pred_row", "expected_nll"),
+    [
+        pytest.param([0.0, 0.0, 0.0, 0.0, 0.3, 0.0, -0.2], -0.1, id="perfect-keypoint-no-floor-shift"),
+        pytest.param([0.0, 0.0, 0.0, 0.0, 25.0, 0.0, 0.0], -25.0, id="large-log-diagonal-not-clamped"),
+    ],
+)
+def test_compute_l1_keypoint_loss_uses_raw_rflow_gaussian_nll(pred_row: list[float], expected_nll: float) -> None:
+    """A perfect keypoint yields the raw r-flow NLL: no floor shift, and large log-diagonals are not clamped."""
+    pred_keypoints = torch.tensor([[pred_row]])
     target_keypoints = torch.tensor([[[0.0, 0.0, 2.0]]], dtype=torch.float32)
 
     _, _, _, nll = compute_l1_keypoint_loss(
@@ -240,24 +236,7 @@ def test_compute_l1_keypoint_loss_uses_raw_rflow_gaussian_nll() -> None:
         num_keypoints_per_class=[1],
     )
 
-    torch.testing.assert_close(nll, torch.tensor([-0.1]), rtol=1e-4, atol=1e-6)
-
-
-def test_compute_l1_keypoint_loss_does_not_clamp_log_cholesky_nll() -> None:
-    """Large precision log-diagonals should remain raw to match r-flow."""
-    pred_keypoints = torch.zeros(1, 1, 7)
-    pred_keypoints[:, :, 4] = 25.0
-    target_keypoints = torch.tensor([[[0.0, 0.0, 2.0]]], dtype=torch.float32)
-
-    _, _, _, nll = compute_l1_keypoint_loss(
-        all_pred_keypoints=pred_keypoints,
-        target_keypoints=target_keypoints,
-        target_classes=torch.tensor([0], dtype=torch.int64),
-        target_areas=torch.tensor([1.0], dtype=torch.float32),
-        num_keypoints_per_class=[1],
-    )
-
-    torch.testing.assert_close(nll, torch.tensor([-25.0]), rtol=1e-4, atol=1e-6)
+    torch.testing.assert_close(nll, torch.tensor([expected_nll]), rtol=1e-4, atol=1e-6)
 
 
 def test_compute_l1_keypoint_loss_raw_nll_gradients_match_reference_formula() -> None:
@@ -305,7 +284,7 @@ def test_compute_l1_keypoint_loss_rejects_missing_schema() -> None:
         )
 
 
-def test_compute_keypoint_matching_cost_smoke() -> None:
+def test_compute_keypoint_matching_cost_returns_four_finite_cost_tensors() -> None:
     """Matching-cost helper should return a four-term cost tensor for each target."""
     all_pred_keypoints = torch.randn(2, 4, 17, 7)
     target_keypoints = torch.rand(2, 17, 3)
@@ -379,7 +358,7 @@ def test_compute_keypoint_matching_cost_rejects_missing_schema() -> None:
         )
 
 
-class TestComputeKeypointMatchingCostSmoke:
+class TestComputeKeypointMatchingCost:
     """Group: compute_keypoint_matching_cost — shape and boundary checks."""
 
     def test_n_targets_zero_returns_four_empty_cost_tensors(self) -> None:

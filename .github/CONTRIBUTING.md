@@ -115,7 +115,7 @@ rf-detr/
 
 ## Development Environment Setup
 
-RF-DETR uses **`uv`** as the package manager for dependency management. Ensure you have Python >=3.10 installed (supports 3.10, 3.11, 3.12, 3.13).
+RF-DETR uses **`uv`** as the package manager for dependency management. Ensure you have Python >=3.10 installed (supports 3.10, 3.11, 3.12, 3.13, 3.14).
 
 ### Installing uv
 
@@ -143,7 +143,7 @@ uv sync --group docs       # Documentation dependencies only
 uv sync --group build      # Build tools only
 ```
 
-Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `--torch-backend` is also only available for `uv pip`.
+Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because some extras are declared as conflicting (for example `executorch` with `tflite` or `xla`, and `litert` with `tflite`). `--torch-backend` is also only available for `uv pip`.
 
 The test suite imports the training and augmentation dependencies, so installing dependency groups alone leaves a large number of tests erroring on import.
 
@@ -164,10 +164,12 @@ The test suite imports the training and augmentation dependencies, so installing
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt and not e2e_executorch_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
 
 The marker expressions exclude suites that need assets, optional integrations, or unavailable hardware: `coco17` needs the COCO dataset, `integration` covers tests owned by dedicated integration jobs, and `xla` / `tpu` need accelerators. Dropping them from the expression is what produces most local-only failures.
+
+The macOS CI leg adds `and not ddp` on top of that expression. `ddp` marks the tests that spawn real gloo worker processes; on macOS each one costs roughly 110 seconds under Python 3.13 against about 10 seconds elsewhere, which pushed that job past its 25-minute cap. macOS cannot run real distributed training anyway, so the Linux and Windows legs own that coverage. Local macOS runs keep the tests unless you exclude the marker yourself.
 
 **Development vs. PR Requirements:**
 
@@ -240,6 +242,28 @@ def test_model_loading(model_variant):
     pass
 ```
 
+**Gate tests that need an optional dependency with a decorator, never `pytest.importorskip`:**
+
+Do not call `pytest.importorskip(...)`, and do not use `pytest.skip()` merely because an optional package is missing. Import the package's `_IS_<PACKAGE>_INSTALLED` flag from `rfdetr.export.imports` (export formats) or `rfdetr.utilities.imports` (everything else; add a new flag there rather than probing in the test file). A format whose exporter package guards its own import (`_IS_COREMLTOOLS_AVAILABLE`, `_IS_EXECUTORCH_AVAILABLE`, `_IS_ONNX2TF_AVAILABLE`, `_IS_POLYGRAPHY_AVAILABLE`) is gated on that flag instead, which skips a broken install rather than failing it. Build a named `skipif` decorator from the flag, and apply that decorator to the test or class (use `pytest.param(..., marks=...)` for parametrized cases; fixtures cannot carry `skipif`, so decorate their consumers). Do not gate a whole module with `pytestmark = <named skipif>`, even when every test in it needs the package: the gate is easy to overlook when a test is added later. Put the marker on each test class or function instead. Give one meaning one decorator name: a gate shared by several modules lives in `tests/_markers.py`, and a name never means different packages in different files (`_requires_onnxruntime` gates ONNX Runtime alone, `_requires_onnx_and_onnxruntime` gates both). Every skip marker is named `_requires_<what the test needs>` (`_requires_kornia`, or `_requires_no_cuda` for a test that needs CUDA absent): the leading underscore keeps it private to the test suite, and a name like `_kornia_only` would wrongly suggest that nothing else may be installed. Every `skipif` condition gets a name: a test, class or `pytest.param` carries the named marker, never an inline `pytest.mark.skipif(...)`. This holds for device and platform gates (`_requires_cuda`, `_requires_posix_permissions`) as much as for packages. Import the optional package locally inside the test or helper that uses it. Helper doctests that need the package use `__doctest_requires__`.
+
+A flag proves that a package is installed, not that it imports. A broken install therefore fails with an error instead of a skip, which is intended: a silent skip would hide the very breakage the test exists to catch. Reserve in-body `pytest.skip()` for conditions that can only be determined at runtime, such as a transitive import that fails inside an installed package.
+
+```python
+import pytest
+
+from rfdetr.export.imports import _IS_ONNX_INSTALLED
+
+_requires_onnx = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed")
+
+
+@_requires_onnx
+class TestOnnxGraph:
+    def test_saves_model(self, tmp_path):
+        import onnx  # local: the package is optional
+
+        ...
+```
+
 **Avoid multiple validation cases in a single test:**
 
 Do not write tests that loop through multiple cases internally. Instead, use `@pytest.mark.parametrize` so each case runs as a separate test:
@@ -287,7 +311,16 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 
 **Use dedicated markers for integration-only CI jobs:**
 
-Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`. The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnxruntime`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
+Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`, named after the pip extra it needs (for example, `e2e_onnx` for the `[onnx]` extra). The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnx`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
+
+**ExecuTorch TensorRT (`e2e_executorch_tensorrt`):** the suite behind `format="executorch", backend="tensorrt"` exports real models through Torch-TensorRT and runs the `.pte` with ExecuTorch's TensorRT delegate, so it needs an NVIDIA GPU and the `executorch-tensorrt` extra. The `ExecuTorch TensorRT parity` job (`executorch-tensorrt-parity`) in `.github/workflows/ci-integrations.yml` is the only CI job that runs it; `ci-tests-gpu.yml` deselects it. The extra pins torch 2.15 and conflicts with `executorch`, so the job installs it in an isolated environment of its own. To run it locally, use a Linux machine with an NVIDIA GPU and Python 3.11 or newer, install the extra into a fresh environment, and select the marker:
+
+```bash
+uv pip install -e ".[executorch-tensorrt,train,augment,cli,visual]" --group tests
+uv run --no-sync pytest tests/ -m e2e_executorch_tensorrt -n 1 --timeout=600 -rs
+```
+
+A skipped test here means the extra or a CUDA device is missing, not that the suite passed.
 
 ### CI Testing
 
@@ -298,8 +331,8 @@ Mark tests that require an optional integration dependency with both the shared 
 Our continuous integration tests run on:
 
 - **Operating Systems:** Ubuntu, Windows, macOS
-- **Python Versions:** 3.10, 3.11, 3.12, 3.13
-- **CPU Workflow:** `pytest -m "not gpu"` - Runs on all OS/Python combinations
+- **Python Versions:** 3.10, 3.11, 3.12, 3.13, 3.14
+- **CPU Workflow:** `pytest -m "not gpu"` - Runs on Ubuntu for every Python version above, and on Windows and macOS for Python 3.10 and 3.13
 - **GPU Workflow:** `pytest -m gpu` - Runs separately on GPU infrastructure
 
 This ensures your changes work across all supported platforms and Python versions.
@@ -308,7 +341,7 @@ This ensures your changes work across all supported platforms and Python version
 
 **Key GitHub Actions workflow files** (in `.github/workflows/`):
 
-- **ci-tests-cpu.yml** — CPU tests across Ubuntu/Windows/macOS × Python 3.10–3.13
+- **ci-tests-cpu.yml** — CPU tests on Ubuntu across Python 3.10–3.14, plus Windows and macOS on Python 3.10 and 3.13
 - **ci-tests-gpu.yml** — GPU-dependent tests
 - **ci-legacy-checkpoints.yml** — Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **build-package.yml** — Build and validate distributions (`uv build` + `twine check`)
@@ -387,15 +420,15 @@ RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the 
 
 > [!NOTE]
 >
-> Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the XLarge and 2XLarge model pages. Without it, the build will fail on those reference pages.
+> Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the Atto, Femto, Pico, XLarge and 2XLarge model pages (Atto, Femto and Pico need `rfdetr_plus>=1.2.0`). Without it, the build will fail on those reference pages.
 
 ### Install Documentation Dependencies
 
 ```bash
-# Full docs build (matches CI — required for XLarge/2XLarge model pages)
-uv pip install -e ".[plus]" --group docs
+# Full docs build (required for the Plus model pages: Atto, Femto, Pico, XLarge, 2XLarge)
+uv pip install -e ".[plus]" "rfdetr_plus>=1.2.0" --group docs
 
-# Minimal install (skip plus models — XLarge/2XLarge pages will error)
+# Minimal install (skip plus models — the Plus model pages will error)
 uv sync --group docs
 ```
 

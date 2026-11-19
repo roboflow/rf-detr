@@ -5,13 +5,14 @@
 # ------------------------------------------------------------------------
 """Tests for the format-independent export preparation shared by every exporter.
 
-``prepare_export_graph`` is the single producer of the graph all six formats consume, so a mistake here reaches every
+``prepare_export_graph`` is the single producer of the graph all seven formats consume, so a mistake here reaches every
 format at once — which is exactly why the work was pulled out of ``RFDETR.export()`` in the first place.
 """
 
 from __future__ import annotations
 
 import types
+from typing import Any
 
 import pytest
 import torch
@@ -101,6 +102,12 @@ class TestResolveOutputNames:
             resolve_output_names(_make_model_config(), backbone_only=True, backbone=None)
 
 
+#: Skip a test node that checks the fallback taken when CUDA is requested but absent.
+_requires_no_cuda = pytest.mark.skipif(
+    torch.cuda.is_available(), reason="exercises the CUDA-requested-but-unavailable fallback"
+)
+
+
 class TestPrepareExportGraph:
     """Building the traceable graph every format is handed."""
 
@@ -136,7 +143,7 @@ class TestPrepareExportGraph:
 
         assert graph.input_tensors.device.type == "cpu"
 
-    @pytest.mark.skipif(torch.cuda.is_available(), reason="exercises the CUDA-requested-but-unavailable fallback")
+    @_requires_no_cuda
     def test_falls_back_to_cpu_when_cuda_is_requested_but_absent(self) -> None:
         """Requesting CUDA on a machine without it falls back to CPU (with a warning) instead of raising.
 
@@ -147,3 +154,82 @@ class TestPrepareExportGraph:
         graph = prepare_export_graph(_DetectorStub(), _make_model_config(), shape=(16, 16), device="cuda")
 
         assert graph.input_tensors.device.type == "cpu"
+
+
+class _ShapeAwareEncoderStub(torch.nn.Module):
+    """Stand-in for a registered non-DINOv2 encoder that bakes its position embeddings per export shape.
+
+    Examples:
+        >>> encoder = _ShapeAwareEncoderStub()
+        >>> encoder.set_export_shape((32, 48))
+        >>> encoder.export_shapes
+        [(32, 48)]
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.export_shapes: list[tuple[int, int]] = []
+
+    def set_export_shape(self, shape: tuple[int, int]) -> None:
+        """Record the shape export preparation froze this encoder to."""
+        self.export_shapes.append(shape)
+
+
+class _DetectorWithEncoderStub(_DetectorStub):
+    """Detector stub holding a shape-aware encoder somewhere in its module tree.
+
+    Examples:
+        >>> type(_DetectorWithEncoderStub().backbone[0].encoder).__name__
+        '_ShapeAwareEncoderStub'
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.backbone = torch.nn.ModuleList([torch.nn.Module()])
+        self.backbone[0].encoder = _ShapeAwareEncoderStub()
+
+
+class TestExportShapeFreeze:
+    """Non-DINOv2 encoders opt in to the export-shape freeze through ``set_export_shape``."""
+
+    def test_set_export_shape_is_called_with_the_export_shape(self) -> None:
+        """set_export_shape is called with the export shape."""
+        model = _DetectorWithEncoderStub()
+
+        prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
+
+        assert model.backbone[0].encoder.export_shapes == [(32, 48)]
+
+
+class _ForwardingWrapperStub(torch.nn.Module):
+    """Wrapper that forwards unknown attributes to the module it wraps, as PEFT's ``PeftModel`` does.
+
+    Examples:
+        >>> _ForwardingWrapperStub(_ShapeAwareEncoderStub()).export_shapes
+        []
+    """
+
+    def __init__(self, inner: torch.nn.Module) -> None:
+        super().__init__()
+        self.inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        """Return this module's attribute, or else the wrapped module's."""
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.inner, name)
+
+
+class TestExportShapeFreezeThroughWrappers:
+    """A wrapper that forwards attributes must not freeze the wrapped encoder a second time."""
+
+    def test_forwarding_wrapper_does_not_repeat_the_freeze(self) -> None:
+        """A forwarding wrapper around the encoder does not repeat the shape freeze."""
+        model = _DetectorWithEncoderStub()
+        encoder = model.backbone[0].encoder
+        model.backbone[0].encoder = _ForwardingWrapperStub(encoder)
+
+        prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
+
+        assert encoder.export_shapes == [(32, 48)]

@@ -43,8 +43,10 @@ def save_gt_predictions_visualization(
     gt_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in gt_boxes]
     pred_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in pred_boxes]
 
-    gt_xyxy = xywh_to_xyxy(np.array(gt_boxes_offset))
-    pred_xyxy = xywh_to_xyxy(np.array(pred_boxes_offset))
+    # reshape(-1, 4) keeps an empty list a well-formed (0, 4) array instead of the 1-D shape
+    # np.array([]) produces on its own, which xywh_to_xyxy indexes as 2-D and crashes on.
+    gt_xyxy = xywh_to_xyxy(np.array(gt_boxes_offset).reshape(-1, 4))
+    pred_xyxy = xywh_to_xyxy(np.array(pred_boxes_offset).reshape(-1, 4))
 
     gt_detections = None
     pred_detections = None

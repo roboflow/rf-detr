@@ -9,15 +9,21 @@ Three of the five export backends (ONNX, CoreML, ExecuTorch) resolve their outpu
 :func:`resolve_export_stem`, choosing between a user-supplied full override (``output_name``), a model variant
 identifier (``variant_name``), and a generic default, with consistent path-traversal sanitization. The other two differ:
 TFLite takes no ``output_name`` at all (it inherits its stem from the already-resolved ONNX filename), and TensorRT
-delegates only the ``output_name`` sanitize step here while still building its own engine path and ``_fp16``/``_fp32``
-precision suffix. Centralizing the precedence + sanitization keeps the backends that share it consistent instead of each
-re-implementing it.
+delegates only the ``output_name`` sanitize step here while still building its own engine path and
+``_fp16``/``_fp32``/``_int8`` precision suffix. Centralizing the precedence + sanitization keeps the backends that share
+it consistent instead of each re-implementing it.
 """
 
 from __future__ import annotations
 
 import os
 import re
+
+# Extensions of the artifacts the export backends write, plus the conventional TensorRT engine names. ``_sanitize``
+# strips only these, so a dot that is part of the name itself (``"detector-v1.2"``) is kept.
+_ARTIFACT_EXTENSIONS = frozenset(
+    {".aimodel", ".bin", ".engine", ".mlmodel", ".mlpackage", ".onnx", ".plan", ".pte", ".tflite", ".trt", ".xml"}
+)
 
 
 def resolve_export_stem(
@@ -30,8 +36,9 @@ def resolve_export_stem(
 
     Precedence: ``output_name`` (verbatim custom filename) wins over ``variant_name``
     (model identifier, e.g. ``"rfdetr-small"``) wins over *default*. Both inputs are
-    sanitized against path traversal by keeping only the basename and stripping any
-    extension the caller may have included (e.g. ``"rfdetr-small.onnx"`` -> ``"rfdetr-small"``).
+    sanitized against path traversal by keeping only the basename and stripping an export
+    artifact extension the caller may have included (e.g. ``"rfdetr-small.onnx"`` -> ``"rfdetr-small"``).
+    Any other dot belongs to the name and is kept (``"rfdetr-small-v1.2"`` stays as it is).
 
     Args:
         variant_name: Model variant identifier, or ``None``.
@@ -58,6 +65,8 @@ def resolve_export_stem(
         ('backbone_model', False)
         >>> resolve_export_stem("sub/dir/rfdetr-nano.onnx", None)
         ('rfdetr-nano', False)
+        >>> resolve_export_stem(None, "rfdetr-nano-v1.2")
+        ('rfdetr-nano-v1.2', True)
     """
     if output_name:
         stem = _sanitize(output_name)
@@ -75,7 +84,7 @@ def append_backbone_marker(export_name: str, *, backbone_only: bool, named: bool
     ``-backbone`` marks a distinct model graph, not a precision or backend detail, so every backend appends it after
     whatever detail suffix it already added. It is appended whenever a name was supplied — custom or variant-derived —
     but never onto the bare ``backbone_model`` default, which already spells it out. Without the marker a backbone
-    export silently overwrites a full-detector export of the same name.
+    export silently overwrites a full-model export of the same name.
 
     Args:
         export_name: The artifact name resolved so far, including any precision or backend suffix.
@@ -97,5 +106,6 @@ def append_backbone_marker(export_name: str, *, backbone_only: bool, named: bool
 
 
 def _sanitize(name: str) -> str:
-    """Strip directory components and extension from a caller-supplied name."""
-    return os.path.splitext(re.split(r"[\\/]", name)[-1])[0]
+    """Strip directory components and an export artifact extension from a caller-supplied name."""
+    stem, extension = os.path.splitext(re.split(r"[\\/]", name)[-1])
+    return stem if extension.lower() in _ARTIFACT_EXTENSIONS else stem + extension

@@ -37,6 +37,9 @@ _ClassContribution: TypeAlias = tuple[
     int,
 ]
 
+#: True-positive flags, crowd-ignore flags, and the non-crowd ground-truth count.
+_MatchResult: TypeAlias = tuple[np.ndarray[Any, np.dtype[np.int64]], np.ndarray[Any, np.dtype[np.bool_]], int]
+
 #: Positions of one class inside an image's prediction and GT arrays: the rows and the columns it
 #: owns in the image-wide ``box_iou`` matrix. ``None`` instead means the image holds a single class,
 #: which owns the whole matrix and needs no positions at all.
@@ -63,7 +66,7 @@ _MASK_IOU_CHUNK: int = 32
 def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
     """Sum each mask's true pixels, ``_MASK_IOU_CHUNK`` rows at a time.
 
-    Matches ``masks.bool().view(-1, hw).float().sum(dim=1, keepdim=True)`` row for row: a row's sum
+    Matches ``masks.bool().reshape(-1, hw).float().sum(dim=1, keepdim=True)`` row for row: a row's sum
     only reads that row's own pixels, so batching rows into chunks changes neither the per-row
     floating-point reduction nor its result — only how many rows are converted to float32 at once.
 
@@ -76,7 +79,7 @@ def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
     """
     count = masks.shape[0]
     chunks = [
-        masks[start : start + _MASK_IOU_CHUNK].bool().view(-1, hw).float().sum(dim=1, keepdim=True)
+        masks[start : start + _MASK_IOU_CHUNK].bool().reshape(-1, hw).float().sum(dim=1, keepdim=True)
         for start in range(0, count, _MASK_IOU_CHUNK)
     ]
     if not chunks:
@@ -84,19 +87,29 @@ def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
     return torch.cat(chunks, dim=0)
 
 
-def _resize_mask_chunk(masks: Tensor, size: tuple[int, int]) -> Tensor:
-    """Resize one boolean-mask chunk with nearest-neighbor sampling.
+def resize_masks_nearest(masks: Tensor, size: tuple[int, int]) -> Tensor:
+    """Resize boolean masks to a target grid with nearest-neighbor sampling.
 
-    Resizes only a caller-bounded chunk so the temporary float32 interpolation
-    output cannot scale with every ground-truth mask in an image.
+    The temporary float32 interpolation output scales with the row count handed in, so a caller with an unbounded
+    number of masks bounds it itself by calling this one chunk at a time (see ``_compute_mask_iou``).
 
     Args:
-        masks: Boolean mask tensor of shape [chunk, H, W].
+        masks: Boolean mask tensor of shape [count, H, W].
         size: Target height and width.
 
     Returns:
-        Resized boolean mask tensor of shape [chunk, size[0], size[1]].
+        *masks* itself when it already has *size*, otherwise a new boolean tensor of shape [count, *size*].
+
+    Examples:
+        >>> import torch
+        >>> resize_masks_nearest(torch.ones(2, 2, 2, dtype=torch.bool), (4, 4)).shape
+        torch.Size([2, 4, 4])
+        >>> masks = torch.ones(1, 3, 3, dtype=torch.bool)
+        >>> resize_masks_nearest(masks, (3, 3)) is masks
+        True
     """
+    if masks.shape[-2:] == size:
+        return masks
     return F.interpolate(masks.float().unsqueeze(1), size=size, mode="nearest").squeeze(1).bool()
 
 
@@ -104,6 +117,7 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """Compute pairwise boolean-mask IoU between N predictions and M ground truths.
 
     Both predictions and ground truths are converted to float32 ``_MASK_IOU_CHUNK`` rows at a time.
+    Reshaping a noncontiguous mask can require a copy, bounded here to a single chunk.
     When mask grids differ, ground truths are also resized one chunk at a time before conversion. At
     most one prediction chunk and one ground-truth chunk are resident as float32 [chunk, H*W] tensors,
     bounding that allocation to ``_MASK_IOU_CHUNK x H x W`` on each side instead of ``N x H x W`` and
@@ -126,7 +140,7 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     pred_area = _mask_row_areas(pred_masks, hw)  # [N, 1]
     if resize_ground_truths:
         gt_area_chunks = [
-            _mask_row_areas(_resize_mask_chunk(gt_masks[start : start + _MASK_IOU_CHUNK], mask_size), hw)
+            _mask_row_areas(resize_masks_nearest(gt_masks[start : start + _MASK_IOU_CHUNK], mask_size), hw)
             for start in range(0, m, _MASK_IOU_CHUNK)
         ]
         gt_area = (
@@ -139,13 +153,13 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
 
     iou_rows: list[Tensor] = []
     for pstart in range(0, n, _MASK_IOU_CHUNK):
-        pred_chunk = pred_masks[pstart : pstart + _MASK_IOU_CHUNK].bool().view(-1, hw).float()  # [c, HW]
+        pred_chunk = pred_masks[pstart : pstart + _MASK_IOU_CHUNK].bool().reshape(-1, hw).float()  # [c, HW]
         inter_blocks = []
         for gstart in range(0, m, _MASK_IOU_CHUNK):
             gt_chunk = gt_masks[gstart : gstart + _MASK_IOU_CHUNK]
             if resize_ground_truths:
-                gt_chunk = _resize_mask_chunk(gt_chunk, mask_size)
-            gt_flat = gt_chunk.bool().view(-1, hw).float()
+                gt_chunk = resize_masks_nearest(gt_chunk, mask_size)
+            gt_flat = gt_chunk.bool().reshape(-1, hw).float()
             inter_blocks.append(torch.mm(pred_chunk, gt_flat.t()))  # each block [c, g]
         inter = (
             torch.cat(inter_blocks, dim=1)
@@ -163,11 +177,7 @@ def _match_sorted_iou_matrix(
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
     iou_threshold: float,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
+) -> _MatchResult:
     """Apply COCO greedy matching to score-ordered NumPy IoUs for one class.
 
     Dispatches on whether the class has any crowd GT. Both loops below are per-detection Python
@@ -194,11 +204,7 @@ def _match_sorted_iou_matrix(
 def _match_rows_without_crowd(
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     iou_threshold: float,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
+) -> _MatchResult:
     """Greedily match score-ordered IoUs for a class whose ground truths are all non-crowd.
 
     Behaviourally a special case of ``_match_rows_with_crowd()`` — every GT is claimable, none can
@@ -253,11 +259,7 @@ def _match_rows_with_crowd(
     iou_matrix_sorted: np.ndarray[Any, np.dtype[np.float32]],
     gt_crowd_np: np.ndarray[Any, np.dtype[np.bool_]],
     iou_threshold: float,
-) -> tuple[
-    np.ndarray[Any, np.dtype[np.int64]],
-    np.ndarray[Any, np.dtype[np.bool_]],
-    int,
-]:
+) -> _MatchResult:
     """Greedily match score-ordered IoUs for a class that may have crowd ground truths.
 
     Handles crowd GTs in full generality, so it stays correct for an all-non-crowd input too — that

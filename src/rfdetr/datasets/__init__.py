@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import torchvision
 from torch.utils.data import Dataset, Subset
 
+from rfdetr.config import DatasetFile
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema as infer_coco_keypoint_schema
 from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer_yolo_keypoint_schema
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
@@ -29,7 +31,12 @@ from rfdetr.datasets.multi_source import WeightedMultiSourceBatchSampler as Weig
 from rfdetr.datasets.multi_source import compute_source_batch_sizes as compute_source_batch_sizes
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.webdataset.load import build_webdataset
-from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
+from rfdetr.datasets.yolo import (
+    YoloDetection,
+    build_roboflow_from_yolo,
+    find_yolo_data_file,
+    find_yolo_train_images,
+)
 
 
 def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Any | None:
@@ -60,17 +67,24 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     if coco_annotation.exists():
         return "coco"
 
-    # Check for YOLO format: look for data.yaml or data.yml and train/images folder
-    yolo_data_file_yaml = dataset_dir / "data.yaml"
-    yolo_data_file_yml = dataset_dir / "data.yml"
-    yolo_images_dir = dataset_dir / "train" / "images"
-    if (yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()) and yolo_images_dir.exists():
+    if find_yolo_train_images(dataset_dir) is not None:
         return "yolo"
+
+    yolo_data_file = find_yolo_data_file(dataset_dir)
+    if yolo_data_file is not None:
+        # Naming the config that was found keeps the message from reading as "no data.yaml
+        # here" when one is present but declares nothing usable.
+        raise ValueError(
+            f"Could not detect dataset format in {dataset_dir}. Found the YOLO data file {yolo_data_file}, "
+            f"but no training image directory resolved from it: neither its 'train' path nor "
+            f"{dataset_dir / 'train' / 'images'} is a directory inside the dataset. "
+            f"Enable debug logging to see each declaration that was rejected."
+        )
 
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "
         f"Expected either COCO format (train/_annotations.coco.json) "
-        f"or YOLO format (data.yaml or data.yml + train/images/)"
+        f"or YOLO format (data.yaml or data.yml + training images resolved from YAML or train/images/)"
     )
 
 
@@ -89,15 +103,32 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
     return build_roboflow_from_yolo(image_set, args, resolution)
 
 
+#: Dataset builder per ``TrainConfig.dataset_file`` value. Adding a layout means one entry here plus its name in
+#: :data:`rfdetr.config.DatasetFile`; ``tests/datasets/test_builder_options.py`` keeps the two in sync.
+_DATASET_BUILDERS: dict[DatasetFile, Callable[[str, Any, int], Dataset[Any]]] = {
+    "coco": build_coco,
+    "o365": build_o365,
+    "roboflow": build_roboflow,
+    "yolo": build_roboflow_from_yolo,
+    "webdataset": build_webdataset,
+}
+
+
 def build_dataset(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
-    if args.dataset_file == "coco":
-        return build_coco(image_set, args, resolution)
-    if args.dataset_file == "o365":
-        return build_o365(image_set, args, resolution)
-    if args.dataset_file == "roboflow":
-        return build_roboflow(image_set, args, resolution)
-    if args.dataset_file == "yolo":
-        return build_roboflow_from_yolo(image_set, args, resolution)
-    if args.dataset_file == "webdataset":
-        return build_webdataset(image_set, args, resolution)
-    raise ValueError(f"dataset {args.dataset_file} not supported")
+    """Build the dataset for *image_set* using the builder registered for ``args.dataset_file``.
+
+    Args:
+        image_set: Split to build, e.g. ``"train"``, ``"val"`` or ``"test"``.
+        args: Merged model/train config namespace; ``args.dataset_file`` selects the builder.
+        resolution: Target square resolution in pixels.
+
+    Returns:
+        The dataset produced by the registered builder.
+
+    Raises:
+        ValueError: If ``args.dataset_file`` names no registered builder.
+    """
+    builder = _DATASET_BUILDERS.get(args.dataset_file)
+    if builder is None:
+        raise ValueError(f"dataset {args.dataset_file} not supported; expected one of {tuple(_DATASET_BUILDERS)}")
+    return builder(image_set, args, resolution)

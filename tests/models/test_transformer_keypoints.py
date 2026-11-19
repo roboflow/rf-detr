@@ -7,10 +7,17 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 from torch import nn
 
-from rfdetr.models.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer, build_transformer
+from rfdetr.models.transformer import (
+    Transformer,
+    TransformerDecoder,
+    TransformerDecoderLayer,
+    _additive_attn_mask,
+    build_transformer,
+)
 
 
 def _build_transformer_inputs(
@@ -47,52 +54,51 @@ def _build_transformer_inputs(
     return srcs, masks, pos_embeds, refpoint_embed, query_feat
 
 
+def _build_transformer(**kwargs: object) -> Transformer:
+    """Build a one-layer, two-level ``Transformer`` (width 16, 6 queries); ``kwargs`` override or extend the defaults.
+
+    Examples:
+        >>> transformer = _build_transformer(num_queries=3)
+        >>> transformer.num_queries, transformer.num_feature_levels
+        (3, 2)
+    """
+    options: dict[str, object] = {
+        "d_model": 16,
+        "num_queries": 6,
+        "num_decoder_layers": 1,
+        "sa_nhead": 4,
+        "ca_nhead": 4,
+        "num_feature_levels": 2,
+        "dec_n_points": 1,
+        "return_intermediate_dec": True,
+        "lite_refpoint_refine": True,
+    }
+    return Transformer(**{**options, **kwargs})
+
+
 def test_transformer_keypoint_disabled_matches_default_contract() -> None:
     """Transformer without GroupPose should keep the 4-item return contract."""
     srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs()
-    transformer = Transformer(
-        d_model=16,
-        num_queries=6,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=2,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        use_grouppose_keypoints=False,
-    )
+    transformer = _build_transformer(use_grouppose_keypoints=False)
 
     outputs = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
-    assert len(outputs) == 4, f"Expected 4 outputs, got {len(outputs)}"
-    hs, references, memory_ts, boxes_ts = outputs
+    assert len(outputs) == 5, f"Expected 5 outputs, got {len(outputs)}"
+    hs, references, memory_ts, boxes_ts, cls_ts = outputs
     assert hs is not None and references is not None
     assert memory_ts is None and boxes_ts is None
+    assert cls_ts is None
 
 
 def test_transformer_keypoint_enabled_shapes() -> None:
     """GroupPose path should emit keypoint hidden states and encoder keypoint slots."""
     srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs()
-    transformer = Transformer(
-        d_model=16,
-        num_queries=6,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=2,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        use_grouppose_keypoints=True,
-        num_keypoints_per_class=[17],
-    )
+    transformer = _build_transformer(two_stage=True, use_grouppose_keypoints=True, num_keypoints_per_class=[17])
     transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(16, 2)])
     transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(16, 4)])
 
     outputs = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
-    assert len(outputs) == 7, f"Expected 7 outputs, got {len(outputs)}"
-    hs, references, memory_ts, boxes_ts, keypoint_hs, enc_kp_predictions, keypoint_memory_ts = outputs
+    assert len(outputs) == 8, f"Expected 8 outputs, got {len(outputs)}"
+    hs, references, memory_ts, boxes_ts, keypoint_hs, enc_kp_predictions, keypoint_memory_ts, _ = outputs
 
     assert isinstance(hs, torch.Tensor)
     assert hs.shape[-1] == 16
@@ -133,6 +139,36 @@ def test_build_transformer_defaults_inter_instance_keypoint_attention_to_config_
     assert not decoder_layer.inter_instance_kp_attn
 
 
+def _cross_class_mask() -> torch.Tensor:
+    """Return the keypoint class mask for a ``[3, 2]`` schema.
+
+    Token 0 is the instance; tokens 1-3 and 4-5 are the two keypoint classes.
+
+    Examples:
+        >>> mask = _cross_class_mask()
+        >>> mask.shape, int(mask.sum())
+        (torch.Size([6, 6]), 12)
+    """
+    blocked = torch.zeros(6, 6, dtype=torch.bool)
+    blocked[1:4, 4:] = True
+    blocked[4:, 1:4] = True
+    return blocked
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [pytest.param(_cross_class_mask(), id="cross_class"), pytest.param(torch.zeros(6, 6, dtype=torch.bool), id="none")],
+)
+def test_additive_attn_mask_matches_boolean_mask_in_multihead_attention(mask: torch.Tensor) -> None:
+    """The float mask handed to ``nn.MultiheadAttention`` must give exactly what its boolean form gives."""
+    torch.manual_seed(0)
+    attention = nn.MultiheadAttention(16, 4, batch_first=True).eval()
+    x = torch.randn(3, 6, 16)
+    expected = attention(x, x, x, attn_mask=mask, need_weights=False)[0]
+    actual = attention(x, x, x, attn_mask=_additive_attn_mask(mask, x.dtype), need_weights=False)[0]
+    assert torch.equal(actual, expected)
+
+
 def test_keypoint_class_mask_person_only() -> None:
     """Person-only schema `[17]` should build a keypoint class mask with only self-class tokens."""
     layer = TransformerDecoderLayer(
@@ -166,16 +202,13 @@ def test_keypoint_class_mask_person_only() -> None:
 def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
     """Encoder keypoint path must use a single head (head 0) in eval mode.
 
-    Regression: ``group_detr = len(self.enc_out_keypoint_embed)`` without a
-    ``self.training`` guard caused eval mode to split ``num_queries`` across all
-    group heads instead of routing every query through head 0. Fix:
+    Regression: ``group_detr = len(self.enc_out_keypoint_embed)`` without a ``self.training`` guard caused eval mode to
+    split ``num_queries`` across all group heads instead of routing every query through head 0. Fix:
     ``group_detr = len(...) if self.training else 1``.
 
-    Strategy: zero all head weights/biases; set head-0 last-layer bias to
-    ``sentinel``. In eval mode every query routes through head 0, so
-    ``kp_pred[..., 2:]`` (the pure-delta dims unaffected by ref_xy/wh) must all
-    equal ``sentinel``. In training mode only the first 1/group_detr queries go
-    through head 0 (the rest equal 0.0).
+    Strategy: zero all head weights/biases; set head-0 last-layer bias to ``sentinel``. In eval mode every query routes
+    through head 0, so ``kp_pred[..., 2:]`` (the pure-delta dims unaffected by ref_xy/wh) must all equal ``sentinel``.
+    In training mode only the first 1/group_detr queries go through head 0 (the rest equal 0.0).
     """
     group_detr = 3
     num_queries = 6  # divisible by group_detr
@@ -187,16 +220,9 @@ def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
     refpoint_embed = torch.rand(num_queries, 4)
     query_feat = torch.randn(num_queries, hidden_dim)
 
-    transformer = Transformer(
+    transformer = _build_transformer(
         d_model=hidden_dim,
         num_queries=num_queries,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=2,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
         two_stage=True,
         group_detr=group_detr,
         use_grouppose_keypoints=True,
@@ -207,7 +233,7 @@ def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
 
     # Zero all keypoint head weights and biases; give head 0 a distinctive output.
     with torch.no_grad():
-        for _, head in enumerate(transformer.enc_out_keypoint_embed):
+        for head in transformer.enc_out_keypoint_embed:
             for layer in head.layers:
                 layer.weight.zero_()
                 layer.bias.zero_()
@@ -217,7 +243,7 @@ def test_enc_keypoint_embed_eval_uses_only_head_zero() -> None:
     with torch.no_grad():
         outputs = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
 
-    _, _, _, _, _, enc_kp_predictions, _ = outputs
+    _, _, _, _, _, enc_kp_predictions, _, _ = outputs
     assert enc_kp_predictions is not None, "enc_kp_predictions should not be None in keypoint mode"
 
     # kp_pred = [kp_xy(2 dims), kp_delta[2:]]; dims 2: are pure MLP output unaffected by ref_xy/wh.
@@ -233,22 +259,11 @@ def test_cross_attn_srcs_none_backward_compat() -> None:
     """`cross_attn_srcs=None` must remain equivalent to passing the primary feature stream."""
     srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs()
 
-    transformer = Transformer(
-        d_model=16,
-        num_queries=6,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=2,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        use_grouppose_keypoints=False,
-    )
+    transformer = _build_transformer(use_grouppose_keypoints=False)
     outputs_default = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
     outputs_explicit = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=srcs)
 
-    assert len(outputs_default) == len(outputs_explicit) == 4
+    assert len(outputs_default) == len(outputs_explicit) == 5
     for default_part, explicit_part in zip(outputs_default, outputs_explicit):
         if default_part is None:
             assert explicit_part is None

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="470" viewBox="0 0 1000 470" role="img" aria-labelledby="title desc">
+  <!-- Sources: KEYPOINT_PRED_DIM channel layout in src/rfdetr/models/heads/keypoints.py (x, y, findable, visible, three precision-Cholesky parameters, class contribution); keypoint decoding in LWDETR.forward and _aggregate_keypoint_class_logits in src/rfdetr/models/lwdetr.py (xy = delta * reference box size + reference box center; class contribution summed over active keypoints into the class logits); _apply_keypoint_trace_fusion in src/rfdetr/models/postprocess.py (object score lowered by the findability-weighted mean covariance trace). -->
+  <title id="title">What each keypoint query predicts</title>
+  <desc id="desc">A person inside its dashed reference box, with 17 keypoints. Each keypoint query predicts its location as an offset from the box center in units of the box size; a findable probability, whether an annotator could place the point at all; a visible probability, whether it is in plain sight, so a hidden ankle is findable but not visible; three numbers for an uncertainty ellipse, small around the shoulders and large around the hidden ankle; and a class vote that is summed over the keypoints and added to the object's class score. At inference, wide ellipses lower the object's score.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; }
+    .s { font-size: 15px; fill: #B8B8B8; }
+    .lbl { font-size: 15px; }
+    .bone { stroke: #F0AC5F; stroke-width: 2; stroke-linecap: round; }
+    .joint { fill: #F0AC5F; }
+    .ell { fill: #58C4DD; fill-opacity: .15; stroke: #58C4DD; stroke-width: 1.5; }
+    .offset { stroke: #58C4DD; stroke-width: 2; fill: none; marker-end: url(#tipb); }
+  </style>
+  <defs>
+    <marker id="tipb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58C4DD"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="470" rx="16" fill="#16181D"/>
+  <text class="h" x="40" y="46">What each keypoint query predicts</text>
+  <text class="s" x="40" y="70">eight numbers per keypoint, read by a small MLP after every decoder layer</text>
+
+  <!-- person inside its reference box -->
+  <rect x="70" y="105" width="172" height="322" fill="none" stroke="#58C4DD" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <g class="bone">
+    <line x1="182" y1="352" x2="177" y2="283"/>
+    <line x1="131" y1="352" x2="136" y2="283"/>
+    <line x1="177" y1="283" x2="136" y2="283"/>
+    <line x1="185" y1="174" x2="177" y2="283"/>
+    <line x1="128" y1="174" x2="136" y2="283"/>
+    <line x1="185" y1="174" x2="128" y2="174"/>
+    <line x1="185" y1="174" x2="200" y2="232"/>
+    <line x1="128" y1="174" x2="110" y2="228"/>
+    <line x1="200" y1="232" x2="208" y2="283"/>
+    <line x1="110" y1="228" x2="101" y2="281"/>
+    <line x1="163" y1="127" x2="149" y2="127"/>
+    <line x1="156" y1="134" x2="163" y2="127"/>
+    <line x1="156" y1="134" x2="149" y2="127"/>
+    <line x1="163" y1="127" x2="171" y2="131"/>
+    <line x1="149" y1="127" x2="141" y2="131"/>
+    <line x1="171" y1="131" x2="185" y2="174"/>
+    <line x1="141" y1="131" x2="128" y2="174"/>
+    <line x1="182" y1="352" x2="186" y2="416"/>
+  </g>
+  <!-- the right lower leg is hidden: drawn dashed -->
+  <line x1="131" y1="352" x2="126" y2="416" stroke="#F0AC5F" stroke-width="2" stroke-dasharray="4 4"/>
+
+  <!-- uncertainty ellipses: tight on the shoulders, wider on the wrists, widest on the hidden ankle -->
+  <ellipse class="ell" cx="185" cy="174" rx="6" ry="5"/>
+  <ellipse class="ell" cx="128" cy="174" rx="6" ry="5"/>
+  <ellipse class="ell" cx="208" cy="283" rx="13" ry="7" transform="rotate(-30 208 283)"/>
+  <ellipse class="ell" cx="101" cy="281" rx="13" ry="7" transform="rotate(30 101 281)"/>
+  <ellipse class="ell" cx="126" cy="413" rx="20" ry="11" transform="rotate(-15 126 413)"/>
+
+  <g class="joint">
+    <circle cx="156" cy="134" r="4"/>
+    <circle cx="163" cy="127" r="3"/>
+    <circle cx="149" cy="127" r="3"/>
+    <circle cx="171" cy="131" r="3"/>
+    <circle cx="141" cy="131" r="3"/>
+    <circle cx="185" cy="174" r="4"/>
+    <circle cx="128" cy="174" r="4"/>
+    <circle cx="200" cy="232" r="4"/>
+    <circle cx="110" cy="228" r="4"/>
+    <circle cx="208" cy="283" r="4"/>
+    <circle cx="101" cy="281" r="4"/>
+    <circle cx="177" cy="283" r="4"/>
+    <circle cx="136" cy="283" r="4"/>
+    <circle cx="182" cy="352" r="4"/>
+    <circle cx="131" cy="352" r="4"/>
+    <circle cx="186" cy="416" r="4"/>
+  </g>
+  <circle cx="126" cy="413" r="4.5" fill="#16181D" stroke="#F0AC5F" stroke-width="1.5" stroke-dasharray="2 2"/>
+
+  <!-- offset from the box center to the left wrist -->
+  <path d="M 150 266 L 162 266 M 156 260 L 156 272" stroke="#58C4DD" stroke-width="2"/>
+  <path class="offset" d="M 158 267 L 202 281"/>
+  <text class="s" x="70" y="452">dashed: the object's reference box</text>
+
+  <!-- the eight numbers -->
+  <path d="M 318 120 L 330 120 M 324 114 L 324 126" stroke="#58C4DD" stroke-width="2"/>
+  <path class="offset" d="M 327 122 L 348 130"/>
+  <text class="lbl" x="370" y="125">location (2 numbers)</text>
+  <text class="s" x="370" y="145">offset from the box center, in units of the box width and height</text>
+
+  <circle cx="330" cy="190" r="5" fill="#F0AC5F"/>
+  <text class="lbl" x="370" y="195">findable</text>
+  <text class="s" x="370" y="215">could an annotator place this point at all? (COCO visibility v &gt; 0)</text>
+
+  <circle cx="318" cy="260" r="5" fill="#F0AC5F"/>
+  <circle cx="342" cy="260" r="4.5" fill="#16181D" stroke="#F0AC5F" stroke-width="1.5" stroke-dasharray="2 2"/>
+  <text class="lbl" x="370" y="265">visible</text>
+  <text class="s" x="370" y="285">is it in plain sight? (v = 2) The hidden ankle is findable but not visible</text>
+
+  <ellipse class="ell" cx="330" cy="330" rx="17" ry="8" transform="rotate(-25 330 330)"/>
+  <circle cx="330" cy="330" r="3" fill="#F0AC5F"/>
+  <text class="lbl" x="370" y="335">uncertainty (3 numbers)</text>
+  <text class="s" x="370" y="355">a 2D Gaussian around the location: the ellipse's size and tilt</text>
+
+  <text x="330" y="412" style="font-size:24px; fill:#F0AC5F; text-anchor:middle">Σ</text>
+  <text class="lbl" x="370" y="405">class vote</text>
+  <text class="s" x="370" y="425">summed over the keypoints and added to the object's class score</text>
+
+  <text class="s" x="370" y="452">At inference, wide ellipses lower the object's score; tight ones keep it.</text>
+</svg>

@@ -6,10 +6,10 @@
 """Detection decoding shared by the export inference helpers.
 
 Turning an exported model's raw ``dets``/``labels`` tensors into pixel-space detections is identical for every format:
-per-class sigmoid, drop the background slot, rank query/class pairs globally, threshold, then convert normalised
-``cxcywh`` to pixel ``xyxy``. Matching the raw tensors to their roles is *not* shared -- ONNX keeps its output names
-while ``onnx2tf`` usually strips them -- so each format module does its own matching and calls :func:`decode_detections`
-with the result.
+per-class sigmoid, optionally drop a background slot, rank query/class pairs globally, threshold, then convert
+normalised ``cxcywh`` to pixel ``xyxy``. Matching the raw tensors to their roles is *not* shared -- ONNX keeps its
+output names while ``onnx2tf`` usually strips them -- so each format module does its own matching and calls
+:func:`decode_detections` with the result.
 
 This decode mirrors ``PostProcess.forward`` in ``rfdetr/models/postprocess.py``; the parity suite depends on it staying
 that way.
@@ -41,7 +41,8 @@ class DecodedDetections:
 
     #: Pixel-space boxes, shape ``(N, 4)`` in ``xyxy`` order.
     xyxy: NDArray[np.float32]
-    #: Sigmoid confidence per detection, shape ``(N,)``.
+    #: Sigmoid confidence per detection, shape ``(N,)``. It has the logits' floating dtype in native byte order: the
+    #: sigmoid runs with at least float32 intermediates and is rounded once to that dtype before selection.
     confidence: NDArray[np.floating[Any]]
     #: Exported class slot per detection, shape ``(N,)``.
     class_id: NDArray[np.int64]
@@ -56,7 +57,7 @@ def decode_detections(
     image_size: tuple[int, int],
     threshold: float = 0.3,
     num_select: int | None = None,
-    background_class_id: int | None = -1,
+    background_class_id: int | None = None,
 ) -> DecodedDetections:
     """Decode one image's raw model outputs into pixel-space detections.
 
@@ -72,18 +73,22 @@ def decode_detections(
         threshold: Confidence threshold; detections at or below this score are dropped.
         num_select: Maximum query/class pairs selected before thresholding. ``None`` uses the exported model's query
             count, matching shipped RF-DETR configurations; pass an explicit value for custom exports.
-        background_class_id: Exported class slot to exclude before selection. The default ``-1`` preserves the common
-            final-slot background convention. Pass ``None`` for sparse COCO checkpoints, whose final slot is class 90,
-            or ``0`` for legacy background-first keypoint checkpoints.
+        background_class_id: Exported class slot to exclude before selection. The default ``None`` keeps every slot,
+            exactly as :meth:`rfdetr.detr.RFDETR.predict` does. That matters for checkpoints trained on sparse COCO
+            category IDs, including the official pretrained weights, whose final slot is the real class 90: excluding
+            it would silently drop every class-90 detection. For checkpoints trained with contiguous 0-based category
+            IDs, whose final slot is an untrained no-object slot, pass ``-1`` to exclude it; pass ``0`` for legacy
+            background-first keypoint checkpoints.
 
     Returns:
-        The decoded detections, ordered by descending confidence.
+        The decoded detections, ordered by descending confidence. ``confidence`` keeps the logits' floating dtype (FP16
+        logits give FP16 scores, matching ``PostProcess``) after a single rounding from at least float32 intermediates.
 
     Examples:
         >>> import numpy as np
         >>> boxes = np.array([[0.5, 0.5, 1.0, 1.0]], dtype=np.float32)
         >>> logits = np.array([[9.0, -9.0]], dtype=np.float32)
-        >>> decoded = decode_detections(boxes, logits, (100, 50), background_class_id=None)
+        >>> decoded = decode_detections(boxes, logits, (100, 50))
         >>> decoded.xyxy
         array([[  0.,   0., 100.,  50.]], dtype=float32)
         >>> decoded.class_id
@@ -100,8 +105,20 @@ def decode_detections(
         )
     else:
         logger.debug("Logits stats: empty shape=%s", logits.shape)
-    one = np.asarray(1, dtype=logits.dtype)
-    scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
+    # Use at least float32 intermediates, then round once to the original score dtype, as PyTorch sigmoid does.
+    # Copy even FP32/FP64 inputs so the reusable work buffer never modifies caller-owned logits.
+    work_dtype = np.result_type(logits.dtype, np.float32)
+    scores_all = logits.astype(work_dtype, copy=True)
+    one = np.asarray(1, dtype=scores_all.dtype)
+    np.clip(scores_all, -88, 88, out=scores_all)
+    np.negative(scores_all, out=scores_all)
+    np.exp(scores_all, out=scores_all)
+    np.add(scores_all, one, out=scores_all)
+    np.divide(one, scores_all, out=scores_all)
+    # Round back only for floating logits, in native byte order; integer or boolean logits keep the floating work dtype,
+    # since casting probabilities to an integer dtype would truncate every score to 0 or 1.
+    score_dtype = logits.dtype.newbyteorder("=") if np.issubdtype(logits.dtype, np.floating) else work_dtype
+    scores_all = scores_all.astype(score_dtype, copy=False)
     scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
     # The query count is read off the logits rather than the boxes; a valid RF-DETR export gives both the same Q.
     selection_cap = logits.shape[0] if num_select is None else num_select

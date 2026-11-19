@@ -12,13 +12,15 @@ migration to PyTorch Lightning (PR #794) dropped ``engine.py`` entirely, along w
 
 Two metrics, two different scopes — do not conflate them:
 
-``max_mem`` is the peak allocation of the **local process** on ``trainer.strategy.root_device``, formatted as whole MB.
+``max_mem`` is the peak allocation of the **local process** on ``trainer.strategy.root_device``, formatted as whole MB
+up to 1000 MB, then GB with one decimal (1024 MB per GB, retaining the existing binary byte conversion).
 Under DDP only rank 0 renders a progress bar, so the number shown is rank 0's own peak — not a sum, max, or mean across
 the cluster. Other ranks may peak higher (uneven batch shapes) without that ever surfacing. This is pre-#794 behaviour,
 kept unchanged; it is documented here only because the rank-local scope is not obvious from the rendered label.
 
 ``free_mem`` is ``torch.cuda.mem_get_info(device)``'s ``free``/``total`` pair for the **whole device**, formatted as
-``"{free}/{total} MB"``. Unlike ``max_mem`` it is **not process-local and not a peak**: it reflects every allocator on
+``"{free} {unit}/{total} {unit}"``, choosing units independently as for ``max_mem``.
+Unlike ``max_mem`` it is **not process-local and not a peak**: it reflects every allocator on
 that device — this process, any sibling process sharing the GPU, the CUDA driver's own reserved memory — at the instant
 it is read. Under the default caching-allocator behavior, it reflects memory PyTorch's own caching allocator has
 actually handed back to the CUDA driver. Freeing a tensor in this process (``del``, going out of scope, the end of a
@@ -68,6 +70,14 @@ _BYTES_TO_MB = 1024.0 * 1024.0
 _Metrics = dict[str, Union[int, str, float, dict[str, float]]]
 
 
+def _format_memory(num_bytes: int) -> str:
+    """Format bytes as whole MB, switching above 1000 MB to GB with one decimal."""
+    megabytes = num_bytes / _BYTES_TO_MB
+    if megabytes > 1000:
+        return f"{megabytes / 1024:.1f} GB"
+    return f"{megabytes:.0f} MB"
+
+
 def _is_cuda(device: torch.device) -> bool:
     """Return True if device is a CUDA device with an active CUDA context."""
     return (
@@ -79,7 +89,7 @@ def _is_cuda(device: torch.device) -> bool:
 
 
 class _GpuMemoryMetricsMixin(ProgressBar):
-    """Adds ``max_mem``/``free_mem`` entries (CUDA memory, in MB) when training on CUDA.
+    """Adds ``max_mem``/``free_mem`` entries (CUDA memory, in MB or GB) when training on CUDA.
 
     Always mix in *before* a concrete PTL progress bar (see ``GPUMemoryTQDMProgressBar``). The ``ProgressBar`` base is
     declared only to pin the MRO: it makes ``super()`` statically resolvable, while at runtime every ``super()`` call
@@ -130,7 +140,7 @@ class _GpuMemoryMetricsMixin(ProgressBar):
         items: _Metrics = super().get_metrics(trainer, pl_module)
         device = trainer.strategy.root_device
         if _is_cuda(device):
-            max_mem = f"{torch.cuda.max_memory_allocated(device) / _BYTES_TO_MB:.0f} MB"
+            max_mem = _format_memory(torch.cuda.max_memory_allocated(device))
             if "max_mem" in items and items["max_mem"] != max_mem:
                 rank_zero_warn(
                     "The progress bar already tracks a metric with the name 'max_mem', and"
@@ -140,7 +150,7 @@ class _GpuMemoryMetricsMixin(ProgressBar):
             items.setdefault("max_mem", max_mem)
 
             free_bytes, total_bytes = torch.cuda.mem_get_info(device)
-            free_mem = f"{free_bytes / _BYTES_TO_MB:.0f}/{total_bytes / _BYTES_TO_MB:.0f} MB"
+            free_mem = f"{_format_memory(free_bytes)}/{_format_memory(total_bytes)}"
             if "free_mem" in items and items["free_mem"] != free_mem:
                 rank_zero_warn(
                     "The progress bar already tracks a metric with the name 'free_mem', and"

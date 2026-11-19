@@ -10,7 +10,7 @@ import importlib
 import json
 import os
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
@@ -22,11 +22,26 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+#: Dataset layout selectable via ``TrainConfig.dataset_file``. The builder registry that resolves each name lives
+#: in ``rfdetr.datasets``; this alias is the single typed source of the accepted names.
+DatasetFile: TypeAlias = Literal["coco", "o365", "roboflow", "yolo", "webdataset"]
 PathLikeStr: TypeAlias = str | Path
+#: Mixed-precision autocast dtype; ``None`` disables autocast (full fp32).
+AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
+#: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
+#: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "hotcoco_streaming", "faster_coco_eval", "ufcoco", "vernier"]
+#: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
+#: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
+_AMP_DTYPE_DEFAULT: AmpDtype = "auto"
 
 __all__ = [
+    "AmpDtype",
     "AugmentationBackend",
+    "CocoEvalBackend",
+    "DatasetFile",
     "ModelConfig",
+    "MultiScale",
     "RFDETRBaseConfig",
     "RFDETRLargeDeprecatedConfig",
     "RFDETRNanoConfig",
@@ -81,6 +96,39 @@ def _package_importable(module_name: str) -> bool:
         return False
 
 
+class MultiScale(str, Enum):
+    """Multi-scale training mode for ``TrainConfig.multi_scale``.
+
+    ``PER_BATCH`` draws one random scale per batch and applies it in ``RFDETRLightningModule.on_train_batch_start`` by
+    interpolating the already collated batch (the dataset resizes every sample to the largest scale). ``PER_SAMPLE``
+    draws a scale per sample inside the dataset transforms and collate pads to the batch maximum. ``OFF`` trains at the
+    fixed ``ModelConfig.resolution``. Booleans are accepted as input (``True`` is ``PER_BATCH``, the behaviour the old
+    ``multi_scale=True`` default had; ``False`` is ``OFF``) but are never stored as such.
+    """
+
+    OFF = "off"
+    PER_BATCH = "per-batch"
+    PER_SAMPLE = "per-sample"
+
+    @classmethod
+    def from_value(cls, value: "MultiScale | str | bool") -> "MultiScale":
+        """Normalize a member, its string value, or a legacy boolean to a member.
+
+        Examples:
+            >>> MultiScale.from_value(True)
+            <MultiScale.PER_BATCH: 'per-batch'>
+            >>> MultiScale.from_value(False)
+            <MultiScale.OFF: 'off'>
+            >>> MultiScale.from_value("per-sample")
+            <MultiScale.PER_SAMPLE: 'per-sample'>
+        """
+        if value is True:
+            return cls.PER_BATCH
+        if value is False:
+            return cls.OFF
+        return cls(value)
+
+
 class AugmentationBackend(str, Enum):
     """Concrete augmentation backend selector for ``TrainConfig.augmentation_backend``.
 
@@ -108,18 +156,21 @@ class AugmentationBackend(str, Enum):
         """Resolve a string to a concrete backend, auto-picking the best installed one.
 
         Legacy string aliases (``"gpu"``, ``"tv"``, ``"albu"``) are mapped to their current form
-        first. ``"cpu"`` auto-picks the best *installed* CPU backend: Albumentations > Kornia
-        (CPU) > torchvision. ``"auto"`` additionally prefers Kornia first when ``has_cuda=True``
-        and Kornia is installed, then falls back to the same CPU priority. The concrete backend
-        ``"cpu"``/``"auto"`` resolve to can therefore vary across environments — pass
-        ``"torchvision"`` explicitly to force torchvision regardless of what's installed.
+        first. ``"cpu"`` auto-picks the best *installed* backend: Albumentations > Kornia >
+        torchvision, where Kornia is eligible only when ``has_cuda=True``. ``"auto"`` additionally
+        prefers Kornia first when ``has_cuda=True`` and Kornia is installed, then falls back to the
+        same priority. Neither ever resolves to Kornia without CUDA, because the Kornia training path
+        refuses to run without a CUDA device. The concrete backend ``"cpu"``/``"auto"`` resolve to
+        can therefore vary across environments — pass ``"torchvision"`` explicitly to force
+        torchvision regardless of what's installed.
 
         Args:
             value: Backend name string.
-            has_cuda: Whether a CUDA device is available. Only consulted for ``"auto"`` — callers
-                that care about CUDA-gated GPU selection (e.g. dataset builders) compute this via
-                their own fork-safe CUDA check and pass it in; this function does not probe CUDA
-                itself to avoid importing device-detection code from other modules.
+            has_cuda: Whether a CUDA device is available. Consulted for ``"cpu"`` and ``"auto"``,
+                which only pick Kornia when it is ``True`` — callers that care about CUDA-gated GPU
+                selection (e.g. dataset builders) compute this via their own fork-safe CUDA check and
+                pass it in; this function does not probe CUDA itself to avoid importing
+                device-detection code from other modules.
 
         Returns:
             Concrete ``AugmentationBackend`` member.
@@ -139,7 +190,7 @@ class AugmentationBackend(str, Enum):
                 return cls.KORNIA
             if cls.ALBU._is_available():
                 return cls.ALBU
-            if cls.KORNIA._is_available():
+            if has_cuda and cls.KORNIA._is_available():
                 return cls.KORNIA
             return cls.TV
         try:
@@ -217,6 +268,154 @@ def _detect_device() -> str:
 
 
 DEVICE: str = _detect_device()
+
+
+def _cuda_supports_native_bf16(device: torch.device | int | None = None) -> bool:
+    """Return whether a CUDA device runs bfloat16 natively rather than through emulation.
+
+    This is the test ``torch.cuda.is_bf16_supported(including_emulation=False)`` applies in PyTorch 2.4+ (compute
+    capability 8.0 or newer, and every ROCm device), but for any device instead of only the current one, and on every
+    supported PyTorch version. ``torch.cuda.is_bf16_supported()`` itself also counts emulated bfloat16, so it returns
+    ``True`` on pre-Ampere GPUs such as the T4 and V100, which have no bfloat16 tensor cores; emulated bfloat16 there
+    runs slower than float16 and even float32.
+
+    Args:
+        device: CUDA device to check. ``None`` checks the current device.
+
+    Returns:
+        ``True`` when CUDA is available and the device supports bfloat16 natively.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("torch.cuda.is_available", return_value=False):
+        ...     _cuda_supports_native_bf16()
+        False
+    """
+    if not torch.cuda.is_available():
+        return False
+    if torch.version.hip:
+        return True
+    return torch.cuda.get_device_capability(device)[0] >= 8
+
+
+def _cuda_training_device_indices(devices: int | str | Sequence[int]) -> list[int]:
+    """Return the CUDA device indices a Lightning ``devices`` value trains on.
+
+    Lightning reads ``devices`` as a count (``2``, ``"2"``), explicit indices (``[1]``, ``"0,2"``), or every visible
+    device (``"auto"``, ``-1``). ``RFDETR.train(device="cuda:1")`` forwards ``devices=[1]``.
+
+    ``"auto"`` and ``-1`` therefore mean *every* visible device, never some idle subset of them, and the callers read
+    that set conservatively — every selected GPU has to qualify. That is deliberate: Lightning gives the whole set to
+    the run and precision must be identical across DDP ranks, which one rank cannot decide for another. The cost is
+    that a single pre-Ampere GPU anywhere in a mixed host keeps an ``amp_dtype="auto"`` run (and the bf16-only paths
+    that follow from it) in fp16; naming the fast GPUs explicitly (``devices=[1]``) is how a caller opts out.
+
+    Indices this host cannot see are dropped, so every returned index is safe to hand to a per-device probe such as
+    ``torch.cuda.get_device_capability``: an over-count (``devices=4`` on a two-GPU host) or an out-of-range explicit
+    index otherwise reaches that probe and trips a bare internal ``assert`` there, replacing Lightning's own named
+    misconfiguration error with an opaque ``AssertionError``.
+
+    The two ways of selecting nothing are left as they fall out — ``devices=0`` reads as the every-visible-device case
+    and ``devices=[]`` returns an empty list — because neither reaches here in practice: Lightning rejects both while
+    validating its own ``devices`` value, before any precision is resolved. Nothing downstream depends on which way
+    they lean, so neither is special-cased.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        The visible device indices, in the order given. Empty when no requested index is visible, which on a host
+        without CUDA is every form.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("torch.cuda.device_count", return_value=4):
+        ...     _cuda_training_device_indices([1]), _cuda_training_device_indices("0,2")
+        ([1], [0, 2])
+        >>> with patch("torch.cuda.device_count", return_value=2):
+        ...     _cuda_training_device_indices(2), _cuda_training_device_indices(4)
+        ([0, 1], [0, 1])
+    """
+    visible = range(torch.cuda.device_count())
+    if not isinstance(devices, (int, str)):
+        return [int(index) for index in devices if int(index) in visible]
+    if isinstance(devices, str):
+        devices_name = devices.strip().lower()
+        if "," in devices_name:
+            return [int(entry) for entry in devices_name.split(",") if entry.strip() and int(entry) in visible]
+        devices = int(devices_name) if devices_name.isdigit() else -1
+    if devices > 0:
+        return [index for index in range(devices) if index in visible]
+    return list(visible)
+
+
+def _cuda_native_bf16_on_devices(devices: int | str | Sequence[int]) -> bool:
+    """Return whether every CUDA device a Lightning ``devices`` value trains on runs bfloat16 natively.
+
+    ``amp_dtype="auto"`` trains in bf16 only when this is ``True``. The trainer's precision and the
+    ``batch_size="auto"`` probe both take their answer from here, so the probe measures the dtype the run uses.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        ``True`` when every selected device supports bfloat16 natively. When ``devices`` selects no visible device,
+        the current device is checked.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> capability = {0: (8, 0), 1: (7, 5)}
+        >>> with (
+        ...     patch("torch.cuda.is_available", return_value=True),
+        ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.device_count", return_value=2),
+        ...     patch("torch.cuda.get_device_capability", side_effect=lambda index=None: capability[index or 0]),
+        ... ):
+        ...     _cuda_native_bf16_on_devices([0]), _cuda_native_bf16_on_devices(2)
+        (True, False)
+    """
+    indices: list[int | None] = list(_cuda_training_device_indices(devices)) or [None]
+    return all(_cuda_supports_native_bf16(index) for index in indices)
+
+
+def _cuda_bf16_supported_on_devices(devices: int | str | Sequence[int]) -> bool:
+    """Return whether the CUDA devices a Lightning ``devices`` value trains on can run bfloat16 at all.
+
+    This is the wider question ``torch.cuda.is_bf16_supported()`` answers — native bfloat16 *or* emulation — asked for
+    the devices a run trains on instead of only the current one. An explicit ``amp_dtype="bf16"`` is honoured on
+    emulated bfloat16 (with a warning), so its gate needs this test rather than the stricter
+    :func:`_cuda_native_bf16_on_devices`; reading the same device set is what keeps the gate and that warning from
+    disagreeing on a mixed-GPU host.
+
+    Only the native half of the question is answered per device. Whether *emulated* bfloat16 is available is left to
+    PyTorch's own probe of the current device, because answering it per index means materialising a bfloat16 tensor on
+    every selected GPU, creating a CUDA context on each of them in the parent process.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        ``True`` when bfloat16 is usable on the selected devices, natively or through emulation.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with (
+        ...     patch("torch.cuda.is_available", return_value=True),
+        ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.device_count", return_value=2),
+        ...     patch("torch.cuda.get_device_capability", return_value=(7, 5)),
+        ...     patch("torch.cuda.is_bf16_supported", return_value=True),
+        ... ):
+        ...     _cuda_bf16_supported_on_devices([1])
+        True
+    """
+    if not torch.cuda.is_available():
+        # Checked here rather than left to the probe below: torch.cuda.is_bf16_supported() reads torch.version.hip
+        # before torch.cuda.is_available(), so on a ROCm build with no visible GPU the bare call answers True.
+        return False
+    return _cuda_native_bf16_on_devices(devices) or torch.cuda.is_bf16_supported()
+
+
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
 
 
@@ -321,9 +520,10 @@ def _desugar_optimizer_callable(
 
 
 _MANAGED_SCHEDULER_PRESETS = {"step", "cosine"}
-_DEPRECATED_LR_FIELD_KWARGS = {"lr_drop": "lr_drop", "lr_min_factor": "min_factor"}
-# Keys the managed "step" / "cosine" presets actually consume from lr_scheduler_kwargs.
-_MANAGED_SCHEDULER_KWARGS = {"min_factor", "lr_drop"}
+#: Default values used when managed step/cosine scheduler kwargs are omitted.
+_MANAGED_SCHEDULER_DEFAULTS: dict[str, int | float] = {"lr_drop": 100, "min_factor": 0.0}
+#: Keyword arguments consumed by the managed step/cosine scheduler presets.
+_MANAGED_SCHEDULER_KWARGS = frozenset(_MANAGED_SCHEDULER_DEFAULTS)
 
 # ReduceLROnPlateau does not subclass LRScheduler but is a supported explicit scheduler.
 SchedulerType: TypeAlias = LRScheduler | ReduceLROnPlateau
@@ -453,6 +653,7 @@ class ModelConfig(BaseConfig):
             subclass.
         dec_n_points: Deformable attention points per head per level in the decoder. Must be
             provided by concrete subclass.
+        dim_feedforward: Hidden width of the decoder feed-forward layers. Defaults to ``2048``.
         resolution: Square input resolution (pixels). Must be provided by concrete subclass.
         positional_encoding_size: Side length (in patches) of the sinusoidal positional grid.
             Must be provided by concrete subclass.
@@ -463,9 +664,31 @@ class ModelConfig(BaseConfig):
             convergence acceleration. ``num_queries * group_detr`` predictions are produced in
             training mode; ``num_queries`` in eval mode. ``num_queries`` must be divisible by
             ``group_detr``. Defaults to ``13``.
-        amp: Enable automatic mixed precision (bfloat16/float16). Defaults to ``True``.
-        compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
-            ``False``.
+        amp: Deprecated, removal in v1.14: use ``TrainConfig.amp_dtype=None`` instead. Enable
+            automatic mixed precision (bfloat16/float16). Defaults to ``True``. An explicit
+            ``TrainConfig.amp_dtype`` always overrides this field; it is only consulted when
+            ``amp_dtype`` is left at its default and this field is set to ``False``.
+        compile: Compile the model and matcher L1 box cost with ``torch.compile`` on CUDA.
+            Under BF16/FP16 AMP the compiled cost serves the decoder (and auxiliary) layers;
+            encoder-stage matching stays on the eager ``torch.cdist`` path because its predicted
+            boxes are emitted in the reduced precision while targets stay float32. For detection
+            models with ``TrainConfig.multi_scale=False`` (and the defaults
+            ``TrainConfig.square_resize_div_64=True`` and ``cuda_graphs=False``) the model is compiled
+            for the fixed training batch shape (a validation batch of another shape, such as a partial
+            final batch or a different ``TrainConfig.eval_batch_size``, recompiles once) and the default
+            IA-BCE detection losses run layer-batched in one compiled function. Target packing and
+            assignment stay eager, and every other configuration, including segmentation and keypoint
+            models, keeps its dynamic model compile and eager per-layer losses. Detection training on one BF16
+            CUDA device with ``TrainConfig.use_ema=True`` also runs gradient clipping, AdamW and the EMA update
+            as one Triton pass; the advanced training guide lists the exact conditions. Defaults to ``False``.
+        cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
+            graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
+            sizes it matches eager and ``compile`` is the better lever. Combined with
+            ``compile=True`` the replay is delegated to Inductor's CUDA graph trees, which
+            stacks both gains at small batch sizes and matches plain compilation at large
+            ones. With ``amp_dtype="fp8"`` and ``compile=False``, uses Transformer Engine's
+            FP8-aware capture instead, requiring fixed resolution and no gradient accumulation.
+            Combining FP8 with both flags stays compile-only. Defaults to ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
         device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
         gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
@@ -483,6 +706,7 @@ class ModelConfig(BaseConfig):
     sa_nheads: int
     ca_nheads: int
     dec_n_points: int
+    dim_feedforward: int = Field(default=2048, ge=1)
     num_queries: int = 300
     # ModelConfig is the sole owner of `num_select` for PTL/inference; it is read via `_namespace_from_configs`.
     num_select: int = 300
@@ -490,6 +714,7 @@ class ModelConfig(BaseConfig):
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
+    # Deprecated: use TrainConfig.amp_dtype=None instead (see _resolve_amp_dtype). Removal in v1.14.
     amp: bool = True
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
@@ -500,6 +725,7 @@ class ModelConfig(BaseConfig):
     group_detr: int = 13
     gradient_checkpointing: bool = False
     compile: bool = False
+    cuda_graphs: bool = False
     fused_optimizer: bool = True
     positional_encoding_size: int
     ia_bce_loss: bool = True
@@ -643,6 +869,7 @@ class ModelConfig(BaseConfig):
             "sa_nheads",
             "ca_nheads",
             "dec_n_points",
+            "dim_feedforward",
             "out_feature_indexes",
             "projector_scale",
             "bbox_reparam",
@@ -1041,18 +1268,21 @@ class TrainConfig(BaseConfig):
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
-    epochs: int = 100
+    # ge=1: ``epochs=0`` otherwise surfaces as a ZeroDivisionError inside ``configure_optimizers``.
+    epochs: int = Field(default=100, ge=1)
     resume: PathLikeStr | None = None
-    ema_decay: float = 0.993
+    # ``decay * ema + (1 - decay) * weight`` only averages for decay in [0, 1]; outside it the EMA weights diverge.
+    ema_decay: float = Field(default=0.993, ge=0.0, le=1.0)
     ema_tau: int = 100
-    lr_drop: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
     skip_best_epochs: int = Field(default=0, ge=0)
     smooth_alpha: float = 0.0
-    warmup_epochs: float = 0.0
+    # ge=0: a negative value shifts the managed LR schedule so it starts part-way through its decay.
+    warmup_epochs: float = Field(default=0.0, ge=0.0)
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
-    drop_path: float = 0.0
+    # [0, 1): ``drop_path=1.0`` divides by a zero keep probability and turns every drop-path layer output into NaN.
+    drop_path: float = Field(default=0.0, ge=0.0, lt=1.0)
     cls_loss_coef: float = 1.0
     # Detection-vs-keypoint distinction is derived by callers via `include_keypoints`, not
     # stored on this field. See rfdetr.datasets.transforms.AlbumentationsWrapper.from_config
@@ -1065,15 +1295,15 @@ class TrainConfig(BaseConfig):
     keypoint_oks_sigmas: list[float] | None = None
     # "webdataset" streams pre-packed tar shards instead of loose image files; see
     # rfdetr.datasets.webdataset for the packer and the sizing contract it imposes on the loaders.
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
+    dataset_file: DatasetFile = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
+    # See MultiScale: "per-batch" (default) / "per-sample" / "off"; True and False alias "per-batch" and "off".
     # XLA/TPU: every distinct (H, W) triggers a separate graph compilation. Set multi_scale=False
     # for a static shape (zero recompilations after the first batch) when training on TPU.
-    multi_scale: bool = True
+    multi_scale: MultiScale = MultiScale.PER_BATCH
     expanded_scales: bool = True
-    do_random_resize_via_padding: bool = False
     use_ema: bool = True
     ema_update_interval: int = 1
     # Validation-only: also evaluate the base model, on top of the model validation already forwards
@@ -1101,15 +1331,23 @@ class TrainConfig(BaseConfig):
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
-    amp_dtype: Literal["auto", "bf16", "fp16", "fp8"] = Field(
-        default="auto",
+    amp_dtype: AmpDtype = Field(
+        default=_AMP_DTYPE_DEFAULT,
         description=(
-            "Mixed-precision autocast dtype. "
-            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
-            "'fp16' forces fp16. "
-            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU. "
-            "Non-FP8 choices have no effect when model_config.amp=False or when training on CPU."
+            "Mixed-precision training precision. Sole live authority for AMP enable+dtype; see "
+            "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
+            "None disables autocast (full fp32). "
+            "On TPU, 'auto' and 'bf16' select XLA's bf16-true precision. "
+            "Elsewhere, 'auto' selects bf16-mixed on CUDA GPUs with native bf16 (Ampere and newer) and fp16 otherwise, "
+            "including pre-Ampere GPUs such as the T4 and V100, where bf16 is only emulated. "
+            "'bf16' selects bfloat16 (with a warning where it is only emulated; falls back to fp16 with a warning if "
+            "unsupported). "
+            "'fp16' selects fp16 on supported CUDA/MPS backends. "
+            "Explicit XLA uses full fp32 until CPU/GPU PJRT BF16 execution is verified. "
+            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
+            "an explicit 'fp8' is honored even if the deprecated ModelConfig.amp=False. "
+            "Any non-default value here always wins over the deprecated ModelConfig.amp. "
+            "The direct CPU accelerator always uses full fp32."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
@@ -1138,12 +1376,18 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
-    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
-        default="hotcoco",
+    eval_backend: CocoEvalBackend = Field(
+        default="vernier",
         description=(
-            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
-            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
-            "to the previous evaluator."
+            "COCO evaluation backend used for validation and test mAP. All of them ship with 'rfdetr[train]' and "
+            "produce identical metrics; 'vernier' is the default and computes fastest, both several times "
+            "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools. "
+            "'hotcoco_streaming' is the same evaluator as 'hotcoco' in a different execution mode, best-effort with a "
+            "fallback to 'hotcoco': it matches each validation batch as it arrives, which shortens the end-of-epoch "
+            "evaluation but costs more CPU time in total. It keeps the stored evaluation state for the fallback "
+            "and adds the stream's matching state during the epoch, but skips the full COCO dataset build at the "
+            "end; peak memory has not been measured. It applies to single-process runs and otherwise evaluates in "
+            "one batch like 'hotcoco'."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
@@ -1160,6 +1404,18 @@ class TrainConfig(BaseConfig):
     scale_jitter: bool = True
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
     save_dataset_grids: bool = False
+
+    @field_validator("multi_scale", mode="before")
+    @classmethod
+    def _coerce_multi_scale(cls, v: Any) -> Any:
+        """Map the boolean spellings to members: ``True`` is ``"per-batch"`` (the old default), ``False`` is
+        ``"off"``."""
+        return MultiScale.from_value(v) if isinstance(v, bool) else v
+
+    @field_serializer("multi_scale")
+    def _serialize_multi_scale(self, value: MultiScale) -> str:
+        """Serialize the mode to its plain string value so ``model_dump`` stays JSON-safe."""
+        return value.value
 
     @field_validator("augmentation_backend", mode="before")
     @classmethod
@@ -1204,11 +1460,14 @@ class TrainConfig(BaseConfig):
     notes: Optional[Any] = Field(
         default=None,
         description=(
-            "User-defined provenance metadata embedded in best-model .pth checkpoints "
-            "under checkpoint['args']['notes'] and in exported ONNX files under the "
-            "'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
-            "(string, dict, list, int, float, bool). String values are stored verbatim; "
-            "all other types are JSON-encoded."
+            "User-defined provenance metadata embedded in best-model .pth and Lightning .ckpt "
+            "checkpoints under checkpoint['args']['notes'], and in the metadata of an exported artifact "
+            "for a format that carries it (see 'Read Embedded Notes' in the export docs). "
+            "Accepts any JSON-serialisable value (string, dict, list, int, float, bool). "
+            "Checkpoints store the value as-is; a "
+            "Lightning .ckpt additionally replaces a value a weights-only torch.load cannot "
+            "read with its repr() (and warns) so Trainer.fit(ckpt_path=...) can still resume. "
+            "Exports store string values verbatim and JSON-encode all other types."
         ),
     )
 
@@ -1231,10 +1490,11 @@ class TrainConfig(BaseConfig):
         Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
         dtype rather than failing the whole training run.
         """
-        if value not in ("auto", "bf16", "fp16", "fp8"):
+        if value not in (None, "auto", "bf16", "fp16", "fp8"):
             # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
             warnings.warn(
-                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16', 'fp8'. Falling back to 'auto'.",
+                f"Unknown amp_dtype={value!r}; expected None or one of 'auto', 'bf16', 'fp16', 'fp8'. "
+                "Falling back to 'auto'.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -1244,7 +1504,11 @@ class TrainConfig(BaseConfig):
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
-    clip_max_norm: float = 0.1
+    # ge=0.0 keeps 0.0 as the documented "clipping off" value while rejecting negatives at
+    # construction time. Both consumers gate clipping behind ``> 0`` —
+    # RFDETRModelModule._clip_manual_optimization_gradients and FusedAdamWEMA (which maps any non-positive norm to
+    # math.inf) — so a negative value would otherwise train unclipped for the whole run without raising or warning.
+    clip_max_norm: float = Field(default=0.1, ge=0.0)
     seed: int | None = None
     sync_bn: bool = False
     # strategy maps to PTL Trainer(strategy=...). Common values: "auto", "ddp",
@@ -1254,13 +1518,13 @@ class TrainConfig(BaseConfig):
     # num_nodes maps to PTL Trainer(num_nodes=...) for multi-machine training.
     # Single-machine DDP users should leave this at 1 (the default).
     num_nodes: int = 1
+    # Deprecated: no runtime consumer since the PTL migration — eval precision follows amp_dtype
+    # (see _warn_deprecated_fp16_eval). Removal in v1.14.
     fp16_eval: bool = False
     lr_scheduler: str | Callable[..., SchedulerType] = "step"
     lr_scheduler_kwargs: dict[str, Any] = Field(default_factory=dict)
     lr_scheduler_interval: Literal["step", "epoch"] = "step"
     lr_scheduler_monitor: str = "val/loss"
-    # Deprecated aux LR knobs — kept for one cycle; folded into lr_scheduler_kwargs (see _map_deprecated_lr_fields).
-    lr_min_factor: float = 0.0
     optimizer: str | Callable[..., Optimizer] = "adamw"
     optimizer_kwargs: dict[str, Any] = Field(default_factory=dict)
     dont_save_weights: bool = False
@@ -1458,6 +1722,26 @@ class TrainConfig(BaseConfig):
             )
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_deprecated_fp16_eval(cls, data: Any) -> Any:
+        """Warn that ``fp16_eval`` is inert and superseded by ``amp_dtype``.
+
+        The flag has had no runtime consumer since the PTL migration, so it is warned about rather than migrated: a
+        config carrying it already trains and evaluates at the precision ``amp_dtype`` resolves to. A default ``False``
+        is skipped silently so reloading a dumped config (which always carries the field) never warns.
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("fp16_eval"):
+            warnings.warn(
+                "fp16_eval is deprecated and has no effect; evaluation precision follows amp_dtype. "
+                "Set amp_dtype='fp16' to evaluate in fp16.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
+
     @model_validator(mode="after")
     def validate_explicit_val_loss_disable(self) -> "TrainConfig":
         """Reject disabling validation loss for a configured plateau loss monitor.
@@ -1504,65 +1788,6 @@ class TrainConfig(BaseConfig):
                     f"{{{allowed}}}; unknown key(s): {unknown_keys}."
                 )
         return self
-
-    @model_validator(mode="before")
-    @classmethod
-    def _map_deprecated_lr_fields(cls, data: Any) -> Any:
-        """Fold the deprecated ``lr_drop`` / ``lr_min_factor`` fields into ``lr_scheduler_kwargs``.
-
-        These loose knobs are deprecated in favor of ``lr_scheduler_kwargs``. When either is supplied with a non-default
-        value for a managed preset (``"step"`` / ``"cosine"``), it is copied into ``lr_scheduler_kwargs`` (without
-        overriding an explicit kwarg) and a ``FutureWarning`` is emitted. Default values are ignored silently so round-
-        tripping a dumped config (which always carries these fields) never warns. For explicit (dotted-path / callable)
-        schedulers the deprecated fields are preset-specific and left untouched.
-        """
-        if not isinstance(data, dict):
-            return data
-        # Only managed presets consume these knobs; default lr_scheduler ("step") is managed.
-        if not _is_managed_scheduler_name(data.get("lr_scheduler", "step")):
-            # Explicit / callable scheduler: these preset knobs are inert. Warn (never fold) when a non-default
-            # value is set so a stale lr_drop / lr_min_factor carried over from a managed config is not silently
-            # dropped — a reproducibility footgun when migrating a saved config to an explicit scheduler.
-            for field_name in _DEPRECATED_LR_FIELD_KWARGS:
-                if field_name in data and data[field_name] != cls.model_fields[field_name].default:
-                    warnings.warn(
-                        f"{field_name} is ignored for the explicit (non-managed) lr_scheduler "
-                        f"{data.get('lr_scheduler')!r}; it only applies to the managed 'step'/'cosine' presets.",
-                        FutureWarning,
-                        stacklevel=2,
-                    )
-            return data
-        kwargs = dict(data.get("lr_scheduler_kwargs") or {})
-        for field_name, kwarg_name in _DEPRECATED_LR_FIELD_KWARGS.items():
-            if field_name not in data:
-                continue
-            # A default value (common when reloading a dumped config) is a no-op: the managed builder falls back to
-            # the same default. Skip silently so serialization round-trips don't emit spurious deprecation warnings.
-            if data[field_name] == cls.model_fields[field_name].default:
-                continue
-            # Already migrated: a dumped config carries both the top-level field and the folded kwarg. If the kwarg
-            # already holds this value, the field adds nothing — skip silently so migrated-config reloads never warn.
-            if kwargs.get(kwarg_name) == data[field_name]:
-                continue
-            # Both set to different values: the kwarg wins (setdefault below is a no-op). Say so explicitly rather
-            # than implying the deprecated field was migrated, which would mislead — the field value is discarded.
-            if kwarg_name in kwargs:
-                warnings.warn(
-                    f"{field_name}={data[field_name]!r} is ignored because lr_scheduler_kwargs already sets "
-                    f"{kwarg_name!r}={kwargs[kwarg_name]!r} (the kwarg wins); remove the deprecated {field_name}.",
-                    FutureWarning,
-                    stacklevel=2,
-                )
-                continue
-            warnings.warn(
-                f"{field_name} is deprecated; pass it via lr_scheduler_kwargs={{'{kwarg_name}': ...}} instead.",
-                FutureWarning,
-                stacklevel=2,
-            )
-            kwargs[kwarg_name] = data[field_name]
-        if kwargs:
-            data["lr_scheduler_kwargs"] = kwargs
-        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -1709,3 +1934,52 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_nll_loss_coef: float = 1.0
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
+
+
+def _resolve_amp_dtype(
+    model_config: ModelConfig,
+    train_config: TrainConfig,
+    *,
+    warn_legacy: bool = True,
+) -> AmpDtype:
+    """Resolve the effective mixed-precision mode from the training and (deprecated) model settings.
+
+    ``TrainConfig.amp_dtype`` is the live authority. The deprecated ``ModelConfig.amp`` toggle is consulted only as a
+    fallback, so a caller that sets ``amp_dtype`` never has it silently overridden by a stale ``amp=False`` carried in
+    a model config.
+
+    "Set" means holding a non-default value, not ``model_fields_set`` membership: a config reloaded from
+    ``training_config.json`` carries every field explicitly, which would otherwise make the legacy toggle inert after a
+    single save/load round-trip.
+
+    Args:
+        model_config: Architecture configuration, read only for the deprecated ``amp`` toggle.
+        train_config: Training configuration holding the authoritative ``amp_dtype``.
+        warn_legacy: Emit the deprecation warning when the legacy toggle supplies the result.
+
+    Returns:
+        The effective ``amp_dtype``; ``None`` means run in full fp32.
+
+    Examples:
+        >>> from rfdetr.config import RFDETRNanoConfig, TrainConfig, _resolve_amp_dtype
+        >>> _resolve_amp_dtype(RFDETRNanoConfig(), TrainConfig(dataset_dir="data"))
+        'auto'
+        >>> _resolve_amp_dtype(RFDETRNanoConfig(), TrainConfig(dataset_dir="data", amp_dtype="bf16"))
+        'bf16'
+        >>> import warnings
+        >>> with warnings.catch_warnings():
+        ...     warnings.simplefilter("ignore", FutureWarning)
+        ...     _resolve_amp_dtype(RFDETRNanoConfig(amp=False), TrainConfig(dataset_dir="data")) is None
+        True
+    """
+    if train_config.amp_dtype != _AMP_DTYPE_DEFAULT:
+        return train_config.amp_dtype
+    if not model_config.amp:
+        if warn_legacy:
+            warnings.warn(
+                "ModelConfig.amp is deprecated; pass amp_dtype=None to the training config instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return None
+    return train_config.amp_dtype

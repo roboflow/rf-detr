@@ -10,19 +10,22 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import torch
 from PIL import Image
+from torchvision.transforms.v2 import functional
 
 from rfdetr.datasets._torchvision import (
     Compose,
     RandomChoice,
     RandomHorizontalFlip,
     RandomResize,
+    RandomSelect,
     RandomSizedCrop,
     Resize,
+    _apply_to_masks,
+    _mark_invisible_keypoints,
     crop,
 )
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
@@ -52,11 +55,10 @@ class TestDefaultTorchvisionTransforms:
     def test_keypoint_pipeline_without_flip_pairs_disables_default_flip(self, builder: Callable[..., Compose]) -> None:
         """A keypoint pipeline (list sentinel) with no flip pairs disables the default flip.
 
-        Regression test: RandomHorizontalFlip's default construction previously ran the flip
-        unconditionally whenever keypoint_flip_pairs was falsy, mirroring the mirror-without-
-        relabel it performs internally (see TestRandomHorizontalFlipEdgeCases below) at the
-        pipeline level too — the flip must be dropped entirely, not partially applied, matching
-        AlbumentationsWrapper.from_config's filter_keypoint_hflip_augmentations for the same
+        Regression test: RandomHorizontalFlip's default construction previously ran the flip unconditionally whenever
+        keypoint_flip_pairs was falsy, mirroring the mirror-without-relabel it performs internally (see
+        TestRandomHorizontalFlipEdgeCases below) at the pipeline level too — the flip must be dropped entirely, not
+        partially applied, matching AlbumentationsWrapper.from_config's filter_keypoint_hflip_augmentations for the same
         sentinel (keypoint_flip_pairs is not None and not keypoint_flip_pairs).
         """
         pipeline = builder("train", 640, keypoint_flip_pairs=[])
@@ -64,15 +66,16 @@ class TestDefaultTorchvisionTransforms:
         assert not any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
 
     @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
-    def test_keypoint_pipeline_without_flip_pairs_warns(self, builder: Callable[..., Compose]) -> None:
+    def test_keypoint_pipeline_without_flip_pairs_warns(self, mocker, builder: Callable[..., Compose]) -> None:
         """Disabling the default flip for an unpaired keypoint pipeline logs a warning.
 
         The warning must not tell the user to remove the transform "from your augmentation config" — the torchvision-
         native default path (``aug_config=None``) has no such config object; the only actionable remedy here is
         providing ``keypoint_flip_pairs``.
         """
-        with patch("rfdetr.datasets.coco.logger") as mock_logger:
-            builder("train", 640, keypoint_flip_pairs=[])
+        mock_logger = mocker.patch("rfdetr.datasets.coco.logger")
+
+        builder("train", 640, keypoint_flip_pairs=[])
 
         mock_logger.warning.assert_called_once()
         message = str(mock_logger.warning.call_args)
@@ -81,16 +84,12 @@ class TestDefaultTorchvisionTransforms:
         assert "augmentation config" not in message.lower()
 
     @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
-    def test_keypoint_pipeline_with_flip_pairs_keeps_default_flip(self, builder: Callable[..., Compose]) -> None:
-        """A keypoint pipeline with real flip pairs keeps the default flip (control, no regression)."""
-        pipeline = builder("train", 640, keypoint_flip_pairs=[0, 1])
-
-        assert any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
-
-    @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
-    def test_detection_only_pipeline_keeps_default_flip(self, builder: Callable[..., Compose]) -> None:
-        """A detection-only pipeline (None sentinel) keeps the default flip (control, no regression)."""
-        pipeline = builder("train", 640, keypoint_flip_pairs=None)
+    @pytest.mark.parametrize("keypoint_flip_pairs", [[0, 1], None])
+    def test_real_flip_pairs_or_detection_only_keeps_default_flip(
+        self, builder: Callable[..., Compose], keypoint_flip_pairs: list[int] | None
+    ) -> None:
+        """Real flip pairs (keypoints) or the ``None`` sentinel (detection-only) keep the default flip (control)."""
+        pipeline = builder("train", 640, keypoint_flip_pairs=keypoint_flip_pairs)
 
         assert any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
 
@@ -102,21 +101,20 @@ class TestDefaultTorchvisionTransforms:
         assert not any(isinstance(step, AlbumentationsWrapper) for step in pipeline.transforms)
         assert any(isinstance(step, Normalize) for step in pipeline.transforms)
 
-    @patch("rfdetr.datasets.transforms.alb", None)
-    def test_custom_aug_config_missing_albumentations_raises_extra_hint(self) -> None:
+    def test_custom_aug_config_missing_albumentations_raises_extra_hint(self, mocker) -> None:
         """Custom Albumentations configs require the augmentation extra."""
-        with pytest.raises(ImportError, match=r"rfdetr\[augment\]"):
+        mocker.patch("rfdetr.datasets.transforms.alb", None)
+
+        with pytest.raises(ImportError) as exc_info:
             make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
 
-    @patch("rfdetr.datasets.transforms.alb", None)
-    def test_gpu_postprocess_custom_aug_config_does_not_require_albumentations(self) -> None:
+        assert "rfdetr[augment]" in str(exc_info.value)
+
+    def test_gpu_postprocess_custom_aug_config_does_not_require_albumentations(self, mocker) -> None:
         """GPU augmentation uses torchvision CPU resize even with custom aug_config."""
-        pipeline = make_coco_transforms(
-            "train",
-            640,
-            aug_config={"HorizontalFlip": {"p": 1.0}},
-            gpu_postprocess=True,
-        )
+        mocker.patch("rfdetr.datasets.transforms.alb", None)
+
+        pipeline = make_coco_transforms("train", 640, aug_config={"HorizontalFlip": {"p": 1.0}}, gpu_postprocess=True)
 
         assert not any(isinstance(step, AlbumentationsWrapper) for step in pipeline.transforms)
         assert not any(isinstance(step, Normalize) for step in pipeline.transforms)
@@ -141,12 +139,7 @@ class TestTorchvisionTransformOutputs:
 
         assert tensor.shape[-2:] == (200, 200)
         assert transformed["masks"].shape == (1, 200, 200)
-        torch.testing.assert_close(
-            transformed["boxes"],
-            torch.tensor([[0.2, 0.3, 0.2, 0.4]]),
-            rtol=1e-4,
-            atol=1e-6,
-        )
+        torch.testing.assert_close(transformed["boxes"], torch.tensor([[0.2, 0.3, 0.2, 0.4]]), rtol=1e-4, atol=1e-6)
 
     def test_horizontal_flip_updates_boxes_and_keypoint_pairs(self) -> None:
         """Default flip mirrors boxes, keypoints, and configured left/right pairs."""
@@ -163,10 +156,52 @@ class TestTorchvisionTransformOutputs:
         _, transformed = flip(image, target)
 
         torch.testing.assert_close(transformed["boxes"], torch.tensor([[70.0, 5.0, 90.0, 25.0]]))
-        torch.testing.assert_close(
-            transformed["keypoints"],
-            torch.tensor([[[69.0, 25.0, 2.0], [89.0, 5.0, 2.0]]]),
-        )
+        torch.testing.assert_close(transformed["keypoints"], torch.tensor([[[70.0, 25.0, 2.0], [90.0, 5.0, 2.0]]]))
+
+    @pytest.mark.parametrize(
+        ("keypoints", "pairs", "expected"),
+        [
+            pytest.param(
+                [
+                    [[2.0, 1.0, 2.0], [7.0, 2.0, 2.0], [3.0, 3.0, 2.0], [6.0, 4.0, 2.0], [5.0, 5.0, 2.0]],
+                    [[1.0, 1.0, 2.0], [9.0, 2.0, 2.0], [4.0, 3.0, 2.0], [5.0, 4.0, 2.0], [8.0, 5.0, 2.0]],
+                ],
+                [0, 1, 2, 3],
+                [
+                    [[3.0, 2.0, 2.0], [8.0, 1.0, 2.0], [4.0, 4.0, 2.0], [7.0, 3.0, 2.0], [5.0, 5.0, 2.0]],
+                    [[1.0, 2.0, 2.0], [9.0, 1.0, 2.0], [5.0, 4.0, 2.0], [6.0, 3.0, 2.0], [2.0, 5.0, 2.0]],
+                ],
+                id="two-instances-two-pairs-one-unpaired-slot",
+            ),
+            pytest.param(
+                [[[0.0, 2.0, 2.0], [10.0, 3.0, 2.0]]],
+                [0, 1],
+                [[[0.0, 3.0, 2.0], [10.0, 2.0, 2.0]]],
+                id="edge-keypoints-swap-and-stay-visible",
+            ),
+            pytest.param(
+                [[[2.0, 1.0, 0.0], [7.0, 2.0, 2.0]]],
+                [0, 1],
+                [[[3.0, 2.0, 2.0], [0.0, 0.0, 0.0]]],
+                id="invisible-keypoint-is-zeroed-in-partner-slot",
+            ),
+        ],
+    )
+    def test_horizontal_flip_keypoint_pairs_and_visibility(
+        self, keypoints: list[list[list[float]]], pairs: list[int], expected: list[list[list[float]]]
+    ) -> None:
+        """Flip mirrors each keypoint to ``width - x``, then swaps paired slots and keeps invisible ones zeroed.
+
+        Covers several instances, a slot outside every pair, a swapped pair sitting on both vertical image
+        edges, and an invisible keypoint with non-zero coordinates that must not leak into its partner slot.
+        """
+        image = torch.zeros((1, 6, 10), dtype=torch.float32)
+        target = {"keypoints": torch.tensor(keypoints)}
+
+        _, transformed = RandomHorizontalFlip(p=1.0, keypoint_flip_pairs=pairs)(image, target)
+
+        assert transformed is not None
+        torch.testing.assert_close(transformed["keypoints"], torch.tensor(expected))
 
 
 class TestTrainExtraIsMinimal:
@@ -193,6 +228,25 @@ class TestTrainExtraIsMinimal:
 
 class TestCropFunction:
     """Crop() correctly filters degenerate boxes and synchronises per-instance fields."""
+
+    def test_instance_with_mask_outside_crop_is_dropped_but_box_only_instance_kept(self) -> None:
+        """A partly visible box whose mask lies outside the crop is dropped; a box-only instance stays."""
+        image = Image.new("RGB", (100, 100))
+        masks = torch.zeros((3, 100, 100), dtype=torch.bool)
+        masks[0, 10:20, 60:70] = True  # box reaches into the crop, mask does not
+        masks[1, 10:30, 10:30] = True
+        target = {
+            "boxes": torch.tensor([[40.0, 10.0, 70.0, 20.0], [10.0, 10.0, 30.0, 30.0], [5.0, 5.0, 25.0, 25.0]]),
+            "labels": torch.tensor([1, 2, 3]),
+            "masks": masks,
+        }
+
+        _, out = crop(image, target, top=0, left=0, height=50, width=50)
+
+        assert out["labels"].tolist() == [2, 3]
+        assert out["masks"].shape == (2, 50, 50)
+        assert out["masks"][0].any()
+        assert not out["masks"][1].any()
 
     def test_all_boxes_outside_crop_produces_empty_target(self) -> None:
         """Boxes fully outside the crop are removed and every per-instance field is filtered to match.
@@ -271,6 +325,32 @@ class TestCropFunction:
 class TestRandomHorizontalFlipEdgeCases:
     """RandomHorizontalFlip boundary and skip-path behaviour."""
 
+    @pytest.mark.parametrize("width", [10, 11])
+    def test_continuous_keypoint_stays_aligned_with_pixel_feature(self, width: int) -> None:
+        """Horizontal flip keeps continuous keypoints aligned at even and odd widths."""
+        row, column = 2, 3
+        image = torch.zeros((1, 6, width), dtype=torch.float32)
+        image[0, row, column] = 1.0
+        target = {"keypoints": torch.tensor([[[column + 0.5, row + 0.5, 2.0]]])}
+
+        flipped_image, transformed = RandomHorizontalFlip(p=1.0)(image, target)
+
+        flipped_column = int(torch.nonzero(flipped_image[0, row], as_tuple=False).item())
+        feature_center_x = flipped_column + 0.5
+        assert transformed is not None
+        assert transformed["keypoints"][0, 0, 0].item() == feature_center_x
+
+    @pytest.mark.parametrize("x", [0.0, 10.0])
+    def test_keypoint_on_image_edge_stays_visible(self, x: float) -> None:
+        """A keypoint on either vertical image edge stays visible and moves to the opposite edge."""
+        image = torch.zeros((1, 6, 10), dtype=torch.float32)
+        target = {"keypoints": torch.tensor([[[x, 2.5, 2.0]]])}
+
+        _, transformed = RandomHorizontalFlip(p=1.0)(image, target)
+
+        assert transformed is not None
+        torch.testing.assert_close(transformed["keypoints"], torch.tensor([[[10.0 - x, 2.5, 2.0]]]))
+
     def test_p_zero_returns_input_unchanged(self) -> None:
         """p=0.0 always skips the flip; image and target returned unmodified."""
         image = Image.new("RGB", (100, 50))
@@ -284,16 +364,18 @@ class TestRandomHorizontalFlipEdgeCases:
 
     def test_odd_length_keypoint_flip_pairs_raises(self) -> None:
         """Odd-length keypoint_flip_pairs raises ValueError at construction time."""
-        with pytest.raises(ValueError, match="even"):
+        with pytest.raises(ValueError) as exc_info:
             RandomHorizontalFlip(p=1.0, keypoint_flip_pairs=[0, 1, 2])
+
+        assert "even" in str(exc_info.value)
 
 
 class TestRandomSelectBoundaries:
     """RandomSelect always routes to the correct transform at boundary probabilities."""
 
-    def test_p_zero_always_selects_transform2(self) -> None:
-        """p=0.0 always picks transform2."""
-        from rfdetr.datasets._torchvision import RandomSelect
+    @pytest.mark.parametrize(("p", "expected"), [(0.0, 2), (1.0, 1)])
+    def test_boundary_probability_selects_expected_transform(self, p: float, expected: int) -> None:
+        """p=0.0 always picks transform2 and p=1.0 always picks transform1."""
 
         def t1(img, tgt):
             return img, {"selected": 1}
@@ -301,27 +383,11 @@ class TestRandomSelectBoundaries:
         def t2(img, tgt):
             return img, {"selected": 2}
 
-        sel = RandomSelect(t1, t2, p=0.0)
+        sel = RandomSelect(t1, t2, p=p)
         image = Image.new("RGB", (10, 10))
         for _ in range(10):
             _, out = sel(image, {})
-            assert out["selected"] == 2
-
-    def test_p_one_always_selects_transform1(self) -> None:
-        """p=1.0 always picks transform1."""
-        from rfdetr.datasets._torchvision import RandomSelect
-
-        def t1(img, tgt):
-            return img, {"selected": 1}
-
-        def t2(img, tgt):
-            return img, {"selected": 2}
-
-        sel = RandomSelect(t1, t2, p=1.0)
-        image = Image.new("RGB", (10, 10))
-        for _ in range(10):
-            _, out = sel(image, {})
-            assert out["selected"] == 1
+            assert out["selected"] == expected
 
 
 class TestRandomSizedCropBoundary:
@@ -334,13 +400,13 @@ class TestRandomSizedCropBoundary:
             pytest.param((8, 8), (100, 200), (640, 640), id="small_image_larger_crop_range"),
         ],
     )
-    def test_does_not_crash_on_degenerate_size(
+    def test_degenerate_size_returns_image(
         self,
         img_size: tuple[int, int],
         crop_range: tuple[int, int],
         output_size: tuple[int, int],
     ) -> None:
-        """RandomSizedCrop does not crash when min_crop >= image dimension after clamping."""
+        """RandomSizedCrop still returns an image when min_crop >= image dimension after clamping."""
         image = Image.new("RGB", img_size)
         target = {"boxes": torch.zeros((0, 4)), "labels": torch.zeros(0, dtype=torch.long)}
         transform = RandomSizedCrop(crop_range, output_size)
@@ -371,15 +437,19 @@ class TestResizeDtypeGuard:
 class TestEdgeCaseCoverage:
     """Edge cases: empty constructors, unknown splits, zero-spatial masks, max_size cap."""
 
-    def test_random_choice_empty_raises(self) -> None:
-        """RandomChoice with no transforms raises ValueError."""
-        with pytest.raises(ValueError, match="at least one transform"):
-            RandomChoice([])
+    @pytest.mark.parametrize(
+        ("cls", "message"),
+        [
+            pytest.param(RandomChoice, "at least one transform", id="random-choice"),
+            pytest.param(RandomResize, "at least one", id="random-resize"),
+        ],
+    )
+    def test_empty_constructor_raises(self, cls: type, message: str) -> None:
+        """RandomChoice with no transforms and RandomResize with no sizes raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            cls([])
 
-    def test_random_resize_empty_raises(self) -> None:
-        """RandomResize with no sizes raises ValueError."""
-        with pytest.raises(ValueError, match="at least one"):
-            RandomResize([])
+        assert message in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "builder",
@@ -390,15 +460,13 @@ class TestEdgeCaseCoverage:
     )
     def test_unknown_image_set_raises(self, builder) -> None:
         """Unknown image_set raises ValueError."""
-        with pytest.raises(ValueError, match="unknown"):
+        with pytest.raises(ValueError) as exc_info:
             builder("predict", 640)
+
+        assert "unknown" in str(exc_info.value)
 
     def test_resize_masks_zero_spatial_dim(self) -> None:
         """_apply_to_masks handles (0, H, W) masks returning (0, new_H, new_W) without error."""
-        from torchvision.transforms.v2 import functional
-
-        from rfdetr.datasets._torchvision import _apply_to_masks
-
         empty_masks = torch.zeros((0, 50, 100), dtype=torch.bool)
         result = _apply_to_masks(empty_masks, lambda masks: functional.resize(masks, [200, 200]))
 
@@ -447,14 +515,56 @@ class TestEdgeCaseCoverage:
 
         assert img_out.shape[-2:] == (200, 200)
 
-    def test_mark_invisible_keypoints_empty_no_crash(self) -> None:
-        """_mark_invisible_keypoints returns immediately for empty keypoints tensor."""
-        from rfdetr.datasets._torchvision import _mark_invisible_keypoints
-
+    def test_mark_invisible_keypoints_empty_returns_empty(self) -> None:
+        """_mark_invisible_keypoints returns an empty keypoints tensor unchanged."""
         empty_kps = torch.zeros((0, 17, 3))
         result = _mark_invisible_keypoints(empty_kps, height=480, width=640)
 
         assert result.shape == (0, 17, 3)
+
+    @pytest.mark.parametrize(
+        ("x", "y", "kept"),
+        [
+            (0.0, 0.0, True),
+            (640.0, 480.0, True),
+            (640.5, 10.0, False),
+            (10.0, 480.5, False),
+            (-0.5, 10.0, False),
+            (10.0, -0.5, False),
+        ],
+    )
+    def test_mark_invisible_keypoints_keeps_points_on_image_edges(self, x: float, y: float, kept: bool) -> None:
+        """Continuous coordinates include both image edges; points beyond them are cleared."""
+        keypoints = torch.tensor([[[x, y, 2.0]]])
+        result = _mark_invisible_keypoints(keypoints, height=480, width=640)
+
+        expected = keypoints if kept else torch.zeros_like(keypoints)
+        torch.testing.assert_close(result, expected)
+
+    @pytest.mark.parametrize(
+        ("old_width", "new_width"),
+        [
+            pytest.param(600, 640, id="600-to-640"),
+            pytest.param(100, 432, id="100-to-432"),
+        ],
+    )
+    def test_resize_keeps_right_and_bottom_edge_keypoint_exact(self, old_width: int, new_width: int) -> None:
+        """A keypoint on the right and bottom image edge lands exactly on the resized edge and stays visible.
+
+        Scaling by a precomputed float32 ratio rounds ``x == old_width`` one ulp past ``new_width`` for these size pairs
+        (``600 -> 640`` gives 640.00006), which the edge-inclusive bounds check would clear.
+        """
+        old_height, new_height = 50, 64
+        image = Image.new("RGB", (old_width, old_height))
+        target = {
+            "keypoints": torch.tensor([[[float(old_width), float(old_height), 2.0]]]),
+            "orig_size": torch.tensor([old_height, old_width]),
+            "size": torch.tensor([old_height, old_width]),
+        }
+
+        _, out = Resize((new_height, new_width))(image, target)
+
+        torch.testing.assert_close(out["keypoints"], torch.tensor([[[float(new_width), float(new_height), 2.0]]]))
 
 
 class TestNonUniformMaskParity:

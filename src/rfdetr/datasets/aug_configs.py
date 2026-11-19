@@ -80,7 +80,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``HorizontalFlip`` | ``K.RandomHorizontalFlip`` | Direct |
 | ``VerticalFlip`` | ``K.RandomVerticalFlip`` | Direct |
 | ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
-| ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` fraction; scalar -> signed; CPU warning; scale -> ``(v, v)`` |
+| ``Affine`` | ``K.RandomAffine`` / pixel translation | Pixel shifts or fractional translation; see below |
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
 | ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, 3 channels; only ``p`` honored, method/num_output_channels ignored |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
@@ -115,6 +115,20 @@ Use the Albumentations backend when that distribution must be preserved. ``inter
 Note that
 Albumentations itself deprecates ``ShiftScaleRotate`` in favour of ``Affine``, which this backend already
 supports; new configs should prefer ``Affine``.
+
+``Affine(translate_px=...)`` accepts fixed offsets, inclusive ``(min, max)`` pairs, and per-axis ``x``/``y``
+mappings on Kornia; an offset may be any integer or an integral float such as ``4.0``. It applies whole-pixel
+shifts to images, boxes, instance masks and padding masks together. Options that cannot change a whole-pixel
+shift are accepted and have no effect: ``interpolation`` and ``mask_interpolation`` codes 0-4, ``keep_ratio``,
+``balanced_scale``, ``rotate_method``, a unit ``scale`` or zero ``shear``, and ``fill``/``fill_mask`` with a
+replicate border. Pipeline construction raises for nonzero rotation or shear, nonunit scale (a per-axis
+``scale``/``shear`` mapping's missing axis counts as ``1``, as on Albumentations, so ``shear={"x": 0}`` raises),
+``fit_output=True``, interpolation codes outside 0-4, border modes other than constant or replicate, a nonzero
+``fill``/``fill_mask`` with a constant border, the deprecated Albumentations 1.x aliases ``cval``, ``cval_mask``
+and ``mode`` (use ``fill``, ``fill_mask`` and ``border_mode``), and boolean, fractional, reversed or
+out-of-64-bit-range offsets. Use Albumentations for those combinations.
+The existing ``translate_percent`` mapping uses a size fraction; a scalar becomes a signed Kornia range instead
+of Albumentations' fixed positive shift and emits a warning. A scalar ``scale`` becomes ``(v, v)``.
 
 Not yet supported on Kornia: ``HueSaturationValue`` (Albumentations shifts hue/saturation/value additively,
 Kornia's ``ColorJiggle`` scales them multiplicatively, so there is no faithful mapping), and the geometric

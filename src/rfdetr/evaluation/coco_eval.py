@@ -28,7 +28,6 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
-import faster_coco_eval.core.mask as mask_util
 import numpy as np
 from faster_coco_eval import COCO
 from faster_coco_eval.core.faster_eval_api import COCOeval
@@ -175,7 +174,28 @@ def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float]
         return None
 
     _warn_custom_keypoint_oks_sigma_once(keypoint_count)
-    return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+    return _default_custom_oks_sigmas(keypoint_count)
+
+
+def _default_custom_oks_sigmas(keypoint_count: int) -> list[float]:
+    """Build the fallback OKS sigma list used when a dataset is not COCO-person shaped.
+
+    The ``float32`` round-trip is deliberate: it is what the sigmas were built with before, and
+    widening back to Python floats keeps each value bit-identical to the previously evaluated
+    numbers rather than the exact decimal literal.
+
+    Args:
+        keypoint_count: Number of keypoints the dataset annotates.
+
+    Returns:
+        One sigma per keypoint.
+
+    Examples:
+        >>> _default_custom_oks_sigmas(2)
+        [0.05000000074505806, 0.05000000074505806]
+    """
+    sigmas = np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32)
+    return [float(sigma) for sigma in sigmas.tolist()]
 
 
 def _resolve_group_keypoint_oks_sigmas(
@@ -187,7 +207,7 @@ def _resolve_group_keypoint_oks_sigmas(
         if keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
             return None
         _warn_custom_keypoint_oks_sigma_once(keypoint_count)
-        return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+        return _default_custom_oks_sigmas(keypoint_count)
 
     sigmas = np.asarray(keypoint_oks_sigmas, dtype=np.float32)
     if sigmas.ndim != 1 or sigmas.size == 0:
@@ -285,24 +305,37 @@ def _xyxy_to_xywh(boxes: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     return boxes
 
 
-def _weighted_mean_coco_stats(stats: list[np.ndarray[Any, Any]], weights: list[int]) -> np.ndarray[Any, Any]:
-    """Compute category-weighted mean COCO stats, ignoring unavailable ``-1`` values."""
-    if not stats:
-        return np.full((10,), -1.0, dtype=np.float32)
+def _summarize_keypoint_groups(evals: list[COCOeval]) -> np.ndarray[Any, Any]:
+    """Summarize accumulated keypoint groups as one COCO evaluation.
 
-    max_len = max(len(item) for item in stats)
-    aggregated = np.full((max_len,), -1.0, dtype=np.float32)
-    for stat_idx in range(max_len):
-        numerator = 0.0
-        denominator = 0
-        for stat, weight in zip(stats, weights):
-            if len(stat) <= stat_idx or stat[stat_idx] < 0:
-                continue
-            numerator += float(stat[stat_idx]) * weight
-            denominator += weight
-        if denominator > 0:
-            aggregated[stat_idx] = numerator / denominator
-    return aggregated
+    COCO's summary averages only values above ``-1``, so a category with no scorable ground truth for a stat stays out
+    of that stat's mean, whichever group holds it.
+
+    Args:
+        evals: One accumulated evaluator per group, all with the same IoU, recall, area and ``maxDets`` settings.
+
+    Returns:
+        The keypoint stats over every group's categories, with ``-1`` where no category has a value.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> params = SimpleNamespace(
+        ...     iouType="keypoints", iouThrs=np.array([0.5, 0.75]), areaRngLbl=["all", "medium", "large"], maxDets=[20]
+        ... )
+        >>> def group(*category_values):
+        ...     precision = np.array(category_values)[None, None, :, None, None] * np.ones((2, 1, 1, 3, 1))
+        ...     return SimpleNamespace(params=params, eval={"precision": precision, "recall": precision[:, 0]})
+        >>> float(_summarize_keypoint_groups([group(1.0, -1.0), group(0.0)])[0])
+        0.5
+    """
+    merged = copy.copy(evals[0])
+    # precision is [iou, recall, category, area, max_dets] and recall is [iou, category, area, max_dets].
+    merged.eval = {
+        "precision": np.concatenate([coco_eval.eval["precision"] for coco_eval in evals], axis=2),
+        "recall": np.concatenate([coco_eval.eval["recall"] for coco_eval in evals], axis=1),
+    }
+    patched_pycocotools_summarize(merged, log_summary=False)
+    return np.asarray(merged.stats)
 
 
 def _log_keypoint_stats(stats: np.ndarray[Any, Any]) -> None:
@@ -489,10 +522,8 @@ class CocoEvaluator:
             coco_eval.evaluate()
 
     def _evaluate_grouped_keypoints(self, grouped_eval: _GroupedKeypointCOCOeval) -> None:
-        """Run keypoint evaluation per keypoint-count group and aggregate stats."""
+        """Run keypoint evaluation per keypoint-count group and summarize the groups together."""
         grouped_eval.evals = []
-        group_stats: list[np.ndarray[Any, Any]] = []
-        group_weights: list[int] = []
         all_results = self.coco_results["keypoints"]
         img_ids = list(np.unique(self.img_ids))
 
@@ -509,10 +540,8 @@ class CocoEvaluator:
             self._evaluate_grouped_keypoint_results(group_coco_eval, group_gt, group_results, img_ids)
             _accumulate_and_summarize(group_coco_eval, log_summary=False)
             grouped_eval.evals.append(group_coco_eval)
-            group_stats.append(np.asarray(getattr(group_coco_eval, "stats"), dtype=np.float32))
-            group_weights.append(len(group.category_ids))
 
-        grouped_eval.stats = _weighted_mean_coco_stats(group_stats, group_weights)
+        grouped_eval.stats = _summarize_keypoint_groups(grouped_eval.evals)
 
     @staticmethod
     def _evaluate_grouped_keypoint_results(
@@ -582,10 +611,12 @@ class CocoEvaluator:
             labels = prediction["labels"].tolist()
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
 
-            encode = getattr(mask_util, "encode")
-            rles: list[dict[str, Any]] = [
-                encode(np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0] for mask in masks
-            ]
+            # hotcoco (Rust, shipped with the same `train` extra as faster_coco_eval) encodes the whole (H, W, N)
+            # stack in one call and returns the same RLE bytes as encoding each mask on its own, several times faster;
+            # this loop dominated segmentation scoring.
+            import hotcoco.mask as hotcoco_mask
+
+            rles: list[dict[str, Any]] = hotcoco_mask.encode(masks[:, 0].cpu().numpy().transpose(1, 2, 0))
             for rle in rles:
                 rle["counts"] = rle["counts"].decode("utf-8")
 

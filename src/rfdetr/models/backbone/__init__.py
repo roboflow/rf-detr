@@ -7,10 +7,11 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from typing import Any
+from typing import Any, get_args
 
 from torch import Tensor, nn
 
+from rfdetr.config import EncoderName
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.position_encoding import build_position_encoding
 from rfdetr.utilities.tensors import NestedTensor
@@ -57,6 +58,49 @@ class Joiner(nn.Sequential):
         return feats, masks, poss, cross_attn_feats
 
 
+#: Backbone classes for encoders that are not built into ``rfdetr``, keyed by ``ModelConfig.encoder``.
+_BACKBONE_REGISTRY: dict[str, type[Backbone]] = {}
+
+
+def register_backbone(encoder: str, backbone_cls: type[Backbone]) -> None:
+    """Route :func:`build_backbone` for *encoder* to *backbone_cls*.
+
+    Extension packages (for example ``rfdetr_plus``) call this at import time to plug in an encoder that ``rfdetr``
+    does not ship. *backbone_cls* subclasses :class:`Backbone` and overrides ``_build_encoder`` (and, when its
+    parameters follow other naming rules, ``get_named_param_lr_pairs``); the projector, padding masks and export path
+    stay those of :class:`Backbone`. An override of ``_build_encoder`` must accept ``**kwargs`` and use only the
+    arguments it needs, because the hook signature may grow.
+
+    Registry keys are ``ModelConfig.encoder`` values, which ``ModelConfig`` restricts to the three built-in DINOv2
+    names (``EncoderName``). To select a registered encoder through a config, subclass ``ModelConfig`` (or one of its
+    subclasses) and redeclare ``encoder`` with the registered name. A ``Literal`` redeclaration that is not a subtype of
+    the base ``Literal`` needs ``# type: ignore[assignment]``.
+
+    The stochastic-depth (drop-path) schedule finds the transformer layers of the module that ``_build_encoder``
+    returns at its ``blocks``, ``trunk.blocks`` or ``encoder.encoder.layer`` attribute (the HuggingFace DINOv2 layout),
+    and sets ``drop_path.drop_prob`` on each layer that has it. An encoder with another layout is trained without the
+    schedule, and a warning is logged when a positive ``drop_path`` is configured.
+
+    Args:
+        encoder: The ``ModelConfig.encoder`` value that selects *backbone_cls*.
+        backbone_cls: The :class:`Backbone` subclass to build for *encoder*.
+
+    Raises:
+        TypeError: If *backbone_cls* is not a :class:`Backbone` subclass.
+        ValueError: If *encoder* is a DINOv2 encoder name, or is already registered to another class.
+    """
+    if not (isinstance(backbone_cls, type) and issubclass(backbone_cls, Backbone)):
+        raise TypeError(f"backbone_cls must be a Backbone subclass, got {backbone_cls!r}.")
+    if encoder in get_args(EncoderName) or encoder.split("_")[0] == "dinov2":
+        raise ValueError(f"Encoder {encoder!r} is a built-in rfdetr (DINOv2) encoder name and cannot be registered.")
+    registered = _BACKBONE_REGISTRY.get(encoder)
+    if registered is not None and registered is not backbone_cls:
+        raise ValueError(
+            f"Encoder {encoder!r} is already registered to {registered.__module__}.{registered.__qualname__}."
+        )
+    _BACKBONE_REGISTRY[encoder] = backbone_cls
+
+
 def build_backbone(
     encoder: str,
     vit_encoder_num_layers: int,
@@ -92,7 +136,8 @@ def build_backbone(
     """
     position_embedding_module = build_position_encoding(hidden_dim, position_embedding)
 
-    backbone = Backbone(
+    backbone_cls = _BACKBONE_REGISTRY.get(encoder, Backbone)
+    backbone = backbone_cls(
         encoder,
         pretrained_encoder,
         window_block_indexes=window_block_indexes,
@@ -107,7 +152,7 @@ def build_backbone(
         rms_norm=rms_norm,
         backbone_lora=backbone_lora,
         gradient_checkpointing=gradient_checkpointing,
-        load_dinov2_weights=load_dinov2_weights,
+        load_dinov2_weights=load_dinov2_weights and not force_no_pretrain,
         patch_size=patch_size,
         num_windows=num_windows,
         positional_encoding_size=positional_encoding_size,

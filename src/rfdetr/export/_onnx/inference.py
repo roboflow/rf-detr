@@ -5,27 +5,187 @@
 # ------------------------------------------------------------------------
 """ONNX Runtime inference helpers for RF-DETR exported models.
 
-These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or the
-RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
+These functions handle session creation, image preprocessing, and detection decoding using ``onnxruntime``, ``numpy``,
+``supervision``, and ``Pillow``, alongside the RF-DETR package dependencies. Loading a ``.onnx`` artifact through
+``RFDETRInference`` also reads its embedded inference metadata with the ``onnx`` package, so that path needs
+``rfdetr[onnx]``, which installs both ``onnx`` and ``onnxruntime``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import torch
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._runtime.adapters import (
+    ExportRuntime,
+    _check_input_interface,
+    _check_output_interface,
+    _input_array,
+    _input_tensor,
+    _runtime_options,
+    _single_input,
+    _thread_count_option,
+)
 from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
 
 
-def _create_onnx_session(model_path: str | Path, providers: list[str] | None = None) -> Any:
+def _run_onnx_raw(session: Any, input_name: str, array: Any) -> list[Any]:
+    """Execute one ONNX batch through the shared session path."""
+    return cast(list[Any], session.run(None, {input_name: array}))
+
+
+def _onnx_dtype(type_name: str) -> np.dtype[Any]:
+    """Return the NumPy dtype of an ONNX tensor type name such as ``"tensor(float)"``.
+
+    Examples:
+        >>> _onnx_dtype("tensor(float)"), _onnx_dtype("tensor(float16)")
+        (dtype('float32'), dtype('float16'))
+    """
+    # ONNX names element types "tensor(<type>)"; only "float" differs from the NumPy name, where it means float64.
+    element_type = type_name.removeprefix("tensor(").removesuffix(")")
+    return np.dtype("float32" if element_type == "float" else element_type)
+
+
+def _run_onnx_bound(session: Any, input_name: str, batch: torch.Tensor, outputs: Sequence[Any]) -> list[torch.Tensor]:
+    """Run one batch through IO binding on the batch's own device and return the outputs as new tensors there.
+
+    ONNX Runtime reads the input and writes every output in place, so a CUDA batch never goes through host memory.
+    Each output takes the batch size for its first axis; the other axes must be static in the graph.
+
+    Args:
+        session: The ONNX Runtime session.
+        input_name: Name of the graph's single input.
+        batch: The input, already in the graph's layout and dtype and contiguous.
+        outputs: The session's output descriptions, in graph order.
+
+    Returns:
+        One tensor per output, in graph order, on the batch's device.
+
+    Examples:
+        Needs an exported ONNX model.
+
+        >>> import onnxruntime  # doctest: +SKIP
+        >>> session = onnxruntime.InferenceSession("model.onnx")  # doctest: +SKIP
+        >>> batch = torch.zeros(1, 3, 384, 384)  # doctest: +SKIP
+        >>> boxes, logits = _run_onnx_bound(session, "input", batch, session.get_outputs())  # doctest: +SKIP
+    """
+    device = batch.device
+    device_id = 0 if device.index is None else device.index
+    binding = session.io_binding()
+    # Allocate on the CPU: a process-wide default device such as CUDA would make ``.numpy()`` raise.
+    input_dtype = torch.empty(0, dtype=batch.dtype, device="cpu").numpy().dtype
+    binding.bind_input(input_name, device.type, device_id, input_dtype, tuple(batch.shape), batch.data_ptr())
+    results = []
+    for output in outputs:
+        dtype = _onnx_dtype(output.type)
+        tensor = torch.empty(
+            (batch.shape[0], *output.shape[1:]), dtype=torch.from_numpy(np.empty(0, dtype=dtype)).dtype, device=device
+        )
+        binding.bind_output(output.name, device.type, device_id, dtype, tuple(tensor.shape), tensor.data_ptr())
+        results.append(tensor)
+    if device.type == "cuda":
+        # ONNX Runtime runs on its own CUDA stream, and the batch was written on torch's current stream.
+        torch.cuda.current_stream(device).synchronize()
+    session.run_with_iobinding(binding)
+    binding.synchronize_outputs()
+    return results
+
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
+    """Load an ONNX artifact with provider and interface checks; it reads the ``num_threads`` option."""
+    num_threads = _thread_count_option("ONNX", _runtime_options("ONNX", options, ("num_threads",)))
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise ImportError("ONNX inference requires onnxruntime or onnxruntime-gpu.") from exc
+
+    providers = ort.get_available_providers()
+    if device == "cpu":
+        provider = "CPUExecutionProvider"
+    elif device == "auto":
+        provider = "CUDAExecutionProvider" if "CUDAExecutionProvider" in providers else "CPUExecutionProvider"
+    elif device == "cuda" or (device.startswith("cuda:") and device[5:].isdigit()):
+        provider = "CUDAExecutionProvider"
+    else:
+        raise ValueError(f"ONNX device {device!r} is unsupported. Use cpu, cuda:N, or auto.")
+    if provider not in providers:
+        raise RuntimeError(f"ONNX provider {provider} is unavailable. Installed providers: {providers}.")
+
+    device_id = int(device[5:]) if device.startswith("cuda:") else 0
+    requested: list[str | tuple[str, dict[str, Any]]] = (
+        [(provider, {"device_id": device_id})] if provider == "CUDAExecutionProvider" else [provider]
+    )
+    session = _create_onnx_session(
+        path, providers=requested, **({} if num_threads is None else {"num_threads": num_threads})
+    )
+    if provider not in session.get_providers():
+        raise RuntimeError(f"ONNX session did not activate requested provider {provider}.")
+    if device != "auto" and provider == "CUDAExecutionProvider" and hasattr(session, "disable_fallback"):
+        session.disable_fallback()
+    input_info = _single_input("ONNX", session.get_inputs())
+    dtype = _onnx_dtype(input_info.type)
+    # A symbolic or unnamed ONNX dimension is a str or None; only an int fixes the axis.
+    shape = [size if isinstance(size, int) else None for size in input_info.shape]
+    _check_input_interface("ONNX", metadata, input_info.name, shape, dtype)
+    outputs = session.get_outputs()
+    output_names = [item.name for item in outputs]
+    _check_output_interface("ONNX", metadata, output_names)
+
+    # On the CUDA provider, the batch is prepared on the GPU and bound in place, so it never goes through host memory.
+    # That needs torch to see the GPU, every output to lead with the input's batch axis (the same symbol or size, so a
+    # scalar or fixed-size auxiliary output stays on the host path) and every other axis to be static, so its buffer can
+    # be allocated.
+    batch_axis = input_info.shape[0] if input_info.shape else None
+    on_device = (
+        provider == "CUDAExecutionProvider"
+        and torch.cuda.is_available()
+        and batch_axis is not None
+        and all(
+            len(item.shape) >= 1
+            and item.shape[0] == batch_axis
+            and all(isinstance(size, int) for size in item.shape[1:])
+            for item in outputs
+        )
+    )
+
+    def execute(batch: Any) -> dict[str, Any]:
+        """Map one raw ONNX result by graph output name."""
+        if on_device:
+            return dict(
+                zip(output_names, _run_onnx_bound(session, input_info.name, _input_tensor(batch, metadata), outputs))
+            )
+        return dict(zip(output_names, _run_onnx_raw(session, input_info.name, _input_array(batch, metadata))))
+
+    return ExportRuntime(
+        "onnx",
+        metadata,
+        session=session,
+        device_policy=provider,
+        execute=execute,
+        device=torch.device("cuda", device_id) if on_device else torch.device("cpu"),
+        borrowed_outputs=False,
+    )
+
+
+def _create_onnx_session(
+    model_path: str | Path,
+    providers: list[str | tuple[str, dict[str, Any]]] | None = None,
+    num_threads: int | None = None,
+) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
     Imports ``onnxruntime`` at call time so that the rest of the package remains usable without it installed.  Input and
@@ -47,6 +207,8 @@ def _create_onnx_session(model_path: str | Path, providers: list[str] | None = N
         providers: Ordered list of ORT execution providers, e.g.
             ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.  When ``None`` (default), the best available
             provider is selected automatically.
+        num_threads: Size of the CPU intra-op thread pool, or ``None`` to leave it to ONNX Runtime, which sizes it
+            to the physical cores. Pass the logical core count to use hyperthreads too.
 
     Returns:
         An ``onnxruntime.InferenceSession`` ready for inference.
@@ -77,6 +239,8 @@ def _create_onnx_session(model_path: str | Path, providers: list[str] | None = N
                 "Install onnxruntime-gpu for GPU acceleration: `pip install onnxruntime-gpu`"
             )
     session_options = ort.SessionOptions()
+    if num_threads is not None:
+        session_options.intra_op_num_threads = num_threads
     # ORT's default CPU intra-op thread pool busy-spins while idle instead of blocking, trading
     # wake-up latency for CPU usage between calls. That spinning contends for CPU with any other
     # work in this process -- including this module's own torchvision-based preprocessing in
@@ -160,7 +324,7 @@ def _run_inference(
     with PILImage.open(image_path) as pil_img:
         inp_tensor = preprocess_to_nchw(pil_img, height, width, channels)
 
-    raw_outputs = session.run(None, {input_name: inp_tensor})
+    raw_outputs = _run_onnx_raw(session, input_name, inp_tensor)
 
     # RF-DETR ONNX output names: "dets" = pred_boxes, "labels" = pred_logits.
     # Match by name so the code is robust to output reordering.
@@ -217,61 +381,3 @@ def _run_inference(
 
     detections = Detections(xyxy=decoded.xyxy, confidence=decoded.confidence, class_id=decoded.class_id.astype(int))
     return detections, pil_img
-
-
-# Benchmarking helper — not part of production inference API; subject to removal.
-def _onnx_runtime(
-    onnx_path: Path | str,
-    image: PILImage.Image,
-    providers: list[str],
-    warmup: int = 20,
-    runs: int = 100,
-) -> tuple[float, float, str]:
-    """Benchmark ONNX Runtime inference for one image and provider list.
-
-    Creates a fresh ``InferenceSession`` with the requested providers, preprocesses ``image`` once using ImageNet
-    normalisation, then runs timed inference with ``time.perf_counter``.  GPU timings may underestimate real latency
-    if the CUDA execution provider is configured for asynchronous execution; for accurate GPU timing use CUDA events.
-
-    Args:
-        onnx_path: Path to the ``.onnx`` model file.
-        image: Input image (any size); resized to the model's expected spatial resolution.
-        providers: Ordered list of ORT execution providers, e.g.
-            ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.
-        warmup: Number of un-timed warm-up runs before measurement begins.
-        runs: Number of timed runs used to compute statistics.
-
-    Returns:
-        A ``(mean_ms, std_ms, provider_label)`` tuple where ``provider_label`` is the first active provider with
-        ``"ExecutionProvider"`` stripped, e.g. ``"CUDA"`` or ``"CPU"``.
-
-    Examples:
-        .. code-block:: python
-
-            mean_ms, std_ms, label = _onnx_runtime("model.onnx", image, ["CPUExecutionProvider"])
-            print(f"{label}: {mean_ms:.1f} ms ± {std_ms:.1f}")
-    """
-    import time
-
-    sess = _create_onnx_session(onnx_path, providers=providers)
-    active = sess.get_providers()[0]
-    if active != providers[0]:
-        raise RuntimeError(
-            f"Requested provider {providers[0]!r} not active — ORT fell back to {active!r}. "
-            "Install onnxruntime-gpu: `pip install onnxruntime-gpu`"
-        )
-    input_meta = sess.get_inputs()[0]
-    _, channels, height, width = input_meta.shape
-    inp = preprocess_to_nchw(image, height, width, channels)
-    feed = {input_meta.name: inp}
-
-    for _ in range(warmup):
-        sess.run(None, feed)
-    timings: list[float] = []
-    for _ in range(runs):
-        t0 = time.perf_counter()
-        sess.run(None, feed)
-        timings.append((time.perf_counter() - t0) * 1000.0)
-    arr_t = np.array(timings)
-    provider_label = sess.get_providers()[0].replace("ExecutionProvider", "")
-    return float(arr_t.mean()), float(arr_t.std()), provider_label

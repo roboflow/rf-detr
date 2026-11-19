@@ -6,10 +6,14 @@
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
 import logging
+import math
+import pickle
 import random
 import warnings
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -18,23 +22,28 @@ from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
+from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
+from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.utilities.box_ops import pairwise_box_l1_cost
+from rfdetr.utilities.imports import _IS_PYTORCH_OPTIMIZER_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor
+from tests._markers import _requires_cuda
+from tests.training.helpers import _fake_postprocess as _helpers_fake_postprocess
+from tests.training.helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
-from .helpers import _fake_postprocess as _helpers_fake_postprocess
-from .helpers import _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+_requires_pytorch_optimizer = pytest.mark.skipif(
+    not _IS_PYTORCH_OPTIMIZER_INSTALLED, reason="pytorch_optimizer not installed"
+)
 
-# ---------------------------------------------------------------------------
-# Private helpers — used by both module-level fixtures and class-level _setup_*
-# methods (which cannot inject pytest fixtures directly).
-# Only define a private helper when it is called from more than one site;
-# single-use logic belongs directly in the fixture body.
-# ---------------------------------------------------------------------------
+# Private helpers shared by module-level fixtures and class-level _setup_* methods (which cannot inject fixtures);
+# define one only when it has more than one call site.
 
 
 def _base_model_config(**overrides):
@@ -72,7 +81,6 @@ def _base_train_config(tmp_path=None, **overrides):
         drop_path=0.0,
         multi_scale=False,
         expanded_scales=False,
-        do_random_resize_via_padding=False,
         grad_accum_steps=1,
         tensorboard=False,
     )
@@ -212,7 +220,7 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
     return module, fake_model, fake_criterion, fake_postprocess
 
 
-def test_keypoint_training_resets_gaussian_parameters_after_pretrained_load(tmp_path) -> None:
+def test_keypoint_training_resets_gaussian_parameters_after_pretrained_load(tmp_path, mocker) -> None:
     """Keypoint finetuning should reset pretrained Gaussian precision rows after loading weights."""
     mc = _base_model_config(
         pretrain_weights="/fake/keypoint.pth",
@@ -224,20 +232,18 @@ def test_keypoint_training_resets_gaussian_parameters_after_pretrained_load(tmp_
     fake_model.reset_keypoint_gaussian_parameters = MagicMock()
     events: list[str] = []
 
-    with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
-        patch("rfdetr.training.module_model.load_pretrain_weights") as mock_load_pretrain_weights,
-        patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_fake_criterion(), _fake_postprocess()),
-        ),
-    ):
-        mock_load_pretrain_weights.side_effect = lambda *_args, **_kwargs: events.append("load")
-        fake_model.reset_keypoint_gaussian_parameters.side_effect = lambda: events.append("reset")
+    mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model)
+    mock_load_pretrain_weights = mocker.patch("rfdetr.training.module_model.load_pretrain_weights")
+    mocker.patch(
+        "rfdetr.training.module_model.build_criterion_from_config",
+        return_value=(_fake_criterion(), _fake_postprocess()),
+    )
+    mock_load_pretrain_weights.side_effect = lambda *_args, **_kwargs: events.append("load")
+    fake_model.reset_keypoint_gaussian_parameters.side_effect = lambda: events.append("reset")
 
-        from rfdetr.training.module_model import RFDETRModelModule
+    from rfdetr.training.module_model import RFDETRModelModule
 
-        RFDETRModelModule(mc, tc)
+    RFDETRModelModule(mc, tc)
 
     mock_load_pretrain_weights.assert_called_once_with(fake_model, mc)
     fake_model.reset_keypoint_gaussian_parameters.assert_called_once_with()
@@ -267,12 +273,29 @@ def _make_batch(batch_size=2, channels=3, h=16, w=16):
     return samples, targets
 
 
+def _attach_trainer(module, **attributes):
+    """Attach a MagicMock trainer carrying ``attributes`` to ``module`` and return it.
+
+    Examples:
+        >>> module, *_ = _build_module()
+        >>> trainer = _attach_trainer(module, global_step=3)
+        >>> module.trainer is trainer, trainer.global_step
+        (True, 3)
+    """
+    trainer = MagicMock()
+    for name, value in attributes.items():
+        setattr(trainer, name, value)
+    module._trainer = trainer
+    type(module).trainer = property(lambda self: self._trainer)
+    return trainer
+
+
 class TestMultiScaleBatchStart:
     """on_train_batch_start multi-scale resize picks a step-deterministic scale without clobbering global RNG."""
 
     def _build_multi_scale_module(self, tmp_path, global_step):
         """Return a module configured for multi-scale with a stubbed trainer at the given global step."""
-        tc = _base_train_config(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        tc = _base_train_config(tmp_path, multi_scale="per-batch")
         module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
         module.trainer = SimpleNamespace(global_step=global_step)
         return module
@@ -355,11 +378,7 @@ class _BoxNormalizedCriterion:
         return {"loss_ce": numerator / denominator}
 
 
-# ---------------------------------------------------------------------------
-# Fixtures — inject common test infrastructure; prefer these over private
-# helpers in test methods.  Class-level _setup_* helpers still use the private
-# functions directly (they cannot inject fixtures themselves).
-# ---------------------------------------------------------------------------
+# Fixtures: prefer these over the private helpers in test methods; class-level _setup_* helpers call the helpers.
 
 
 @pytest.fixture
@@ -378,9 +397,19 @@ def make_batch():
     return _make_batch
 
 
+#: Skip a test node that replays Inductor CUDA graph trees.
+_requires_cudagraph_trees = pytest.mark.skipif(
+    not torch.cuda.is_available() or not hasattr(torch.compiler, "cudagraph_mark_step_begin"),
+    reason="combined cudagraph regression requires CUDA graph-tree support",
+)
+
+
 class TestInit:
-    """Tests for RFDETRModelModule.__init__ — covers attribute assignment and delegation to build_model() /
-    build_criterion_and_postprocessors() when pretrain_weights is None."""
+    """Tests for RFDETRModelModule.__init__.
+
+    Covers attribute assignment and delegation to build_model() / build_criterion_and_postprocessors() when
+    pretrain_weights is None.
+    """
 
     @pytest.mark.parametrize(
         "model_config,expected_manual",
@@ -395,29 +424,25 @@ class TestInit:
         ],
     )
     def test_optimization_mode_per_model_type(self, build_module, model_config, expected_manual):
-        """Only keypoint models need manual optimization for box-normalized accumulation; detection and segmentation
-        keep Lightning's automatic optimization path."""
+        """Only keypoint models need manual optimization for box-normalized accumulation.
+
+        Detection and segmentation keep Lightning's automatic optimization path.
+        """
         module, _, _, _ = build_module(model_config=model_config)
 
         assert module._use_manual_optimization is expected_manual
         assert module.automatic_optimization is (not expected_manual)
 
-    def test_model_is_set(self, build_module):
-        """__init__ must assign the built model to module.model."""
-        module, fake_model, _, _ = build_module()
-        assert module.model is fake_model
+    @pytest.mark.parametrize(
+        "attribute, built_index",
+        [("model", 1), ("criterion", 2), ("postprocess", 3)],
+    )
+    def test_built_component_is_assigned(self, build_module, attribute, built_index):
+        """__init__ assigns the built model, criterion and postprocessor to module.model/.criterion/.postprocess."""
+        built = build_module()
+        assert getattr(built[0], attribute) is built[built_index]
 
-    def test_criterion_is_set(self, build_module):
-        """__init__ must assign the built criterion to module.criterion."""
-        module, _, fake_criterion, _ = build_module()
-        assert module.criterion is fake_criterion
-
-    def test_postprocess_is_set(self, build_module):
-        """__init__ must assign the built postprocessor to module.postprocess."""
-        module, _, _, fake_pp = build_module()
-        assert module.postprocess is fake_pp
-
-    def test_configs_stored(self, base_model_config, base_train_config, build_module):
+    def test_stores_configs(self, base_model_config, base_train_config, build_module):
         """Both model and train configs must be stored for later access."""
         mc = base_model_config()
         tc = base_train_config()
@@ -425,7 +450,7 @@ class TestInit:
         assert module.model_config is mc
         assert module.train_config is tc
 
-    def test_compile_runs_when_multi_scale_enabled(self, tmp_path):
+    def test_compile_runs_when_multi_scale_enabled(self, mocker, tmp_path):
         """torch.compile still runs with multi_scale=True, which is the shipped default.
 
         ``dynamic=True`` is passed precisely so one graph covers every (H, W) the multi-scale pipeline produces, so
@@ -433,16 +458,23 @@ class TestInit:
         """
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=True)
-        with (
-            patch("rfdetr.config.DEVICE", "cuda"),
-            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        _, _, criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
         assert mock_compile.call_args.kwargs["dynamic"] is True
+        criterion.enable_compiled_detection_losses.assert_not_called()
+
+    def test_compile_does_not_enable_global_error_suppression(self, mocker, tmp_path: Path) -> None:
+        """RF-DETR must not hide compiler failures or change unrelated models' fallback policy."""
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda model, **_: model)
+        with torch._dynamo.config.patch(suppress_errors=False):
+            _build_module(model_config=_base_model_config(compile=True), tmp_path=tmp_path)
+            assert torch._dynamo.config.suppress_errors is False
 
     @pytest.mark.gpu
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="compiled multi-scale regression requires CUDA")
+    @_requires_cuda
     def test_compiled_multi_scale_forward_backward_across_resolutions(self, tmp_path):
         """The real compiled CUDA module must backpropagate finite losses at two resized multi-scale resolutions."""
         torch.manual_seed(0)
@@ -480,23 +512,119 @@ class TestInit:
 
         assert len(resized_shapes) == 2
 
+    @pytest.mark.gpu
+    @_requires_cuda
+    def test_static_compile_runs_compiled_batched_losses_through_training_step(self, tmp_path: Path) -> None:
+        """A real RF-DETR Nano training step statically compiles the model and reaches the compiled loss graph.
+
+        The shipped builders create the detector, the criterion (``group_detr=13``) and the matcher. Only the whole-
+        model ``torch.compile`` is replaced by a recorder, because compiling the detector takes minutes; the loss graph
+        is compiled for real, and the step's loss matches the per-layer path on the same weights.
+        """
+        torch.manual_seed(0)
+        real_compile = torch.compile
+        model_config = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, compile=True, device="cuda")
+        train_config = _base_train_config(tmp_path, multi_scale=False)
+
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch(
+                "rfdetr.training.module_model.torch.compile",
+                side_effect=lambda target, **kwargs: (
+                    target if isinstance(target, nn.Module) else real_compile(target, **kwargs)
+                ),
+            ) as compiler,
+        ):
+            module = RFDETRModelModule(model_config, train_config).cuda().train()
+
+        model_compiles = [call for call in compiler.call_args_list if isinstance(call.args[0], nn.Module)]
+        assert len(model_compiles) == 1
+        assert model_compiles[0].kwargs["dynamic"] is False
+        criterion = module.criterion
+        assert type(criterion) is SetCriterion
+        assert criterion._compile_batched_detection_losses is True
+
+        resolution = model_config.resolution
+        samples, _ = _make_batch(batch_size=2, h=resolution, w=resolution)
+        samples.tensors = samples.tensors.cuda()
+        samples.mask = samples.mask.cuda()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2], [0.3, 0.6, 0.1, 0.2]][:count], device="cuda"),
+                "labels": torch.tensor([1, 3][:count], device="cuda"),
+            }
+            for count in (2, 1)
+        ]
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        trainer = SimpleNamespace(accumulate_grad_batches=1)
+        with patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer):
+            loss = module.training_step((samples, targets), batch_idx=0)
+            loss.backward()
+            with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
+                fallback_loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert criterion._compiled_batched_detection_losses is not None, "the compiled loss graph never ran"
+        assert torch.isfinite(loss)
+        gradients = [parameter.grad for parameter in module.model.parameters() if parameter.grad is not None]
+        assert gradients
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
+        assert torch.allclose(loss.detach(), fallback_loss.detach(), rtol=1e-4, atol=1e-6)
+
+    @pytest.mark.gpu
+    @_requires_cudagraph_trees
+    def test_compiled_cudagraph_trees_replay_two_optimizer_steps(self, mocker, tmp_path: Path) -> None:
+        """Combined compilation and CUDA graph trees must preserve finite gradients across optimizer replays."""
+        torch.manual_seed(0)
+        model_config = _base_model_config(compile=True, cuda_graphs=True, resolution=128)
+        train_config = _base_train_config(tmp_path, multi_scale=False)
+        model = _DynamicShapeModel().cuda().train()
+        criterion = _FakeCriterion()
+
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+        ):
+            module = RFDETRModelModule(model_config, train_config)
+
+        assert module._inductor_cudagraphs is True
+        optimizer = torch.optim.SGD(module.model.parameters(), lr=1e-3)
+        trainer = SimpleNamespace(accumulate_grad_batches=1)
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        for step in range(2):
+            samples, targets = _make_batch(h=128, w=128)
+            samples.tensors = samples.tensors.cuda()
+            samples.mask = samples.mask.cuda()
+            loss = module.training_step((samples, targets), batch_idx=step)
+            loss.backward()
+
+            assert torch.isfinite(loss)
+            assert model.weight.grad is not None
+            assert torch.isfinite(model.weight.grad).all()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
-    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
+    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, mocker, accelerator, tmp_path):
         """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
 
         This is the invariant the removed ``not multi_scale`` clause was documented as protecting; the accelerator check
         is what actually enforces it.
         """
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile")
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False, accelerator=accelerator)
-        with (
-            patch("rfdetr.config.DEVICE", "cuda"),
-            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
 
-    def test_compile_disabled_when_device_is_not_cuda(self, tmp_path, caplog, monkeypatch):
+    def test_compile_disabled_when_device_is_not_cuda(self, mocker, tmp_path, caplog, monkeypatch):
         """A non-CUDA accelerator disables compilation regardless of multi_scale, with an explanatory notice.
 
         A caller who sets ``compile=True`` on CPU/XLA/TPU must still learn why nothing was compiled, the same way the
@@ -507,65 +635,285 @@ class TestInit:
         # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
         # handler only sees its records while propagation is re-enabled.
         monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
-        with (
-            patch("rfdetr.config.DEVICE", "cpu"),
-            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
-            caplog.at_level(logging.INFO, logger="rf-detr"),
-        ):
+        mocker.patch("rfdetr.config.DEVICE", "cpu")
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile")
+        with caplog.at_level(logging.INFO, logger="rf-detr"):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
         assert any("Disabling torch.compile" in record.getMessage() for record in caplog.records)
 
-    def test_compile_runs_when_enabled_and_static_shapes(self, tmp_path):
+    def test_compile_runs_when_enabled_and_static_shapes(self, mocker, tmp_path):
         """torch.compile runs when compile=True and multi_scale=False on CUDA."""
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False)
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        _, _, criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is False
+        criterion.enable_compiled_detection_losses.assert_called_once_with()
+
+    @pytest.mark.parametrize(
+        ("model_overrides", "train_overrides"),
+        [
+            pytest.param({}, {"square_resize_div_64": False}, id="aspect-ratio-resize"),
+            pytest.param(
+                {},
+                {"aug_config": {"RandomCrop": {"height": 320, "width": 320, "p": 0.5}}},
+                id="custom-shape-changing-augmentation",
+            ),
+            pytest.param({"cuda_graphs": True}, {}, id="inductor-cuda-graphs"),
+            pytest.param({"segmentation_head": True}, {}, id="segmentation"),
+            pytest.param({"use_grouppose_keypoints": True}, {}, id="keypoints"),
+        ],
+    )
+    def test_compile_keeps_dynamic_shapes_when_batch_shape_can_vary(
+        self, mocker, model_overrides: dict[str, Any], train_overrides: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """A fixed ``multi_scale=False`` run still keeps the dynamic recipe outside the measured detection route.
+
+        Aspect-preserving resize pads each batch to its own per-axis maximum, and custom augmentations may change image
+        shape after resize; static graphs would recompile when those batch shapes vary. Inductor CUDA graph trees keep
+        their established recipe, and segmentation and keypoint models were not measured. None of these routes enables
+        the batched loss graph.
+        """
+        mc = _base_model_config(compile=True, **model_overrides)
+        tc = _base_train_config(tmp_path, multi_scale=False, **train_overrides)
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace()))
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        _, _, criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is True
+        criterion.enable_compiled_detection_losses.assert_not_called()
+
+    def test_compile_tolerates_criterion_without_matcher(self, mocker, tmp_path: Path) -> None:
+        """A criterion that exposes no ``matcher`` attribute must not break compiled construction.
+
+        ``_FakeCriterion`` is what the GPU compile regressions inject; reading ``self.criterion.matcher`` unguarded
+        raised ``AttributeError`` there before the ``getattr`` probe.
+        """
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), _fake_postprocess()),
+        )
+        compiler = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        module = RFDETRModelModule(_base_model_config(compile=True), _base_train_config(tmp_path))
+
+        assert module._compile_active is True
+        compiler.assert_called_once()
+
+    @pytest.mark.parametrize("compile_enabled", [False, True])
+    def test_matcher_l1_compilation_follows_model_flag(self, tmp_path: Path, compile_enabled: bool) -> None:
+        """Compile only the real matcher's tensor cost, without changing other matcher instances."""
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+        model = _fake_model()
         with (
             patch("rfdetr.config.DEVICE", "cuda"),
-            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+            patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace(coalesce_tiling_analysis=True))),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+            patch.object(HungarianMatcher, "enable_compiled_l1_cost", autospec=True) as enabler,
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda value, **_: value) as compiler,
         ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
-        mock_compile.assert_called_once()
+            module = RFDETRModelModule(
+                _base_model_config(compile=compile_enabled, cuda_graphs=True), _base_train_config(tmp_path)
+            )
+
+        assert module.criterion.matcher is matcher
+        assert type(matcher).forward is HungarianMatcher.forward
+        if not compile_enabled:
+            enabler.assert_not_called()
+            compiler.assert_not_called()
+            return
+        # Construction compiles only the model; the matcher's cost compiles lazily on its first use, from the
+        # same Inductor options the model got (the matcher itself forces CUDA graph replay off on top of them).
+        compiler.assert_called_once()
+        assert compiler.call_args.args == (model,)
+        model_options = compiler.call_args.kwargs["options"]
+        assert model_options == {"triton.coalesce_tiling_analysis": False, "triton.cudagraphs": True}
+        enabler.assert_called_once_with(matcher, model_options)
+
+    def test_compiled_matcher_stays_picklable_for_spawn_launchers(self, tmp_path: Path) -> None:
+        """The module's matcher pickles before and after its compiled cost is built in this process.
+
+        ``ddp_spawn``/``ddp_notebook`` pickle the trainer -- criterion and matcher included -- into every worker. The
+        ``torch.compile`` double returns a local closure, which ``pickle`` rejects (negative control below), so this
+        passes only when the matcher stores the compile request and builds the callable lazily per process.
+        """
+
+        def unpicklable_compile(fn, **_):
+            def compiled(*args):
+                return fn(*args)
+
+            return compiled
+
+        with pytest.raises((pickle.PicklingError, AttributeError)):
+            pickle.dumps(unpicklable_compile(pairwise_box_l1_cost))
+
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+        # The double is live during construction too: an eager compile in __init__ would already leave the
+        # unpicklable closure on the matcher and fail the first pickle below.
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+            patch(
+                "rfdetr.training.module_model.torch.compile",
+                side_effect=lambda value, **_: unpicklable_compile(value) if value is pairwise_box_l1_cost else value,
+            ),
+        ):
+            module = RFDETRModelModule(_base_model_config(compile=True), _base_train_config(tmp_path))
+
+        torch.manual_seed(0)
+        outputs = {"pred_logits": torch.randn(2, 4, 5), "pred_boxes": torch.rand(2, 4, 4) * 0.4 + 0.3}
+        targets = [
+            {"labels": torch.tensor([1, 3]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+        expected = HungarianMatcher()(outputs, targets)
+
+        # Pickled before any use: the spawn launcher's moment.
+        spawned_matcher = pickle.loads(pickle.dumps(module.criterion.matcher))
+        with patch("rfdetr.training.module_model.torch.compile", side_effect=unpicklable_compile) as compiler:
+            actual = module.criterion.matcher(outputs, targets)
+            spawned = spawned_matcher(outputs, targets)
+        assert compiler.call_count == 2, "each process builds its own compiled callable on first use"
+        for (actual_i, actual_j), (expected_i, expected_j) in zip((*actual, *spawned), (*expected, *expected)):
+            assert torch.equal(actual_i, expected_i)
+            assert torch.equal(actual_j, expected_j)
+
+        # Pickled after use: the compiled callable is a per-process cache, never state.
+        pickle.dumps(module.criterion.matcher)
 
     @pytest.mark.parametrize("knob_supported", [True, False])
-    def test_coalesce_tiling_knob_passed_only_when_torch_exposes_it(self, knob_supported, tmp_path):
+    def test_coalesce_tiling_knob_passed_only_when_torch_exposes_it(self, mocker, knob_supported, tmp_path):
         """The Inductor workaround reaches torch.compile only on a torch whose config exposes the knob.
 
         Older torch versions have no ``triton.coalesce_tiling_analysis``; passing it there raises
         ``RuntimeError("Unexpected optimization option ...")`` from ``_TorchCompileInductorWrapper.apply_options``.
-        Compilation must still proceed in both cases.
+        Compilation must still proceed in both cases, and the matcher's compile request must carry the same knob
+        decision as the model's.
         """
         triton_config = SimpleNamespace(coalesce_tiling_analysis=True) if knob_supported else SimpleNamespace()
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False)
-        with (
-            patch("rfdetr.config.DEVICE", "cuda"),
-            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
-            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("torch._inductor.config", SimpleNamespace(triton=triton_config))
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(criterion, _fake_postprocess()),
+        )
+        enabler = mocker.patch.object(HungarianMatcher, "enable_compiled_l1_cost", autospec=True)
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        RFDETRModelModule(mc, tc)
 
-        expected = {"triton.coalesce_tiling_analysis": False} if knob_supported else None
-        assert mock_compile.call_args.kwargs["options"] == expected
+        expected = {"triton.coalesce_tiling_analysis": False} if knob_supported else {}
+        assert mock_compile.call_args.kwargs["options"] == (expected or None)
+        enabler.assert_called_once_with(matcher, expected)
 
-    def test_coalesce_tiling_knob_leaves_process_global_config_untouched(self, tmp_path):
+    def test_coalesce_tiling_knob_leaves_process_global_config_untouched(self, mocker, tmp_path):
         """The workaround must not disable coalesce tiling for unrelated compilations in the same process."""
         triton_config = SimpleNamespace(coalesce_tiling_analysis=True)
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False)
-        with (
-            patch("rfdetr.config.DEVICE", "cuda"),
-            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
-            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m),
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("torch._inductor.config", SimpleNamespace(triton=triton_config))
+        mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
 
         assert triton_config.coalesce_tiling_analysis is True
 
-    @patch("rfdetr.training.module_model.torch.compile")
-    @patch("rfdetr.config.DEVICE", "cuda")
-    def test_compile_disabled_when_train_accelerator_is_cpu(self, _mock_compile: MagicMock, tmp_path):
+    def test_cuda_graphs_with_compile_requests_inductor_cudagraphs(self, mocker, tmp_path):
+        """``cuda_graphs=True`` together with ``compile=True`` turns on Inductor's CUDA graph trees.
+
+        ``torch.compile(mode="reduce-overhead")`` cannot be used here because ``mode`` and ``options`` are mutually
+        exclusive in ``torch.compile``; the equivalent option key is what must reach the compiler alongside the existing
+        coalesce-tiling workaround.
+        """
+        triton_config = SimpleNamespace(coalesce_tiling_analysis=True)
+        mc = _base_model_config(compile=True, cuda_graphs=True)
+        tc = _base_train_config(tmp_path, multi_scale=False)
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("torch._inductor.config", SimpleNamespace(triton=triton_config))
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        module, _, _, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        assert mock_compile.call_args.kwargs["options"] == {
+            "triton.coalesce_tiling_analysis": False,
+            "triton.cudagraphs": True,
+        }
+        assert module._inductor_cudagraphs is True
+
+    @pytest.mark.parametrize(
+        ("model_overrides", "train_overrides"),
+        [
+            pytest.param({}, {"grad_accum_steps": 2}, id="gradient-accumulation"),
+            pytest.param({}, {"devices": 2}, id="multi-device"),
+            pytest.param({}, {"num_nodes": 2}, id="multi-node"),
+            pytest.param({}, {"amp_dtype": "fp8"}, id="fp8-needs-te-capture"),
+            pytest.param({"segmentation_head": True}, {}, id="segmentation"),
+            pytest.param({"use_grouppose_keypoints": True, "num_keypoints_per_class": [1]}, {}, id="keypoints"),
+            pytest.param({"gradient_checkpointing": True}, {}, id="gradient-checkpointing"),
+        ],
+    )
+    def test_cuda_graphs_with_compile_falls_back_to_plain_compile_outside_validated_scope(
+        self, mocker, model_overrides, train_overrides, tmp_path, caplog, monkeypatch
+    ):
+        """Outside the single-GPU detection scope the combined request degrades to compile-only with a warning.
+
+        Inductor CUDA graph trees allocate gradient outputs inside the graph pool, so a ``.grad`` adopted by the first
+        microbatch is overwritten by the next replay — gradient accumulation cannot run on this path. Model modes and
+        distributed layouts mirror the limits of the eager graph runner.
+        """
+        mc = _base_model_config(compile=True, cuda_graphs=True, **model_overrides)
+        tc = _base_train_config(tmp_path, multi_scale=False, **train_overrides)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        mocker.patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace()))
+        mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            module, _, _, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        assert mock_compile.call_args.kwargs["options"] is None
+        assert module._inductor_cudagraphs is False
+        assert any("compile-only" in record.getMessage() for record in caplog.records)
+
+    def test_compile_disabled_when_train_accelerator_is_cpu(self, mocker, tmp_path):
         """Compile stays disabled when training is explicitly forced to CPU."""
+        mocker.patch("rfdetr.config.DEVICE", "cuda")
+        _mock_compile = mocker.patch("rfdetr.training.module_model.torch.compile")
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False, accelerator="cpu")
         _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
@@ -573,9 +921,11 @@ class TestInit:
 
 
 class TestLoadPretrainWeights:
-    """Tests for _load_pretrain_weights() — covers checkpoint validation, detection-head reinitialization on class-count
-    mismatch, query-embedding trimming, re-download on corruption, and class-name extraction from checkpoint
-    metadata."""
+    """Tests for _load_pretrain_weights().
+
+    Covers checkpoint validation, detection-head reinitialization on class-count mismatch, query-embedding trimming, re-
+    download on corruption, and class-name extraction from checkpoint metadata.
+    """
 
     def _make_checkpoint(self, num_classes_in_ckpt=91, num_queries=300, group_detr=13):
         """Build a fake checkpoint dict."""
@@ -590,10 +940,10 @@ class TestLoadPretrainWeights:
             }
         }
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_loads_checkpoint_successfully(self, mock_validate, mock_torch_load, base_model_config, build_module):
+    def test_loads_valid_checkpoint(self, mocker, base_model_config, build_module):
         """A valid checkpoint must be validated, loaded, and applied to the model."""
+        mock_validate = mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         mock_torch_load.return_value = checkpoint
@@ -605,12 +955,10 @@ class TestLoadPretrainWeights:
         mock_validate.assert_called_once_with("/fake/weights.pth", strict=False)
         module.model.load_state_dict.assert_called_once()
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_class_count_mismatch_triggers_reinitialize(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
+    def test_class_count_mismatch_triggers_reinitialize(self, mocker, base_model_config, build_module):
         """Detection head is expanded to checkpoint size, then trimmed back to config size."""
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
         mc = base_model_config(num_classes=5)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         mock_torch_load.return_value = checkpoint
@@ -621,17 +969,13 @@ class TestLoadPretrainWeights:
 
         # First call: expand to checkpoint size so load_state_dict shapes match.
         # Second call: trim back to configured num_classes + 1 (background class).
-        from unittest.mock import call
-
-        fake_model.reinitialize_detection_head.assert_has_calls([call(91), call(6)])
+        fake_model.reinitialize_detection_head.assert_has_calls([mocker.call(91), mocker.call(6)])
         assert fake_model.reinitialize_detection_head.call_count == 2
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_class_count_match_does_not_reinitialize(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
+    def test_class_count_match_does_not_reinitialize(self, mocker, base_model_config, build_module):
         """Detection head must NOT be reinitialized when class counts match."""
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
         mc = base_model_config(num_classes=5)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=6)
         mock_torch_load.return_value = checkpoint
@@ -642,12 +986,10 @@ class TestLoadPretrainWeights:
 
         fake_model.reinitialize_detection_head.assert_not_called()
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_query_embedding_trimmed_to_configured_count(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
+    def test_query_embedding_trimmed_to_configured_count(self, mocker, base_model_config, build_module):
         """Oversized query embeddings in checkpoint must be trimmed to match config."""
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
         mc = base_model_config(num_classes=90)
         module, _, _, _ = build_module(model_config=mc)
 
@@ -672,50 +1014,34 @@ class TestLoadPretrainWeights:
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
         assert checkpoint["model"]["query_feat.weight"].shape[0] == desired
 
-    @patch("rfdetr.models.weights.os.path.isfile", return_value=True)
-    @patch("rfdetr.models.weights.download_pretrain_weights")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_redownloads_on_load_failure(
-        self, mock_validate, mock_download, mock_isfile, base_model_config, build_module
-    ):
-        """A corrupted checkpoint must trigger re-download and a second load attempt."""
+    def test_load_failure_does_not_redownload_existing_weights(self, mocker, base_model_config, build_module):
+        """A checkpoint read failure propagates without replacing the existing file."""
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_download = mocker.patch("rfdetr.models.weights.download_pretrain_weights")
+        mocker.patch("rfdetr.models.weights.os.path.isfile", return_value=True)
         mc = base_model_config(num_classes=90)
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
-        load_calls = [0]
-
-        def fake_safe_load(*args, **kwargs):
-            load_calls[0] += 1
-            if load_calls[0] == 1:
-                raise RuntimeError("corrupted file")
-            return checkpoint
-
-        # Patch at the definition site in util.io (_safe_torch_load is a deferred import in
-        # weights.py so it is not a module-level name there). MD5 validation is intentionally
-        # kept on the retry (validate_md5=False was removed in favour of rejecting
-        # hash-mismatched files rather than silently accepting them).
-        with patch("rfdetr.utilities.io._safe_torch_load", side_effect=fake_safe_load):
+        mock_load = mocker.patch("rfdetr.utilities.io._safe_torch_load", side_effect=RuntimeError("corrupted file"))
+        with pytest.raises(RuntimeError, match="corrupted file"):
             load_pretrain_weights(module.model, module.model_config)
 
-        redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
-        assert len(redownload_calls) >= 1
-        assert load_calls[0] == 2
+        mock_download.assert_called_once_with("/fake/weights.pth")
+        mock_load.assert_called_once()
 
-    @patch("rfdetr.models.weights.os.path.isfile", return_value=False)
-    @patch("rfdetr.models.weights.download_pretrain_weights")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    @patch("rfdetr.models.weights.torch.load")
-    def test_download_before_load_when_weights_absent(
-        self, mock_torch_load, mock_validate, mock_download, mock_isfile, base_model_config, build_module
-    ):
-        """download_pretrain_weights must be called before torch.load so a fresh environment (e.g. Colab) downloads
-        weights automatically.
+    def test_download_before_load_when_weights_absent(self, mocker, base_model_config, build_module):
+        """download_pretrain_weights is called before torch.load when weights are absent.
+
+        A fresh environment (e.g. Colab) then downloads weights automatically.
 
         Regression test: previously download was only called as an except-block fallback, but ModelWeights.from_filename
         received the absolute path and returned None, causing a silent no-op and a FileNotFoundError.
         """
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_download = mocker.patch("rfdetr.models.weights.download_pretrain_weights")
+        mocker.patch("rfdetr.models.weights.os.path.isfile", return_value=False)
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         mock_torch_load.return_value = checkpoint
@@ -729,70 +1055,56 @@ class TestLoadPretrainWeights:
         first_call = mock_download.call_args_list[0]
         assert first_call.args[0] == "/content/rf-detr-base.pth"
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_seg_checkpoint_into_detection_model_raises(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
+    @pytest.mark.parametrize(
+        "ckpt_segmentation_head, ckpt_patch_size, module_overrides, expected_match",
+        [
+            pytest.param(
+                True, 12, {"segmentation_head": False}, "segmentation head", id="seg-checkpoint-into-detection-model"
+            ),
+            pytest.param(
+                False, 16, {"segmentation_head": True}, "segmentation head", id="detection-checkpoint-into-seg-model"
+            ),
+            pytest.param(
+                False,
+                12,
+                {"segmentation_head": False, "patch_size": 16},
+                "patch_size",
+                id="patch-size-mismatch",
+            ),
+        ],
+    )
+    def test_incompatible_checkpoint_raises(
+        self,
+        mocker,
+        base_model_config,
+        build_module,
+        ckpt_segmentation_head: bool,
+        ckpt_patch_size: int,
+        module_overrides: dict[str, object],
+        expected_match: str,
     ):
-        """Loading a segmentation checkpoint into a detection model must raise ValueError."""
+        """Loading a checkpoint whose segmentation_head/patch_size mismatch the model must raise ValueError."""
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
         mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=12)
+        ckpt_args = SimpleNamespace(segmentation_head=ckpt_segmentation_head, patch_size=ckpt_patch_size)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         checkpoint["args"] = ckpt_args
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False}
+            update={"pretrain_weights": "/fake/weights.pth", **module_overrides}
         )
 
-        with pytest.raises(ValueError, match="segmentation head"):
+        with pytest.raises(ValueError) as exc_info:
             load_pretrain_weights(module.model, module.model_config)
+        assert expected_match in str(exc_info.value)
 
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_detection_checkpoint_into_seg_model_raises(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
-        """Loading a detection checkpoint into a segmentation model must raise ValueError."""
-        mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=16)
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
-        checkpoint["args"] = ckpt_args
-        mock_torch_load.return_value = checkpoint
-
-        module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": True}
-        )
-
-        with pytest.raises(ValueError, match="segmentation head"):
-            load_pretrain_weights(module.model, module.model_config)
-
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_patch_size_mismatch_raises(self, mock_validate, mock_torch_load, base_model_config, build_module):
-        """Loading a checkpoint with a different patch_size must raise ValueError."""
-        mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
-        checkpoint["args"] = ckpt_args
-        mock_torch_load.return_value = checkpoint
-
-        module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False, "patch_size": 16}
-        )
-
-        with pytest.raises(ValueError, match="patch_size"):
-            load_pretrain_weights(module.model, module.model_config)
-
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_compatible_checkpoint_does_not_raise(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
+    def test_compatible_checkpoint_does_not_raise(self, mocker, base_model_config, build_module):
         """A checkpoint matching segmentation_head and patch_size must load without error."""
+        mocker.patch("rfdetr.models.weights.validate_pretrain_weights")
+        mock_torch_load = mocker.patch("rfdetr.models.weights.torch.load")
         mc = base_model_config(num_classes=90)
         ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14, class_names=[])
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
@@ -809,8 +1121,11 @@ class TestLoadPretrainWeights:
 
 
 class TestApplyLora:
-    """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the correct target modules and that
-    the backbone encoder is replaced in-place with the wrapped PEFT model."""
+    """Tests for _apply_lora().
+
+    Verifies that PEFT LoraConfig is constructed with the correct target modules and that the backbone encoder is
+    replaced in-place with the wrapped PEFT model.
+    """
 
     def _build_module_with_backbone(self, tmp_path):
         """Build module with a mock backbone that exposes backbone[0].encoder."""
@@ -837,10 +1152,10 @@ class TestApplyLora:
 
         return module, fake_model, fake_backbone_0, fake_encoder
 
-    @patch("peft.get_peft_model")
-    @patch("peft.LoraConfig")
-    def test_calls_lora_config_with_correct_target_modules(self, mock_lora_cfg_class, mock_get_peft, tmp_path):
+    def test_calls_lora_config_with_correct_target_modules(self, mocker, tmp_path):
         """LoRA must target the expected attention and token projection modules."""
+        mock_lora_cfg_class = mocker.patch("peft.LoraConfig")
+        mock_get_peft = mocker.patch("peft.get_peft_model")
         module, _, _, _ = self._build_module_with_backbone(tmp_path)
         mock_get_peft.return_value = MagicMock()
 
@@ -851,10 +1166,10 @@ class TestApplyLora:
         expected = ["q_proj", "v_proj", "k_proj", "qkv", "query", "key", "value", "cls_token", "register_tokens"]
         assert target_modules == expected
 
-    @patch("peft.get_peft_model")
-    @patch("peft.LoraConfig")
-    def test_replaces_encoder_with_peft_model(self, mock_lora_cfg_class, mock_get_peft, tmp_path):
+    def test_replaces_encoder_with_peft_model(self, mocker, tmp_path):
         """The backbone encoder must be replaced in-place with the PEFT-wrapped model."""
+        mocker.patch("peft.LoraConfig")
+        mock_get_peft = mocker.patch("peft.get_peft_model")
         module, _, fake_backbone_0, fake_encoder = self._build_module_with_backbone(tmp_path)
         peft_wrapped = MagicMock()
         mock_get_peft.return_value = peft_wrapped
@@ -868,35 +1183,21 @@ class TestApplyLora:
 class TestOnFitStart:
     """Tests for on_fit_start() seeding behavior."""
 
-    @patch("rfdetr.training.module_model.seed_everything")
-    def test_seed_at_rank_zero(self, mock_seed, base_train_config, build_module):
-        """Rank 0: seed_everything(seed + 0) == seed_everything(seed)."""
+    @pytest.mark.parametrize("rank, expected_seed", [(0, 7), (2, 9)])
+    def test_seed_is_offset_by_rank(self, mocker, base_train_config, build_module, rank, expected_seed):
+        """seed_everything(seed + global_rank) is called, so each DDP worker seeds uniquely (rank 0 keeps the seed)."""
+        mock_seed = mocker.patch("rfdetr.training.module_model.seed_everything")
         tc = base_train_config(seed=7)
         module, _, _, _ = build_module(train_config=tc)
 
-        with patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=0):
-            module.on_fit_start()
+        mocker.patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=rank)
+        module.on_fit_start()
 
-        mock_seed.assert_called_once_with(7, workers=True)
+        mock_seed.assert_called_once_with(expected_seed, workers=True)
 
-    @patch("rfdetr.training.module_model.seed_everything")
-    def test_seed_rank_offset(self, mock_seed, base_train_config, build_module):
-        """Non-zero rank: seed_everything(seed + global_rank) must be called.
-
-        Validates the rank-offset contract — each worker seeds with a unique value to prevent correlated data
-        augmentation across DDP processes.
-        """
-        tc = base_train_config(seed=7)
-        module, _, _, _ = build_module(train_config=tc)
-
-        with patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=2):
-            module.on_fit_start()
-
-        mock_seed.assert_called_once_with(9, workers=True)  # 7 + 2
-
-    @patch("rfdetr.training.module_model.seed_everything")
-    def test_seed_skipped_when_none(self, mock_seed, base_train_config, build_module):
+    def test_seed_skipped_when_none(self, mocker, base_train_config, build_module):
         """No seed means on_fit_start should not call seed_everything."""
+        mock_seed = mocker.patch("rfdetr.training.module_model.seed_everything")
         tc = base_train_config(seed=None)
         module, _, _, _ = build_module(train_config=tc)
 
@@ -906,46 +1207,33 @@ class TestOnFitStart:
 
 
 class TestOnTrainBatchStart:
-    """Tests for on_train_batch_start() — covers multi-scale interpolation of NestedTensor inputs and verifies
-    regularization scheduling is delegated to DropPathCallback."""
+    """Tests for on_train_batch_start().
+
+    Covers multi-scale interpolation of NestedTensor inputs and verifies regularization scheduling is delegated to
+    DropPathCallback.
+    """
 
     def _setup_module(
         self,
         tmp_path,
         multi_scale=False,
-        do_random_resize_via_padding=False,
     ):
-        tc = _base_train_config(
-            tmp_path,
-            multi_scale=multi_scale,
-            do_random_resize_via_padding=do_random_resize_via_padding,
-        )
+        tc = _base_train_config(tmp_path, multi_scale=multi_scale)
         module, fake_model, _, _ = _build_module(train_config=tc)
 
-        trainer = MagicMock()
-        trainer.global_step = 0
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, global_step=0)
 
         return module, fake_model
 
-    def test_drop_path_not_applied_in_module_hook(self, tmp_path):
-        """Drop-path scheduling must be handled by DropPathCallback, not module hook."""
+    @pytest.mark.parametrize("method_name, step", [("update_drop_path", 1), ("update_dropout", 2)])
+    def test_regularization_not_applied_in_module_hook(self, method_name, step, tmp_path):
+        """Drop-path and dropout scheduling belong to DropPathCallback, not the module hook."""
         module, fake_model = self._setup_module(tmp_path)
-        module._trainer.global_step = 1
+        module._trainer.global_step = step
 
-        module.on_train_batch_start(_make_batch(), batch_idx=1)
+        module.on_train_batch_start(_make_batch(), batch_idx=step)
 
-        fake_model.update_drop_path.assert_not_called()
-
-    def test_dropout_not_applied_in_module_hook(self, tmp_path):
-        """Dropout scheduling must be handled by DropPathCallback, not module hook."""
-        module, fake_model = self._setup_module(tmp_path)
-        module._trainer.global_step = 2
-
-        module.on_train_batch_start(_make_batch(), batch_idx=2)
-
-        fake_model.update_dropout.assert_not_called()
+        getattr(fake_model, method_name).assert_not_called()
 
     @pytest.mark.parametrize(
         "method_name",
@@ -964,7 +1252,7 @@ class TestOnTrainBatchStart:
 
     def test_multi_scale_resize_mutates_nested_tensor(self, tmp_path):
         """Multi-scale training must resize the input tensor to a square resolution."""
-        module, _ = self._setup_module(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        module, _ = self._setup_module(tmp_path, multi_scale="per-batch")
         module._trainer.global_step = 0
         samples, targets = _make_batch(batch_size=2, h=16, w=16)
 
@@ -973,9 +1261,9 @@ class TestOnTrainBatchStart:
         new_h, new_w = samples.tensors.shape[2], samples.tensors.shape[3]
         assert new_h == new_w, "Multi-scale should produce square outputs"
 
-    def test_multi_scale_skipped_when_random_resize_via_padding(self, tmp_path):
-        """Padding-based resize takes precedence, so multi-scale must be a no-op."""
-        module, _ = self._setup_module(tmp_path, multi_scale=True, do_random_resize_via_padding=True)
+    def test_multi_scale_skipped_when_per_sample(self, tmp_path):
+        """Per-sample scaling happens in the dataset, so the batch-level resize must be a no-op."""
+        module, _ = self._setup_module(tmp_path, multi_scale="per-sample")
         samples, targets = _make_batch(batch_size=2, h=16, w=16)
         original_shape = samples.tensors.shape
 
@@ -985,8 +1273,11 @@ class TestOnTrainBatchStart:
 
 
 class TestTrainingStep:
-    """Tests for training_step() — covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar
-    visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
+    """Tests for training_step().
+
+    Covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar visibility, scalar tensor
+    output, and that losses absent from weight_dict are excluded from the total.
+    """
 
     def _run_step(
         self,
@@ -1020,13 +1311,13 @@ class TestTrainingStep:
         module.optimizers = MagicMock(return_value=real_optimizer)
         module.manual_backward = MagicMock()
         module.lr_schedulers = MagicMock(return_value=None)
-        trainer = MagicMock()
-        trainer.accumulate_grad_batches = 1
-        trainer.num_training_batches = 1
-        trainer.gradient_clip_val = 0.0
-        trainer.gradient_clip_algorithm = "norm"
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(
+            module,
+            accumulate_grad_batches=1,
+            num_training_batches=1,
+            gradient_clip_val=0.0,
+            gradient_clip_algorithm="norm",
+        )
         return module, samples, targets, fake_model, fake_criterion
 
     def test_returns_weighted_loss_sum(self, tmp_path):
@@ -1039,9 +1330,101 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(1.0 + 10.0 + 6.0)
 
+    def test_automatic_optimization_never_touches_trainer_strategy(self, mocker, tmp_path: Path) -> None:
+        """Detection models must not fetch ``self.optimizers()`` — Lightning owns the optimizer on that path.
+
+        ``optimizers()`` dereferences ``trainer.strategy._lightning_optimizers``. Only the keypoint manual-optimization
+        branch consumes the result, so a trainer stub that carries nothing but ``accumulate_grad_batches`` must be
+        enough for a detection ``training_step``; anything else means the automatic path grew a hidden dependency.
+        """
+        module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        fake_model.return_value = {}
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        trainer = SimpleNamespace(accumulate_grad_batches=1)
+
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert loss.item() == pytest.approx(1.0)
+
+    def test_routes_forward_through_cuda_graph_runner(self, tmp_path: Path) -> None:
+        """Once configured, training_step uses the graph runner while leaving self.model registered."""
+        module, samples, targets, fake_model, fake_criterion = self._run_step(tmp_path)
+        runner = MagicMock(return_value={})
+        module._cuda_graph_runner = runner
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        runner.assert_called_once_with(samples, targets)
+        fake_model.assert_not_called()
+
+    @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
+    def test_marks_cudagraph_step_only_on_inductor_path(self, mocker, inductor_cudagraphs, tmp_path):
+        """Each step on the Inductor CUDA graph path begins with ``cudagraph_mark_step_begin``; other paths never do.
+
+        Lightning keeps the logged loss tensors alive across steps. Without the mark, cudagraph trees raise "accessing
+        tensor output of CUDAGraphs that has been overwritten by a subsequent run" on the next replay.
+        """
+        mark_step = mocker.patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin")
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+        module._inductor_cudagraphs = inductor_cudagraphs
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
+
+    def test_real_model_composes_through_cuda_graph_runner_on_training_step(self, tmp_path: Path) -> None:
+        """A real detector, criterion, backward, and optimizer compose through the graph-runner ``training_step()``.
+
+        Neither the synthetic model ``CudaGraphTrainingRunner`` is unit-tested against in isolation nor a fully-mocked
+        runner class, as in the test above, covers this.
+
+        ``torch.cuda.make_graphed_callables`` is the one CUDA-only primitive mocked here (as in
+        ``test_capture_preserves_accumulated_gradients``); everything else — model, transformer capture toggle,
+        criterion, Lightning's training_step, and the optimizer step — runs for real on CPU.
+        """
+        mc = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        tc = _base_train_config(tmp_path)
+        real_model = build_model_from_config(mc, tc)
+        real_criterion, real_postprocess = build_criterion_from_config(mc, tc)
+        real_model.train()
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=real_model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(real_criterion, real_postprocess),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+
+        module._cuda_graph_runner = CudaGraphTrainingRunner(module.model)
+        samples, targets = _make_batch(batch_size=1, h=mc.resolution, w=mc.resolution)
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_optimizer = torch.optim.SGD(module.model.parameters(), lr=1e-3)
+        module.optimizers = MagicMock(return_value=real_optimizer)
+        _attach_trainer(module, accumulate_grad_batches=1, num_training_batches=1)
+
+        with patch("torch.cuda.make_graphed_callables", side_effect=lambda inner, _args, **_kwargs: inner):
+            loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert torch.isfinite(loss)
+        assert all(p.grad is None for p in module.model.parameters())
+        loss.backward()
+        assert any(p.grad is not None for p in module.model.parameters())
+        assert len(module._cuda_graph_runner._graphed_cache) == 1
+
     def test_loss_backward_uses_box_normalizer_contract(self, tmp_path):
-        """Backward loss for keypoint models is scaled by the criterion box normalizer (manual optimization owns
-        accumulation), not by Lightning's ``accumulate_grad_batches``."""
+        """Backward loss for keypoint models is scaled by the criterion box normalizer.
+
+        Manual optimization owns accumulation, so Lightning's ``accumulate_grad_batches`` does not scale it.
+        """
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
         keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
@@ -1086,9 +1469,13 @@ class TestTrainingStep:
         optimizer.toggle_model.assert_called_once_with(sync_grad=sync_grad)
         module.manual_backward.assert_called_once()
 
-    def test_detection_loss_uses_lightning_grad_accum_scaling(self, tmp_path):
-        """Detection (automatic optimization) divides loss by ``trainer.accumulate_grad_batches`` so the returned loss
-        matches the legacy non-manual training path."""
+    def test_detection_loss_is_returned_unscaled_for_lightning_accumulation(self, tmp_path: Path) -> None:
+        """Detection (automatic optimization) returns the weighted loss unscaled.
+
+        Lightning's ``ClosureResult.from_training_step_output`` divides the returned loss by
+        ``trainer.accumulate_grad_batches`` before ``backward()``. Dividing here as well would scale every accumulated
+        gradient by ``1/N**2`` (``tests/training/test_grad_accumulation.py`` holds the gradient-level proof).
+        """
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
         module, samples, targets, _, _ = self._run_step(
@@ -1101,7 +1488,7 @@ class TestTrainingStep:
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
-        assert loss.item() == pytest.approx(1.0)
+        assert loss.item() == pytest.approx(4.0)
         module.manual_backward.assert_not_called()
 
     def _make_keypoint_module(self, tmp_path, grad_accum_steps, num_training_batches):
@@ -1121,13 +1508,13 @@ class TestTrainingStep:
         module.optimizers = MagicMock(return_value=optimizer)
         module.manual_backward = lambda loss: loss.backward()
         module.lr_schedulers = MagicMock(return_value=None)
-        trainer = MagicMock()
-        trainer.accumulate_grad_batches = 1
-        trainer.num_training_batches = num_training_batches
-        trainer.gradient_clip_val = 0.0
-        trainer.gradient_clip_algorithm = "norm"
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(
+            module,
+            accumulate_grad_batches=1,
+            num_training_batches=num_training_batches,
+            gradient_clip_val=0.0,
+            gradient_clip_algorithm="norm",
+        )
         return module, model
 
     @pytest.mark.parametrize(
@@ -1144,8 +1531,10 @@ class TestTrainingStep:
     def test_box_normalized_accumulation_matches_large_effective_batch(
         self, tmp_path, grad_accum_steps, box_counts, loss_numerators, expected_value
     ):
-        """Accumulated gradients across ``grad_accum_steps`` microbatches must equal a single large batch normalized by
-        total boxes, regardless of how lopsided the per-microbatch box counts are."""
+        """Gradients over ``grad_accum_steps`` microbatches equal one large batch normalized by total boxes.
+
+        This holds regardless of how lopsided the per-microbatch box counts are.
+        """
         large_module, large_model = self._make_keypoint_module(tmp_path, grad_accum_steps=1, num_training_batches=1)
         accum_module, accum_model = self._make_keypoint_module(
             tmp_path, grad_accum_steps=grad_accum_steps, num_training_batches=grad_accum_steps
@@ -1182,6 +1571,90 @@ class TestTrainingStep:
         assert progress_loss_calls[0].kwargs.get("on_epoch") is False
 
     @pytest.mark.parametrize(
+        ("progress_name", "scale"),
+        [("loss", 2.0), ("loss_cls", 1.0)],
+    )
+    def test_progress_loss_is_epoch_running_mean_weighted_by_batch_size(
+        self, tmp_path: Path, progress_name: str, scale: float
+    ) -> None:
+        """The live progress value is the sample-weighted mean of the epoch so far, not the latest batch."""
+        module, _, _, _, fake_criterion = self._run_step(tmp_path, weight_dict={"loss_ce": 2.0})
+        first_samples, first_targets = _make_batch(batch_size=1)
+        second_samples, second_targets = _make_batch(batch_size=3)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((first_samples, first_targets), batch_idx=0)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(4.0)}
+        module.training_step((second_samples, second_targets), batch_idx=1)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == progress_name]
+        assert progress_calls[-1].args[1].item() == pytest.approx(scale * (1.0 * 1 + 4.0 * 3) / 4)
+
+    def test_progress_terms_stay_per_batch_when_train_log_on_step(self, tmp_path: Path) -> None:
+        """With train_log_on_step=True every progress term keeps its per-batch value, as train/loss_step does."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path, train_log_on_step=True)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((samples, targets), batch_idx=0)
+        second_value = torch.tensor(3.0)
+        fake_criterion.return_value = {"loss_ce": second_value}
+        module.training_step((samples, targets), batch_idx=1)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1] is second_value
+
+    @pytest.mark.parametrize("train_log_on_step", [False, True])
+    def test_progress_terms_are_progress_bar_only(self, tmp_path: Path, train_log_on_step: bool) -> None:
+        """Every progress term goes to the progress bar only, per step, with the same flags in both modes."""
+        module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].kwargs == {
+            "prog_bar": True,
+            "logger": False,
+            "on_step": True,
+            "on_epoch": False,
+            "batch_size": 2,
+        }
+
+    @pytest.mark.parametrize("progress_name", ["loss", "loss_cls"])
+    def test_progress_loss_running_mean_restarts_each_epoch(self, tmp_path: Path, progress_name: str) -> None:
+        """The running mean restarts at each epoch, so the first step of a new epoch reports its own loss."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        module.training_step((samples, targets), batch_idx=0)
+        module.on_train_epoch_start()
+        fake_criterion.return_value = {"loss_ce": torch.tensor(3.0)}
+        module.log.reset_mock()
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == progress_name]
+        assert progress_calls[-1].args[1].item() == pytest.approx(3.0)
+
+    def test_progress_loss_running_mean_is_detached_from_autograd(self, tmp_path: Path) -> None:
+        """The running sums must not keep the autograd graph of every step alive until the epoch ends."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0, requires_grad=True)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1].requires_grad is False
+
+    def test_progress_loss_running_mean_accumulates_in_float32(self, tmp_path: Path) -> None:
+        """A half-precision loss term is summed in float32, so the bar does not drift over a long epoch."""
+        module, samples, targets, _, fake_criterion = self._run_step(tmp_path)
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0, dtype=torch.bfloat16)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_calls = [c for c in module.log.call_args_list if c[0][0] == "loss_cls"]
+        assert progress_calls[-1].args[1].dtype is torch.float32
+
+    @pytest.mark.parametrize(
         "train_log_on_step",
         [
             pytest.param(False, id="epoch-only"),
@@ -1207,11 +1680,14 @@ class TestTrainingStep:
             pytest.param(True, 0, id="on-step-skips-live-loss"),
         ],
     )
-    def test_live_loss_key_gated_on_train_log_on_step(self, tmp_path, train_log_on_step, expected_live_loss_calls):
+    def test_live_loss_key_gated_on_train_log_on_step(
+        self, tmp_path: Path, train_log_on_step: bool, expected_live_loss_calls: int
+    ) -> None:
         """Redundant live ``loss`` progress key is emitted only when train_log_on_step is False.
 
-        With train_log_on_step=True the ``train/loss`` call forks into a live ``train/loss_step`` progress entry, so the
-        separate ``loss`` scalar becomes redundant and is skipped.
+        With train_log_on_step=True the ``train/loss`` call forks into a per-batch ``train/loss_step`` progress entry,
+        which already shows the aggregate, so the running-mean ``loss`` scalar is skipped to keep the bar's keys as
+        before.
         """
         module, samples, targets, _, _ = self._run_step(tmp_path, train_log_on_step=train_log_on_step)
 
@@ -1364,11 +1840,7 @@ class TestTrainingStep:
         module.log_dict = MagicMock()
         real_param = nn.Parameter(torch.randn(4))
         module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
-        trainer = MagicMock()
-        trainer.accumulate_grad_batches = 1
-        trainer.num_training_batches = 1
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, accumulate_grad_batches=1, num_training_batches=1)
 
         # Spy on the criterion to capture its raw (pre-aggregation) per-key loss dict, so the expected
         # aggregate is derived from the same real forward pass training_step() uses internally rather
@@ -1416,21 +1888,46 @@ class TestTrainingStep:
         assert module.log_dict.call_args.kwargs.get("on_step") is False
         assert module.log_dict.call_args.kwargs.get("on_epoch") is True
 
-    def test_logs_learning_rates_for_manual_optimizer_steps_including_tail(self, tmp_path):
-        """Manual accumulation logs rates once per completed or partial optimizer window, never twice.
+    @pytest.mark.parametrize(
+        "grad_accum_steps, num_training_batches, expected_log_count",
+        [
+            pytest.param(2, 3, 2, id="manual-accumulation-tail-fallback-logs-once-per-window-never-twice"),
+            pytest.param(
+                1,
+                3,
+                3,
+                id="grad-accum-steps-one-every-batch-closes-its-own-window-and-logs",
+            ),
+            pytest.param(
+                2,
+                float("inf"),
+                1,
+                id="infinite-dataset-logs-only-at-modulo-boundary-tail-fallback-never-fires",
+            ),
+        ],
+    )
+    def test_logs_learning_rates_for_manual_optimizer_steps(
+        self, tmp_path, grad_accum_steps: int, num_training_batches: float, expected_log_count: int
+    ):
+        """Manual accumulation logs learning rates once per completed or partial optimizer window, never twice.
 
         ``_step_optimizer`` must not log learning rates itself — the single emission site is the
         ``on_before_optimizer_step`` hook, which ``_StepHookOptimizer`` fires from ``step()`` the same way Lightning's
-        real ``LightningOptimizer.step()`` does on both automatic and manual paths.
+        real ``LightningOptimizer.step()`` does on both automatic and manual paths. The finite case
+        (``num_training_batches=3``) exercises ``_should_step_optimizer``'s end-of-epoch tail fallback on its third
+        batch; the infinite case proves ``batch_idx + 1 >= num_training_batches`` can never trip against infinity, so
+        only the modulo-boundary step (batch_idx=1) logs.
         """
         module, *_ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=grad_accum_steps),
             tmp_path=tmp_path,
         )
         parameter = nn.Parameter(torch.randn(4))
         optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
-        trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
+        trainer = MagicMock(
+            num_training_batches=num_training_batches, gradient_clip_val=0.0, gradient_clip_algorithm="norm"
+        )
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
         module.log = MagicMock()
@@ -1441,67 +1938,7 @@ class TestTrainingStep:
 
         for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
             metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
-            assert len(metric_calls) == 2
-
-    def test_logs_learning_rates_at_grad_accum_steps_one(self, tmp_path):
-        """With no accumulation (``grad_accum_steps=1``), every batch closes its own window and logs rates.
-
-        ``grad_accum_steps=1`` is this repo's own recommended setting for multi-GPU keypoint training (see
-        docs/learn/train/advanced.md's "Prefer grad_accum_steps=1 on multi-GPU for keypoints" note) — the
-        ``grad_accum_steps=2`` case above never exercises the no-accumulation path where the modulo check in
-        ``_should_step_optimizer`` is trivially true for every batch and the end-of-epoch tail fallback never engages
-        (there is never a partial window to flush).
-        """
-        module, *_ = _build_module(
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            train_config=_base_train_config(tmp_path, grad_accum_steps=1),
-            tmp_path=tmp_path,
-        )
-        parameter = nn.Parameter(torch.randn(4))
-        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
-        trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        module.log = MagicMock()
-
-        for batch_idx in range(3):
-            if module._should_step_optimizer(batch_idx):
-                module._step_optimizer(optimizer)
-
-        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
-            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
-            assert len(metric_calls) == 3
-
-    def test_logs_learning_rates_for_infinite_dataset_skips_tail_fallback(self, tmp_path):
-        """On an infinite/streaming dataset only modulo-boundary batches log rates; no spurious tail fallback fires.
-
-        ``test_logs_learning_rates_for_manual_optimizer_steps_including_tail`` above only covers a finite
-        ``num_training_batches=3``, where the third batch triggers ``_should_step_optimizer``'s end-of-epoch tail
-        fallback and logs a second time. ``TestShouldStepOptimizer.test_infinite_dataset_uses_modulo_only`` covers
-        the boolean return of ``_should_step_optimizer`` in isolation for ``num_training_batches=float("inf")``, but
-        not that the LR-logging path downstream reflects it: with the same ``grad_accum_steps=2`` and 3 batches, an
-        infinite dataset must log exactly once (only the modulo-boundary step at batch_idx=1), not twice, because
-        ``batch_idx + 1 >= num_training_batches`` can never hold against infinity.
-        """
-        module, *_ = _build_module(
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
-            tmp_path=tmp_path,
-        )
-        parameter = nn.Parameter(torch.randn(4))
-        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
-        trainer = MagicMock(num_training_batches=float("inf"), gradient_clip_val=0.0, gradient_clip_algorithm="norm")
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        module.log = MagicMock()
-
-        for batch_idx in range(3):
-            if module._should_step_optimizer(batch_idx):
-                module._step_optimizer(optimizer)
-
-        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
-            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
-            assert len(metric_calls) == 1
+            assert len(metric_calls) == expected_log_count
 
     def test_logs_convergence_components_to_progress_bar(self, tmp_path):
         """Selected detection and keypoint losses should appear as compact progress-only metrics."""
@@ -1554,10 +1991,7 @@ class TestTrainingStep:
         module.log_dict = MagicMock()
         real_param = nn.Parameter(torch.randn(4))
         module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
-        trainer = MagicMock()
-        trainer.accumulate_grad_batches = 1
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, accumulate_grad_batches=1)
 
         result = module.training_step((samples, targets), batch_idx=0)
 
@@ -1613,11 +2047,7 @@ class TestTrainingStep:
         module.log_dict = MagicMock()
         real_param = nn.Parameter(torch.randn(4))
         module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
-        trainer = MagicMock()
-        trainer.accumulate_grad_batches = 1
-        trainer.num_training_batches = 1
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, accumulate_grad_batches=1, num_training_batches=1)
         samples, targets = _make_batch(batch_size=batch_size)
 
         module.training_step((samples, targets), batch_idx=0)
@@ -1656,11 +2086,7 @@ class TestTrainingStep:
         module.log_dict = MagicMock()
         real_param = nn.Parameter(torch.randn(4))
         module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
-        trainer = MagicMock()
-        trainer.accumulate_grad_batches = 1
-        trainer.num_training_batches = 1
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, accumulate_grad_batches=1, num_training_batches=1)
         samples, targets = _make_batch()
 
         module.training_step((samples, targets), batch_idx=0)
@@ -1680,7 +2106,7 @@ class TestOnBeforeOptimizerStepFiresOncePerAccumulationWindow:
     it faithfully is a real ``Trainer.fit()`` run with ``accumulate_grad_batches > 1``.
     """
 
-    def test_fires_once_per_window_not_once_per_microbatch(self, tmp_path):
+    def test_fires_once_per_window_not_once_per_microbatch(self, mocker, tmp_path):
         """4 training batches at accumulate_grad_batches=2 must trigger exactly 2 optimizer-step hook calls."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, num_workers=0)
@@ -1702,37 +2128,38 @@ class TestOnBeforeOptimizerStepFiresOncePerAccumulationWindow:
 
         counter = _CountOptimizerSteps()
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(fake_criterion, fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
-            patch(
-                "rfdetr.training.module_model.get_param_dict",
-                side_effect=lambda args, model: _make_param_dicts(model),
-            ),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = Trainer(
-                fast_dev_run=4,
-                accelerator="cpu",
-                enable_progress_bar=False,
-                enable_model_summary=False,
-                logger=False,
-                accumulate_grad_batches=2,
-                callbacks=[counter],
-            )
-            trainer.fit(module, datamodule)
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model)
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(fake_criterion, fake_postprocess),
+        )
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset)
+        mocker.patch(
+            "rfdetr.training.module_model.get_param_dict",
+            side_effect=lambda args, model: _make_param_dicts(model),
+        )
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = Trainer(
+            fast_dev_run=4,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            accumulate_grad_batches=2,
+            callbacks=[counter],
+        )
+        trainer.fit(module, datamodule)
 
         assert counter.count == 2
 
 
 class TestShouldStepOptimizer:
-    """Tests for ``_should_step_optimizer`` — covers the modulo path, the end-of-epoch fallback, and the iterable /
-    infinite dataset case where ``trainer.num_training_batches`` is ``float('inf')``."""
+    """Tests for ``_should_step_optimizer``.
+
+    Covers the modulo path, the end-of-epoch fallback, and the iterable / infinite dataset case where
+    ``trainer.num_training_batches`` is ``float('inf')``.
+    """
 
     def _make_module_with_trainer(self, tmp_path, grad_accum_steps, num_training_batches):
         """Build a module with a stub trainer exposing ``num_training_batches`` for the test scenario."""
@@ -1741,10 +2168,7 @@ class TestShouldStepOptimizer:
             train_config=_base_train_config(tmp_path, grad_accum_steps=grad_accum_steps),
             tmp_path=tmp_path,
         )
-        trainer = MagicMock()
-        trainer.num_training_batches = num_training_batches
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, num_training_batches=num_training_batches)
         return module
 
     @pytest.mark.parametrize(
@@ -1875,38 +2299,30 @@ class TestOnTrainEpochStart:
 class TestRescaleAccumulatedGradients:
     """Direct contract tests for _rescale_accumulated_gradients."""
 
-    def test_scales_all_parameter_grads_by_factor(self, tmp_path):
-        """Calling _rescale with factor 0.5 must halve every parameter's .grad tensor."""
+    @pytest.mark.parametrize(
+        "in_features, out_features, factor, weight_grad, bias_grad, weight_expected, bias_expected",
+        [
+            pytest.param(3, 5, 0.5, 4.0, 8.0, 2.0, 4.0, id="factor-half-halves-grads"),
+            pytest.param(2, 2, 1.0, 3.0, 7.0, 3.0, 7.0, id="factor-one-is-identity"),
+        ],
+    )
+    def test_scales_parameter_grads_by_factor(
+        self, tmp_path, in_features, out_features, factor, weight_grad, bias_grad, weight_expected, bias_expected
+    ):
+        """Every parameter's .grad is multiplied by the factor; factor 1.0 leaves gradients exactly unchanged."""
         module, *_ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
             tmp_path=tmp_path,
         )
-        nano_model = nn.Linear(3, 5)
-        # weight: [5, 3], bias: [5]
-        nano_model.weight.grad = torch.full((5, 3), 4.0)
-        nano_model.bias.grad = torch.full((5,), 8.0)
+        nano_model = nn.Linear(in_features, out_features)
+        nano_model.weight.grad = torch.full((out_features, in_features), weight_grad)
+        nano_model.bias.grad = torch.full((out_features,), bias_grad)
         module.model = nano_model
 
-        module._rescale_accumulated_gradients(torch.tensor(0.5))
+        module._rescale_accumulated_gradients(torch.tensor(factor))
 
-        torch.testing.assert_close(nano_model.weight.grad, torch.full((5, 3), 2.0))
-        torch.testing.assert_close(nano_model.bias.grad, torch.full((5,), 4.0))
-
-    def test_scale_one_leaves_grads_unchanged(self, tmp_path):
-        """Scale factor 1.0 must leave gradients exactly unchanged (identity)."""
-        module, *_ = _build_module(
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            tmp_path=tmp_path,
-        )
-        nano_model = nn.Linear(2, 2)
-        nano_model.weight.grad = torch.full((2, 2), 3.0)
-        nano_model.bias.grad = torch.full((2,), 7.0)
-        module.model = nano_model
-
-        module._rescale_accumulated_gradients(torch.tensor(1.0))
-
-        torch.testing.assert_close(nano_model.weight.grad, torch.full((2, 2), 3.0))
-        torch.testing.assert_close(nano_model.bias.grad, torch.full((2,), 7.0))
+        torch.testing.assert_close(nano_model.weight.grad, torch.full((out_features, in_features), weight_expected))
+        torch.testing.assert_close(nano_model.bias.grad, torch.full((out_features,), bias_expected))
 
     def test_skips_params_with_no_grad(self, tmp_path):
         """Parameters without .grad must remain None after rescaling."""
@@ -1925,8 +2341,10 @@ class TestRescaleAccumulatedGradients:
 
 
 class TestValidationStep:
-    """Tests for validation_step() — verifies output dict shape, postprocessor invocation with correct original sizes,
-    and val/loss logging."""
+    """Validation-specific behaviour of validation_step(): loss policy, keypoint loss logging, and eval-model choice.
+
+    The contracts validation_step() shares with test_step() live in :class:`TestEvalStepOutputs`.
+    """
 
     def _run_val_step(
         self,
@@ -1944,31 +2362,6 @@ class TestValidationStep:
         module.log_dict = MagicMock()
         result = module.validation_step((samples, targets), batch_idx=0)
         return result, fake_pp, module
-
-    @pytest.mark.parametrize(
-        "key",
-        [
-            pytest.param("results", id="results-key"),
-            pytest.param("targets", id="targets-key"),
-        ],
-    )
-    def test_returns_dict_with_required_key(self, key, tmp_path):
-        """Output dict must contain both 'results' and 'targets' for downstream metric computation."""
-        result, _, _ = self._run_val_step(tmp_path)
-        assert key in result
-
-    def test_postprocess_called_with_orig_sizes(self, tmp_path):
-        """Postprocessor must receive original image sizes to rescale predictions."""
-        _result, fake_pp, _ = self._run_val_step(tmp_path)
-        fake_pp.assert_called_once()
-        orig_sizes = fake_pp.call_args[0][1]
-        assert orig_sizes.shape == (2, 2)
-
-    def test_logs_val_loss(self, tmp_path):
-        """Validation loss must be logged for monitoring and early stopping."""
-        _, _, module = self._run_val_step(tmp_path)
-        val_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "val/loss"]
-        assert len(val_loss_calls) == 1
 
     def test_logs_val_keypoint_loss_components_once(self, tmp_path):
         """Validation should expose full keypoint losses without duplicate progress aliases."""
@@ -1993,7 +2386,7 @@ class TestValidationStep:
         assert "val/kp_vis" not in logged_names
         assert "val/kp_nll" not in logged_names
 
-    def test_val_detection_loss_components_are_not_relogged_as_progress_aliases(self, tmp_path):
+    def test_val_detection_loss_components_not_relogged_as_aliases(self, tmp_path):
         """Validation component losses should be logged once under canonical ``val/loss_*`` names."""
         loss_dict = {
             "loss_ce": torch.tensor(0.5),
@@ -2010,20 +2403,24 @@ class TestValidationStep:
         assert "val/loss_giou" not in direct_log_names
         assert "val/giou" not in direct_log_names
 
-    def test_can_disable_val_loss_computation(self, tmp_path):
-        """compute_val_loss=False skips criterion call and val/loss logging."""
+    @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
+    def test_marks_cudagraph_step_only_on_inductor_path(self, mocker, inductor_cudagraphs, tmp_path):
+        """Validation on the Inductor CUDA graph path marks each step, since the compiled model records an eval graph.
+
+        With ``eval_base_model=True`` or ``use_ema=False`` the ``OptimizedModule`` itself runs validation; the results
+        kept by ``COCOEvalCallback`` across the epoch must not alias a graph output the next batch rewrites.
+        """
+        mark_step = mocker.patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin")
         tc = _base_train_config(tmp_path, compute_val_loss=False)
-        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module, fake_model, _, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module._inductor_cudagraphs = inductor_cudagraphs
         samples, targets = _make_batch()
         fake_model.return_value = {}
         module.log = MagicMock()
 
-        result = module.validation_step((samples, targets), batch_idx=0)
+        module.validation_step((samples, targets), batch_idx=0)
 
-        fake_criterion.assert_not_called()
-        logged_keys = [c[0][0] for c in module.log.call_args_list]
-        assert "val/loss" not in logged_keys
-        assert "results" in result and "targets" in result
+        assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 
     def test_auto_val_loss_skips_criterion_without_a_loss_monitor(self, tmp_path):
         """compute_val_loss='auto' skips validation loss when no configured consumer monitors it."""
@@ -2055,47 +2452,36 @@ class TestValidationStep:
         fake_criterion.assert_called_once_with({}, targets)
         assert any(call.args[0] == "val/loss" for call in module.log.call_args_list)
 
-    def test_auto_val_loss_keeps_criterion_for_rfdetr_early_stopping(self, tmp_path):
-        """compute_val_loss='auto' retains validation loss for a real RFDETREarlyStopping monitoring val/loss.
+    @pytest.mark.parametrize(
+        "callbacks, expected",
+        [
+            pytest.param(
+                [RFDETREarlyStopping(monitor_regular="val/loss")],
+                True,
+                id="real-rfdetr-early-stopping-monitor-lives-in-monitor-regular-not-monitor",
+            ),
+            pytest.param(
+                [SimpleNamespace(monitor="__rfdetr_effective_map__", _monitor_ema="val/loss")],
+                True,
+                id="ema-monitor-attribute-consuming-val-loss",
+            ),
+            pytest.param([], False, id="empty-callback-list-resolves-like-the-unattached-case"),
+        ],
+    )
+    def test_auto_val_loss_scan_resolves_policy(self, tmp_path, callbacks: list, expected: bool):
+        """compute_val_loss='auto' scans trainer.callbacks for any callback that would consume val/loss.
 
-        ``RFDETREarlyStopping.monitor`` is always the synthetic ``__rfdetr_effective_map__`` key it injects itself, so
-        the callback's real target only ever appears in ``_monitor_regular``. Stub callbacks carrying a plain
-        ``monitor="val/loss"`` attribute exercise the generic half of the scan and would keep passing even if the half
-        covering RF-DETR's own callbacks regressed.
+        Covers three cases a naive scan (monitor attribute only) could miss: ``RFDETREarlyStopping``'s real target lives
+        in ``_monitor_regular`` (its ``monitor`` is always the synthetic ``__rfdetr_effective_map__`` key it injects
+        itself); RF-DETR's EMA callbacks track their metric via ``_monitor_ema`` instead; and an attached trainer with
+        an empty callback list must resolve exactly like the unattached case rather than raising or falling back to
+        computing the loss.
         """
         tc = _base_train_config(tmp_path, compute_val_loss="auto")
         module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
-        module.trainer = SimpleNamespace(callbacks=[RFDETREarlyStopping(monitor_regular="val/loss")])
+        module.trainer = SimpleNamespace(callbacks=callbacks)
 
-        assert module._should_compute_val_loss is True
-
-    def test_auto_val_loss_detects_ema_monitor_attribute(self, tmp_path):
-        """compute_val_loss='auto' retains validation loss for a callback consuming val/loss as its EMA monitor.
-
-        RF-DETR's ``BestModelCallback`` / ``RFDETREarlyStopping`` keep their EMA-track metric key in ``_monitor_ema``
-        rather than in the PTL-native ``monitor`` attribute, so a scan that inspects only ``monitor`` (and
-        ``_monitor_regular``) would silently skip the loss those callbacks still read.
-        """
-        tc = _base_train_config(tmp_path, compute_val_loss="auto")
-        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
-        module.trainer = SimpleNamespace(
-            callbacks=[SimpleNamespace(monitor="__rfdetr_effective_map__", _monitor_ema="val/loss")]
-        )
-
-        assert module._should_compute_val_loss is True
-
-    def test_auto_val_loss_skips_criterion_for_empty_callback_list(self, tmp_path):
-        """compute_val_loss='auto' resolves to skipping the loss when the attached trainer carries no callbacks.
-
-        ``any()`` over an empty callback list is False, which is the intended answer, but nothing in the scan states
-        it: an attached trainer with an empty ``callbacks`` list must resolve exactly like the unattached case rather
-        than raising or falling back to computing the loss.
-        """
-        tc = _base_train_config(tmp_path, compute_val_loss="auto")
-        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
-        module.trainer = SimpleNamespace(callbacks=[])
-
-        assert module._should_compute_val_loss is False
+        assert module._should_compute_val_loss is expected
 
     def test_explicit_val_loss_disable_rejects_callback_monitor(self, tmp_path):
         """compute_val_loss=False rejects a callback that would consume val/loss."""
@@ -2103,10 +2489,11 @@ class TestValidationStep:
         module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
         module.trainer = SimpleNamespace(callbacks=[SimpleNamespace(monitor="val/loss")])
 
-        with pytest.raises(ValueError, match="compute_val_loss=False is incompatible"):
+        with pytest.raises(ValueError) as exc_info:
             module.on_fit_start()
+        assert "compute_val_loss=False is incompatible" in str(exc_info.value)
 
-    def test_standalone_validate_run_skips_the_fit_start_rejection(self, tmp_path):
+    def test_standalone_validate_skips_fit_start_rejection(self, mocker, tmp_path):
         """A standalone trainer.validate() with compute_val_loss=False runs despite a callback monitoring val/loss.
 
         The rejection lives in ``on_fit_start``, which PTL invokes only when ``trainer.state.fn`` is ``FITTING``; a bare
@@ -2124,26 +2511,24 @@ class TestValidationStep:
 
         fake_postprocess = MagicMock(side_effect=_helpers_fake_postprocess)
 
-        with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
-            patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), fake_postprocess),
-            ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4)),
-        ):
-            module = RFDETRModelModule(mc, tc)
-            datamodule = RFDETRDataModule(mc, tc)
-            trainer = Trainer(
-                limit_val_batches=1,
-                accelerator="cpu",
-                enable_progress_bar=False,
-                enable_model_summary=False,
-                enable_checkpointing=False,
-                logger=False,
-                callbacks=[_ValLossMonitorCallback()],
-            )
-            trainer.validate(module, datamodule)
+        mocker.patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel())
+        mocker.patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), fake_postprocess),
+        )
+        mocker.patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4))
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = Trainer(
+            limit_val_batches=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            enable_checkpointing=False,
+            logger=False,
+            callbacks=[_ValLossMonitorCallback()],
+        )
+        trainer.validate(module, datamodule)
 
         # The validation batch reached postprocess, so the loop ran to completion instead of raising the guard.
         fake_postprocess.assert_called_once()
@@ -2242,13 +2627,13 @@ class TestValidationLossSkipNotice:
         module.trainer = SimpleNamespace(**state)
         return module
 
-    @patch("rfdetr.training.module_model.logger")
-    def test_notice_is_emitted_once_across_validation_epochs(self, mock_logger, tmp_path):
+    def test_notice_is_emitted_once_across_validation_epochs(self, mocker, tmp_path):
         """The skip notice is logged on the first validation epoch only, not once per epoch.
 
         Every validation epoch re-enters the hook, so an unguarded notice would repeat for the whole run and drown the
         per-epoch metric lines it sits next to.
         """
+        mock_logger = mocker.patch("rfdetr.training.module_model.logger")
         module = self._build_module_with_trainer(tmp_path)
 
         module.on_validation_epoch_start()
@@ -2256,22 +2641,22 @@ class TestValidationLossSkipNotice:
 
         mock_logger.info.assert_called_once()
 
-    @patch("rfdetr.training.module_model.logger")
-    def test_no_notice_when_a_callback_consumes_val_loss(self, mock_logger, tmp_path):
+    def test_no_notice_when_a_callback_consumes_val_loss(self, mocker, tmp_path):
         """No notice is logged while a callback monitors val/loss, because the loss is still computed."""
+        mock_logger = mocker.patch("rfdetr.training.module_model.logger")
         module = self._build_module_with_trainer(tmp_path, callbacks=[SimpleNamespace(monitor="val/loss")])
 
         module.on_validation_epoch_start()
 
         mock_logger.info.assert_not_called()
 
-    @patch("rfdetr.training.module_model.logger")
-    def test_sanity_check_pass_defers_the_notice(self, mock_logger, tmp_path):
+    def test_sanity_check_defers_notice(self, mocker, tmp_path):
         """The pre-training sanity-check validation pass does not consume the one-shot notice.
 
         Sanity checking runs before training starts and is invisible in most run logs; emitting the notice there would
         spend the single announcement on a pass the user is least likely to be watching.
         """
+        mock_logger = mocker.patch("rfdetr.training.module_model.logger")
         module = self._build_module_with_trainer(tmp_path, sanity_checking=True)
 
         module.on_validation_epoch_start()
@@ -2282,7 +2667,7 @@ class TestValidationLossSkipNotice:
 class TestValidationLossPolicyCaching:
     """_should_compute_val_loss reuses the resolution that on_validation_epoch_start cached for the running epoch."""
 
-    def test_per_batch_reads_reuse_the_epoch_resolution(self, tmp_path):
+    def test_per_batch_reads_reuse_epoch_resolution(self, tmp_path):
         """A callback attached mid-epoch does not change the policy the running validation epoch already resolved.
 
         The resolution walks every configured callback, so ``validation_step`` must not redo it per batch. Mutating
@@ -2311,97 +2696,83 @@ class TestValidationLossPolicyCaching:
         assert module._should_compute_val_loss is True
 
 
-class TestTestStep:
-    """Tests for test_step() — verifies output dict shape, postprocessor invocation with correct original sizes, and
-    test/loss logging.
+@pytest.mark.parametrize(
+    ("step", "prefix", "loss_flag"),
+    [("validation_step", "val", "compute_val_loss"), ("test_step", "test", "compute_test_loss")],
+)
+class TestEvalStepOutputs:
+    """validation_step() and test_step() share one forward+postprocess contract and differ in the metric prefix."""
 
-    Mirrors :class:`TestValidationStep` since both steps share the same forward+postprocess logic and differ only in the
-    logged metric prefix.
-    """
-
-    def _run_test_step(self, tmp_path):
-        module, fake_model, fake_criterion, fake_pp = _build_module(tmp_path=tmp_path)
+    @staticmethod
+    def _run(tmp_path: Path, step: str, loss_flag: str, compute_loss: bool = True) -> SimpleNamespace:
+        """Run one eval step on a fake module and return the pieces the tests inspect."""
+        tc = _base_train_config(tmp_path, **{loss_flag: compute_loss})
+        module, fake_model, fake_criterion, fake_pp = _build_module(train_config=tc, tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {}
         fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
         fake_criterion.weight_dict = {"loss_ce": 1.0}
         module.log = MagicMock()
-        result = module.test_step((samples, targets), batch_idx=0)
-        return result, fake_pp, module
+        module.log_dict = MagicMock()
+        result = getattr(module, step)((samples, targets), batch_idx=0)
+        return SimpleNamespace(
+            result=result,
+            module=module,
+            model=fake_model,
+            criterion=fake_criterion,
+            postprocess=fake_pp,
+            samples=samples,
+        )
 
-    @pytest.mark.parametrize(
-        "key",
-        [
-            pytest.param("results", id="results-key"),
-            pytest.param("targets", id="targets-key"),
-        ],
-    )
-    def test_returns_dict_with_required_key(self, key, tmp_path):
-        """Output dict must contain both 'results' and 'targets' for COCOEvalCallback."""
-        result, _, _ = self._run_test_step(tmp_path)
-        assert key in result
+    @pytest.mark.parametrize("key", ["results", "targets"])
+    def test_returns_dict_with_required_key(self, tmp_path, step, prefix, loss_flag, key):
+        """The output dict carries both 'results' and 'targets' for downstream metric computation."""
+        run = self._run(tmp_path, step, loss_flag)
 
-    def test_postprocess_called_with_orig_sizes(self, tmp_path):
-        """Postprocessor must receive original image sizes to rescale predictions."""
-        _result, fake_pp, _ = self._run_test_step(tmp_path)
-        fake_pp.assert_called_once()
-        orig_sizes = fake_pp.call_args[0][1]
-        assert orig_sizes.shape == (2, 2)
+        assert key in run.result
 
-    def test_logs_test_loss(self, tmp_path):
-        """Test loss must be logged under test/ prefix for monitoring."""
-        _, _, module = self._run_test_step(tmp_path)
-        test_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "test/loss"]
-        assert len(test_loss_calls) == 1
+    def test_postprocess_called_with_orig_sizes(self, tmp_path, step, prefix, loss_flag):
+        """The postprocessor receives original image sizes to rescale predictions."""
+        run = self._run(tmp_path, step, loss_flag)
 
-    def test_model_called_with_samples_only(self, tmp_path):
-        """Test step must pass only samples (not targets) to the model forward."""
-        module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
-        samples, targets = _make_batch()
-        fake_model.return_value = {}
-        fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
-        fake_criterion.weight_dict = {"loss_ce": 1.0}
-        module.log = MagicMock()
+        run.postprocess.assert_called_once()
+        assert run.postprocess.call_args[0][1].shape == (2, 2)
 
-        module.test_step((samples, targets), batch_idx=0)
+    def test_logs_loss_under_own_prefix_only(self, tmp_path, step, prefix, loss_flag):
+        """The loss is logged once as '<prefix>/loss' and never under the other step's namespace."""
+        run = self._run(tmp_path, step, loss_flag)
 
-        fake_model.assert_called_once_with(samples)
+        logged = [c[0][0] for c in run.module.log.call_args_list]
+        assert logged.count(f"{prefix}/loss") == 1
+        assert ({"val/loss", "test/loss"} - {f"{prefix}/loss"}).isdisjoint(logged)
 
-    def test_loss_prefix_differs_from_validation(self, tmp_path):
-        """test_step must log 'test/loss', not 'val/loss', to keep metric namespaces separate."""
-        _, _, module = self._run_test_step(tmp_path)
-        logged_keys = [c[0][0] for c in module.log.call_args_list]
-        assert "test/loss" in logged_keys
-        assert "val/loss" not in logged_keys
+    def test_model_called_with_samples_only(self, tmp_path, step, prefix, loss_flag):
+        """The step passes only samples (not targets) to the model forward."""
+        run = self._run(tmp_path, step, loss_flag)
 
-    def test_can_disable_test_loss_computation(self, tmp_path):
-        """compute_test_loss=False skips criterion call and test/loss logging."""
-        tc = _base_train_config(tmp_path, compute_test_loss=False)
-        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
-        samples, targets = _make_batch()
-        fake_model.return_value = {}
-        module.log = MagicMock()
+        run.model.assert_called_once_with(run.samples)
 
-        result = module.test_step((samples, targets), batch_idx=0)
+    def test_can_disable_loss_computation(self, tmp_path, step, prefix, loss_flag):
+        """Disabling the loss flag skips the criterion call and the '<prefix>/loss' log."""
+        run = self._run(tmp_path, step, loss_flag, compute_loss=False)
 
-        fake_criterion.assert_not_called()
-        logged_keys = [c[0][0] for c in module.log.call_args_list]
-        assert "test/loss" not in logged_keys
-        assert "results" in result and "targets" in result
+        run.criterion.assert_not_called()
+        assert f"{prefix}/loss" not in [c[0][0] for c in run.module.log.call_args_list]
+        assert "results" in run.result and "targets" in run.result
 
 
 class TestConfigureOptimizers:
-    """Tests for configure_optimizers() — covers required output keys, AdamW optimizer type, step-interval scheduler, LR
-    lambda warmup ramp, and step-decay behaviour before and after lr_drop."""
+    """Tests for configure_optimizers().
+
+    Covers required output keys, AdamW optimizer type, step-interval scheduler, LR lambda warmup ramp, and step-decay
+    behaviour before and after lr_drop.
+    """
 
     def _setup_module(self, tmp_path, **train_overrides):
         tc = _base_train_config(tmp_path, **train_overrides)
         module, _, _, _ = _build_module(train_config=tc)
 
-        trainer = MagicMock()
-        trainer.estimated_stepping_batches = 1000
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, estimated_stepping_batches=1000)
 
         real_param = nn.Parameter(torch.randn(4, 4))
         param_dicts = [{"params": real_param, "lr": tc.lr}]
@@ -2414,25 +2785,25 @@ class TestConfigureOptimizers:
             pytest.param("lr_scheduler", id="lr-scheduler-key"),
         ],
     )
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_configure_optimizers_returns_required_key(self, mock_get_param_dict, key, tmp_path):
+    def test_returns_required_key(self, mocker, key, tmp_path):
         """Lightning requires both 'optimizer' and 'lr_scheduler' keys in the returned config dict."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
 
         assert key in module.configure_optimizers()
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_optimizer_is_adamw(self, mock_get_param_dict, tmp_path):
+    def test_optimizer_is_adamw(self, mocker, tmp_path):
         """RF-DETR must use AdamW for its decoupled weight decay behavior."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
 
         assert isinstance(module.configure_optimizers()["optimizer"], torch.optim.AdamW)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_adamw_optimizer_kwargs_forwarded(self, mock_get_param_dict, tmp_path):
+    def test_adamw_optimizer_kwargs_forwarded(self, mocker, tmp_path):
         """optimizer_kwargs are forwarded to RF-DETR's default AdamW optimizer."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         optimizer_kwargs = {"betas": (0.8, 0.95), "eps": 1e-7}
         module, param_dicts = self._setup_module(tmp_path, optimizer_kwargs=optimizer_kwargs)
         mock_get_param_dict.return_value = param_dicts
@@ -2442,49 +2813,49 @@ class TestConfigureOptimizers:
         assert optimizer.defaults["betas"] == optimizer_kwargs["betas"]
         assert optimizer.defaults["eps"] == pytest.approx(optimizer_kwargs["eps"])
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_managed_optimizer_resolves_native_class(self, mock_get_param_dict, tmp_path):
+    def test_managed_optimizer_resolves_native_class(self, mocker, tmp_path):
         """Managed short names resolve to a native torch.optim class with lr/weight_decay injected."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
 
-        with patch(
+        mock_resolve = mocker.patch(
             "rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer
-        ) as mock_resolve:
-            optimizer = module.configure_optimizers()["optimizer"]
+        )
+        optimizer = module.configure_optimizers()["optimizer"]
 
         mock_resolve.assert_called_once_with("sgd")
         assert isinstance(optimizer, _RecordingOptimizer)
         assert optimizer.defaults["lr"] == pytest.approx(module.train_config.lr)
         assert optimizer.defaults["weight_decay"] == pytest.approx(module.train_config.weight_decay)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_managed_optimizer_preserves_rfdetr_param_groups(self, mock_get_param_dict, tmp_path):
+    def test_managed_optimizer_preserves_rfdetr_param_groups(self, mocker, tmp_path):
         """Managed optimizers must receive RF-DETR param groups with layer-wise LR values."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         param_dicts[0]["lr"] = 2.5e-5
         mock_get_param_dict.return_value = param_dicts
 
-        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer):
-            optimizer = module.configure_optimizers()["optimizer"]
+        mocker.patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer)
+        optimizer = module.configure_optimizers()["optimizer"]
 
         assert optimizer.param_groups[0]["initial_lr"] == pytest.approx(2.5e-5)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_managed_optimizer_kwargs_forwarded(self, mock_get_param_dict, tmp_path):
+    def test_managed_optimizer_kwargs_forwarded(self, mocker, tmp_path):
         """optimizer_kwargs are forwarded to a managed optimizer constructor."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         optimizer_kwargs = {"momentum": 0.9, "nesterov": True}
         module, param_dicts = self._setup_module(tmp_path, optimizer="sgd", optimizer_kwargs=optimizer_kwargs)
         mock_get_param_dict.return_value = param_dicts
 
-        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer):
-            optimizer = module.configure_optimizers()["optimizer"]
+        mocker.patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer)
+        optimizer = module.configure_optimizers()["optimizer"]
 
         assert optimizer.extra_kwargs == optimizer_kwargs
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_callable_optimizer_called_with_param_groups_only(self, mock_get_param_dict, tmp_path):
+    def test_callable_optimizer_called_with_param_groups_only(self, mocker, tmp_path):
         """A non-reconstructable callable optimizer is invoked with the param groups and nothing else."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer=lambda params: _RecordingOptimizer(params))
         mock_get_param_dict.return_value = param_dicts
 
@@ -2493,9 +2864,9 @@ class TestConfigureOptimizers:
         assert isinstance(optimizer, _RecordingOptimizer)
         assert optimizer.extra_kwargs == {}
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_dotted_optimizer_built_from_kwargs_without_injection(self, mock_get_param_dict, tmp_path):
+    def test_dotted_optimizer_built_from_kwargs_without_injection(self, mocker, tmp_path):
         """A dotted-path optimizer is built from optimizer_kwargs only, with no lr/weight_decay injection."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path, optimizer="torch.optim.AdamW", optimizer_kwargs={"weight_decay": 0.5}
         )
@@ -2508,22 +2879,21 @@ class TestConfigureOptimizers:
         # Explicit mode must not inject the config lr as the optimizer-level default.
         assert optimizer.defaults["lr"] == pytest.approx(1e-3)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_uninstalled_import_path_optimizer_raises_value_error(self, mock_get_param_dict, tmp_path):
+    def test_uninstalled_import_path_optimizer_raises_value_error(self, mocker, tmp_path):
         """A dotted import path that cannot be imported surfaces as a configuration error at train start."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
         mock_get_param_dict.return_value = param_dicts
 
-        with (
-            patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module")),
-            pytest.raises(ValueError, match="Could not import optimizer"),
-        ):
+        mocker.patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module"))
+        with pytest.raises(ValueError) as exc_info:
             module.configure_optimizers()
+        assert "Could not import optimizer" in str(exc_info.value)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_real_import_path_optimizer_smoke(self, mock_get_param_dict, tmp_path):
+    @_requires_pytorch_optimizer
+    def test_real_import_path_optimizer_smoke(self, mocker, tmp_path):
         """A real pytorch-optimizer optimizer can be built via its import path when installed."""
-        pytest.importorskip("pytorch_optimizer")
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="pytorch_optimizer.Lion")
         mock_get_param_dict.return_value = param_dicts
 
@@ -2531,103 +2901,89 @@ class TestConfigureOptimizers:
 
         assert optimizer.__class__.__name__ == "Lion"
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_custom_optimizer_omits_weight_decay_when_unsupported(self, mock_get_param_dict, tmp_path):
+    def test_custom_optimizer_omits_weight_decay_when_unsupported(self, mocker, tmp_path):
         """weight_decay must not be injected into optimizers whose constructor does not accept it."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
 
-        with patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_NoWeightDecayOptimizer):
-            optimizer = module.configure_optimizers()["optimizer"]
+        mocker.patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_NoWeightDecayOptimizer)
+        optimizer = module.configure_optimizers()["optimizer"]
 
         assert isinstance(optimizer, _NoWeightDecayOptimizer)
         assert "weight_decay" not in optimizer.defaults
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    def test_fused_optimizer_warns_for_custom_optimizer_on_bf16(
-        self,
-        mock_bf16_supported,
-        mock_cuda_available,
-        mock_get_param_dict,
-        tmp_path,
-    ):
+    def test_fused_optimizer_warns_for_custom_optimizer_on_bf16(self, mocker, tmp_path):
         """A custom optimizer on a fused-eligible BF16/CUDA run must warn that fused_optimizer is ignored."""
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
         module._trainer.precision = "bf16-mixed"
 
-        with (
-            patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer),
-            patch("rfdetr.training.module_model.logger.warning") as mock_warning,
-        ):
-            module.configure_optimizers()
+        mocker.patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RecordingOptimizer)
+        mock_warning = mocker.patch("rfdetr.training.module_model.logger.warning")
+        module.configure_optimizers()
 
         assert any("fused_optimizer=True is ignored" in str(call.args[0]) for call in mock_warning.call_args_list)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    def test_no_fused_warning_for_adamw_on_bf16(
-        self,
-        mock_bf16_supported,
-        mock_cuda_available,
-        mock_get_param_dict,
-        tmp_path,
-    ):
+    def test_no_fused_warning_for_adamw_on_bf16(self, mocker, tmp_path):
         """The built-in AdamW path uses fused and must not emit the fused-ignored warning."""
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
         module._trainer.precision = "bf16-mixed"
 
-        with patch("rfdetr.training.module_model.logger.warning") as mock_warning:
-            module.configure_optimizers()
+        mock_warning = mocker.patch("rfdetr.training.module_model.logger.warning")
+        module.configure_optimizers()
 
         assert not any("fused_optimizer=True is ignored" in str(call.args[0]) for call in mock_warning.call_args_list)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_adamw_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
+    def test_adamw_construction_error_is_rewrapped(self, mocker, tmp_path):
         """An unsupported AdamW kwarg must surface as an RF-DETR-specific initialization error."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer_kwargs={"nonexistent_adamw_kwarg": True})
         mock_get_param_dict.return_value = param_dicts
 
-        with pytest.raises(TypeError, match="Failed to initialize optimizer 'adamw'"):
+        with pytest.raises(TypeError) as exc_info:
             module.configure_optimizers()
+        assert "Failed to initialize optimizer 'adamw'" in str(exc_info.value)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_pytorch_optimizer_construction_error_is_rewrapped(self, mock_get_param_dict, tmp_path):
+    def test_pytorch_optimizer_construction_error_is_rewrapped(self, mocker, tmp_path):
         """A managed optimizer constructor failure must surface as an RF-DETR-specific initialization error."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, optimizer="sgd")
         mock_get_param_dict.return_value = param_dicts
 
-        with (
-            patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RaisingOptimizer),
-            pytest.raises(TypeError, match="Failed to initialize optimizer 'sgd'"),
-        ):
+        mocker.patch("rfdetr.training.module_model._resolve_native_optimizer", return_value=_RaisingOptimizer)
+        with pytest.raises(TypeError) as exc_info:
             module.configure_optimizers()
+        assert "Failed to initialize optimizer 'sgd'" in str(exc_info.value)
 
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_use_fused_optimizer_false_for_custom_optimizer(self, mock_cuda_available, mock_bf16_supported, tmp_path):
+    def test_use_fused_optimizer_false_for_custom_optimizer(self, mocker, tmp_path):
         """Fused AdamW lifecycle must not activate for custom optimizers, even on BF16/CUDA."""
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
         module, _ = self._setup_module(tmp_path, optimizer="sgd")
         module._trainer.precision = "bf16-mixed"
 
         assert module._use_fused_optimizer is False
 
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_use_fused_optimizer_true_for_adamw(self, mock_cuda_available, mock_bf16_supported, tmp_path):
+    def test_use_fused_optimizer_true_for_adamw(self, mocker, tmp_path):
         """Fused AdamW must activate for the built-in AdamW optimizer on BF16/CUDA."""
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
         module, _ = self._setup_module(tmp_path)
         module._trainer.precision = "bf16-mixed"
 
         assert module._use_fused_optimizer is True
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_scheduler_interval_is_step(self, mock_get_param_dict, tmp_path):
+    def test_scheduler_interval_is_step(self, mocker, tmp_path):
         """Scheduler must step per batch (not per epoch) for fine-grained warmup."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
 
@@ -2640,9 +2996,9 @@ class TestConfigureOptimizers:
             pytest.param(50, "warmup_mid", id="warmup-midpoint"),
         ],
     )
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_warmup_phase(self, mock_get_param_dict, step, expected_behavior, tmp_path):
+    def test_lr_lambda_warmup_phase(self, mocker, step, expected_behavior, tmp_path):
         """LR lambda must produce a linear ramp during the warmup phase."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, warmup_epochs=1.0, epochs=10)
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
@@ -2654,9 +3010,16 @@ class TestConfigureOptimizers:
         expected = float(step) / float(max(1, 100))
         assert lr_lambda(step) == pytest.approx(expected)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_step_decay_before_drop(self, mock_get_param_dict, tmp_path):
-        """Before lr_drop epoch, the LR multiplier must remain at 1.0."""
+    @pytest.mark.parametrize(
+        "step, expected_factor",
+        [
+            pytest.param(500, 1.0, id="before-lr-drop-epoch-8-times-100-steps-per-epoch-equals-800"),
+            pytest.param(900, 0.1, id="after-lr-drop-epoch-decays-to-0.1"),
+        ],
+    )
+    def test_lr_lambda_step_decay(self, mocker, tmp_path, step: int, expected_factor: float):
+        """The step-decay LR multiplier stays at 1.0 before lr_drop and decays to 0.1 after it."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
         )
@@ -2666,27 +3029,11 @@ class TestConfigureOptimizers:
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
         lr_lambda = scheduler.lr_lambdas[0]
 
-        # lr_drop * steps_per_epoch = 8 * 100 = 800; step 500 < 800 → factor 1.0
-        assert lr_lambda(500) == pytest.approx(1.0)
+        assert lr_lambda(step) == pytest.approx(expected_factor)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_step_decay_after_drop(self, mock_get_param_dict, tmp_path):
-        """After lr_drop epoch, the LR multiplier must decay to 0.1."""
-        module, param_dicts = self._setup_module(
-            tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
-        )
-        module._trainer.estimated_stepping_batches = 1000
-        mock_get_param_dict.return_value = param_dicts
-
-        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
-        lr_lambda = scheduler.lr_lambdas[0]
-
-        # step 900 > 800 → factor 0.1
-        assert lr_lambda(900) == pytest.approx(0.1)
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_cosine_reads_train_config_fields(self, mock_get_param_dict, tmp_path):
+    def test_lr_lambda_cosine_reads_train_config_fields(self, mocker, tmp_path):
         """Cosine preset must read its floor from lr_scheduler_kwargs['min_factor']."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2700,12 +3047,38 @@ class TestConfigureOptimizers:
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
         lr_lambda = scheduler.lr_lambdas[0]
 
-        # At the final step, cosine schedule must end at lr_min_factor.
+        # At the final step, cosine schedule must end at min_factor.
         assert lr_lambda(1000) == pytest.approx(0.2)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_explicit_dotted_scheduler_builds_from_kwargs(self, mock_get_param_dict, tmp_path):
+    def test_lr_lambda_step_default_drop_is_epoch_100(self, mocker, tmp_path):
+        """With no ``lr_drop`` kwarg the step preset falls back to the managed default of 100 epochs."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=200)
+        module._trainer.estimated_stepping_batches = 20000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        # steps_per_epoch=100 -> drop at step 10000
+        assert lr_lambda(9999) == pytest.approx(1.0)
+        assert lr_lambda(10000) == pytest.approx(0.1)
+
+    def test_lr_lambda_cosine_default_floor_is_zero(self, mocker, tmp_path):
+        """With no ``min_factor`` kwarg the cosine preset anneals to the managed default floor of 0.0."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler="cosine")
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        assert lr_lambda(1000) == pytest.approx(0.0)
+
+    def test_explicit_dotted_scheduler_builds_from_kwargs(self, mocker, tmp_path):
         """An explicit dotted-path lr_scheduler is built from lr_scheduler_kwargs verbatim."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2721,12 +3094,10 @@ class TestConfigureOptimizers:
         assert scheduler.step_size == 30
         assert scheduler.gamma == pytest.approx(0.1)
 
-    @patch("rfdetr.training.module_model._build_param_dicts")
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_per_parameter_lr_lambda_list_is_collapsed_onto_merged_groups(
-        self, mock_get_param_dict, mock_build_param_dicts, tmp_path
-    ):
+    def test_per_parameter_lr_lambda_list_is_collapsed_onto_merged_groups(self, mocker, tmp_path):
         """A legacy per-parameter lr_lambda list is regrouped to one callback per merged group."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        mock_build_param_dicts = mocker.patch("rfdetr.training.module_model._build_param_dicts")
 
         def shared_lambda(step: int) -> float:
             return 1.0
@@ -2748,9 +3119,9 @@ class TestConfigureOptimizers:
 
         assert scheduler.lr_lambdas == [shared_lambda]
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_managed_preset_builds_lambda_lr(self, mock_get_param_dict, tmp_path):
+    def test_managed_preset_builds_lambda_lr(self, mocker, tmp_path):
         """A managed preset still builds a LambdaLR at step interval."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, lr_scheduler="step")
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
@@ -2760,9 +3131,9 @@ class TestConfigureOptimizers:
         assert isinstance(config["scheduler"], torch.optim.lr_scheduler.LambdaLR)
         assert config["interval"] == "step"
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_callable_scheduler_built_from_optimizer_only(self, mock_get_param_dict, tmp_path):
+    def test_callable_scheduler_built_from_optimizer_only(self, mocker, tmp_path):
         """A non-reconstructable callable scheduler is invoked with the optimizer and nothing else."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2776,9 +3147,9 @@ class TestConfigureOptimizers:
         assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
         assert scheduler.step_size == 11
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_explicit_scheduler_auto_wrapped_with_warmup(self, mock_get_param_dict, tmp_path):
+    def test_explicit_scheduler_auto_wrapped_with_warmup(self, mocker, tmp_path):
         """With warmup_epochs>0 an explicit scheduler is wrapped in a SequentialLR linear warmup."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=1.0,
@@ -2792,9 +3163,9 @@ class TestConfigureOptimizers:
 
         assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_epoch_interval_warmup_ramps_over_multiple_epochs(self, mock_get_param_dict, tmp_path):
+    def test_epoch_interval_warmup_ramps_over_multiple_epochs(self, mocker, tmp_path):
         """An epoch-interval explicit scheduler gets a real warmup ramp sized in whole epochs (not optimizer steps)."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=3.0,
@@ -2814,10 +3185,10 @@ class TestConfigureOptimizers:
         assert warmup.total_iters == 3
         assert warmup.start_factor < 1.0
 
-    @patch("rfdetr.training.module_model.logger")
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_epoch_interval_single_epoch_warmup_warns_and_skips(self, mock_get_param_dict, mock_logger, tmp_path):
+    def test_epoch_interval_single_epoch_warmup_warns_and_skips(self, mocker, tmp_path):
         """A single-epoch epoch-interval warmup cannot ramp; it warns and is skipped, not silently flat."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        mock_logger = mocker.patch("rfdetr.training.module_model.logger")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=1.0,
@@ -2835,9 +3206,9 @@ class TestConfigureOptimizers:
         assert not isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
         mock_logger.warning.assert_called_once()
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_explicit_scheduler_interval_propagates(self, mock_get_param_dict, tmp_path):
+    def test_explicit_scheduler_interval_propagates(self, mocker, tmp_path):
         """lr_scheduler_interval is forwarded to the Lightning scheduler config for explicit schedulers."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2850,9 +3221,9 @@ class TestConfigureOptimizers:
 
         assert module.configure_optimizers()["lr_scheduler"]["interval"] == "epoch"
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_reduce_on_plateau_sets_monitor_and_epoch_interval(self, mock_get_param_dict, tmp_path):
+    def test_reduce_on_plateau_sets_monitor_and_epoch_interval(self, mocker, tmp_path):
         """A plateau loss monitor makes automatic validation loss available each epoch."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2869,8 +3240,56 @@ class TestConfigureOptimizers:
         assert config["interval"] == "epoch"
         assert module._should_compute_val_loss is True
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_callable_plateau_scheduler_rejects_disabled_val_loss(self, mock_get_param_dict, tmp_path):
+    def test_reduce_on_plateau_records_each_group_initial_lr(self, mocker, tmp_path: Path) -> None:
+        """A resumed run rescales its reduced lr from the recorded initial lr when ``lr`` changes (#1613).
+
+        Every other scheduler sets ``initial_lr`` itself.
+        """
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.ReduceLROnPlateau",
+            lr_scheduler_monitor="train/loss",
+        )
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.param_groups[0]["initial_lr"] == module.train_config.lr
+
+    @pytest.mark.parametrize(
+        ("train_overrides", "expected_base"),
+        [
+            pytest.param({"warmup_epochs": 1.0}, 1e-4, id="managed-warmup"),
+            pytest.param(
+                {
+                    "warmup_epochs": 0.0,
+                    "lr_scheduler": "torch.optim.lr_scheduler.OneCycleLR",
+                    "lr_scheduler_kwargs": {"max_lr": 1e-3, "total_steps": 100},
+                },
+                1e-3 / 25,
+                id="one-cycle",
+            ),
+        ],
+    )
+    def test_records_each_group_base_as_its_scheduler_set_it(
+        self, mocker, train_overrides: dict[str, Any], expected_base: float, tmp_path: Path
+    ) -> None:
+        """A resumed run compares the recorded base with the restored one (#1613).
+
+        The base is the scheduler's own: not the warmup-scaled current lr and, for a scheduler that sets its own rates
+        (OneCycleLR starts at ``max_lr / 25``), not ``lr``.
+        """
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        module, param_dicts = self._setup_module(tmp_path, **train_overrides)
+        mock_get_param_dict.return_value = param_dicts
+
+        module.configure_optimizers()
+
+        assert module._configured_param_group_settings[0][0] == pytest.approx(expected_base)
+
+    def test_callable_plateau_scheduler_rejects_disabled_val_loss(self, mocker, tmp_path):
         """A closure-built ReduceLROnPlateau monitoring val/loss is rejected when compute_val_loss=False.
 
         ``TrainConfig.validate_explicit_val_loss_disable`` only string-compares ``lr_scheduler`` against the
@@ -2878,6 +3297,7 @@ class TestConfigureOptimizers:
         to that path — never reaches the comparison. The runtime check in ``configure_optimizers`` is therefore the only
         guard left once the concrete scheduler exists.
         """
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         with warnings.catch_warnings():
             # A lambda lr_scheduler cannot round-trip through training_config.json; that reproducibility warning is
             # expected here and unrelated to the conflict under test.
@@ -2891,24 +3311,24 @@ class TestConfigureOptimizers:
             )
         mock_get_param_dict.return_value = param_dicts
 
-        with pytest.raises(ValueError, match="incompatible with ReduceLROnPlateau"):
+        with pytest.raises(ValueError) as exc_info:
             module.configure_optimizers()
+        assert "incompatible with ReduceLROnPlateau" in str(exc_info.value)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_uninstalled_scheduler_path_raises_value_error(self, mock_get_param_dict, tmp_path):
+    def test_uninstalled_scheduler_path_raises_value_error(self, mocker, tmp_path):
         """A dotted scheduler path that cannot be imported surfaces as a configuration error at train start."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path, lr_scheduler="nonexistent_pkg.MyScheduler")
         mock_get_param_dict.return_value = param_dicts
 
-        with (
-            patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module")),
-            pytest.raises(ValueError, match="Could not import lr_scheduler"),
-        ):
+        mocker.patch("rfdetr.training.module_model.importlib.import_module", side_effect=ImportError("No module"))
+        with pytest.raises(ValueError) as exc_info:
             module.configure_optimizers()
+        assert "Could not import lr_scheduler" in str(exc_info.value)
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_explicit_scheduler_construction_error_is_reraised(self, mock_get_param_dict, tmp_path):
+    def test_explicit_scheduler_construction_error_is_reraised(self, mocker, tmp_path):
         """A missing required scheduler kwarg surfaces as an RF-DETR configuration error, not a bare TypeError."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=0.0,
@@ -2918,13 +3338,14 @@ class TestConfigureOptimizers:
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
-        with pytest.raises(TypeError, match="Failed to initialize lr_scheduler"):
+        with pytest.raises(TypeError) as exc_info:
             module.configure_optimizers()
+        assert "Failed to initialize lr_scheduler" in str(exc_info.value)
 
-    @patch("rfdetr.training.module_model.logger")
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_plateau_with_warmup_warns(self, mock_get_param_dict, mock_logger, tmp_path):
+    def test_plateau_with_warmup_warns(self, mocker, tmp_path):
         """warmup_epochs>0 with ReduceLROnPlateau warns; a metric-driven scheduler cannot compose with a warmup ramp."""
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
+        mock_logger = mocker.patch("rfdetr.training.module_model.logger")
         module, param_dicts = self._setup_module(
             tmp_path,
             warmup_epochs=1.0,
@@ -2938,112 +3359,77 @@ class TestConfigureOptimizers:
 
         mock_logger.warning.assert_called_once()
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_fused_optimizer_disabled_when_precision_not_bf16(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-        mock_get_param_dict,
-        tmp_path,
-    ):
-        """Fused AdamW must be disabled when trainer precision is not bf16-mixed.
+    @pytest.mark.parametrize(
+        "precision, expected_fused",
+        [
+            pytest.param(
+                "32-true",
+                False,
+                id="not-bf16-disables-fused-even-though-the-gpu-supports-bf16",
+            ),
+            pytest.param(
+                "bf16-mixed",
+                True,
+                id="bf16-mixed-enables-fused-params-grads-and-state-share-dtype-and-layout",
+            ),
+            pytest.param(
+                "transformer-engine",
+                True,
+                id="transformer-engine-default-fp8-uses-bf16-weights-so-fused-stays-active",
+            ),
+        ],
+    )
+    def test_fused_optimizer_gating_by_precision(self, mocker, tmp_path, precision: str, expected_fused: bool):
+        """Fused AdamW is enabled only for the precisions whose params/grads/state all stay BF16-compatible.
 
-        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the trainer is configured for 32-true
-        precision.  The old code always enabled fused AdamW based on GPU capability alone, crashing with ``params,
-        grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had
-        non-matching strides. The fix checks ``trainer.precision`` before enabling fused.
+        On Ampere+ GPUs ``torch.cuda.is_bf16_supported()`` is True even when the trainer is configured for 32-true
+        precision. The old code always enabled fused AdamW based on GPU capability alone, crashing with ``params, grads,
+        exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had non-
+        matching strides — the fix checks ``trainer.precision`` before enabling fused.
         """
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
-        # Simulate trainer configured for full FP32 precision.
-        module._trainer.precision = "32-true"
+        module._trainer.precision = precision
 
         optimizer = module.configure_optimizers()["optimizer"]
 
-        assert not optimizer.defaults.get("fused")
+        assert bool(optimizer.defaults.get("fused")) is expected_fused
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_fused_optimizer_enabled_when_precision_is_bf16_mixed(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-        mock_get_param_dict,
-        tmp_path,
-    ):
-        """Fused AdamW must be enabled when both GPU supports BF16 and trainer uses bf16-mixed.
-
-        The fused path is beneficial (and safe) only when training precision is actually BF16: parameters, gradients,
-        and optimizer state all stay in the same dtype/layout, satisfying the fused kernel requirements.
-        """
-        module, param_dicts = self._setup_module(tmp_path)
-        mock_get_param_dict.return_value = param_dicts
-        # Simulate trainer configured for BF16 mixed precision.
-        module._trainer.precision = "bf16-mixed"
-
-        optimizer = module.configure_optimizers()["optimizer"]
-
-        assert optimizer.defaults.get("fused") is True
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_fused_optimizer_enabled_with_transformer_engine(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-        mock_get_param_dict,
-        tmp_path,
-    ):
-        """Default FP8 uses BF16 weights, so the built-in fused AdamW path must remain active."""
-        module, param_dicts = self._setup_module(tmp_path)
-        mock_get_param_dict.return_value = param_dicts
-        module._trainer.precision = "transformer-engine"
-
-        optimizer = module.configure_optimizers()["optimizer"]
-
-        assert optimizer.defaults.get("fused") is True
-
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
-    def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
+    def test_fused_optimizer_disabled_when_cuda_unavailable(self, mocker, tmp_path):
         """_use_fused_optimizer must return False when CUDA is not available, regardless of precision."""
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
         module, _ = self._setup_module(tmp_path)
         module._trainer.precision = "bf16-mixed"
 
         assert not module._use_fused_optimizer
 
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_total_steps_divided_by_grad_accum_for_keypoint_module(self, mock_get_param_dict, tmp_path):
+    def test_total_steps_divided_by_grad_accum_for_keypoint_module(self, mocker, tmp_path):
         """Keypoint (manual-opt) path must divide estimated_stepping_batches by grad_accum_steps for LR scheduling.
 
         With microbatches=100, grad_accum_steps=4, epochs=1, warmup_epochs=0 the scheduler should span 25 optimizer
-        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at lr_min_factor;
-        if total_steps were mistakenly 100 the LR would still be near its peak at step 24.
+        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at min_factor; if
+        total_steps were mistakenly 100 the LR would still be near its peak at step 24.
         """
-        import math
-
+        mock_get_param_dict = mocker.patch("rfdetr.training.module_model.get_param_dict")
         grad_accum_steps = 4
         microbatches = 100
-        lr_min_factor = 0.1
+        min_factor = 0.1
         tc = _base_train_config(
             tmp_path,
             grad_accum_steps=grad_accum_steps,
             warmup_epochs=0,
             epochs=1,
             lr_scheduler="cosine",
-            lr_scheduler_kwargs={"min_factor": lr_min_factor},
+            lr_scheduler_kwargs={"min_factor": min_factor},
         )
         module, _, _, _ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
             train_config=tc,
         )
-        trainer = MagicMock()
-        trainer.estimated_stepping_batches = microbatches
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, estimated_stepping_batches=microbatches)
         real_param = nn.Parameter(torch.randn(4, 4))
         mock_get_param_dict.return_value = [{"params": real_param, "lr": tc.lr}]
 
@@ -3052,129 +3438,505 @@ class TestConfigureOptimizers:
         lr_lambda = scheduler.lr_lambdas[0]
 
         expected_total_steps = max(1, math.ceil(microbatches / grad_accum_steps))  # 25
-        # The cosine schedule reaches lr_min_factor exactly at step == total_steps (progress=1.0).
+        # The cosine schedule reaches min_factor exactly at step == total_steps (progress=1.0).
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
-        assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+        assert lr_at_decay_end == pytest.approx(min_factor, abs=1e-6)
+
+
+class TestCudaGraphLifecycle:
+    """Tests for enabling the graph runner after Lightning resolves runtime ownership."""
+
+    def test_on_train_start_enables_single_cuda_detection(
+        self, mocker, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A supported CUDA fit builds one runner around the registered detector and says so.
+
+        The enable path must be as visible as the fallback warnings: without a log line a graph run
+        and an eager run print identical consoles.
+        """
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, model, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
+        runner = MagicMock()
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner", return_value=runner)
+        with caplog.at_level(logging.INFO, logger="rf-detr"):
+            module.on_train_start()
+
+        runner_type.assert_called_once_with(model)
+        assert module._cuda_graph_runner is runner
+        assert any("CUDA graph replay enabled" in record.getMessage() for record in caplog.records)
+
+    def test_on_train_start_leaves_replay_to_inductor_when_compiled(
+        self, mocker, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When Inductor owns CUDA graph replay, the eager runner is never wrapped around the compiled model.
+
+        ``make_graphed_callables`` over an ``OptimizedModule`` would capture Inductor's own launch path a second time;
+        cudagraph trees already replay the compiled kernels. The console still announces which runtime replays.
+        """
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+        trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        with caplog.at_level(logging.INFO, logger="rf-detr"):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+        assert any("Inductor" in record.getMessage() for record in caplog.records)
+
+    def test_on_train_start_keeps_compile_only_fallback_out_of_eager_capture(self, mocker, tmp_path: Path) -> None:
+        """Gradient accumulation must not wrap a compiled fallback in the eager CUDA graph runner."""
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        tc = _base_train_config(tmp_path, grad_accum_steps=2)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace())),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda model, **_: model),
+        ):
+            module, _, _, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        assert module._compile_active is True
+        assert module._inductor_cudagraphs is False
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    @pytest.mark.parametrize(
+        "trainer",
+        [
+            pytest.param(SimpleNamespace(world_size=1, accumulate_grad_batches=2), id="accumulation"),
+            pytest.param(SimpleNamespace(world_size=2, accumulate_grad_batches=1), id="distributed"),
+        ],
+    )
+    def test_on_train_start_stops_when_trainer_leaves_inductor_scope(self, mocker, trainer, tmp_path: Path) -> None:
+        """A trainer that resolved accumulation or several processes stops an Inductor graph run at train start.
+
+        The construction-time gate reads ``TrainConfig``, but ``trainer_kwargs`` can override
+        ``accumulate_grad_batches`` and ``devices="auto"`` can resolve to several GPUs. The model is already compiled
+        with cudagraphs by then, so the run must stop with a clear message instead of failing on the second microbatch
+        inside cudagraph trees.
+        """
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        with pytest.raises(RuntimeError) as exc_info:
+            module.on_train_start()
+
+        assert "validated for single-GPU training without gradient accumulation" in str(exc_info.value)
+
+    def test_on_train_start_disables_inductor_replay_when_trainer_resolves_cpu(self, mocker, tmp_path: Path) -> None:
+        """A CUDA-capable construction must not mark graph steps after Lightning places the module on CPU."""
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+        trainer = SimpleNamespace(world_size=1, accumulate_grad_batches=1, precision="bf16-mixed")
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cpu"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        assert module._inductor_cudagraphs is False
+        runner_type.assert_not_called()
+
+    def test_on_train_start_rejects_te_precision_override_of_inductor(self, mocker, tmp_path: Path) -> None:
+        """A precision-plugin override cannot bypass the FP8 compile/capture separation."""
+        mc = RFDETRNanoConfig(
+            pretrain_weights=None, device="cpu", cuda_graphs=True, compile=True, fused_optimizer=False
+        )
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+        trainer = SimpleNamespace(world_size=1, accumulate_grad_batches=1, precision="transformer-engine")
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        with pytest.raises(RuntimeError) as exc_info:
+            module.on_train_start()
+        assert "FP8 CUDA graphs require compile=False" in str(exc_info.value)
+
+    def test_on_train_start_keeps_cpu_training_eager(
+        self, mocker, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit graph request on CPU degrades visibly to eager training."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cpu"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+        assert any("model is on 'cpu'" in record.getMessage() for record in caplog.records)
+
+    def test_on_train_start_keeps_distributed_training_eager(self, mocker, tmp_path: Path) -> None:
+        """DDP remains on its established eager path."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=2)
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    @pytest.mark.parametrize(
+        "config_overrides",
+        [
+            pytest.param({"segmentation_head": True}, id="segmentation"),
+            pytest.param(
+                {"use_grouppose_keypoints": True, "num_keypoints_per_class": [1]},
+                id="keypoints",
+            ),
+            pytest.param({"gradient_checkpointing": True}, id="gradient-checkpointing"),
+        ],
+    )
+    def test_on_train_start_keeps_unsupported_model_modes_eager(
+        self, mocker, config_overrides: dict[str, object], tmp_path: Path
+    ) -> None:
+        """Known-unsupported model modes never enter capture."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False, **config_overrides)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1)
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    def test_on_train_start_routes_fp8_to_te_with_live_recipe(self, mocker, tmp_path: Path) -> None:
+        """FP8 capture receives the actual post-conversion Lightning recipe, not a new default."""
+        mc = RFDETRNanoConfig(pretrain_weights=None, device="cpu", cuda_graphs=True, fused_optimizer=False)
+        tc = _base_train_config(tmp_path, amp_dtype="fp8")
+        module, model, _, _ = _build_module(model_config=mc, train_config=tc)
+        recipe = object()
+        trainer = SimpleNamespace(
+            world_size=1,
+            precision="transformer-engine",
+            accumulate_grad_batches=1,
+            precision_plugin=SimpleNamespace(recipe=recipe),
+        )
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        runner_type.assert_called_once_with(model, fp8_recipe=recipe)
+        assert module._cuda_graph_runner is runner_type.return_value
+
+    @pytest.mark.parametrize(
+        ("train_overrides", "accumulation"),
+        [
+            pytest.param({"multi_scale": "per-batch"}, 1, id="per-batch-multi-scale"),
+            pytest.param({"square_resize_div_64": False}, 1, id="aspect-ratio-resize"),
+            pytest.param({"multi_scale": "per-sample"}, 1, id="per-sample-multi-scale"),
+            pytest.param({}, 2, id="trainer-overrides-accumulation"),
+        ],
+    )
+    def test_on_train_start_keeps_fp8_outside_fixed_shape_scope_eager(
+        self, mocker, train_overrides: dict[str, object], accumulation: int, tmp_path: Path
+    ) -> None:
+        """FP8 scope is checked at final trainer placement, including accumulation overrides."""
+        mc = RFDETRNanoConfig(pretrain_weights=None, device="cpu", cuda_graphs=True, fused_optimizer=False)
+        tc = _base_train_config(tmp_path, amp_dtype="fp8", **train_overrides)
+        module, _, _, _ = _build_module(model_config=mc, train_config=tc)
+        trainer = SimpleNamespace(
+            world_size=1,
+            precision="transformer-engine",
+            accumulate_grad_batches=accumulation,
+            precision_plugin=SimpleNamespace(recipe=object()),
+        )
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    def test_on_train_start_rejects_fp8_plugin_without_recipe(self, mocker, tmp_path: Path) -> None:
+        """A missing Transformer Engine recipe cannot accidentally select the BF16 capture backend."""
+        mc = RFDETRNanoConfig(pretrain_weights=None, device="cpu", cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path, amp_dtype="fp8"))
+        trainer = SimpleNamespace(world_size=1, precision="transformer-engine", precision_plugin=SimpleNamespace())
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        with pytest.raises(RuntimeError) as exc_info:
+            module.on_train_start()
+        assert "recipe" in str(exc_info.value)
+
+    @pytest.mark.parametrize("precision", ["16-mixed", "32-true", "transformer-engine-float16"])
+    def test_on_train_start_keeps_non_bf16_precision_eager(self, mocker, precision: str, tmp_path: Path) -> None:
+        """FP16, FP32 and Transformer Engine with FP16 fallback stay outside the supported capture paths."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1, precision=precision)
+
+        mocker.patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda"))
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        runner_type = mocker.patch("rfdetr.training.module_model.CudaGraphTrainingRunner")
+        module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+
+def _module_with_restored_optimizer(
+    tmp_path: Path, configured: list[tuple[float, float | None]], *, restarts: bool
+) -> tuple[RFDETRModelModule, torch.optim.Optimizer]:
+    """Build a module whose optimizer holds one group restored from an older ``ReduceLROnPlateau`` checkpoint.
+
+    The group trained at 0.1 and was reduced to 0.025, and records no ``initial_lr``. The module is marked as resuming
+    with an explicit setting, as ``on_load_checkpoint`` leaves it.
+
+    Args:
+        tmp_path: Directory for the module's config.
+        configured: What ``configure_optimizers`` recorded; empty when a subclass replaced it.
+        restarts: Whether a learning-rate setting changed, so groups without a base restart.
+
+    Returns:
+        The module and its restored optimizer.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     module, optimizer = _module_with_restored_optimizer(Path(directory), [(0.1, 0.0)], restarts=True)
+        >>> optimizer.param_groups[0]["lr"], module._reapplied_param_group_settings
+        (0.025, ['lr'])
+    """
+    module, *_ = _build_module(tmp_path=tmp_path)
+    optimizer = torch.optim.AdamW([nn.Parameter(torch.zeros(1))], lr=0.025, weight_decay=0.0)
+    module.optimizers = MagicMock(return_value=optimizer)
+    module._current_lr_scheduler = MagicMock(return_value=None)
+    module._configured_param_group_settings = configured
+    module._reapplied_param_group_settings = ["lr"]
+    module._restarts_groups_without_base = restarts
+    return module, optimizer
+
+
+class TestReapplyConfiguredParamGroupSettings:
+    """``on_train_start`` puts the configured settings back over a resumed checkpoint's optimizer state (#1613)."""
+
+    @pytest.fixture(autouse=True)
+    def fed_by(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        """Stand in for the model-dependent mask: every explicit setting feeds every group.
+
+        Examples:
+            >>> fed_by  # doctest: +SKIP
+            A pytest fixture; it needs monkeypatch.
+        """
+        mock = MagicMock(side_effect=lambda names, configured, *_: configured)
+        monkeypatch.setattr("rfdetr.training.module_model._configured_settings_fed_by", mock)
+        return mock
+
+    def test_explicit_settings_mask_configured_ones(self, tmp_path: Path, fed_by: MagicMock) -> None:
+        """A group no explicit setting feeds keeps what the checkpoint's optimizer holds, stale ``args`` or not."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module._reapplied_param_group_settings = ["weight_decay"]
+        fed_by.side_effect = lambda names, configured, *_: [(None, weight_decay) for _, weight_decay in configured]
+
+        module._reapply_configured_param_group_settings()
+
+        assert fed_by.call_args.args[0] == ["weight_decay"]
+        assert optimizer.param_groups[0]["lr"] == 0.025
+
+    @pytest.mark.parametrize(("restarts", "expected_lr"), [(True, 0.1), (False, 0.025)])
+    def test_group_without_base_restarts_only_for_lr_change(
+        self, tmp_path: Path, restarts: bool, expected_lr: float
+    ) -> None:
+        """A param group with no base lr is restarted only when the reapplied setting is a learning rate."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=restarts)
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == expected_lr
+
+    def test_unfed_settings_leave_optimizer_alone_and_warn(
+        self,
+        tmp_path: Path,
+        fed_by: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Parameters the model does not own (FSDP, DeepSpeed) match no group; the resume must not pass silently."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        fed_by.side_effect = lambda names, configured, *_: [(None, None)] * len(configured)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.WARNING, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
+        assert "No parameter group of the resumed optimizer is fed by lr" in caplog.text
+
+    def test_weight_decay_alone_is_put_back(self, tmp_path: Path, fed_by: MagicMock) -> None:
+        """A resume that passes only ``weight_decay`` feeds no learning rate, but its weight decay still applies."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.05)], restarts=False)
+        module._reapplied_param_group_settings = ["weight_decay"]
+        fed_by.side_effect = lambda names, configured, *_: [(None, weight_decay) for _, weight_decay in configured]
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["weight_decay"] == 0.05
+
+    def test_on_train_start_reapplies_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A second ``fit`` of the module carries no resumed state to put back."""
+        module, _ = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module._reapply_configured_param_group_settings = MagicMock()
+        module._configure_cuda_graph_runner = MagicMock()
+        monkeypatch.setattr(RFDETRModelModule, "_use_fused_optimizer", False)
+
+        module.on_train_start()
+        module.on_train_start()
+
+        assert module._reapply_configured_param_group_settings.call_count == 1
+
+    def test_logs_how_many_groups_changed(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A resume hit by #1613 recorded the new ``lr`` already, so only this line reports the change."""
+        module, _ = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.INFO, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert "Gave the learning rate and weight decay set for this run to 1 resumed parameter group(s)" in caplog.text
+
+    def test_replaced_configure_optimizers_keeps_restored_optimizer(self, tmp_path: Path) -> None:
+        """A subclass's own ``configure_optimizers`` records no settings, so there is nothing to compare with."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [], restarts=True)
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
+
+    def test_replaced_configure_optimizers_is_reported(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A user-replaced ``configure_optimizers`` is reported with a warning when settings are reapplied."""
+        module, _ = _module_with_restored_optimizer(tmp_path, [], restarts=True)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        caplog.set_level(logging.WARNING, logger="rf-detr")
+
+        module._reapply_configured_param_group_settings()
+
+        assert "configure_optimizers was replaced" in caplog.text
+
+    def test_several_optimizers_from_replaced_configure_optimizers_left_alone(self, tmp_path: Path) -> None:
+        """Lightning returns a list when ``configure_optimizers`` built more than one optimizer."""
+        module, optimizer = _module_with_restored_optimizer(tmp_path, [(0.1, 0.0)], restarts=True)
+        module.optimizers = MagicMock(return_value=[optimizer, optimizer])
+
+        module._reapply_configured_param_group_settings()
+
+        assert optimizer.param_groups[0]["lr"] == 0.025
 
 
 class TestFusedOptimizerResumeStateNormalization:
-    """Tests for resume-time fused AdamW state normalization."""
+    """Resume-time fused AdamW state normalization in on_train_start()."""
 
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    @pytest.fixture
+    def fused_module(self, mocker) -> RFDETRModelModule:
+        """Return a bare fused-AdamW module on bf16-mixed with CUDA reported available and ``optimizers`` mocked.
+
+        Examples:
+            >>> fused_module  # doctest: +SKIP
+            A pytest fixture; it needs mocker.
+        """
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+        module = RFDETRModelModule.__new__(RFDETRModelModule)
+        module.model_config = SimpleNamespace(fused_optimizer=True)
+        module.train_config = SimpleNamespace(optimizer="adamw")
+        module._reapplied_param_group_settings = []
+        trainer = MagicMock()
+        trainer.precision = "bf16-mixed"
+        trainer.is_global_zero = True
+        module._trainer = trainer
+        module.optimizers = MagicMock()
+        mocker.patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer)
+        return module
+
+    @pytest.mark.parametrize(
+        ("wrapped", "exp_avg_value", "exp_avg_sq_value"),
+        [
+            pytest.param(False, 2.0, 3.0, id="plain-optimizer"),
+            pytest.param(True, 4.0, 5.0, id="lightning-optimizer-wrapper"),
+        ],
+    )
     def test_on_train_start_normalizes_restored_fused_optimizer_state(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
+        self, fused_module, wrapped: bool, exp_avg_value: float, exp_avg_sq_value: float
     ) -> None:
-        """Resumed fused AdamW state tensors must match the live parameter layout before the first step."""
-        module = RFDETRModelModule.__new__(RFDETRModelModule)
-        module.model_config = SimpleNamespace(fused_optimizer=True)
-        module.train_config = SimpleNamespace(optimizer="adamw")
-        trainer = MagicMock()
-        trainer.precision = "bf16-mixed"
-        trainer.is_global_zero = True
-        module._trainer = trainer
-        module.optimizers = MagicMock()
+        """Resumed fused AdamW state tensors must match the live parameter layout before the first step.
 
+        A Lightning-style optimizer wrapper (exposing ``.optimizer``) must be unwrapped and normalized the same way.
+        """
         optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
         optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
         optimizer.state[optimizer_param] = {
-            "exp_avg": torch.full((3, 2), 2.0, dtype=torch.float32),
-            "exp_avg_sq": torch.full((3, 2), 3.0, dtype=torch.float64),
+            "exp_avg": torch.full((3, 2), exp_avg_value, dtype=torch.float32),
+            "exp_avg_sq": torch.full((3, 2), exp_avg_sq_value, dtype=torch.float64),
         }
-        module.optimizers.return_value = optimizer
+        fused_module.optimizers.return_value = SimpleNamespace(optimizer=optimizer) if wrapped else optimizer
 
-        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
-            trainer_prop.return_value = trainer
-            module.on_train_start()
+        fused_module.on_train_start()
 
-        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
+        fused_module.optimizers.assert_called_once_with(use_pl_optimizer=False)
         state = optimizer.state[optimizer_param]
         assert state["exp_avg"].dtype == optimizer_param.dtype
         assert state["exp_avg"].stride() == optimizer_param.stride()
         assert state["exp_avg_sq"].dtype == optimizer_param.dtype
         assert state["exp_avg_sq"].stride() == optimizer_param.stride()
-        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 2.0))
-        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 3.0))
+        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, exp_avg_value))
+        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, exp_avg_sq_value))
 
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_on_train_start_unwraps_optimizer_wrapper(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-    ) -> None:
-        """Lightning-style optimizer wrappers must still be normalized on resume."""
-        module = RFDETRModelModule.__new__(RFDETRModelModule)
-        module.model_config = SimpleNamespace(fused_optimizer=True)
-        module.train_config = SimpleNamespace(optimizer="adamw")
-        trainer = MagicMock()
-        trainer.precision = "bf16-mixed"
-        trainer.is_global_zero = True
-        module._trainer = trainer
-        module.optimizers = MagicMock()
-
-        optimizer_param = nn.Parameter(torch.arange(6.0, dtype=torch.bfloat16).reshape(2, 3).t())
-        optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
-        optimizer.state[optimizer_param] = {
-            "exp_avg": torch.full((3, 2), 4.0, dtype=torch.float32),
-            "exp_avg_sq": torch.full((3, 2), 5.0, dtype=torch.float64),
-        }
-        module.optimizers.return_value = SimpleNamespace(optimizer=optimizer)
-
-        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
-            trainer_prop.return_value = trainer
-            module.on_train_start()
-
-        module.optimizers.assert_called_once_with(use_pl_optimizer=False)
-        state = optimizer.state[optimizer_param]
-        assert state["exp_avg"].dtype == optimizer_param.dtype
-        assert state["exp_avg"].stride() == optimizer_param.stride()
-        assert state["exp_avg_sq"].dtype == optimizer_param.dtype
-        assert state["exp_avg_sq"].stride() == optimizer_param.stride()
-        torch.testing.assert_close(state["exp_avg"], torch.full_like(optimizer_param, 4.0))
-        torch.testing.assert_close(state["exp_avg_sq"], torch.full_like(optimizer_param, 5.0))
-
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_on_train_start_leaves_empty_optimizer_state_untouched(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-    ) -> None:
+    def test_on_train_start_leaves_empty_optimizer_state_untouched(self, fused_module) -> None:
         """Fresh fused-optimizer runs with no restored state should remain a no-op."""
-        module = RFDETRModelModule.__new__(RFDETRModelModule)
-        module.model_config = SimpleNamespace(fused_optimizer=True)
-        module.train_config = SimpleNamespace(optimizer="adamw")
-        trainer = MagicMock()
-        trainer.precision = "bf16-mixed"
-        trainer.is_global_zero = True
-        module._trainer = trainer
-        module.optimizers = MagicMock()
-
         optimizer_param = nn.Parameter(torch.ones((2, 2), dtype=torch.bfloat16))
         optimizer = torch.optim.AdamW([optimizer_param], lr=1e-3)
-        module.optimizers.return_value = optimizer
+        fused_module.optimizers.return_value = optimizer
 
-        with patch.object(type(module), "trainer", new_callable=PropertyMock) as trainer_prop:
-            trainer_prop.return_value = trainer
-            module.on_train_start()
+        fused_module.on_train_start()
 
         assert optimizer.state == {}
 
 
-class TestClipGradients:
-    """Tests for clip_gradients() — verifies precision gating mirrors configure_optimizers()."""
+class TestConfigureGradientClipping:
+    """Tests for configure_gradient_clipping() — verifies precision gating mirrors configure_optimizers()."""
 
     def _setup_module(self, tmp_path, precision: str):
         tc = _base_train_config(tmp_path)
         module, _, _, _ = _build_module(train_config=tc)
-        trainer = MagicMock()
-        trainer.precision = precision
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
+        _attach_trainer(module, precision=precision)
         return module
 
     @pytest.mark.parametrize(
@@ -3184,46 +3946,35 @@ class TestClipGradients:
             pytest.param("16-mixed", id="fp16-mixed"),
         ],
     )
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_clip_gradients_delegates_to_super_when_not_bf16(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-        precision,
-        tmp_path,
-    ):
-        """clip_gradients must delegate to super() when trainer precision is not a BF16 variant.
+    def test_delegates_to_clip_gradients_when_not_bf16(self, mocker, precision, tmp_path):
+        """configure_gradient_clipping must delegate to clip_gradients() when trainer precision is not a BF16 variant.
 
         On Ampere+ GPUs is_bf16_supported() is True regardless of actual precision. The method must check
         trainer.precision before choosing the fused path, mirroring the same gate in configure_optimizers() to prevent
-        silent divergence.
+        silent divergence. ``clip_gradients`` itself is never overridden (PTL documents it as "do not override"), so the
+        un-overridden base implementation on the module's own class is patched directly.
         """
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
         module = self._setup_module(tmp_path, precision=precision)
 
-        with patch.object(type(module).__bases__[0], "clip_gradients") as mock_super_clip:
-            module.clip_gradients(MagicMock(), gradient_clip_val=0.1)
+        mock_clip_gradients = mocker.patch.object(type(module), "clip_gradients")
+        module.configure_gradient_clipping(MagicMock(), gradient_clip_val=0.1)
 
-        mock_super_clip.assert_called_once()
+        mock_clip_gradients.assert_called_once()
 
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    @patch("rfdetr.training.module_model.torch.nn.utils.clip_grad_norm_")
-    def test_clip_gradients_uses_clip_grad_norm_when_bf16_mixed(
-        self,
-        mock_clip_grad_norm,
-        mock_cuda_available,
-        mock_bf16_supported,
-        tmp_path,
-    ):
-        """clip_gradients must call clip_grad_norm_ directly when precision is bf16-mixed.
+    def test_configure_gradient_clipping_uses_clip_grad_norm_when_bf16_mixed(self, mocker, tmp_path):
+        """configure_gradient_clipping must call clip_grad_norm_ directly when precision is bf16-mixed.
 
         When fused AdamW is active (BF16, no GradScaler), the standard PTL AMP plugin refuses to clip gradients.
         clip_grad_norm_ is called directly instead, bypassing the scaler-aware path that would otherwise raise.
         """
+        mock_clip_grad_norm = mocker.patch("rfdetr.training.module_model.torch.nn.utils.clip_grad_norm_")
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+        mocker.patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
         module = self._setup_module(tmp_path, precision="bf16-mixed")
 
-        module.clip_gradients(MagicMock(), gradient_clip_val=0.5)
+        module.configure_gradient_clipping(MagicMock(), gradient_clip_val=0.5)
 
         mock_clip_grad_norm.assert_called_once()
         _, _call_kwargs = mock_clip_grad_norm.call_args
@@ -3232,8 +3983,11 @@ class TestClipGradients:
 
 
 class TestPredictStep:
-    """Tests for predict_step() — verifies that only samples (not targets) are passed to the model, that postprocess
-    receives the correct original sizes, and that the postprocessor output is returned directly to the caller."""
+    """Tests for predict_step().
+
+    Verifies that only samples (not targets) are passed to the model, that postprocess receives the correct original
+    sizes, and that the postprocessor output is returned directly to the caller.
+    """
 
     def test_calls_postprocess_with_orig_sizes(self, build_module):
         """Postprocessor must receive a (batch, 2) tensor of original image sizes."""
@@ -3277,8 +4031,10 @@ class TestPredictStep:
 
 
 class TestReinitializeDetectionHead:
-    """Tests for reinitialize_detection_head() — verifies that the module delegates to the underlying model and that
-    arbitrary class counts are forwarded unchanged."""
+    """Tests for reinitialize_detection_head().
+
+    Verifies that the module delegates to the underlying model and that arbitrary class counts are forwarded unchanged.
+    """
 
     def test_delegates_to_model(self, build_module):
         """Module must delegate head reinitialization to the underlying model."""
@@ -3306,14 +4062,36 @@ class TestReinitializeDetectionHead:
 
 
 class TestOnLoadCheckpoint:
-    """Tests for on_load_checkpoint() — covers legacy .pth normalisation and positional-embedding interpolation for
-    custom-resolution PTL checkpoints.
+    """Tests for on_load_checkpoint().
+
+    Covers legacy .pth normalisation and positional-embedding interpolation for custom-resolution PTL checkpoints.
 
     Regression: issue #998 — resume with custom resolution crashed because
     on_load_checkpoint did not interpolate PE before PTL applied the state dict.
     """
 
     _PE_KEY = "model.backbone.0.encoder.encoder.embeddings.position_embeddings"
+
+    @pytest.mark.parametrize(
+        ("optimizer_states", "expected_lr_encoder"),
+        [
+            pytest.param([{"state": {}, "param_groups": []}], 0.123, id="full-checkpoint"),
+            pytest.param([], TrainConfig.model_fields["lr_encoder"].default, id="lightweight-checkpoint"),
+        ],
+    )
+    def test_resolves_resumed_settings_without_a_trainer(
+        self, optimizer_states: list[dict[str, Any]], expected_lr_encoder: float, tmp_path: Path
+    ) -> None:
+        """``load_from_checkpoint`` calls the hook before any trainer exists.
+
+        Only a checkpoint carrying optimizer state supplies the settings left out (#1613); a lightweight one restarts
+        the optimizer from the config.
+        """
+        module, *_ = _build_module(train_config=TrainConfig(dataset_dir=str(tmp_path)), tmp_path=tmp_path)
+
+        module.on_load_checkpoint({"optimizer_states": optimizer_states, "args": {"lr_encoder": 0.123}})
+
+        assert module.train_config.lr_encoder == expected_lr_encoder
 
     def _make_ptl_checkpoint(self, pe_size_src: int, _pe_size_tgt: int, dim: int = 16) -> dict:
         """Build a minimal PTL checkpoint with mismatched PE shape.
@@ -3410,8 +4188,8 @@ class TestOnLoadCheckpoint:
 
         assert torch.equal(checkpoint["state_dict"]["model.other_layer.weight"], original_other)
 
-    def test_no_pe_keys_in_state_dict_is_noop(self, build_module):
-        """on_load_checkpoint must not raise when state_dict contains no PE keys."""
+    def test_state_dict_without_pe_or_extra_state_keys_is_unchanged(self, build_module):
+        """on_load_checkpoint neither raises nor alters keys when state_dict has no PE and no `_extra_state` entries."""
         checkpoint = {
             "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
             "epoch": 1,
@@ -3446,19 +4224,6 @@ class TestOnLoadCheckpoint:
         assert "model.some_layer._extra_state" not in checkpoint["state_dict"]
         assert "model.some_layer.weight" in checkpoint["state_dict"]
 
-    def test_no_extra_state_keys_in_state_dict_is_noop(self, build_module):
-        """on_load_checkpoint must not raise or alter keys when state_dict contains no `_extra_state` entries."""
-        checkpoint = {
-            "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
-            "epoch": 1,
-        }
-        original_keys = set(checkpoint["state_dict"].keys())
-
-        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
-        module.on_load_checkpoint(checkpoint)
-
-        assert set(checkpoint["state_dict"].keys()) == original_keys
-
 
 class TestManualOptLRSchedulerStepping:
     """Manual-optimization (keypoint) path steps LR schedulers itself, honoring interval and plateau semantics."""
@@ -3469,78 +4234,76 @@ class TestManualOptLRSchedulerStepping:
         module.automatic_optimization = False
         return module
 
-    def test_step_interval_scheduler_stepped_per_optimizer_step(self, tmp_path):
-        """A step-interval scheduler is stepped by _step_lr_scheduler."""
+    @pytest.mark.parametrize(
+        "interval, method_name, assert_scheduler_state",
+        [
+            pytest.param(
+                "step",
+                "_step_lr_scheduler",
+                lambda scheduler: scheduler.step.assert_called_once_with(),
+                id="step-interval-stepped-per-optimizer-step",
+            ),
+            pytest.param(
+                "epoch",
+                "_step_lr_scheduler",
+                lambda scheduler: scheduler.step.assert_not_called(),
+                id="epoch-interval-not-stepped-by-the-per-optimizer-step-hook",
+            ),
+            pytest.param(
+                "epoch",
+                "on_train_epoch_end",
+                lambda scheduler: scheduler.step.assert_called_once_with(),
+                id="epoch-interval-stepped-on-train-epoch-end-manual-path",
+            ),
+        ],
+    )
+    def test_lr_scheduler_stepped_according_to_interval(
+        self, mocker, tmp_path, interval: str, method_name: str, assert_scheduler_state
+    ):
+        """The manual LR-scheduler step hooks respect ``_lr_scheduler_interval``.
+
+        A step-interval scheduler is stepped on every optimizer step (``_step_lr_scheduler``); an epoch-interval
+        scheduler is not stepped by that hook, only by ``on_train_epoch_end``.
+        """
         module = self._module(tmp_path)
-        module._lr_scheduler_interval = "step"
+        module._lr_scheduler_interval = interval
         scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module._step_lr_scheduler()
+        mocker.patch.object(module, "lr_schedulers", return_value=scheduler)
+        getattr(module, method_name)()
 
-        scheduler.step.assert_called_once_with()
+        assert_scheduler_state(scheduler)
 
-    def test_epoch_interval_scheduler_not_stepped_per_optimizer_step(self, tmp_path):
-        """An epoch-interval scheduler is not stepped by the per-optimizer-step hook."""
-        module = self._module(tmp_path)
-        module._lr_scheduler_interval = "epoch"
-        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module._step_lr_scheduler()
-
-        scheduler.step.assert_not_called()
-
-    def test_epoch_interval_scheduler_stepped_on_train_epoch_end(self, tmp_path):
-        """on_train_epoch_end steps an epoch-interval scheduler on the manual path."""
-        module = self._module(tmp_path)
-        module._lr_scheduler_interval = "epoch"
-        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module.on_train_epoch_end()
-
-        scheduler.step.assert_called_once_with()
-
-    def test_plateau_stepped_from_monitor_metric_on_validation_epoch_end(self, tmp_path):
+    def test_plateau_stepped_from_monitor_metric_on_validation_epoch_end(self, mocker, tmp_path):
         """on_validation_epoch_end steps ReduceLROnPlateau with the monitored metric."""
         module = self._module(tmp_path)
         module._lr_scheduler_monitor = "val/loss"
         scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
-        trainer = MagicMock()
-        trainer.sanity_checking = False
-        trainer.callback_metrics = {"val/loss": torch.tensor(1.23)}
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module.on_validation_epoch_end()
+        _attach_trainer(module, sanity_checking=False, callback_metrics={"val/loss": torch.tensor(1.23)})
+        mocker.patch.object(module, "lr_schedulers", return_value=scheduler)
+        module.on_validation_epoch_end()
 
         scheduler.step.assert_called_once()
 
-    def test_plateau_raises_when_monitor_metric_missing(self, tmp_path):
+    def test_plateau_raises_when_monitor_metric_missing(self, mocker, tmp_path):
         """on_validation_epoch_end fails loud (not silent warn) when the monitored metric is absent."""
         module = self._module(tmp_path)
         module._lr_scheduler_monitor = "val/loss"
         scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
-        trainer = MagicMock()
-        trainer.sanity_checking = False
-        trainer.callback_metrics = {}
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            with pytest.raises(RuntimeError, match="never be reduced"):
-                module.on_validation_epoch_end()
+        _attach_trainer(module, sanity_checking=False, callback_metrics={})
+        mocker.patch.object(module, "lr_schedulers", return_value=scheduler)
+        with pytest.raises(RuntimeError) as exc_info:
+            module.on_validation_epoch_end()
+        assert "never be reduced" in str(exc_info.value)
 
         scheduler.step.assert_not_called()
 
-    def test_plateau_not_stepped_during_sanity_check(self, tmp_path):
+    def test_plateau_not_stepped_during_sanity_check(self, mocker, tmp_path):
         """on_validation_epoch_end must not step plateau during Lightning's pre-training sanity check."""
         module = self._module(tmp_path)
         module._lr_scheduler_monitor = "val/loss"
         scheduler = MagicMock(spec=torch.optim.lr_scheduler.ReduceLROnPlateau)
-        trainer = MagicMock()
-        trainer.sanity_checking = True
-        trainer.callback_metrics = {"val/loss": torch.tensor(1.23)}
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module.on_validation_epoch_end()
+        _attach_trainer(module, sanity_checking=True, callback_metrics={"val/loss": torch.tensor(1.23)})
+        mocker.patch.object(module, "lr_schedulers", return_value=scheduler)
+        module.on_validation_epoch_end()
 
         scheduler.step.assert_not_called()

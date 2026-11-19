@@ -9,13 +9,22 @@ Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco` correct
 RLE, and polygon segmentation formats — including mixed annotations within the same image.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pycocotools.mask as mask_util
 import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.coco import ConvertCoco, _is_rle, convert_coco_poly_to_mask
+from rfdetr.datasets.coco import (
+    ConvertCoco,
+    CrowdRegion,
+    _compressed_crowd_segmentation,
+    _is_rle,
+    convert_coco_poly_to_mask,
+    crowd_regions_from_coco,
+)
 
 # Shared test dimensions
 _H, _W = 100, 100
@@ -88,45 +97,38 @@ def _make_polygon(mask: np.ndarray) -> list:
 class TestIsRle:
     """Tests for the ``_is_rle`` helper."""
 
-    def test_compressed_rle_detected(self) -> None:
-        assert _is_rle({"counts": "abc", "size": [100, 100]}) is True
-
-    def test_uncompressed_rle_detected(self) -> None:
-        assert _is_rle({"counts": [0, 5, 10], "size": [100, 100]}) is True
-
-    def test_bytes_counts_detected(self) -> None:
-        assert _is_rle({"counts": b"abc", "size": [100, 100]}) is True
-
-    def test_polygon_not_detected(self) -> None:
-        assert _is_rle([[30, 20, 70, 20, 70, 50, 30, 50]]) is False
-
-    def test_empty_list_not_detected(self) -> None:
-        assert _is_rle([]) is False
-
-    def test_none_not_detected(self) -> None:
-        assert _is_rle(None) is False
+    @pytest.mark.parametrize(
+        "segmentation,expected",
+        [
+            pytest.param({"counts": "abc", "size": [100, 100]}, True, id="compressed-rle"),
+            pytest.param({"counts": [0, 5, 10], "size": [100, 100]}, True, id="uncompressed-rle"),
+            pytest.param({"counts": b"abc", "size": [100, 100]}, True, id="bytes-counts"),
+            pytest.param([[30, 20, 70, 20, 70, 50, 30, 50]], False, id="polygon"),
+            pytest.param([], False, id="empty-list"),
+            pytest.param(None, False, id="none"),
+        ],
+    )
+    def test_classifies_segmentation_format(self, segmentation: object, expected: bool) -> None:
+        """RLE dicts (string, integer-list or bytes counts) are detected; polygons, empty lists and None are not."""
+        assert _is_rle(segmentation) is expected
 
 
 class TestConvertCocoPolyToMaskRle:
     """Tests for RLE support in ``convert_coco_poly_to_mask``."""
 
-    def test_compressed_rle_decodes_correctly(self) -> None:
-        """Compressed RLE (string counts) should decode to the expected mask."""
+    @pytest.mark.parametrize(
+        "encode",
+        [
+            pytest.param(_encode_compressed_rle, id="compressed-string-counts"),
+            pytest.param(_encode_uncompressed_rle, id="uncompressed-int-list-counts"),
+        ],
+    )
+    def test_rle_decodes_to_reference_mask(self, encode) -> None:
+        """Compressed (string counts) and uncompressed (int-list counts) RLE decode to the expected mask."""
         ref_mask = _make_reference_mask()
-        rle = _encode_compressed_rle(ref_mask)
+        rle = encode(ref_mask)
 
         result = convert_coco_poly_to_mask([rle], _H, _W)
-
-        assert result.shape == (1, _H, _W)
-        assert result.dtype == torch.uint8
-        assert torch.equal(result[0], torch.as_tensor(ref_mask, dtype=torch.uint8))
-
-    def test_uncompressed_rle_decodes_correctly(self) -> None:
-        """Uncompressed RLE (int-list counts) should decode to the expected mask."""
-        ref_mask = _make_reference_mask()
-        uncompressed = _encode_uncompressed_rle(ref_mask)
-
-        result = convert_coco_poly_to_mask([uncompressed], _H, _W)
 
         assert result.shape == (1, _H, _W)
         assert result.dtype == torch.uint8
@@ -168,15 +170,10 @@ class TestConvertCocoPolyToMaskRle:
         # Both should produce the same mask
         assert torch.equal(result[0], result[1])
 
-    def test_empty_segmentation_unchanged(self) -> None:
-        """Empty segmentation should produce a zero mask."""
-        result = convert_coco_poly_to_mask([[]], _H, _W)
-        assert result.shape == (1, _H, _W)
-        assert result.sum() == 0
-
-    def test_none_segmentation_unchanged(self) -> None:
-        """None segmentation should produce a zero mask."""
-        result = convert_coco_poly_to_mask([None], _H, _W)
+    @pytest.mark.parametrize("segmentations", [pytest.param([[]], id="empty"), pytest.param([None], id="none")])
+    def test_empty_or_none_segmentation_gives_zero_mask(self, segmentations: list) -> None:
+        """An empty or None segmentation should produce a zero mask."""
+        result = convert_coco_poly_to_mask(segmentations, _H, _W)
         assert result.shape == (1, _H, _W)
         assert result.sum() == 0
 
@@ -243,11 +240,40 @@ class TestConvertCocoClassWithRle:
         """
         return {"image_id": 1, "annotations": annotations}
 
-    def test_rle_masks_included_in_target(self) -> None:
-        """ConvertCoco with include_masks=True should handle RLE segmentations."""
-        ref_mask = _make_reference_mask()
-        rle = _encode_compressed_rle(ref_mask)
-        anno = self._make_annotation(rle)
+    def _make_box_only_annotation(self, category_id: int = 0) -> dict:
+        """Build an annotation with no ``segmentation`` key at all (a pure box-only entry).
+
+        Example:
+            >>> annotation = TestConvertCocoClassWithRle()._make_box_only_annotation()
+            >>> "segmentation" in annotation
+            False
+        """
+        annotation = self._make_annotation([], category_id=category_id)
+        del annotation["segmentation"]
+        return annotation
+
+    def _make_annotations_from_roles(self, roles: list) -> list:
+        """Build one annotation per role: ``"box"`` = no segmentation key, ``"poly"`` = a real polygon.
+
+        Example:
+            >>> anns = TestConvertCocoClassWithRle()._make_annotations_from_roles(["box", "poly"])
+            >>> [("segmentation" in a) for a in anns]
+            [False, True]
+        """
+        return [
+            self._make_box_only_annotation(category_id=i)
+            if role == "box"
+            else self._make_annotation(_make_polygon(_make_reference_mask()), category_id=i)
+            for i, role in enumerate(roles)
+        ]
+
+    @pytest.mark.parametrize(
+        "make_segmentation",
+        [pytest.param(_encode_compressed_rle, id="rle"), pytest.param(_make_polygon, id="polygon")],
+    )
+    def test_masks_included_in_target(self, make_segmentation) -> None:
+        """ConvertCoco with include_masks=True builds a non-empty bool mask from RLE and from polygon segmentations."""
+        anno = self._make_annotation(make_segmentation(_make_reference_mask()))
 
         converter = ConvertCoco(include_masks=True)
         _, target = converter(_IMAGE, self._make_target([anno]))
@@ -256,18 +282,6 @@ class TestConvertCocoClassWithRle:
         assert target["masks"].shape == (1, _H, _W)
         assert target["masks"].dtype == torch.bool
         assert target["masks"][0].any()
-
-    def test_polygon_masks_still_work(self) -> None:
-        """ConvertCoco should still handle polygon segmentations."""
-        polygon = _make_polygon(_make_reference_mask())
-        anno = self._make_annotation(polygon)
-
-        converter = ConvertCoco(include_masks=True)
-        _, target = converter(_IMAGE, self._make_target([anno]))
-
-        assert "masks" in target
-        assert target["masks"].shape == (1, _H, _W)
-        assert target["masks"].dtype == torch.bool
 
     def test_mixed_rle_and_polygon_in_same_image(self) -> None:
         """An image with both polygon and RLE annotations across instances."""
@@ -280,6 +294,84 @@ class TestConvertCocoClassWithRle:
 
         assert target["masks"].shape == (2, _H, _W)
         assert target["labels"].tolist() == [0, 1]
+
+    @pytest.mark.parametrize(
+        "roles",
+        [
+            pytest.param(["box", "poly"], id="box-only-first"),
+            pytest.param(["poly", "box"], id="box-only-last"),
+            pytest.param(["box", "box", "poly"], id="three-annotations-poly-last"),
+        ],
+    )
+    def test_box_only_annotation_keeps_other_masks_regardless_of_order(self, roles: list) -> None:
+        """A box-only annotation must not drop the masks of segmented siblings, in any position.
+
+        Pins order-independence beyond the original two-annotation, box-only-first case: every mask slot's non-emptiness
+        must match its role (``box`` -> empty, ``poly`` -> non-empty), regardless of how many box-only annotations
+        precede or follow the segmented one.
+        """
+        annotations = self._make_annotations_from_roles(roles)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target(annotations))
+
+        expected_nonempty = [role == "poly" for role in roles]
+        assert target["masks"].shape == (len(roles), _H, _W)
+        assert target["masks"].flatten(1).any(dim=1).tolist() == expected_nonempty
+
+    def test_all_box_only_masks_match_box_count(self) -> None:
+        """An image with zero segmented annotations still gets one mask per kept box.
+
+        Pins the invariant the class docstring declares (``masks`` and ``boxes`` share N) for the
+        branch a gated mask build left untested: no annotation in the image carries a
+        ``segmentation`` key at all.
+        """
+        annotations = [self._make_box_only_annotation(category_id=0), self._make_box_only_annotation(category_id=1)]
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target(annotations))
+
+        assert target["masks"].shape[0] == target["boxes"].shape[0]
+        assert target["masks"].shape == (2, _H, _W)
+        assert not target["masks"].any()
+
+    def test_degenerate_box_filtered_leaves_box_only_survivor_aligned(self) -> None:
+        """The ``keep`` filter must drop a degenerate segmented box without misaligning masks.
+
+        One annotation has a zero-height bbox (dropped by the keep filter) and carries a real segmentation; the
+        surviving annotation is box-only. Pins that ``masks[keep]`` and ``boxes[keep]`` stay index-aligned when the
+        *first* annotation, not the second, is the one removed.
+        """
+        degenerate = self._make_annotation(_make_polygon(_make_reference_mask()), category_id=0)
+        degenerate["bbox"] = [30, 20, 0, 0]
+        survivor = self._make_box_only_annotation(category_id=1)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target([degenerate, survivor]))
+
+        assert target["boxes"].shape[0] == 1
+        assert target["masks"].shape[0] == 1
+        assert target["labels"].tolist() == [1]
+        assert not target["masks"].any()
+
+    def test_crowd_segmented_annotation_excluded_before_mask_build(self) -> None:
+        """An ``iscrowd=1`` segmented annotation must never reach the mask-building predicate.
+
+        Crowd filtering happens before boxes/masks are built at all (``coco.py:783``) — a distinct code path from the
+        ``keep`` filter in the case above. The surviving box-only annotation's mask must not be polluted by the dropped
+        crowd annotation's segmentation.
+        """
+        crowd = self._make_annotation(_make_polygon(_make_reference_mask()), category_id=0)
+        crowd["iscrowd"] = 1
+        survivor = self._make_box_only_annotation(category_id=1)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target([crowd, survivor]))
+
+        assert target["boxes"].shape[0] == 1
+        assert target["masks"].shape[0] == 1
+        assert target["labels"].tolist() == [1]
+        assert not target["masks"].any()
 
     def test_no_masks_without_flag(self) -> None:
         """RLE annotations should not produce masks when include_masks=False."""
@@ -301,18 +393,163 @@ class TestMalformedRle:
     will either handle them or raise a descriptive error rather than silently falling back.
     """
 
-    def test_missing_size_key_is_not_rle(self) -> None:
-        """Dict with 'counts' but no 'size' is not treated as RLE."""
-        assert _is_rle({"counts": [1, 2, 3]}) is False
+    @pytest.mark.parametrize(
+        "segmentation,expected",
+        [
+            pytest.param({"counts": [1, 2, 3]}, False, id="missing-size-key"),
+            pytest.param({"size": [100, 100]}, False, id="missing-counts-key"),
+            pytest.param({"counts": None, "size": [_H, _W]}, True, id="counts-none"),
+            pytest.param({"counts": [1, 2], "size": [50, 50]}, True, id="size-mismatch"),
+        ],
+    )
+    def test_classification_is_structural(self, segmentation: dict, expected: bool) -> None:
+        """Presence of both 'counts' and 'size' suffices, whatever the value types or the image dimensions."""
+        assert _is_rle(segmentation) is expected
 
-    def test_missing_counts_key_is_not_rle(self) -> None:
-        """Dict with 'size' but no 'counts' is not treated as RLE."""
-        assert _is_rle({"size": [100, 100]}) is False
 
-    def test_counts_none_is_classified_as_rle(self) -> None:
-        """_is_rle is a structural check: presence of both keys suffices regardless of value types."""
-        assert _is_rle({"counts": None, "size": [_H, _W]}) is True
+class TestDegeneratePolygonParts:
+    """Polygon parts with fewer than three points enclose no area and must not reach ``frPyObjects``.
 
-    def test_size_mismatch_is_still_classified_as_rle(self) -> None:
-        """Dicts with both keys are RLE even when the embedded size mismatches the image dimensions."""
-        assert _is_rle({"counts": [1, 2], "size": [50, 50]}) is True
+    ``pycocotools.mask.frPyObjects`` picks the input format from the first part alone, so a four-value part is read as a
+    box and rejected, and an empty part is rejected outright.
+    """
+
+    @pytest.mark.parametrize(
+        "segmentation",
+        [
+            pytest.param([[30, 20, 70, 50]], id="two-point-part"),
+            pytest.param([[30.5, 20.0]], id="one-point-part"),
+            pytest.param([[]], id="empty-part"),
+            pytest.param([[30, 20, 70, 50], []], id="only-degenerate-parts"),
+        ],
+    )
+    def test_no_enclosing_part_gives_empty_mask(self, segmentation: list) -> None:
+        """A segmentation made only of degenerate parts produces a zero mask."""
+        result = convert_coco_poly_to_mask([segmentation], _H, _W)
+
+        assert result.shape == (1, _H, _W)
+        assert result.dtype == torch.uint8
+        assert result.sum() == 0
+
+    @pytest.mark.parametrize(
+        ("part", "expected_sum"),
+        [
+            pytest.param([0, 0, 10, 0, 10], 0, id="five-values"),
+            pytest.param([0, 0, 10, 0, 10, 10], 45, id="six-values"),
+            pytest.param([0, 0, 10, 0, 10, 10, 0], 45, id="seven-values"),
+        ],
+    )
+    def test_part_needs_three_points_to_enclose_an_area(self, part: list, expected_sum: int) -> None:
+        """A part is kept from six values up, so a five-value part is the longest one that is skipped."""
+        result = convert_coco_poly_to_mask([[part]], _H, _W)
+
+        assert result.sum() == expected_sum
+
+    def test_mixed_batch_keeps_row_order_and_dtype(self) -> None:
+        """An instance with no enclosing part keeps its row, so later rows stay aligned with their boxes."""
+        polygon = _make_polygon(_make_reference_mask())
+
+        result = convert_coco_poly_to_mask([[[]], polygon], _H, _W)
+
+        assert result.shape == (2, _H, _W)
+        assert result.dtype == torch.uint8
+        assert result[0].sum() == 0
+        assert torch.equal(result[1], convert_coco_poly_to_mask([polygon], _H, _W)[0])
+
+    def test_uncompressed_rle_dicts_in_a_list_are_not_dropped(self) -> None:
+        """A list of uncompressed-RLE dicts is not a flat polygon part, so it keeps its mask."""
+        rle = _encode_uncompressed_rle(_make_reference_mask())
+
+        result = convert_coco_poly_to_mask([[rle]], _H, _W)
+
+        assert torch.equal(result, convert_coco_poly_to_mask([rle], _H, _W))
+        assert result.sum() == 1200
+
+    def test_nested_point_pairs_still_fail_loudly(self) -> None:
+        """A part of ``[x, y]`` pairs is not a flat polygon, so the short one keeps raising as it did before."""
+        with pytest.raises(Exception, match="input type is not supported"):
+            convert_coco_poly_to_mask([[[[30, 20], [70, 50]]]], _H, _W)
+
+    @pytest.mark.parametrize(
+        "segmentation",
+        [
+            pytest.param([[30, 20, 70, 50], *_make_polygon(_make_reference_mask())], id="degenerate-first"),
+            pytest.param([[], *_make_polygon(_make_reference_mask())], id="empty-first"),
+            pytest.param([*_make_polygon(_make_reference_mask()), [30, 20, 70, 50]], id="degenerate-last"),
+        ],
+    )
+    def test_degenerate_part_is_ignored(self, segmentation: list) -> None:
+        """Degenerate parts next to a real polygon leave the polygon's mask unchanged."""
+        expected = convert_coco_poly_to_mask([_make_polygon(_make_reference_mask())], _H, _W)
+
+        result = convert_coco_poly_to_mask([segmentation], _H, _W)
+
+        assert torch.equal(result, expected)
+
+    def test_convert_coco_keeps_instance_with_degenerate_part(self) -> None:
+        """``ConvertCoco`` loads an image whose annotation starts with a degenerate polygon part."""
+        polygon = _make_polygon(_make_reference_mask())
+        converter = ConvertCoco(include_masks=True)
+
+        def _convert(segmentation: list) -> dict:
+            annotation = {"bbox": [30, 20, 40, 30], "category_id": 0, "area": 1200, "iscrowd": 0}
+            annotation["segmentation"] = segmentation
+            return converter(_IMAGE, {"image_id": 1, "annotations": [annotation]})[1]
+
+        target = _convert([[30, 20, 70, 50], *polygon])
+
+        assert target["masks"].shape == (1, _H, _W)
+        assert torch.equal(target["masks"], _convert(polygon)["masks"])
+
+    def test_convert_coco_degenerate_only_annotation_gets_empty_mask(self) -> None:
+        """``ConvertCoco`` keeps an annotation whose only polygon part is degenerate, with an empty mask."""
+        annotation = {"bbox": [30, 20, 40, 30], "category_id": 0, "area": 1200, "iscrowd": 0}
+        annotation["segmentation"] = [[30, 20, 70, 50]]
+
+        target = ConvertCoco(include_masks=True)(_IMAGE, {"image_id": 1, "annotations": [annotation]})[1]
+
+        assert target["masks"].shape == (1, _H, _W)
+        assert target["masks"].sum() == 0
+        assert len(target["boxes"]) == 1
+
+    def test_crowd_compression_skips_degenerate_parts(self) -> None:
+        """Crowd segmentations drop degenerate parts and compress what remains like the polygon alone."""
+        polygon = _make_polygon(_make_reference_mask())
+
+        compressed = _compressed_crowd_segmentation([[30, 20, 70, 50], *polygon], _H, _W)
+
+        assert compressed == _compressed_crowd_segmentation(polygon, _H, _W)
+
+    def test_crowd_compression_without_enclosing_part_is_none(self) -> None:
+        """A crowd segmentation with no part that encloses an area has no mask."""
+        assert _compressed_crowd_segmentation([[30, 20, 70, 50]], _H, _W) is None
+
+    def test_crowd_compression_without_dimensions_still_filters(self) -> None:
+        """A degenerate-only crowd polygon is ``None`` even when the annotation file omits the image size."""
+        assert _compressed_crowd_segmentation([[30, 20, 70, 50]], None, None) is None
+
+    def test_crowd_compression_keeps_uncompressed_rle_dicts(self) -> None:
+        """A list of uncompressed-RLE dicts compresses to its area instead of being dropped as short parts."""
+        rle = _encode_uncompressed_rle(_make_reference_mask())
+
+        compressed = _compressed_crowd_segmentation([rle], _H, _W)
+
+        assert compressed is not None
+        assert mask_util.decode(compressed).sum() == 1200
+
+    def test_crowd_region_with_degenerate_polygon_keeps_box_without_mask(self) -> None:
+        """A crowd annotation with only a degenerate part stays a region, with its box and no mask."""
+        annotations = {
+            1: {
+                "image_id": 5,
+                "category_id": 3,
+                "bbox": [10, 20, 30, 40],
+                "iscrowd": 1,
+                "segmentation": [[30, 20, 70, 50]],
+            }
+        }
+        coco_api = SimpleNamespace(anns=annotations, imgs={5: {"height": _H, "width": _W}})
+
+        regions = crowd_regions_from_coco(coco_api)
+
+        assert regions == {5: [CrowdRegion(label=3, box=(10.0, 20.0, 40.0, 60.0), segmentation=None)]}

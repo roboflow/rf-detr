@@ -20,8 +20,9 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, NamedTuple, Optional, cast
 
 import torch
 import torch.utils.data
@@ -30,7 +31,7 @@ from PIL import Image
 from torch import Tensor
 from torchvision.transforms.v2 import ToDtype, ToImage
 
-from rfdetr.config import AugmentationBackend
+from rfdetr.config import AugmentationBackend, MultiScale
 from rfdetr.datasets._aug_utils import _warn_keypoint_hflip_disabled, resolve_keypoint_flip_pairs
 from rfdetr.datasets._torchvision import (
     Compose,
@@ -42,6 +43,7 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.io_utils import decode_pil_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
@@ -304,10 +306,11 @@ def draft_size_for_transforms(
 ) -> int | None:
     """Return the source extent below which the transform pipeline starts losing detail.
 
-    :meth:`CocoDetection._decode_image` passes this to ``PIL.Image.draft`` so JPEG sources far larger than the training
-    resolution are decoded at a reduced DCT scale instead of at full size. ``draft`` never returns an image smaller
-    than the requested box, so the box preserves the largest direct-resize target. Scale jitter also preserves its
-    600-pixel pre-crop resize floor, avoiding an extra upsample after JPEG decoding.
+    :meth:`CocoDetection._decode_image` passes this to the decoder, which applies the reduction ``PIL.Image.draft``
+    would pick, so JPEG sources far larger than the training resolution are decoded at a reduced DCT scale instead of at
+    full size. ``draft`` never returns an image smaller than the requested box, so the box preserves the largest
+    direct-resize target. Scale jitter also preserves its 600-pixel pre-crop resize floor, avoiding an extra upsample
+    after JPEG decoding.
 
     Two cases return ``None`` (decode at full resolution):
 
@@ -393,6 +396,53 @@ def scale_coco_annotation(annotation: dict[str, Any], x_scale: float, y_scale: f
     return scaled
 
 
+def _enclosing_polygons(segmentation: list[Any]) -> list[Any]:
+    """Return the parts of a COCO polygon segmentation that have at least three points.
+
+    ``pycocotools.mask.frPyObjects`` picks the input format from the length of the first part alone: four values are
+    read as an ``[x, y, w, h]`` box, which raises a ``TypeError`` for a list, and an empty part raises ``Exception``. A
+    part with fewer than three points encloses no area, so dropping it leaves the rasterised mask unchanged. Only a flat
+    list of numbers is judged by its length: any other part, such as an uncompressed-RLE dict or a nested list of
+    ``[x, y]`` pairs, is kept so ``pycocotools`` handles or rejects it exactly as it did before.
+
+    Args:
+        segmentation: A polygon segmentation, one flat ``[x1, y1, x2, y2, ...]`` list per part.
+
+    Returns:
+        The parts that are not a flat list of fewer than six coordinates, in their original order.
+
+    Examples:
+        >>> _enclosing_polygons([[1, 1, 8, 8], [0, 0, 5, 0, 5, 5], []])
+        [[0, 0, 5, 0, 5, 5]]
+        >>> _enclosing_polygons([{"counts": [4, 2], "size": [2, 3]}])
+        [{'counts': [4, 2], 'size': [2, 3]}]
+    """
+    return [part for part in segmentation if not _is_degenerate_part(part)]
+
+
+def _is_degenerate_part(part: Any) -> bool:
+    """Check whether a polygon part is a flat list of numbers that holds fewer than three points.
+
+    Args:
+        part: One element of a COCO polygon segmentation.
+
+    Returns:
+        ``True`` for a flat list or tuple of fewer than six values; ``False`` for a longer one and for any part that
+        is not a flat list of numbers.
+
+    Examples:
+        >>> _is_degenerate_part([30, 20, 70, 50])
+        True
+        >>> _is_degenerate_part([[0, 0], [5, 0], [5, 5]])
+        False
+    """
+    return (
+        isinstance(part, (list, tuple))
+        and len(part) < 6
+        and not any(isinstance(value, (list, tuple, dict)) for value in part)
+    )
+
+
 def _is_rle(segmentation: Any) -> bool:
     """Check whether a COCO segmentation entry is in RLE format.
 
@@ -416,6 +466,9 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     arrays) are rasterised via ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with ``"counts"`` and
     ``"size"`` keys; ``counts`` may be str or bytes for compressed RLE, or list of ints for uncompressed RLE) are
     decoded directly, skipping the polygon-to-RLE conversion step.
+
+    A flat polygon part with fewer than three points encloses no area and is skipped before rasterisation. An instance
+    left with no part, like one with an empty or ``None`` segmentation, gets an all-zero mask and keeps its row.
 
     Args:
         segmentations: Per-instance segmentation annotations.  Each element is
@@ -451,6 +504,12 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
                 # Uncompressed RLE (counts is a list of ints) — compress first
                 rles = [coco_mask.frPyObjects(segmentation, height, width)]
         else:
+            if isinstance(segmentation, list):
+                segmentation = _enclosing_polygons(segmentation)
+                if not segmentation:
+                    # every part is shorter than three points, so the instance has no mask area
+                    masks.append(torch.zeros((height, width), dtype=torch.uint8))
+                    continue
             rles = coco_mask.frPyObjects(segmentation, height, width)
         mask = coco_mask.decode(rles)
         if mask.ndim < 3:
@@ -462,6 +521,140 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     if len(masks) == 0:
         return torch.zeros((0, height, width), dtype=torch.uint8)
     return torch.stack(masks, dim=0)
+
+
+class CrowdRegion(NamedTuple):
+    """One ``iscrowd=1`` annotation in the form an evaluation metric's ground truth needs.
+
+    Attributes:
+        label: Class index in the dataset's label space (the ``category_id`` itself when the dataset does not remap).
+        box: ``(x_min, y_min, x_max, y_max)`` in original-image pixels, from the annotation's ``bbox``.
+        segmentation: The annotation's ``segmentation`` compressed to a single RLE dict by
+            :func:`crowd_regions_from_coco`, the raw payload when it could not be compressed, or ``None`` when the
+            annotation carries no mask. Decoded only for mask metrics.
+    """
+
+    label: int
+    box: tuple[float, float, float, float]
+    segmentation: list[Any] | dict[str, Any] | None
+
+
+def _compressed_crowd_segmentation(
+    segmentation: Any, height: int | None, width: int | None
+) -> list[Any] | dict[str, Any] | None:
+    """Compress one crowd annotation's ``segmentation`` to a single RLE dict, once per dataset.
+
+    :func:`convert_coco_poly_to_mask` then takes its decode-only path on every batch that scores the region, instead
+    of rasterising the same polygon again. The raw payload is handed back unchanged when it cannot be compressed —
+    the annotation file carries no dimensions for the image, or ``pycocotools`` is not installed (it ships with the
+    ``rfdetr[train]`` extra, and a box-only evaluation never decodes a crowd mask at all).
+
+    Args:
+        segmentation: The annotation's ``segmentation`` payload, or ``None``/empty when it has none.
+        height: The annotation's image height, or ``None`` when the annotation file omits it.
+        width: The annotation's image width, or ``None`` when the annotation file omits it.
+
+    Returns:
+        A compressed RLE dict; *segmentation* itself when it is already compressed or cannot be compressed; ``None``
+        for a missing or empty payload, or a polygon payload with no part of at least three points.
+
+    Examples:
+        >>> _compressed_crowd_segmentation(None, 4, 4) is None
+        True
+        >>> _compressed_crowd_segmentation([[0, 0, 2, 0, 2, 2]], None, None)
+        [[0, 0, 2, 0, 2, 2]]
+        >>> _compressed_crowd_segmentation({"counts": b"04", "size": [4, 4]}, 4, 4)
+        {'counts': b'04', 'size': [4, 4]}
+    """
+    if segmentation is None or (not isinstance(segmentation, dict) and len(segmentation) == 0):
+        return None
+    if isinstance(segmentation, list):
+        segmentation = _enclosing_polygons(segmentation)
+        if not segmentation:
+            return None
+    raw = cast("list[Any] | dict[str, Any]", segmentation)
+    is_rle = _is_rle(segmentation)
+    if is_rle and isinstance(segmentation.get("counts"), (str, bytes)):
+        return raw
+    if height is None or width is None:
+        return raw
+    try:
+        import pycocotools.mask as coco_mask
+    except ImportError:
+        return raw
+    converted = coco_mask.frPyObjects(segmentation, int(height), int(width))
+    return cast("dict[str, Any]", coco_mask.merge([converted] if is_rle else converted))
+
+
+def crowd_regions_from_coco(coco_api: Any) -> dict[int, list[CrowdRegion]]:
+    """Group a COCO API's crowd annotations by image id, relabelled into the dataset's label space.
+
+    :class:`ConvertCoco` drops ``iscrowd=1`` annotations from the dataset targets, so a metric that needs to score
+    them the way pycocotools does reads them back from the annotation file through this function.
+
+    :class:`CocoDetection` exposes its remapping as ``coco.label2cat``; inverting it recovers exactly the
+    ``cat2label`` mapping that class hands to :class:`ConvertCoco`, since the two are built together from one source.
+    Without a remapping the category ids are the labels, as in :class:`ConvertCoco`. A crowd whose category has no
+    label is skipped: no prediction can carry that label, so the region could never ignore a detection.
+
+    An annotation missing one of the fields read here is skipped with a warning rather than failing the first batch
+    of the next validation epoch — silently dropping it would move mAP with no signal at all.
+
+    Args:
+        coco_api: A pycocotools-style ``COCO`` object (an ``anns`` mapping, plus an optional ``imgs`` mapping and an
+            optional ``label2cat``).
+
+    Returns:
+        Crowd regions per image id; empty when there is no crowd annotation or ``coco_api`` has no ``anns`` mapping.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> anns = {
+        ...     1: {"image_id": 5, "category_id": 3, "bbox": [10, 20, 30, 40], "iscrowd": 1, "segmentation": None},
+        ...     2: {"image_id": 5, "category_id": 3, "bbox": [0, 0, 1, 1], "iscrowd": 0},
+        ...     3: {"image_id": 6, "category_id": 9, "bbox": [0, 0, 1, 1], "iscrowd": 1},
+        ... }
+        >>> crowd_regions_from_coco(SimpleNamespace(anns=anns, label2cat={0: 3}))
+        {5: [CrowdRegion(label=0, box=(10.0, 20.0, 40.0, 60.0), segmentation=None)]}
+    """
+    annotations = getattr(coco_api, "anns", None)
+    if not isinstance(annotations, Mapping):
+        return {}
+    images = getattr(coco_api, "imgs", None)
+    label2cat = getattr(coco_api, "label2cat", None)
+    cat2label = {int(cat): int(label) for label, cat in label2cat.items()} if isinstance(label2cat, Mapping) else None
+    regions: dict[int, list[CrowdRegion]] = {}
+    for annotation_id, annotation in annotations.items():
+        if not annotation.get("iscrowd"):
+            continue
+        image_id = annotation.get("image_id")
+        if image_id is None:
+            logger.warning("Skipping crowd annotation %s: no 'image_id' to attach it to.", annotation_id)
+            continue
+        category_id = annotation.get("category_id")
+        if category_id is None:
+            logger.warning("Skipping crowd annotation of image_id %s: no 'category_id'.", image_id)
+            continue
+        category_id = int(category_id)
+        if cat2label is not None and category_id not in cat2label:
+            continue
+        try:
+            x, y, w, h = (float(value) for value in annotation["bbox"])
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Skipping crowd annotation of image_id %s: 'bbox' is missing or not four numbers.", image_id)
+            continue
+        image_meta = images.get(int(image_id)) if isinstance(images, Mapping) else None
+        image_meta = image_meta if isinstance(image_meta, Mapping) else {}
+        regions.setdefault(int(image_id), []).append(
+            CrowdRegion(
+                label=category_id if cat2label is None else cat2label[category_id],
+                box=(x, y, x + w, y + h),
+                segmentation=_compressed_crowd_segmentation(
+                    annotation.get("segmentation"), image_meta.get("height"), image_meta.get("width")
+                ),
+            )
+        )
+    return regions
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
@@ -566,14 +759,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         )
 
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
-        """Decode one image, optionally letting the JPEG decoder downscale in the DCT domain.
+        """Decode one image through :func:`decode_pil_image`, drafting when ``draft_size`` is set.
 
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
-        deliberately not named the same: it returns a decode scale alongside the image.  When ``draft_size`` is set,
-        ``PIL.Image.draft`` asks libjpeg for the cheapest power-of-two-reduced decode whose output is still at least
-        ``draft_size`` on both axes.  ``draft`` is a no-op for non-JPEG files and whenever no power-of-two reduction
-        keeps the image above the box, so no format check is needed.  This also closes the file handle, which the
-        torchvision implementation leaves to the garbage collector.
+        deliberately not named the same: it returns a decode scale alongside the image.
 
         Args:
             image_id: COCO image id.
@@ -582,12 +771,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
         path = self.coco.loadImgs(image_id)[0]["file_name"]
-        with Image.open(Path(self.root) / path) as image:
-            full_width = image.width
-            full_height = image.height
-            if self._draft_size is not None:
-                image.draft("RGB", (self._draft_size, self._draft_size))
-            return image.convert("RGB"), (image.width / full_width, image.height / full_height)
+        return decode_pil_image(Path(self.root) / path, self._draft_size)
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]
@@ -621,7 +805,9 @@ class ConvertCoco:
       only present when ``include_keypoints=True``.
 
     Crowd annotations (``iscrowd=1``) and degenerate boxes (zero width or height after clamping to image boundaries) are
-    filtered out.
+    filtered out. For ``CocoDetection`` and ``YoloDetection`` splits, ``COCOEvalCallback`` reads crowd regions back from
+    the dataset's COCO API for validation and test mAP; webdataset shards have no COCO API, so their evaluation metrics
+    still omit crowd regions.
 
     Args:
         include_masks: If ``True``, decode segmentation annotations (polygon or
@@ -710,6 +896,8 @@ class ConvertCoco:
                     keypoint_tensors.append(torch.zeros((num_keypoints, 3), dtype=torch.float32))
                     continue
 
+                # Taken as-is, with no +0.5 shift: keypoints are treated as continuous image coordinates, the same
+                # convention as boxes, and the horizontal flip mirrors them as ``width - x``.
                 keypoint_tensor = torch.as_tensor(raw_keypoints, dtype=torch.float32).reshape(-1, 3)
                 if keypoint_tensor.shape[0] < num_keypoints:
                     padded = torch.zeros((num_keypoints, 3), dtype=torch.float32)
@@ -730,17 +918,13 @@ class ConvertCoco:
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
-            if len(anno) > 0 and "segmentation" in anno[0]:
-                segmentations = [obj.get("segmentation", []) for obj in anno]
-                masks = convert_coco_poly_to_mask(segmentations, h, w)
-                if masks.numel() > 0:
-                    target["masks"] = masks[keep]
-                else:
-                    target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-            else:
-                target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-
-            target["masks"] = target["masks"].bool()
+            # Build one mask per annotation unconditionally, not gated on whether any annotation
+            # in the image has a segmentation key: convert_coco_poly_to_mask already falls back to
+            # a zero mask per box-only annotation, so gating the whole build on any(...) is what
+            # left an all-box-only image with (0, H, W) masks against K>0 kept boxes.
+            segmentations = [obj.get("segmentation", []) for obj in anno]
+            masks = convert_coco_poly_to_mask(segmentations, h, w)
+            target["masks"] = masks[keep].bool()
             if keypoint_keep is not None:
                 target["masks"] = target["masks"][keypoint_keep]
 
@@ -1297,8 +1481,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     Direct callers must provide either ``dataset_dir`` or ``coco_path``, plus
     ``square_resize_div_64``, ``segmentation_head``, ``multi_scale``,
-    ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, and
-    ``num_windows`` on ``args``. Keypoint, custom augmentation, scale-jitter,
+    ``expanded_scales``, ``patch_size``, and ``num_windows`` on ``args``. Keypoint, custom augmentation, scale-jitter,
     and augmentation-backend fields are optional.
 
     Args:
@@ -1318,6 +1501,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     if not root.exists():
         logger.error(f"COCO path {root} does not exist")
         raise FileNotFoundError(f"COCO path {root} does not exist")
+    multi_scale = MultiScale.from_value(args.multi_scale)
 
     # Detection dataset args may omit keypoint fields; default to the detection annotation path.
     has_keypoints = getattr(args, "use_grouppose_keypoints", False)
@@ -1354,7 +1538,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
-        multi_scale=args.multi_scale,
+        multi_scale=multi_scale is not MultiScale.OFF,
         expanded_scales=args.expanded_scales,
         patch_size=args.patch_size,
         num_windows=args.num_windows,
@@ -1370,9 +1554,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             transforms=make_coco_transforms_square_div_64(
                 image_set,
                 resolution,
-                multi_scale=args.multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=args.expanded_scales,
-                skip_random_resize=not args.do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
@@ -1397,9 +1581,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             transforms=make_coco_transforms(
                 image_set,
                 resolution,
-                multi_scale=args.multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=args.expanded_scales,
-                skip_random_resize=not args.do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
@@ -1430,7 +1614,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
 
     Direct callers must provide ``dataset_dir``, ``square_resize_div_64``,
     ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
-    ``do_random_resize_via_padding``, ``patch_size``, and ``num_windows`` on
+    ``patch_size``, and ``num_windows`` on
     ``args``. Keypoint, custom augmentation, scale-jitter, and
     augmentation-backend fields are optional.
 
@@ -1464,9 +1648,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     # optional task/augmentation fields below retain documented safe defaults.
     square_resize_div_64 = args.square_resize_div_64
     include_masks = args.segmentation_head
-    multi_scale = args.multi_scale
+    multi_scale = MultiScale.from_value(args.multi_scale)
     expanded_scales = args.expanded_scales
-    do_random_resize_via_padding = args.do_random_resize_via_padding
     patch_size = args.patch_size
     num_windows = args.num_windows
     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
@@ -1484,7 +1667,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
-        multi_scale=multi_scale,
+        multi_scale=multi_scale is not MultiScale.OFF,
         expanded_scales=expanded_scales,
         patch_size=patch_size,
         num_windows=num_windows,
@@ -1500,9 +1683,9 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             transforms=make_coco_transforms_square_div_64(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
@@ -1525,9 +1708,9 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             transforms=make_coco_transforms(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,

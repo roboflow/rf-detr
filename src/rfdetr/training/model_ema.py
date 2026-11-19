@@ -9,6 +9,7 @@ import json
 import math
 from collections.abc import Callable
 from copy import deepcopy
+from typing import Literal
 
 import torch
 
@@ -63,13 +64,35 @@ class ModelEma(torch.nn.Module):
 
 
 class BestMetricSingle:
-    def __init__(self, init_res: float = 0.0, better: str = "large") -> None:
+    """Track the best value of one metric across epochs.
+
+    Args:
+        init_res: Starting best value, kept until an epoch beats it.
+        better: Direction in which the metric improves: ``"large"`` when a higher value is better, ``"small"`` when
+            a lower one is.
+
+    Raises:
+        ValueError: If ``better`` is neither ``"large"`` nor ``"small"``.
+
+    Examples:
+        >>> metric = BestMetricSingle(init_res=1.0, better="small")
+        >>> metric.update(0.5, ep=0)
+        True
+        >>> metric.update(0.7, ep=1)
+        False
+        >>> BestMetricSingle(better="invalid")
+        Traceback (most recent call last):
+            ...
+        ValueError: 'better' must be 'large' or 'small', got 'invalid'
+    """
+
+    def __init__(self, init_res: float = 0.0, better: Literal["large", "small"] = "large") -> None:
+        if better not in ("large", "small"):
+            raise ValueError(f"'better' must be 'large' or 'small', got {better!r}")
         self.init_res = init_res
         self.best_res = init_res
         self.best_ep = -1
-
         self.better = better
-        assert better in ["large", "small"]
 
     def isbetter(self, new_res: float, old_res: float) -> bool:
         if self.better == "large":
@@ -100,7 +123,30 @@ class BestMetricSingle:
 
 
 class BestMetricHolder:
-    def __init__(self, init_res: float = 0.0, better: str = "large", use_ema: bool = False) -> None:
+    """Track the best metric overall and, with EMA enabled, for regular and EMA results separately.
+
+    Args:
+        init_res: Starting best value of every tracker.
+        better: ``"large"`` when a higher value is better, ``"small"`` when a lower one is.
+        use_ema: Also track regular and EMA results separately.
+
+    Raises:
+        ValueError: If ``better`` is neither ``"large"`` nor ``"small"``.
+
+    Examples:
+        >>> holder = BestMetricHolder(better="large")
+        >>> holder.update(0.4, epoch=0)
+        True
+        >>> holder.update(0.3, epoch=1)
+        False
+    """
+
+    def __init__(
+        self,
+        init_res: float = 0.0,
+        better: Literal["large", "small"] = "large",
+        use_ema: bool = False,
+    ) -> None:
         self.best_all = BestMetricSingle(init_res, better)
         self.use_ema = use_ema
         if use_ema:

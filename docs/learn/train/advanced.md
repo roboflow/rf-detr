@@ -12,11 +12,11 @@ This page covers advanced training topics including resuming training, early sto
 
 ## FP8 Training on NVIDIA CUDA
 
-FP8 is an opt-in training mode for supported NVIDIA GPUs. RF-DETR uses Lightning's built-in Transformer Engine precision plugin; no custom accelerator is needed. Eligible layers use FP8 computation with BF16 weights. Installing the `cuda` extra alone does not change training precision: `amp_dtype` still defaults to `"auto"`.
+FP8 is an opt-in training mode for supported NVIDIA GPUs. RF-DETR uses Lightning's built-in Transformer Engine precision plugin; no custom accelerator is needed. Eligible layers use FP8 computation with BF16 weights. Installing the `cuda` extra alone does not change training precision: `amp_dtype` still defaults to `"auto"`. The optional Transformer Engine-aware CUDA-graph path is separate from Lightning's precision plugin and is described in [CUDA Graph Training](#cuda-graph-training).
 
 ### Install the CUDA extra
 
-The `cuda` extra installs `transformer-engine[pytorch]>=2.18,<3` on Linux x86-64. The upstream framework extra is named `pytorch`, not `torch`. Transformer Engine does not support Apple MPS; the dependency is skipped on macOS and other platforms outside this extra's platform marker. Ordinary CUDA and MPS training do not need this extra.
+The `cuda` extra installs `transformer-engine[pytorch]>=2.19,<3` on Linux x86-64. The upstream framework extra is named `pytorch`, not `torch`. Transformer Engine does not support Apple MPS; the dependency is skipped on macOS and other platforms outside this extra's platform marker. Ordinary CUDA and MPS training do not need this extra.
 
 1. Install CUDA-enabled PyTorch for your driver and CUDA environment using the [PyTorch installation instructions](https://pytorch.org/get-started/locally/).
 
@@ -25,14 +25,18 @@ The `cuda` extra installs `transformer-engine[pytorch]>=2.18,<3` on Linux x86-64
 3. Install RF-DETR's training and CUDA extras into that same environment:
 
     ```bash
-    python -m pip install --no-build-isolation 'rfdetr[train,cuda]'
+    python -m pip install --progress-bar on --no-build-isolation 'rfdetr[train,cuda]'
+    python -m pip install --progress-bar on 'jedi>=0.18'
+    python -m pip check
     ```
 
     With `uv`, use `uv pip install --no-build-isolation 'rfdetr[train,cuda]'`. From a local RF-DETR checkout, replace `rfdetr[train,cuda]` with `.[train,cuda]`. Restart the notebook kernel after installing or replacing compiled dependencies.
 
 !!! warning "Match the CUDA core library to your environment"
 
-    Successful package resolution does not validate CUDA toolkit, driver, or PyTorch ABI compatibility. Our dependency-resolution check selected `transformer-engine-cu13` for Transformer Engine 2.18.0; do not assume the extra selects CUDA 12 merely because your PyTorch reports CUDA 12.8. Check the resolved packages against NVIDIA's installation instructions, including its `core_cu12` / `core_cu13` selection and source-build guidance. Adding a second core library alone does not establish compatibility with the PyTorch extension.
+    Successful package resolution does not validate CUDA toolkit, driver, or PyTorch ABI compatibility. Our historical dependency-resolution check selected `transformer-engine-cu13` for Transformer Engine 2.18.0; do not treat that old lock outcome as a promise for every environment, and do not assume a CUDA 12 PyTorch build selects CUDA 12 in that older resolver path. The tested Transformer Engine 2.19 PyTorch installer derives its core CUDA major from `torch.version.cuda`, but you must still verify the resolved package, toolkit, driver, cuDNN, and ABI together. Adding a second core library alone does not establish compatibility with the PyTorch extension.
+
+The Transformer Engine-aware FP8 graph path was tested with Transformer Engine 2.19.0 and uses the current named-argument API of [`make_graphed_callables`](https://docs.nvidia.com/deeplearning/transformer-engine/api/pytorch.html#transformer_engine.pytorch.make_graphed_callables). Install it through RF-DETR's existing `cuda` extra; the tested 2.19 PyTorch installer derives its core CUDA major from `torch.version.cuda`, so this guide adds no separate core wheel or CUDA-version override. The PyTorch extension is compiled against the active CUDA toolkit, cuDNN, driver, and C++ ABI; a wheel resolving successfully does not prove that those components match. Follow [NVIDIA's Transformer Engine prerequisites](https://docs.nvidia.com/deeplearning/transformer-engine/installation.html), use the same environment as RF-DETR, and restart the kernel after installing compiled dependencies.
 
 ### Verify and enable FP8
 
@@ -101,6 +105,12 @@ The training loop will automatically load:
 - Optimizer state
 - Learning rate scheduler state
 - Training epoch number
+
+The optimizer's moments and the schedule's progress carry over. Its learning rates and weight decay follow the order defaults, then the checkpoint, then what you pass: an `lr`, `lr_encoder`, `lr_vit_layer_decay`, `lr_component_decay` or `weight_decay` you set to a new value replaces the checkpoint's, and one you leave out keeps the value the checkpoint records. Only the parameter groups a setting you pass feeds change; the others keep the learning rate and weight decay their saved optimizer holds, even where the recorded settings say otherwise. A group a setting you pass feeds is rebuilt from all the settings that feed it, so one you leave out (the decoder's rate is `lr * lr_component_decay`, for one) comes from the checkpoint's recorded settings there. A new `lr` becomes the base the schedule scales: a schedule without an absolute floor that had decayed to 40% of the old `lr` continues at 40% of the new one, and the floor of a `CosineAnnealingLR`, alone or after the warmup ramp (`eta_min`), or of a `ReduceLROnPlateau` (`min_lr`) stays where the checkpoint's scheduler has it, while the base moves. For a supported scheduler composition, a group saved at a base of zero, or at its cosine's `eta_min`, restarts at its configured base, wherever the schedule stands. Scheduler and optimizer keyword arguments you change on resume are overridden by the restored state. A scheduler that sets its own learning rates from `lr_scheduler_kwargs`, such as `OneCycleLR` or `CyclicLR`, ignores `lr` as it does in a fresh run, and a `ReduceLROnPlateau` checkpoint written by an earlier release restarts at a changed learning rate instead of keeping its reductions. A change that merges or splits parameter groups, such as `weight_decay` to or from `0`, does not fit the saved optimizer state, and loading the checkpoint fails. Resuming logs which values came from the checkpoint and which you set.
+
+An explicitly supplied optimizer setting wins even when it equals the default. Every key supplied in a complete Python or JSON mapping is explicit; remove optimizer keys you want to inherit from the checkpoint. The CLI tracks the keys supplied in arguments or configuration files before adding defaults. A cosine wrapped in a single-member `ChainedScheduler` keeps its absolute floor too. Changing learning rates for a multi-member chain with an active nonzero cosine floor is unsupported and raises before changing optimizer or scheduler state; resuming that chain with unchanged learning rates or only a weight-decay override remains supported.
+
+Resuming rewrites `training_config.json` in `output_dir` with the resumed run's own configuration — once when the run starts and again when it finishes — so a previous run's copy in that directory is replaced as soon as the resumed run begins. Both this file and the checkpoints the resumed run writes record the settings above, but a setting you leave out is recorded as the checkpoint states it, which differs from what the optimizer trains with when the checkpoint recorded stale settings; with a `resume` that names no checkpoint file, such as `"last"`, or one that cannot be read ahead of training, only the checkpoints do. A `last.ckpt` written before rfdetr 1.11.1 does not record the settings it was trained with: resumed without any of them passed, it keeps its saved values while the files record the defaults; with one passed, that one applies and the ones you leave out take their defaults in the parameter groups it feeds, with a warning naming them.
 
 !!! warning "Lightweight checkpoints resume without optimizer/scheduler state"
 
@@ -416,6 +426,207 @@ model.train(dataset_dir="path/to/dataset", scale_jitter=False)
 ```
 
 `scale_jitter` defaults to `True`. Set it to `False` to use direct resize only — no random crop, so annotations near image borders are never clipped.
+
+---
+
+## COCO Evaluation Backends
+
+RF-DETR computes validation and test mAP through a pluggable COCO evaluator, selected by `eval_backend`. Five backends ship with `rfdetr[train]` and return identical metrics — they differ only in how fast `compute()` runs and when the matching happens, never in the numbers they report:
+
+| `eval_backend`        | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"vernier"` (default) | [vernier](https://pypi.org/project/vernier/) — fastest measured backend: 2.6× faster than `"ufcoco"` for boxes, 5.3× for boxes and masks. Requires a box on every annotation — an `iou_type` without `"bbox"` is rejected at construction, not at `compute()`.                                                                                                                                                                                                                                                                                            |
+| `"hotcoco"`           | [hotcoco](https://pypi.org/project/hotcoco/) — Rust evaluator, several times faster than `"faster_coco_eval"`.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `"hotcoco_streaming"` | The same evaluator as `"hotcoco"` in a different execution mode, best-effort with fallback: hotcoco's `StreamingEval` matches each validation batch as it arrives, so the end-of-epoch step only accumulates and summarizes. Costs more CPU time in total for box-only runs. It keeps the stored evaluation state for the fallback and adds the stream's matching state during the epoch, but skips the full COCO dataset build at the end; peak memory has not been measured. Single-process only; elsewhere it evaluates in one batch like `"hotcoco"`. |
+| `"ufcoco"`            | [ultrafast-pycocotools](https://pypi.org/project/ultrafast-pycocotools/) — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.                                                                                                                                                                                                                                                                                                                                                                                            |
+| `"faster_coco_eval"`  | [faster-coco-eval](https://pypi.org/project/faster-coco-eval/) — the previous default evaluator. Slowest of them; kept as the parity baseline the others are tested against.                                                                                                                                                                                                                                                                                                                                                                              |
+
+```python
+model.train(dataset_dir="path/to/dataset", eval_backend="hotcoco")
+```
+
+Full benchmark numbers (core-count scaling, box-only vs. box+mask, hardware) are in [Training Parameters → `eval_backend`](training-parameters.md#training-parameters). Keypoint evaluation uses its own OKS path and is unaffected by this setting.
+
+### Adding a new backend
+
+Every backend is one entry in a name → class registry, checked directly against `TrainConfig.eval_backend`'s type; nothing else in the adapter branches on the backend name (`rfdetr.training.coco_map._BACKENDS`, consumed by `OnePassCocoMeanAveragePrecision`). To add one:
+
+1. **Add the name** to the `CocoEvalBackend` literal in `src/rfdetr/config.py`.
+2. **Implement a backend class** in `src/rfdetr/training/coco_map.py`, subclassing `_RfdetrCocoBackend`:
+    - If the package follows pycocotools' object model (`COCO()`, `COCOeval()`, an RLE `mask` module), subclass `_PackageCocoBackend` instead and implement `_package()` — see `_HotCocoBackend`/`_UfcocoBackend`.
+    - If the package takes ground truth and detections as arrays instead of pycocotools' object model (`vernier`'s shape), subclass `_RfdetrCocoBackend` directly, set `uses_coco_evaluator = False`, and add a new `isinstance(self._coco_backend, YourBackend)` branch to `OnePassCocoMeanAveragePrecision.compute()` alongside the existing `_VernierBackend` check, with a `_your_backend_results()` method modeled on `_vernier_results`. Dispatch here is by `isinstance`, not an overridable hook — there's only one array-native backend today, so no polymorphic seam has been justified yet.
+    - Set the capability flags only where they differ from the shared defaults: `requires_bbox`, `unused_backend_methods`, `uses_coco_evaluator`.
+    - Wrap the import in a small function built on `_import_optional_backend()` (see `_hotcoco()`/`_ufcoco()`/`_vernier()`) so a missing package raises an actionable `ImportError` naming the install extra, not a raw `ModuleNotFoundError`.
+3. **Register it** in `_BACKENDS`, keyed by the literal added in step 1.
+4. **Declare the dependency** in `pyproject.toml`'s `train` extra — all existing backends ship there.
+5. **Extend the tests** in `tests/training/test_coco_map.py`: add the name to `_BACKEND_PACKAGES` (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
+6. **Document it**: this table, the `eval_backend` rows in [Training Parameters](training-parameters.md), and `docs/reference/train_config.md`.
+
+!!! warning "Parity is the contract, not an aspiration"
+
+    `OnePassCocoMeanAveragePrecision` promises every backend returns the same aggregate, per-class and class-ID outputs. A backend that can't pass the exact-equality parity tests for box-only and box+mask evaluation isn't ready to register — don't relax those tests to make a new backend pass.
+
+### Benchmarking a backend
+
+There's no long-lived benchmark script in the repo — the numbers in [Training Parameters](training-parameters.md) came from one-off scripts measuring `compute()` wall time on synthetic COCO-val-shaped state. Build one the same way, calling the adapter directly rather than going through a full training run:
+
+```python
+import time
+
+import torch
+
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
+
+NUM_IMAGES = 5_000
+DETS_PER_IMAGE = 300
+GT_PER_IMAGE = 75
+NUM_CLASSES = 80
+IMAGE_SIZE = 640.0
+
+
+def _random_boxes(n: int) -> torch.Tensor:
+    top_left = torch.rand(n, 2) * (IMAGE_SIZE - 10)
+    size = torch.rand(n, 2) * 10 + 1
+    return torch.cat([top_left, top_left + size], dim=1)  # xyxy, x2>x1 and y2>y1 by construction
+
+
+metric = OnePassCocoMeanAveragePrecision(
+    iou_type="bbox",
+    backend="hotcoco",  # backend under test
+    sync_on_compute=False,
+)
+
+torch.manual_seed(0)
+for _ in range(NUM_IMAGES):
+    preds = [
+        {
+            "boxes": _random_boxes(DETS_PER_IMAGE),
+            "scores": torch.rand(DETS_PER_IMAGE),
+            "labels": torch.randint(0, NUM_CLASSES, (DETS_PER_IMAGE,)),
+        }
+    ]
+    target = [
+        {
+            "boxes": _random_boxes(GT_PER_IMAGE),
+            "labels": torch.randint(0, NUM_CLASSES, (GT_PER_IMAGE,)),
+            "iscrowd": torch.zeros(GT_PER_IMAGE, dtype=torch.long),
+            "area": torch.rand(GT_PER_IMAGE) * 1000,
+        }
+    ]
+    metric.update(preds, target)
+
+start = time.perf_counter()
+metric.compute()
+print(f"compute(): {time.perf_counter() - start:.2f}s")
+```
+
+Match the published methodology so the result is comparable:
+
+- Shape the synthetic state (image/detection/class counts) after what you actually validate on — the vernier-vs-hotcoco margin widens on fewer classes and shrinks on more.
+- Time `compute()` alone, not `update()` — `update()`'s cost is TorchMetrics' own CPU tensor copying and is backend-independent.
+- Fix the core count (`torch.set_num_threads(N)`) and report it; the published numbers scale with cores.
+- Run box-only and box+mask separately — the ranking between backends is not the same in both.
+- **Verify parity before trusting a speed number.** Run `pytest tests/training/test_coco_map.py -k <backend_name>` first; a fast backend that doesn't match `"faster_coco_eval"` is a bug, not a result worth publishing.
+
+---
+
+## CUDA Graph Training
+
+For a long-running detection job on one NVIDIA GPU, enable CUDA graph replay on the model constructor:
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano(cuda_graphs=True)
+model.train(dataset_dir="path/to/dataset")
+```
+
+An INFO line at train start confirms replay is enabled, and each captured input shape logs its own INFO line; without one of these the run is eager (and the reason was logged as a warning). The first batch at each input signature runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. BF16 capture can cache one graph per signature, so multi-scale training retains one graph and memory pool per resolution. Graph pools are private CUDA allocations; compare peak memory and the largest usable batch size as well as step time on your own workload.
+
+There are two capture routes:
+
+- **BF16/eager route:** `cuda_graphs=True` with `compile=False` supports single-GPU detection with BF16 (`amp_dtype="bf16"` or `"auto"` resolving to BF16; on pre-Ampere GPUs such as the T4, `"auto"` resolves to FP16, so those runs stay eager). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, FP16, FP32, and unsupported trainer combinations remain eager and log a warning. BF16 graph replay supports gradient accumulation; the runner preserves gradients already accumulated by earlier microbatches.
+- **FP8/Transformer Engine route:** with a tested-compatible Transformer Engine release (2.19.0 was tested), use `cuda_graphs=True`, `compile=False`, and `amp_dtype="fp8"`. This route calls Transformer Engine's native `make_graphed_callables` with the active Lightning FP8 recipe, disables quantized-parameter caching, and clones returned parameter gradients. It is intentionally limited to single-GPU detection, `grad_accum_steps=1`, no gradient checkpointing, `multi_scale=False` and `square_resize_div_64=True`. The last setting keeps the external image boundary on a fixed square shape; aspect-preserving batches with `square_resize_div_64=False` stay eager. It captures one fixed batch/resolution signature; a later shape change raises. Unsupported shape/accumulation combinations stay eager with a warning; an incompatible Transformer Engine version or precision-plugin misconfiguration stops training with an error instead.
+
+`cuda_graphs=True` may be combined with `compile=True` (see [Combining CUDA graphs with compilation](#combining-cuda-graphs-with-compilation)), but that is the Inductor route. Ordinary FP8 with `compile=False` still uses Lightning's normal Transformer Engine plugin. When all three flags — `cuda_graphs=True`, `compile=True`, and `amp_dtype="fp8"` — are selected, RF-DETR warns and keeps the run compile-only; it does not wrap the compiled module in the Transformer Engine graph helper. FP8 with `compile=True` but `cuda_graphs=False` uses ordinary compiled FP8 training without this graph-routing warning. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with graphs disabled; catching the exception and continuing in the same process is not a supported fallback.
+
+Use the Transformer Engine-aware route explicitly. `TrainConfig.multi_scale` defaults to `"per-batch"`, so it must be explicitly set to `False` (or `"off"`) here (along with `square_resize_div_64=True`) — otherwise the run silently falls back to eager mode, with only a log warning as the signal:
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano(cuda_graphs=True, compile=False)
+model.train(
+    dataset_dir="path/to/dataset",
+    amp_dtype="fp8",
+    batch_size=4,
+    grad_accum_steps=1,
+    multi_scale=False,
+    square_resize_div_64=True,
+)
+```
+
+CUDA graphs and `compile=True` remove different costs, and they can be enabled together. The two measurements immediately below compare CUDA graphs with eager training; the matrix in [Combining CUDA graphs with compilation](#combining-cuda-graphs-with-compilation) compares all four combinations on one GPU. Compare steady-state throughput, startup time, and peak memory with identical data, batch size, precision, and resolutions before choosing. Compilation keeps positional-embedding interpolation eager to avoid PyTorch's symbolic antialiased-bicubic backward failure; its interpolation math and gradients are unchanged. This is a compatibility mitigation, not an upstream compiler fix.
+
+As one BF16 reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (`expanded_scales=False`) reduced the median Lightning training batch from 149.8 ms to 101.7 ms across five runs — a 32.4% median reduction in the five paired per-run measurements. Peak allocated memory increased from 2,395 MiB to 3,466 MiB, and peak reserved memory increased from 2,754 MiB to 14,550 MiB for those 8 captured graph pools. `TrainConfig`'s own default is `expanded_scales=True`, which resolves to 11 multi-scale resolutions for this model and was not benchmarked; expect proportionally more graph pools and higher peak reserved memory under that default. The speed and memory cost depend on the model, shapes, batch size, GPU, and PyTorch version; this option is not a good fit when memory already limits the batch size.
+
+For the Transformer Engine route, a synthetic RF-DETR Nano run at 384 px and batch 4 on an RTX PRO 6000 Blackwell used 20 warm-up and 50 measured steps: eager averaged 78.075 ms per step versus 40.066 ms with Transformer Engine-aware graphs (about 1.95x throughput), with one graph capture serving 70 calls. This is a single fixed-shape experiment, not COCO parity or accuracy evidence, and does not establish a large-batch gain. Repeat numerical-parity and performance checks on your target GPU before treating it as a production baseline.
+
+!!! note "FP8 CUDA-graph capture/replay tests are CI-blind today"
+
+    `tests/training/test_cuda_graph_te.py` covers this route, but the repository's GPU CI runner is a NVIDIA T4 (compute capability 7.5). The test's FP8-hardware gate checks `torch.cuda.get_device_capability(0) >= (8, 9)` before anything imports Transformer Engine, so on a T4 the whole module skips rather than exercising the capture path. These tests are validated only by local or manual runs on Ada/Hopper-class or newer hardware until an 8.9+ GPU is available in CI.
+
+A second reference point, on real data, shows the other end of the range. RF-DETR Nano on an NVIDIA RTX PRO 6000 (Blackwell, 96 GB) with BF16, batch 64, resolution 384, `multi_scale=False`, COCO train2017 through the Albumentations CPU pipeline on Colab: eager and `cuda_graphs=True` both ran at 3.54 it/s (about 8 min 40 s per epoch, one captured graph, no fallback), while `compile=True` finished the same epoch in 7 min 10 s, about 17% faster. Nothing was wrong with the capture; the two options remove different costs.
+
+### Choosing between CUDA graphs and compilation
+
+- **CUDA graphs** remove kernel-launch gaps and CPU dispatch between the model's kernels. They pay when each kernel is short, so the GPU idles between launches: small batch size, small model, low resolution, or a fast GPU driven by a slow CPU. They do nothing for the kernels themselves. When the batch is large enough that every kernel runs for a long time, replay measures the same as eager — that is expected, not a capture failure.
+- **`compile=True`** (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. Compilation adds startup time; dynamic shapes reduce, but do not eliminate, recompilation. It also compiles the matcher's L1 box cost — see [Matcher compilation](#matcher-compilation) below.
+- Rule of thumb from the two measurements above: at batch 4 with a mid-range GPU (L4) graphs gave 32%; at batch 64 on a high-end GPU they gave 0% and compilation gave 17%. Prefer graphs when the effective batch per step is in the single digits or the progress bar shows the GPU far from saturated; prefer compilation for large batches. In between, run 200 steps of each with identical settings and compare the steady-state it/s — startup and capture time distort the first epoch.
+- For large batches, combining the two buys nothing over `compile=True` alone; for small batches it stacks. The section below has the numbers.
+
+**Fastest measured starting point:** for single-GPU RF-DETR Nano detection with BF16 and batch 4, `compile=True` plus `cuda_graphs=True`, with `multi_scale=False`, was fastest among the configurations measured below: 116.0 img/s on an RTX PRO 6000 Blackwell, 1.47× eager and 1.20× `compile=True` alone. This result used synthetic fixed-shape batches and training steps only. At batch 64, graphs added only 1% over compilation, within run-to-run noise; use `compile=True` alone as the simpler starting point there. Treat these as hardware- and workload-specific measurements, not a universal optimum. The combined route requires single-GPU detection without gradient accumulation; its fallbacks and memory costs are listed below.
+
+### Combined AdamW and EMA update
+
+The default single-GPU compiled BF16 detection path combines global-norm gradient clipping, AdamW, and EMA into one multi-tensor Triton update. There is no new option to enable: it is selected when `compile=True`, `fused_optimizer=True`, `use_ema=True`, `ema_update_interval=1`, and the built-in `optimizer="adamw"` are used on one NVIDIA CUDA device with the default `devices=1`, `num_nodes=1`, and `strategy="auto"`; other values, including equivalent spellings such as `devices="1"` or `devices="auto"`, keep the existing PyTorch update. Segmentation, keypoints, CUDA graphs, distributed strategies, custom optimizers, AdamW options the kernel does not implement (`amsgrad`, `maximize`, `capturable`, `differentiable`), other precisions, non-Linux platforms, and Triton releases without the required CUDA libdevice interface keep the existing PyTorch update. A step whose tensor layout the kernels do not support (for example a non-contiguous parameter or gradient) is applied by PyTorch's non-fused AdamW after the same gradient clipping, and the EMA callback averages it. The update rule is unchanged, but that step does not use the fused implementation, so its result can differ from the fused route by float32 rounding.
+
+On an NVIDIA L4, a public `RFDETRNano.train()` run over COCO128 with BF16, the default batch 4, and 384 px inputs improved the median settled training epoch from 3.593 s to 3.135 s across five independent pairs (12.66%, range 11.55-16.86%). The comparison baseline was deliberately stronger than the current standard path: it explicitly used `clip_grad_norm_(foreach=True)`, `AdamW(fused=True)`, a single `torch._foreach_lerp_` EMA operation in place of the callback's two foreach operations, and a host-side EMA counter that avoided the callback's per-step CUDA scalar read. Per-process medians use epochs 2–4, excluding compilation, the first post-compile warm-up epoch, and final validation. Those epochs include image loading, augmentation, Lightning, forward, criterion, backward, clipping, the optimizer, and EMA. Peak allocated CUDA memory changed from 1,852.89 MiB to 1,853.03 MiB. The paired reduction for the complete six-epoch call with populated per-arm compile caches had a 5.56% median (range 3.33-10.99%); one-time setup and final validation dilute the recurring-epoch saving. Convergence and final accuracy of a full training run were not compared with the standard update, and larger models and other GPUs were not measured.
+
+### Matcher compilation
+
+On CUDA, `compile=True` also compiles the matcher's L1 box cost separately from the model. The compiled helper uses dynamic shapes and bypasses the eager target-chunking loop so Inductor can fuse the coordinate reduction. Both compact and full-cartesian matching use it for equal-dtype inputs; mixed-dtype inputs retain the eager helper's autocast/error behavior. Under BF16/FP16 AMP the fused compiled L1 cost serves the decoder (and auxiliary) layers; encoder-stage matching stays on the eager `torch.cdist` path because its predicted boxes are emitted in the reduced precision while targets stay float32. Target packing and Hungarian assignment stay eager. The losses stay eager too, except for fixed-resolution detection training (`multi_scale=False` with the default `square_resize_div_64=True` and `cuda_graphs=False`), where `compile=True` compiles the model for the fixed training batch shape (a validation batch of another shape, such as a partial final batch or a different `eval_batch_size`, recompiles once) and batches the default IA-BCE classification, box, GIoU and cardinality losses across the final, auxiliary and encoder outputs into one lazily compiled function. Matcher CUDA graphs stay disabled independently of the model's graph setting. A startup message confirms that L1 compilation is enabled; kernels compile on first use. `compile=False` retains the memory-bounded eager helper. Measure steady-state throughput and peak memory on your own workload. The matcher's L1 compilation alone carries no end-to-end speedup claim; across six independent RF-DETR Nano training processes (BF16, batch 4, 384 px, a single NVIDIA L4, EMA and validation off), the fixed-resolution route shortened the median settled epoch by 14.4%, with every paired reduction between 11.3% and 20.7%. Segmentation and keypoint models keep the dynamic model compile and the eager per-layer losses. Other detection models, precisions, batch sizes, multi-GPU (DDP) and EMA-on runs were not measured.
+
+Non-empty custom `aug_config` values keep model compilation dynamic because transforms can change image shape after resize. They also keep the batched loss graph disabled.
+
+### Combining CUDA graphs with compilation
+
+Set both flags and RF-DETR hands CUDA graph replay to Inductor's CUDA graph trees (the mechanism behind `torch.compile(mode="reduce-overhead")`, passed here as the `triton.cudagraphs` compile option so it coexists with RF-DETR's other Inductor settings). The compiled forward and backward kernels are recorded once per input shape and replayed afterwards; the eager graph runner used by `cuda_graphs=True` alone stays off, and an INFO line at construction says so.
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano(compile=True, cuda_graphs=True)
+model.train(dataset_dir="path/to/dataset")
+```
+
+Measured on one NVIDIA RTX PRO 6000 (Blackwell) with RF-DETR Nano, BF16, resolution 384, `multi_scale=False`, synthetic detection batches, torch 2.11, 100 timed steps after warm-up (GPU busy is the fraction of wall time with a kernel running, from a profiler trace):
+
+| batch [img] | eager [img/s] | `cuda_graphs` [img/s] | `compile` [img/s] | both [img/s]  | both vs `compile` [×] | GPU busy eager → both [-] |
+| ----------- | ------------- | --------------------- | ----------------- | ------------- | --------------------- | ------------------------- |
+| 4           | 78.7          | 95.3 (1.21×)          | 96.8 (1.23×)      | 116.0 (1.47×) | **1.20×**             | 0.32 → 0.42               |
+| 64          | 246.8         | 249.7 (1.01×)         | 322.8 (1.31×)     | 325.7 (1.32×) | 1.01×                 | 0.85 → 0.83               |
+
+At batch 4 the two gains stack: compilation alone leaves the launch gaps in place (GPU busy stays at 0.32), and graph replay of the compiled kernels removes them. At batch 64 the compiled kernels already run back to back, so replay adds under 1%, inside run-to-run noise; the remaining 15–20% of each step is spent outside the model (matcher, loss, data loading) and neither option reaches it. The same run on an A100 gave 1.70× over `compile` at batch 4 and the same parity at batch 64, so the small-batch gain depends on how much launch overhead the host adds.
+
+Scope and cost:
+
+- Validated for single-GPU detection training without gradient accumulation. Segmentation, keypoints, gradient checkpointing, `grad_accum_steps > 1`, and multi-device or multi-node runs fall back to `compile=True` alone with a warning. Gradient accumulation is the hard limit: cudagraph trees allocate the backward's gradient outputs inside the graph pool, so a `.grad` adopted by the first microbatch is overwritten by the next replay.
+- The fallback is decided from `TrainConfig` when the model is built. If the trainer later resolves gradient accumulation (for example through `trainer_kwargs`) or more than one process (`devices="auto"` on a multi-GPU host), training stops at train start with a `RuntimeError` naming the conflict, because the model is already compiled with graph replay by then.
+- The combined path skips the eager runner's BF16-only gate; BF16 is the measured path. FP8 remains compile-only with a warning, by design; it does not use the Transformer Engine graph wrapper.
+- The benchmark ran training steps only (`use_ema=False`, no validation). With the default `use_ema=True` validation runs the eager EMA copy; with `use_ema=False` or `eval_base_model=True` the compiled model also records an eval-mode graph. Neither validation nor EMA was exercised under the combined path.
+- With `multi_scale="per-batch"` (or `"per-sample"`), `dynamic=True` compilation records one graph per resolution (each with its own memory pool) and PyTorch warns after `torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit` (8) distinct shapes. Benchmark `multi_scale=False` first, then confirm memory with the multi-scale set you train on.
+- Compilation start-up dominates short runs: 5–7 minutes on the RTX PRO 6000 and 13–15 minutes on an A100 for Nano before the first timed step. `TORCH_LOGS=cudagraphs` prints the graph partitions Inductor records, including any operator it refused to capture.
 
 ---
 

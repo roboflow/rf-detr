@@ -1,0 +1,154 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Tests for the Kornia integer-pixel translation transform ``PixelTranslatedAffine``.
+
+All tests in this module are CPU-compatible — the transform indexes pixels directly, which behaves identically on CPU
+and GPU tensors, so no ``@pytest.mark.gpu`` is needed.
+"""
+
+import pytest
+import torch
+
+from tests._markers import _requires_kornia
+
+
+@_requires_kornia
+class TestPixelTranslatedAffineInverse:
+    """``inverse()`` must undo the integer shift on images, masks, and boxes alike."""
+
+    def test_round_trip_restores_image_masks_and_boxes(self) -> None:
+        """A forward shift followed by ``inverse()`` returns every target to its original position.
+
+        Kornia's inverse path hands ``apply_transform`` the inverted matrix, which this transform ignores in favour of
+        its sampled offsets, while boxes are inverted through that matrix. Images and masks must therefore be shifted
+        back too, or they drift away from the boxes. The shift moves right by 3 and up by 2 so both axes and both signs
+        are exercised; the bands the forward pass pushed out of frame were zero-filled and stay zero after the inverse.
+        """
+        from kornia.augmentation import AugmentationSequential
+
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        transform = PixelTranslatedAffine(((3, 3), (-2, -2)), p=1.0, padding_mode="zeros")
+        pipeline = AugmentationSequential(transform, data_keys=["input", "bbox_xyxy", "mask"])
+        image = torch.arange(1, 8 * 10 + 1, dtype=torch.float32).reshape(1, 1, 8, 10)
+        boxes = torch.tensor([[[4.0, 3.0, 6.0, 5.0]]])
+        masks = torch.zeros(1, 1, 8, 10)
+        masks[0, 0, 3:5, 4:6] = 1.0
+
+        restored_image, restored_boxes, restored_masks = pipeline.inverse(*pipeline(image, boxes, masks))
+
+        expected_image = torch.zeros_like(image)
+        expected_image[:, :, 2:, :7] = image[:, :, 2:, :7]
+        torch.testing.assert_close(restored_image, expected_image, rtol=0, atol=0)
+        torch.testing.assert_close(restored_masks, masks, rtol=0, atol=0)
+        torch.testing.assert_close(restored_boxes, boxes, rtol=0, atol=1e-5)
+
+    @pytest.mark.parametrize("p", [0.0, 0.5, 1.0])
+    def test_round_trip_restores_each_image_with_its_own_offset(self, p: float) -> None:
+        """Inverse images and masks stay aligned with boxes for empty, partial, and full selections."""
+        from kornia.augmentation import AugmentationSequential
+
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        transform = PixelTranslatedAffine(((-2, 2), (-1, 1)), p=p, padding_mode="zeros")
+        pipeline = AugmentationSequential(transform, data_keys=["input", "bbox_xyxy", "mask"])
+        image = torch.arange(1, 16 * 6 * 8 + 1, dtype=torch.float32).reshape(16, 1, 6, 8)
+        boxes = torch.tensor([[[2.0, 2.0, 4.0, 4.0]]]).repeat(16, 1, 1)
+        masks = torch.zeros_like(image)
+        masks[:, :, 2:4, 2:4] = 1.0
+
+        shifted_image, shifted_boxes, shifted_masks = pipeline(image, boxes, masks)
+        restored_image, restored_boxes, restored_masks = pipeline.inverse(shifted_image, shifted_boxes, shifted_masks)
+
+        selected = shifted_boxes[:, 0, 0] != boxes[:, 0, 0]
+        expected_image = torch.zeros_like(image)
+        # Box displacements independently identify the original pixels that survived each forward shift.
+        offsets = (shifted_boxes[:, 0, :2] - boxes[:, 0, :2]).to(torch.long)
+        for row, (dx, dy) in enumerate(offsets.tolist()):
+            rows = slice(max(0, -dy), min(6, 6 - dy))
+            columns = slice(max(0, -dx), min(8, 8 - dx))
+            expected_image[row, :, rows, columns] = image[row, :, rows, columns]
+        if p == 0.5:
+            assert selected.any() and (~selected).any()
+            assert offsets.unique(dim=0).shape[0] > 2
+        torch.testing.assert_close(restored_image, expected_image, rtol=0, atol=0)
+        torch.testing.assert_close(restored_masks, masks, rtol=0, atol=0)
+        torch.testing.assert_close(restored_boxes, boxes, rtol=0, atol=1e-5)
+
+
+@_requires_kornia
+class TestPixelTranslatedAffineSameOnBatch:
+    """``same_on_batch=True`` must give every image in a batch one shared shift."""
+
+    def test_container_flag_shifts_every_image_identically(self) -> None:
+        """A container-level ``same_on_batch=True`` shifts a batch of identical images to identical outputs.
+
+        ``AugmentationSequential(same_on_batch=True)`` sets the flag on each child, and Kornia's own generators then
+        draw one value and repeat it across the batch. The integer offsets replace Kornia's translation draw, so they
+        must honour the flag too; with 49 possible offsets per image, independent draws make 16 outputs differ.
+        """
+        from kornia.augmentation import AugmentationSequential
+
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        transform = PixelTranslatedAffine(((-3, 3), (-3, 3)), p=1.0, padding_mode="zeros")
+        pipeline = AugmentationSequential(transform, data_keys=["input"], same_on_batch=True)
+        image = torch.arange(1, 8 * 8 + 1, dtype=torch.float32).reshape(1, 1, 8, 8).repeat(16, 1, 1, 1)
+
+        shifted = pipeline(image)
+
+        torch.testing.assert_close(shifted, shifted[:1].expand_as(shifted), rtol=0, atol=0)
+
+    def test_empty_selection_returns_empty_offsets(self) -> None:
+        """A shared draw still yields no offset rows when no image in the batch was selected.
+
+        With ``p < 1`` Kornia may select zero images and then asks for parameters of an empty batch; expanding the one
+        shared draw must produce an empty ``(0, 2)`` offset tensor rather than a stray row.
+        """
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        transform = PixelTranslatedAffine(((-3, 3), (-3, 3)), p=0.5, padding_mode="zeros")
+        transform.same_on_batch = True
+
+        translations = transform.generate_parameters((0, 1, 8, 8))["translations"]
+
+        assert translations.shape == (0, 2)
+
+
+@_requires_kornia
+class TestPixelTranslatedAffineMaskDtype:
+    """``apply_transform`` must return masks in the dtype they arrived in."""
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.bool, id="bool"),
+            pytest.param(torch.uint8, id="uint8"),
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.float32, id="float32"),
+        ],
+    )
+    def test_shift_preserves_dtype_and_values(self, dtype: torch.dtype) -> None:
+        """A shift by 1 right and 2 down keeps the mask dtype and moves each set pixel by exactly that offset.
+
+        Masks reach the transform as bool, integer or float tensors, and the zero-padding path multiplies the gathered
+        values in place by a boolean validity mask, which must neither promote nor reject any of them. The pixel in row
+        0 would be smeared into the two rows the shift exposes if that masking were skipped.
+        """
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        transform = PixelTranslatedAffine(((1, 1), (2, 2)), p=1.0, padding_mode="zeros")
+        mask = torch.zeros(1, 1, 4, 5, dtype=dtype)
+        mask[0, 0, 0, 3] = 1
+        mask[0, 0, 1, 1] = 1
+
+        shifted = transform.apply_transform(mask, {"translations": torch.tensor([[1.0, 2.0]])}, transform.flags)
+
+        expected = torch.zeros(1, 1, 4, 5, dtype=dtype)
+        expected[0, 0, 2, 4] = 1
+        expected[0, 0, 3, 2] = 1
+        assert shifted.dtype == dtype
+        assert torch.equal(shifted, expected)

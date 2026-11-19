@@ -32,7 +32,14 @@ jobs:
 
       - name: 🏗️ Install dependencies
         timeout-minutes: 5
+        env:
+          UV_TORCH_BACKEND: "cpu"
         run: uv pip install -e ".[plus]" --group docs
+
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
 
       - name: 🧪 Test Docs Build
         run: uv run --no-sync mkdocs build --verbose

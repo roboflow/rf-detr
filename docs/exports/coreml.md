@@ -1,0 +1,264 @@
+---
+description: Export RF-DETR models directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment.
+---
+
+# Native CoreML Export (`.mlpackage`)
+
+!!! warning "Experimental — Use with Caution"
+
+    Native CoreML export is **experimental and work-in-progress**. `dynamic_batch=True` is not supported — fixed shapes are required for reliable ANE / GPU scheduling. Export one `.mlpackage` per batch size instead.
+
+!!! note "Not the same as the ExecuTorch CoreML backend"
+
+    `format="coreml"` exports directly via `torch.export` + `coremltools` to a native `.mlpackage` (mlprogram, iOS 15 / macOS 12 or later; an fp16 bundle returns float32 outputs) — no ONNX and no ExecuTorch runtime involved. This is distinct from [`format="executorch", backend="coreml"`](executorch.md#coreml-backend-apple-neural-engine-fp16), which produces a `.pte` file for the ExecuTorch runtime. Passing both `format="coreml"` and `backend="coreml"` together does not fall through to the ExecuTorch delegate — `backend` is ignored (with a warning) and the native `.mlpackage` path always runs.
+
+RF-DETR's native CoreML export produces a `.mlpackage` you can drag directly into Xcode, with no ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction path for Apple-native (iOS / macOS) developers.
+
+## Prerequisites
+
+```bash
+pip install "rfdetr[coreml]"
+```
+
+## Basic CoreML Export
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRMedium
+
+    model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="coreml")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegMedium
+
+    model = RFDETRSegMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="coreml")
+    ```
+
+This produces `output/rfdetr-medium_fp32.mlpackage` — the file is named after the model variant plus the resolved precision (`{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`), not a generic `inference_model_fp32.mlpackage`. The precision is always encoded, even at its default value, since fp16 vs fp32 materially changes the bundle.
+
+## Compute Precision
+
+CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass `coreml_precision="float16"` for a bundle half the size that Core ML can schedule onto the Neural Engine — this also changes the output filename to `output/rfdetr-medium_fp16.mlpackage`:
+
+```python
+model.export(format="coreml", coreml_precision="float16")
+```
+
+!!! note
+
+    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation; `dets, labels, keypoints` for keypoints).
+
+!!! note "Provenance metadata"
+
+    `notes=` and the RF-DETR version are stored in the `.mlpackage` metadata, under `rfdetr_notes` and `rfdetr_version` in `MLModel.user_defined_metadata` (`rfdetr_notes` as in the ONNX export, `rfdetr_version` as in the [Core AI](coreai.md) export). coremltools' own `com.github.apple.coremltools.*` keys stay. See [Read Embedded Notes](advanced.md#read-embedded-notes).
+
+!!! note "Raw tensors can differ more than the precision suggests"
+
+    RF-DETR's two-stage encoder picks its queries with a `topk` over the encoder tokens' class scores. CoreML's fp32 arithmetic differs from eager PyTorch's in the last bits — measured at up to 1e-5 on a ranking score — so when two neighbouring scores sit closer together than that, the two can rank them in opposite order and run the decoder on a slightly different set of queries. Every raw output then shifts, by ~1e0 on logits, on an export that otherwise tracks eager to ~1e-4. This repo's own parity tests require a 1e-4 gap between neighbouring top-k scores before they compare raw tensors at all.
+
+    This is a property of the ranking, not a conversion error, and it is not specific to `format="coreml"`: any runtime whose arithmetic differs from eager in the last bits can trip it, and fp16 — the ExecuTorch CoreML delegate, or `coreml_precision="float16"` — makes it more likely, not less. Detections comfortably above a confidence threshold survive it: on one pretrained `RFDETRSmall` image at threshold 0.5 (Apple M3 Pro, coremltools 9.0, default `ComputeUnit.ALL`) the two agree on every detection, within 1.1e-4 on scores and 0.005 px on boxes. A detection sitting *on* the threshold can still cross it, since a swap was measured to move post-processed scores by up to 1.2e-3. Compare **post-processed detections**, not raw tensors, when validating an export.
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-medium_fp32.mlpackage")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+For video with GPU compute enabled, select the CPU-and-GPU policy:
+
+```python
+model = RFDETRInference("output/rfdetr-small_fp16.mlpackage", device="cpu_and_gpu")
+results = model.predict("video.mp4", stream=True)
+try:
+    for detections in results:
+        frame = detections.metadata["source_image"]
+finally:
+    results.close()
+```
+
+The loader supports all four [Core ML compute policies](https://apple.github.io/coremltools/source/coremltools.models.html):
+
+| `device`      | Core ML compute units     | Allowed processors          |
+| ------------- | ------------------------- | --------------------------- |
+| `auto`        | `ComputeUnit.ALL`         | CPU, GPU, and Neural Engine |
+| `cpu`         | `ComputeUnit.CPU_ONLY`    | CPU                         |
+| `cpu_and_gpu` | `ComputeUnit.CPU_AND_GPU` | CPU and GPU                 |
+| `cpu_and_ne`  | `ComputeUnit.CPU_AND_NE`  | CPU and Neural Engine       |
+
+`cpu_and_ne` requires macOS 13 or later. Core ML chooses among the allowed processors; these policies do not guarantee GPU-only or Neural-Engine-only execution. `runtime_info` reports the selected policy.
+
+## Advanced: Use Core ML directly
+
+The shared `RFDETRInference` loader also uses Core ML's `coremltools` API directly; this example shows that vendor API for callers who need raw outputs.
+
+```python
+import coremltools as ct
+import numpy as np
+import torchvision.transforms.functional as F
+from PIL import Image
+
+mlmodel = ct.models.MLModel("output/rfdetr-medium_fp32.mlpackage")
+
+input_height, input_width = 576, 576
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [input_height, input_width], antialias=False)
+
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
+
+image_array = image_tensor.unsqueeze(0).numpy()  # add batch dimension: (1, 3, H, W)
+
+# The input name is coremltools-inferred (currently "tensors"), so read it from the spec
+# rather than hard-coding it.
+input_name = mlmodel.get_spec().description.input[0].name
+
+# Outputs are positional (see the precision note above) — dets, labels, in that order.
+predictions = mlmodel.predict({input_name: image_array.astype(np.float32)})
+outputs = [predictions[output.name] for output in mlmodel.get_spec().description.output]
+boxes, labels = outputs[0], outputs[1]
+```
+
+## Neural Engine, Compute Units, and the Fallback Boundary
+
+Core ML decides at **load time** which of the CPU, GPU and Apple Neural Engine (ANE) runs each part of the model. That choice is not stored in the `.mlpackage` — `MLModel` defaults to `ComputeUnit.ALL` every time it is loaded — so it is the caller's to make:
+
+=== "Python"
+
+    ```python
+    import coremltools as ct
+
+    mlmodel = ct.models.MLModel(
+        "output/rfdetr-small_fp16.mlpackage",
+        compute_units=ct.ComputeUnit.CPU_AND_NE,
+    )
+    ```
+
+=== "Swift"
+
+    ```swift
+    let configuration = MLModelConfiguration()
+    configuration.computeUnits = .cpuAndNeuralEngine
+    let model = try MLModel(contentsOf: url, configuration: configuration)
+    ```
+
+**Precision decides whether the ANE is reachable at all.** The ANE has no fp32 path, so an fp32 bundle never touches it — `CPU_AND_NE` then measures the same as `CPU_ONLY`. Only `coreml_precision="float16"` puts the model on the ANE.
+
+Single-image latency, pretrained `RFDETRNano` at 384x384, Apple M3 Pro (macOS 27.0.1, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
+
+| Precision | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL`    |
+| --------- | ---------- | ------------ | ------------- | -------- |
+| fp32      | 75.1       | 76.3         | **26.1**      | 27.0     |
+| fp16      | 50.7       | 24.9         | 25.5          | **22.7** |
+
+On this M3 Pro, with this one model: **fp32 belongs on the GPU, fp16 on the ANE or `ALL`.** The ranking depends on the chip and the model, so measure on your target device. Loading an fp16 bundle with `CPU_AND_NE` is about 2.0x faster than CPU and about as fast as the GPU here (back to back, with no sleep between passes: 12.7 ms on the ANE, 12.1 ms on the GPU). Single-image latency is therefore no longer a reason to prefer the ANE over the GPU.
+
+The ANE pays for that at load: compiling an fp16 RFDETRNano for it takes about 5 s on first load, against about 0.5 s for the GPU or CPU path (subsequent loads of the same bundle are cached by the system). For a process that runs a handful of images and exits, the GPU is the better trade.
+
+**fp16 keeps the accuracy.** On COCO val2017 (all 5000 images, pretrained `RFDETRNano`, same decoding for all rows, Apple M3 Pro):
+
+| Precision                   | mAP@[.5:.95] | mAP@.5 |
+| --------------------------- | ------------ | ------ |
+| eager PyTorch fp32          | 48.0         | 67.1   |
+| Core ML fp32, `ALL`         | 48.0         | 67.1   |
+| Core ML fp16, `CPU_AND_NE`  | 48.0         | 67.1   |
+| Core ML fp16, `CPU_AND_GPU` | 48.0         | 67.1   |
+
+The fp16 bundle is an iOS 15 program on purpose. An iOS 16 program runs `resample` on the Neural Engine in fp16, and that moved mAP down by about 3 points (45.1) while the same bundle was fine on the GPU or CPU; as an iOS 15 program that op stays off the ANE. Validate an fp16 bundle on your own data before shipping it.
+
+**The fallback boundary, at fp16.** An fp16 RF-DETR graph is almost entirely ANE-eligible. The exceptions are the two-stage query selection — `topk`, and the `expand_dims`/`tile`/`gather_along_axis` that consume its indices — plus the deformable-attention sampling (`resample`) with the `cast` ops beside it, which Core ML runs on the CPU. Measured with `MLComputePlan` under `CPU_AND_NE`:
+
+| Model           | Ops on ANE | Ops on CPU | Share of estimated work on the ANE |
+| --------------- | ---------- | ---------- | ---------------------------------- |
+| `RFDETRNano`    | 591        | 11         | 99.7%                              |
+| `RFDETRSmall`   | 648        | 13         | 99.7%                              |
+| `RFDETRMedium`  | 705        | 15         | 99.7%                              |
+| `RFDETRSegNano` | 725        | 15         | 99.9%                              |
+
+Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work. A [Neural Engine export](#neural-engine-export) runs the query selection on the ANE as well.
+
+At fp32 there is no boundary to speak of, because there is no ANE: the plan reports *every* op as ANE-unsupported, and the same RFDETRNano bundle runs all 597 ops on the GPU under `ALL` and all 597 on the CPU under `CPU_AND_NE`.
+
+**`ALL` is not always the fastest choice.** With `ALL`, Core ML is free to put part of the graph on the GPU, and for `RFDETRSegNano` it does: the plan splits 79% ANE / 21% GPU (measured on the earlier iOS 16 bundle; not re-measured for the iOS 15 bundle), and the transfers between them cost real time — 44.2 ms under `ALL` against 38.8 ms under `CPU_AND_NE` (p50, same methodology as the table above). Whether detection models show the same gap was not measured here. Measure both on your target device rather than assuming the default is best.
+
+The [ExecuTorch CoreML delegate](executorch.md#coreml-backend-apple-neural-engine-fp16) lowers RF-DETR to a single Core ML model inside the `.pte`, and that model does reach the Neural Engine. Its internal split is not measurable with `MLComputePlan`, which needs an `.mlpackage`, so the table above is not a statement about the `.pte`.
+
+## Neural Engine Export
+
+`coreml_neural_engine=True` exports a graph that runs almost in full on the ANE. Every recent A-series (iPhone, iPad) and M-series (Mac) chip has an ANE. The flag is off by default. It needs `coreml_precision="float16"`: the ANE runs fp16 only, so an fp32 export with the flag logs a warning.
+
+```python
+model.export(format="coreml", coreml_precision="float16", coreml_neural_engine=True)
+```
+
+The graph has the same weights, inputs, outputs and minimum OS as the default fp16 export. Two parts of it change:
+
+- The backbone attention runs as one einsum pair per head, on a channels-first layout, in query chunks of at most 256 tokens. This is Apple's [`SPLIT_EINSUM_V2`](https://github.com/apple/ml-ane-transformers) pattern: the ANE runs matmul and convolution ops much faster than a fused attention op.
+- The two-stage query selection ranks the scores with comparisons and a sum, and selects the rows with a one-hot matmul.
+
+Under `CPU_AND_NE`, only `resample` and its `cast` ops stay on the CPU: 4, 6 and 8 ops for `RFDETRNano`, `RFDETRSmall` and `RFDETRMedium`, with 99.8% of the estimated work on the ANE (`MLComputePlan`, Apple M4 Max).
+
+The bundle name has `-ane` after the precision, `{variant}_fp16-ane.mlpackage`, so it does not replace a default export in the same folder. An explicit `output_name` is used as given.
+
+**Use it only with `CPU_AND_NE` or `ALL` compute units.** On the CPU and the GPU, this graph is slower than the default graph. Single-image latency, pretrained models at their default resolutions, Apple M4 Max (16-core CPU, 40-core GPU; macOS 27.0.1, coremltools 9.0), fp16, batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
+
+| Model          | Export                      | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL`    |
+| -------------- | --------------------------- | ---------- | ------------ | ------------- | -------- |
+| `RFDETRNano`   | default                     | 31.3       | 22.4         | **20.1**      | 22.9     |
+| `RFDETRNano`   | `coreml_neural_engine=True` | 36.1       | **17.7**     | 24.0          | 18.7     |
+| `RFDETRSmall`  | default                     | 45.6       | 34.5         | **23.3**      | 39.3     |
+| `RFDETRSmall`  | `coreml_neural_engine=True` | 55.4       | 30.4         | 31.5          | **30.2** |
+| `RFDETRMedium` | default                     | 47.2       | 44.7         | **24.0**      | 49.2     |
+| `RFDETRMedium` | `coreml_neural_engine=True` | 65.5       | 36.6         | **33.0**      | 44.2     |
+
+On this M4 Max, the Neural Engine graph on the ANE is the fastest choice for `RFDETRNano`, and the default graph on the GPU for `RFDETRSmall` and `RFDETRMedium`. Measure both exports on your target device.
+
+The ANE takes longer to compile this graph on first load: 6.4, 9.3 and 10.3 s for the three models, against 4.3, 4.5 and 5.2 s for the default graph. Later loads of the same bundle use the system cache and take less than 0.1 s.
+
+The two graphs give close but not identical outputs, and the same accuracy. On COCO val2017 (all 5000 images, `CPU_AND_NE`, same decoding for all rows, Apple M4 Max):
+
+| Model          | Export                      | mAP@[.5:.95] | mAP@.5 |
+| -------------- | --------------------------- | ------------ | ------ |
+| `RFDETRNano`   | default                     | 48.0         | 67.1   |
+| `RFDETRNano`   | `coreml_neural_engine=True` | 48.0         | 67.1   |
+| `RFDETRSmall`  | default                     | 52.8         | 71.9   |
+| `RFDETRSmall`  | `coreml_neural_engine=True` | 52.8         | 71.9   |
+| `RFDETRMedium` | default                     | 54.6         | 73.5   |
+| `RFDETRMedium` | `coreml_neural_engine=True` | 54.6         | 73.5   |
+
+!!! note "Equal scores and other models"
+
+    The one-hot selection puts equal scores in index order, lowest first. `torch.topk` does not specify an order for them, so equal scores at the k-th place can select different rows. A model without the box reparameterization of the released models (`bbox_reparam=True`) keeps `topk`, and the export logs a warning.
+
+## Measured Latency on Apple Silicon
+
+Apple M4 Max, macOS 26.7.1, `RFDETRSmall`, `rfdetr` develop, 5 warmup + 30 timed runs per row, from the [Apple cookbook](../../cookbooks/export-apple/). Every latency is the end-to-end `predict()` call through `RFDETRInference` (preprocessing, forward, postprocessing); `FPS` is images per second at that batch size. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed. The PyTorch baseline of the same machine is on the [export overview](index.md#pytorch-baseline); the ExecuTorch CoreML-backend rows of the same run are on the [ExecuTorch page](executorch.md#measured-latency-on-apple-silicon).
+
+| Compute units           | Precision | b1 latency [ms] | Size [MB] | mAP@50:95 [%] | FPS b1 | FPS b4 | FPS b8 |
+| ----------------------- | --------- | --------------- | --------- | ------------- | ------ | ------ | ------ |
+| `ALL` (`device="auto"`) | fp32      | 12.0            | 114.7     | 56.5          | 83.4   | 119.3  | 124.7  |
+| `ALL` (`device="auto"`) | fp16      | 23.6            | 57.7      | 56.5          | 42.4   | 48.1   | 68.2   |
+
+CoreML fp32 is the faster of the two CoreML rows at every batch size, and a folder of 64 images runs at 86.1 img/s in fp32 against 58.1 in fp16, and 1.7 times faster than eager PyTorch `predict()` on the same machine at batch 1 (12.0 against 20.0 ms). It is not faster than PyTorch's best route on this Mac: `inference()` with inductor, the MPS default, ran at 10.3 ms in fp16 and 11.1 ms in fp32 (see the [PyTorch baseline](index.md#pytorch-baseline)), so at batch 1 the two are within two milliseconds of each other and the choice is about size, tooling and deployment target rather than speed. Its fp16 export is half the size but about twice as slow at batch 1 (23.6 against 12.0 ms), so for `RFDETRSmall`'s default graph under `ALL`, fp16 saves disk space, not time. That is not a rule for every model and compute unit: in the [Neural Engine export](#neural-engine-export) table, the fp16 Neural Engine graph on `CPU_AND_NE` is the fastest row for `RFDETRNano`, and in the M3 Pro table fp16 under `ALL` beats fp32. Those tables come from another macOS release and timing method (p50 over 3 runs of 100 iterations, not 30 timed `predict()` calls), so compare rankings across them, not milliseconds. Measure fp16 per model and chip generation. Both rows score the same mAP on the subset as eager PyTorch, so the choice here is about latency, size and tooling.
+
+The [latency cookbook](../../cookbooks/measure-latency/) times every pretrained size on the same M4 Max, as the median of 500 images, and the fastest configuration per size is on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-apple-silicon), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-apple-silicon) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-apple-silicon). It measures CoreML twice: with the default `device="auto"`, which lets Core ML plan work on the Neural Engine, and with `device="cpu_and_gpu"`. The default is fastest for Atto only (fp16, 3.81 ms against 7.82 ms in fp32, and 25% ahead of PyTorch inductor in fp16). `cpu_and_gpu` in fp16 is fastest for Medium (13.24 ms), Large (16.90 ms), XLarge (31.29 ms) and Keypoint (21.34 ms), and ties with PyTorch inductor for 2XLarge (41.74 ms for both). PyTorch inductor in fp16 is fastest for Femto, Pico, Nano, Small and Seg Nano to Seg XLarge, and PyTorch TorchScript in fp16 for Seg 2XLarge, and a gap under about 5% is a tie. fp16 under the default compute units is not reliably faster: Femto took 24.51 ms, 3.0 times its fp32 time (8.30 ms), and the same package took 8.16 ms with `cpu_and_gpu`. The Femto time is repeatable, not noise (25.02 ms in an earlier run of the cookbook, 24.94 ms in an earlier export): loading its fp16 package prints `ANECCompile() FAILED` from the Neural Engine compiler, so Core ML cannot run the Neural Engine plan it chose and the model runs slowly. Atto's fp16 package did not print that error. For Nano to 2XLarge the default fp16 plan was slower than `cpu_and_gpu` too, so pass `device="cpu_and_gpu"` to `RFDETRInference` and measure fp16 and fp32 per model.
+
+On a Mac with macOS earlier than 27 the Core AI package loads and runs, but only on the CPU, so it is not measured here; see [Core AI](coreai.md).
+
+!!! note "Noisy run"
+
+    The machine was busy during this measurement (load average about 10, an IDE indexing in the background), so batch 4 and 8 rows, and the inductor rows in the PyTorch baseline in particular, read lower than an idle run. Rerun on an idle machine for tighter numbers.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.11.0.dev0"
+version = "1.13.0.dev"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Software Development",
     "Topic :: Scientific/Engineering",
@@ -40,36 +41,57 @@ dependencies = [
     "torch>=2.2.0",                    # core tensor ops and model forward pass
     "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
     "tqdm",                            # progress bars during weight download
-    "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
     "supervision>=0.29.0",       # inference output (Detections, Masks)
     "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
 ]
 
 [project.optional-dependencies]
+stream = [
+    "opencv-python-headless>=4.8.1.78",  # Same cv2 distribution albumentations ([augment]) requires; two would both own cv2
+    "mss>=9",                         # Desktop capture
+    "yt-dlp>=2026.7.4",               # Resolve YouTube video streams; floor excludes releases with published advisories
+]
 lora = [
     "peft",                            # LoRA backbone fine-tuning
 ]
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
-    "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin
+    "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin, and re-diff OnePassCocoMeanAveragePrecision.update(), which mirrors MeanAveragePrecision.update() and imports _input_validator, _fix_empty_tensors and _warning_on_too_many_detections
     # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
     # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
     # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
-    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The exact pin is
-    # deliberate: one of the hotcoco behaviors the adapter works around still fails silently rather than loudly on
-    # 1.0.1 — its `dataset` getter returns a copy, so an in-place annotation edit is invisible to it. (1.0.1 fixed
-    # the other: `mask.encode` emitting RLE counts as bytes that its own COCO constructor read back as an empty
-    # mask, collapsing mask AP to 0.0 without raising.) Pinning exactly makes every hotcoco release an explicit,
-    # parity-tested upgrade rather than something a user's resolver can pick up unverified. Installing it also
-    # puts a generically-named `coco` console script on PATH.
-    # TODO: once a hotcoco release fixes the dataset-copy behavior too, drop the matching workaround
-    # in src/rfdetr/training/coco_map.py (_prediction_dataset_for_iou_type) and reconsider widening this to a range.
-    "hotcoco==1.0.1",
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The floor is 1.2.1.
+    # Release 1.2.0 added the column-form APIs the adapter builds its datasets with: `COCO.from_arrays` for the ground
+    # truth, `COCO.load_res(array, segmentation=...)` for box and mask predictions, and
+    # `COCO.update_anns(ids=..., area=...)` to switch prediction areas between IoU types in place (its `dataset` getter
+    # returns a copy, so an edit through it never lands). Release 1.2.1 stops warning about the float32 threshold
+    # grids, which the narrowed warning filter in `_silenced_backend_diagnostics` assumes, and raises `RuntimeError` for
+    # a NaN score. `_HotCocoBackend` refuses an install that lacks a symbol the adapter calls; the 1.2.1 floor itself is
+    # enforced only by this requirement. 1.2.1 rejects a fractional category or image id but accepts a whole-valued
+    # float one, so the adapter checks label dtypes itself. The ceiling keeps the parity-tested 1.2 line until the next minor is verified against the
+    # adapter. Installing it also puts a generically-named `coco` console script on PATH.
+    "hotcoco>=1.2.1,<1.3",
     "faster-coco-eval>=1.7.2",
+    # Third COCO evaluation backend, selected with TrainConfig.eval_backend="ufcoco" (BSD-2-Clause, numpy-only runtime
+    # dependency, wheels for CPython 3.8+ on manylinux x86_64/aarch64, macOS x86_64/arm64 and win_amd64).
+    # Reproduces pycocotools' evaluator arrays byte for byte; the adapter summarizes its aggregate AP at the configured
+    # eval_max_dets and hands its encoder uint8 masks, see _UfcocoBackend in src/rfdetr/training/coco_map.py. The floor
+    # is the release whose COCOeval subclasses evaluate NumPy result arrays without materializing them
+    # (developer0hye/ultrafast-pycocotools#24), which the box-only detection-array path relies on; below it that path
+    # is slower than the dict path it replaces. 0.1.10 (developer0hye/ultrafast-pycocotools#7, joint bbox/mask
+    # evaluation over images with no annotations) is the correctness floor beneath it: never relax this past 0.1.10.
+    # The ceiling keeps the parity-tested 0.1 line until the next series is verified against the adapter. The
+    # adapter's aggregate-AP override also calls CocoEval's private _summarize() method directly, so the ceiling
+    # additionally guards against that private surface changing shape upstream.
+    "ultrafast-pycocotools>=0.1.13,<0.2",
+    # Default COCO evaluation backend (TrainConfig.eval_backend="vernier"), run in "corrected" parity mode.
+    # 0.6 brings the columnar ingest that makes it faster than ufcoco; the ceiling keeps the tested line.
+    "vernier>=0.6.0,<0.7",
     "pycocotools",
     "scipy",
+    "simplejpeg>=1.9,<2",  # libjpeg-turbo JPEG decoding straight into NumPy for the training dataset (#1391); wheels bundle the library, Pillow is the fallback
     # Batched Hungarian solver for the matcher (Apache-2.0). Speeds up the CUDA path only — its
     # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
     # falls back internally to the same SciPy solve the matcher would have called, so only speed
@@ -86,7 +108,7 @@ train = [
 # Transformer Engine's PyTorch extension needs NVIDIA CUDA and a Linux x86-64 build environment.
 # Keep macOS/MPS and Windows installs free of this optional CUDA dependency.
 cuda = [
-    "transformer-engine[pytorch]>=2.18,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "transformer-engine[pytorch]>=2.19,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
@@ -102,19 +124,19 @@ data = [
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
-    "onnxsim>=0.7.0",  # 0.7.0 ships wheels for cp310/311/312-abi3 (3.10-3.13) on linux x86_64+aarch64, win_amd64 and macOS arm64. The old <0.6.0 pin resolved to 0.5.0, which lacks cp311/cp313/aarch64 wheels, so pip built onnxsim's bundled onnxruntime/onnx from source and the install hung (#749).
-    "onnx_graphsurgeon",
     # onnxruntime dropped cp310 wheels after 1.23.2; 1.24.0+ ship cp311-cp314 only. Unpinned,
     # a 3.10 resolve picks the newest release and then fails at install with "no source
     # distribution or wheel for the current platform". Remove the split when the project's
     # requires-python floor moves past 3.10.
     "onnxruntime<1.24; python_version < '3.11'",
     "onnxruntime; python_version >= '3.11'",
-    "polygraphy",
 ]
 tensorrt = [
     "onnxruntime-gpu",
-    "tensorrt>=8.6.1",
+    # Capped below 11.5: 11.5.0.63 (2026-11-17) slowed the INT8 engine builds enough that the TensorRT parity job,
+    # 24.5 min on 11.4.0.106, no longer fit its time limit. The INT8 figures in the docs were measured on 11.4.
+    # Lift the cap after re-running the INT8 sections of docs/cookbooks/export-cuda.ipynb on 11.5.
+    "tensorrt>=8.6.1,<11.5",
     "polygraphy",
     # TensorRT >= 11 takes engine precision from the ONNX graph, so fp16=True must cast the graph
     # first. This is that caster: an 87 KiB pure-Python wheel adding no transitive package this
@@ -122,7 +144,7 @@ tensorrt = [
     "onnxconverter-common",
     "onnx>=1.16.0,<2.0",
 ]
-# pycuda is only used by async TRTInference in rfdetr.export.benchmark. It ships as an sdist
+# pycuda is only used by async TRTInference (rfdetr.export._tensorrt.inference). It ships as an sdist
 # and builds against the CUDA toolkit dev headers (cuda.h), which a GPU driver alone does not
 # provide. Keep it out of the base [tensorrt] extra so the ONNX->engine parity path (polygraphy
 # TrtRunner, no pycuda) installs on a driver-only runner; async benchmarking opts into it here.
@@ -130,49 +152,81 @@ tensorrt-bench = [
     "pycuda>=2024.1",
 ]
 tflite = [
-    # TFLite conversion routes every export through the ONNX pipeline first (the ONNX exporter's
-    # graph optimization/simplification), so these are needed here directly rather than via
-    # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
-    # inference, never touched by the TFLite export path.
+    # TFLite export writes the ONNX graph first (onnx), rewrites its GridSample nodes for the converter
+    # (onnx_graphsurgeon), then converts it with onnx2tf. onnx2tf lists TensorFlow and tf-keras only as an
+    # optional extra, so they are listed here; it pins its own onnxruntime, so that one is not. onnx2tf shells out
+    # to the onnxsim console script for its own simplification pass, and the distribution it depends on provides it:
+    # onnxsim-prebuilt for 2.4.x, which ships cp312 abi3 wheels for every platform. Never also list onnxsim here:
+    # both wheels install the same onnxsim package and script, the one installed last replaces the other, and
+    # onnx2tf 2.4.3 then fails to convert any RF-DETR model under onnxsim 0.8.1.
     "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
-    "onnxsim>=0.7.0; python_version >= '3.12' and python_version < '3.13'",  # 0.7.0 ships a cp312 abi3 wheel; the old <0.6.0 pin resolved to 0.5.0 whose wheels don't cover every platform, so pip built from source and hung (#749).
     "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
-    "polygraphy; python_version >= '3.12' and python_version < '3.13'",
-    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
+    # <2.5: 2.5 and later move to numpy 2.2.6 and onnxsim 0.6.5, a converter stack this extra has not been tested on.
+    "onnx2tf>=2.4.0,<2.5; python_version >= '3.12' and python_version < '3.13'",
     "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
 executorch = [
-    # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1.
-    # executorch publishes cp310-cp313 wheels only (1.3.1 is current) and has no sdist, so a
+    # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1. Capped below 1.4: 1.4.x needs
+    # torch>=2.13; 1.5.x dropped the torch requirement entirely but fails every `Method.execute` with
+    # "tensor does not have a device" (see the ci-executorch-pin group below, and
+    # https://rfdetr.roboflow.com/latest/cookbooks/export-mobile/ Section 9).
+    # executorch publishes cp310-cp313 wheels only and has no sdist, so a
     # 3.14 install fails on wheel availability rather than resolution. The marker keeps the
     # extra installable-but-empty on 3.14, matching how [tflite] is gated to 3.12. Drop the
     # `python_version < '3.14'` marker once executorch ships cp314 wheels.
-    "executorch>=1.3,<2.0; python_version < '3.14'",
+    "executorch>=1.3,<1.4; python_version < '3.14'",
+]
+executorch-tensorrt = [
+    # format="executorch", backend="tensorrt": Torch-TensorRT builds the TensorRT engine that the .pte carries, and its
+    # [executorch] extra installs the ExecuTorch release it was built with plus the TensorRT delegate that ExecuTorch's
+    # runtime needs to load that .pte. Validated on 2.15.0 (ExecuTorch 1.6.0, TensorRT 11.4). It pins torch 2.15 and
+    # executorch 1.6, so this extra conflicts with [executorch] (see [tool.uv] conflicts). Linux only: Torch-TensorRT
+    # and its delegate need Python 3.11-3.14 and a CUDA 13 torch, which PyPI ships for Linux but not for Windows. The
+    # extra is empty elsewhere. Validated on Linux x86-64; aarch64 untested: the marker does not exclude aarch64, but no
+    # export or prediction has been run there.
+    "torch-tensorrt[executorch]>=2.15,<2.16; python_version >= '3.11' and python_version < '3.15' and sys_platform == 'linux'",
+]
+coreai = [
+    # Apple Core AI (.aimodel) export. coreai-torch requires Python >= 3.11 and coreai-core ships cp311-cp314
+    # wheels for macOS arm64 and Linux x86-64 only, so the extra is empty elsewhere and the exporter's own
+    # ImportError explains why. Running an .aimodel needs the Core AI runtime of iOS/iPadOS/macOS 27.
+    # Pinned exactly: even a 0.4.x *patch* can change the pre-1.0 surface this exporter calls, not just a minor.
+    # 0.4.3 (coreai-core 1.0.0b3) folded AIProgram's optimization passes into to_coreai() and removed
+    # AIProgram.optimize(), so _coreai/exporter.py no longer calls it; with 0.4.2 it would now save an
+    # unoptimized program. Bump this pin only after re-running the e2e_coreai suite against the new version.
+    "coreai-torch==0.4.3; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
+    # coreai-torch 0.4.3 pins coreai-core==1.0.0b3, a pre-release. Since coreai-core 1.0.0 was published (2026-11-18), uv 0.9.26
+    # no longer picks a transitive pre-release, and every extra's install-plan check failed with "no version of
+    # coreai-core==1.0.0b3". A direct requirement carrying a pre-release bound makes uv consider pre-releases for this
+    # package. The bound is "<1.0.0rc1", not "<1.0.0": PEP 440 excludes the pre-releases of 1.0.0 from "<1.0.0", which
+    # would exclude 1.0.0b3 itself. Drop this line together with the coreai-torch bump to a release that needs 1.0.0.
+    "coreai-core<1.0.0rc1; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
 ]
 coreml = [
     # torch.export (ExportedProgram) support added in coremltools 8.0 (see
     # src/rfdetr/export/_coreml/torch_ops.py, op_coverage.py for the private-API surface this pin
     # guards — coremltools._TORCH_OPS_REGISTRY internals can rename across minors).
     "coremltools>=8.0,<10.0",
-    # torch>=2.12 sharply raises the rate of a CoreML/eager numeric-parity divergence on real-image
-    # input (coremltools 9.0): bisected 2026-07-28 on RFDETRNano with random-init weights —
-    # torch<2.12 failed ~1/6 repeat runs, torch>=2.12.0 failed ~6/7 (up to ~1.0 abs diff on raw
-    # query outputs; tests/export/test_coreml_export.py::TestCoreMLEndToEnd::
-    # test_outputs_match_pytorch_supervision_image[detection]). Same decomposed op set both sides —
-    # looks like a coremltools MIL lowering regression exposed by torch 2.12's export graph, not a
-    # missing/renamed op. This pin reduces the failure rate, it does not eliminate it — the
-    # underlying instability (random/untrained-weight activations pushing some op toward
-    # overflow/nan during MIL conversion; see the divide-by-zero/overflow RuntimeWarnings logged
-    # during convert) is present at some low rate on torch<2.12 too. Raise this cap once the root
-    # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
-    "torch<2.12",
+    # No torch cap: the parity failures once blamed on torch>=2.12 were two-stage topk near-tie
+    # flips, not a coremltools numeric bug (see tests/export/coreml/test_coreml_export.py).
 ]
 openvino = [
     # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
     # which this package calls directly and which can move across a major release.
     "openvino>=2024.0,<2027.0",
+]
+litert = [
+    # torch.export -> .tflite through litert-torch's own lowering: no ONNX and no TensorFlow step, unlike the
+    # onnx2tf-based [tflite] extra above. Validated on 0.9.4; capped at the next major since the package is
+    # pre-1.0 and `convert(...).export(...)` is the only surface this package calls. litert-torch's own
+    # metadata pins torch<2.14, which the [tool.uv] conflicts below declare against the typing group.
+    "litert-torch>=0.9.4,<1.0",
+    # litert-torch lowers through JAX's StableHLO, and jax/jaxlib 0.12.1 emit a vhlo.fma op that the converter's
+    # StableHLO plugin (v1.19.0) cannot serialize, so every LiteRT export fails with "failed to legalize operation
+    # 'vhlo.fma_v1'". 0.12.0.1 exports fine. Drop this cap once litert-torch or its StableHLO plugin handles the op.
+    "jax<0.12.1",
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -184,10 +238,11 @@ loggers = [
 visual = [
     "matplotlib",
     "pandas",
+    "psutil",  # host-memory reader behind rfdetr.export.benchmark.measure_memory() on every non-CUDA device
     "seaborn",
 ]
-cli = ["jsonargparse[signatures]>=4.27.7"]
-plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+cli = ["jsonargparse[signatures]>=4.46.0"]
+plus = ["rfdetr_plus>=1.1.0, <2.0.0"]
 # XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
 # torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
 # _XLAC extension is ABI-locked to ONE torch minor (a mismatch surfaces as an `undefined symbol`
@@ -203,13 +258,6 @@ xla = [
 ]
 
 [dependency-groups]
-# TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
-#   Remove this group and the --group ci-gpu-pin references in CI once the driver is updated.
-#   Does not affect users installing rfdetr from PyPI.
-ci-gpu-pin = [
-    "torch<2.11",
-    "torchvision<0.26",
-]
 
 # TODO: Temporary: executorch==1.3.1's prebuilt wheel is compiled against ~torch-2.12.x's C10 ABI
 #   (executorch itself only floors torch>=2.12.0a0, no ceiling). torch>=2.13.0 removed/changed a C10
@@ -219,8 +267,13 @@ ci-gpu-pin = [
 #   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
 #   see rfdetr.export._executorch.exporter._check_executorch_available(require_runtime=True) for the
 #   equivalent runtime guidance surfaced to end users who hit this.
+#   executorch>=1.4 needs torch>=2.13 and says so, so it never resolved under this pin; 1.5.0
+#   (2026-09-16) dropped its torch requirement entirely, resolves against torch 2.12.1, and its
+#   runtime then fails every `Method.execute` with "tensor does not have a device". Cap executorch
+#   alongside torch until both pins move together.
 ci-executorch-pin = [
     "torch<2.13",
+    "executorch<1.4",
 ]
 
 build = [
@@ -236,6 +289,7 @@ tests = [
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
+  "pytest-mock>=3.12,<4",
   "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
   "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
   "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
@@ -246,6 +300,10 @@ tests = [
   # instead of silently skipping.
   "onnx>=1.16.0,<2.0",
   "onnxconverter-common",
+  # tests/export/onnx/test_onnx_quantize.py runs quantize_int8 end to end on a synthetic graph, which needs the runtime
+  # that collects the activation ranges. Same 3.10 split as the [onnx] extra: 1.24+ ships no cp310 wheels.
+  "onnxruntime<1.24; python_version < '3.11'",
+  "onnxruntime; python_version >= '3.11'",
   "tomli>=2.0; python_version < '3.11'",
   # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
   # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
@@ -267,7 +325,10 @@ typing = [
 
 docs = [
     "mkdocs-material[imaging]>=9.7",
+    "pymdown-extensions<12.2",  # 12.2 requires md in Highlight.__init__, which mkdocstrings does not pass.
+    "mkdocs-redirects>=1.2.2,<1.2.3",  # 1.2.3 adds ProperDocs and warns on MkDocs builds.
     "mkdocstrings>=0.25.2,<0.30.0",
+    "pymdown-extensions<12.2",  # 12.2 requires an argument not passed by mkdocstrings below 0.30.
     "mkdocstrings-python>=1.10.9",
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
@@ -302,22 +363,7 @@ override-dependencies = [
     "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
-# ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
-# from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
-# `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
-# forks the two instead of failing to find one lockfile that satisfies both at once.
-#
-# coreml (torch<2.12, see coreml extra comment) and executorch (torch>=2.12.0a0) are likewise
-# unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
-    [
-        { group = "ci-gpu-pin" },
-        { extra = "executorch" },
-    ],
-    [
-        { extra = "coreml" },
-        { extra = "executorch" },
-    ],
     # executorch and tflite extras are unsatisfiable together; declare a conflict so `uv lock` / `uv sync --all-groups` can fork.
     [
         { extra = "executorch" },
@@ -333,10 +379,6 @@ conflicts = [
     # share an environment with configurations that require older Torch releases.
     [
         { group = "typing" },
-        { extra = "coreml" },
-    ],
-    [
-        { group = "typing" },
         { extra = "executorch" },
     ],
     [
@@ -344,12 +386,64 @@ conflicts = [
         { extra = "xla" },
     ],
     [
+        { group = "ci-executorch-pin" },
+        { extra = "tflite" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "xla" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
         { group = "typing" },
-        { group = "ci-gpu-pin" },
+    ],
+    # litert-torch 0.9.x pins torch<2.14 in its own metadata; the typing group pins torch==2.14.0.
+    [
+        { group = "typing" },
+        { extra = "litert" },
+    ],
+    # onnx2tf>=2.4.0 (the tflite extra) pins ai-edge-litert==2.1.2 exactly, while litert-torch 0.9.4 requires
+    # ai-edge-litert>=2.2.0 -- the two .tflite routes cannot share one environment, same fork rationale.
+    [
+        { extra = "litert" },
+        { extra = "tflite" },
+    ],
+    # coreai-torch 0.4.3 needs coreai-core 1.0.0b3, which requires numpy>=2.3.0, while onnx2tf (the tflite extra)
+    # pins numpy 2.2.6 or 1.26.4 -- same fork rationale.
+    [
+        { extra = "coreai" },
+        { extra = "tflite" },
     ],
     [
         { group = "typing" },
         { group = "ci-executorch-pin" },
+    ],
+    # executorch-tensorrt pins torch 2.15 (Torch-TensorRT 2.15) and executorch 1.6, so it cannot share an environment
+    # with executorch (executorch<1.4), ci-executorch-pin (torch<2.13), xla (torch==2.9.*), litert (torch<2.14) or the
+    # typing group (torch==2.14.0). With tflite, onnx2tf's numpy==1.26.4 meets ExecuTorch 1.6's numpy>=2.
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "executorch" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { group = "ci-executorch-pin" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "xla" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "litert" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { group = "typing" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "tflite" },
     ],
 ]
 
@@ -402,6 +496,7 @@ ignore = [
 "docs/cookbooks/*.py" = [
     "E402",  # cell-local imports are intentional in percent-format scripts
     "E501",  # .py mirror of jupytext notebook — markdown prose lines are intentionally unwrapped
+    "F704",  # top-level await is valid in a Jupyter cell; the .py mirror keeps it for jupytext round-tripping
 ]
 
 [tool.docformatter]
@@ -414,26 +509,35 @@ addopts = [
     "--color=yes",          # colored output
     "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
+doctest_norecursedirs = [
+    "*_fused_adamw_ema_triton.py",  # CUDA-only DSL module; imported lazily after the Triton gate
+    "_kornia_pixel_affine.py",  # Kornia is optional; this module is imported lazily after the backend gate
+]
 # Doctest collection is intentionally enabled across tests/ (no doctest_norecursedirs exclusion) so
 # helper-function doctests in test modules run. This previously blanket-excluded tests/* because
 # doctestplus walking every test module's attributes after the TF/ai_edge_litert stack is imported by
 # the tflite export tests grows unittest.mock.call's cached child-mock graph unboundedly — observed
 # 38 GB RSS and a silent SIGKILL during collection. If that recurs, reintroduce
-# `doctest_norecursedirs = ["tests/*"]` or scope it to `tests/export/test_tflite_inference.py`.
+# `doctest_norecursedirs = ["tests/*"]` or scope it to `tests/export/tflite/test_tflite_inference.py`.
 pythonpath = ["src", "."]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
     "xla: tests that require an XLA device or torch_xla runtime (TPU, or CPU/GPU PJRT)",
     "tpu: tests that require real TPU hardware (libtpu/MXU); not runnable on CPU/GPU PJRT",
     "coco17: tests that require COCO 2017 images or annotations",
+    "ddp: tests that spawn real multi-process DDP workers (gloo); excluded on macOS CI",
     # `flaky` is provided by pytest-rerunfailures; registered here too for clarity and to stay
     # safe under --strict-markers (used by tests/benchmarks/test_training_*.py).
     "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
     "integration: tests that require optional dependencies or dedicated integration CI (opt-in)",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
+    "e2e_executorch_tensorrt: ExecuTorch backend='tensorrt' export + prediction parity, [executorch-tensorrt] extra (GPU, opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
+    "e2e_coreai: Core AI end-to-end convert + numerical parity (needs the macOS 27 Core AI runtime; opt-in)",
     "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
-    "e2e_onnxruntime: ONNX Runtime session construction + inference (opt-in; also marked integration)",
+    "e2e_onnx: ONNX Runtime session construction + inference, [onnx] extra (opt-in; also marked integration)",
+    "e2e_tflite: TFLite export + public prediction parity (opt-in)",
+    "e2e_litert: LiteRT end-to-end .tflite export + numerical parity (opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]
@@ -483,6 +587,7 @@ overrides = [
     "einops", "einops.*",
     "deprecate", "deprecate.*",
     "faster_coco_eval", "faster_coco_eval.*",
+    "ultrafast_pycocotools", "ultrafast_pycocotools.*",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
     "requests", "requests.*",
@@ -495,7 +600,6 @@ overrides = [
     "onnxconverter_common", "onnxconverter_common.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
     "onnxruntime", "onnxruntime.*",
-    "onnxsim", "onnxsim.*",
     "polygraphy", "polygraphy.*",
     "tensorrt", "tensorrt.*",
     "pycuda", "pycuda.*",
@@ -503,14 +607,30 @@ overrides = [
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
+    "torch_tensorrt", "torch_tensorrt.*",
+    "torch_tensorrt_executorch_runtime", "torch_tensorrt_executorch_runtime.*",
     "coremltools", "coremltools.*",
+    "coreai", "coreai.*",
+    "coreai_torch", "coreai_torch.*",
     "openvino", "openvino.*",
+    "nncf", "nncf.*",
+    "litert_torch", "litert_torch.*",
+    "ai_edge_litert", "ai_edge_litert.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
     "webdataset", "webdataset.*",
   ], ignore_missing_imports = true },
+  # IPython ships without inline type hints or a stub package: on CI (not installed) mypy needs
+  # ignore_missing_imports; in a full dev venv (installed via the docs/notebook extras) the module
+  # resolves but its symbols are untyped, so follow_imports = "skip" treats it as Any either way
+  # instead of raising attr-defined/no-untyped-call only in the venv that happens to have it.
+  { module = [
+    "IPython", "IPython.*",
+  ], ignore_missing_imports = true, follow_imports = "skip" },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
+  # Supported older plus releases lack PE exports; newer releases make the guarded import's ignore unused.
+  { module = ["rfdetr.platform.models"], warn_unused_ignores = false },
 ]

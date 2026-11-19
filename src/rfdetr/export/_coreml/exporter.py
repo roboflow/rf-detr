@@ -23,12 +23,13 @@ Note:
     ``coreml_precision`` argument (string form only, so callers don't need to import ``coremltools``).
 
 Note:
-    ``torch>=2.12`` sharply raises the rate of a CoreML/eager numeric-parity divergence on
-    real-image input with coremltools 9.0 (bisected: torch<2.12 failed ~1/6 repeat runs,
-    torch>=2.12.0 failed ~6/7) — the ``coreml`` extra pins ``torch<2.12`` in ``pyproject.toml``
-    until this is understood/fixed upstream. That pin reduces the failure rate, it does not
-    guarantee determinism. See ``tests/export/test_coreml_export.py::TestCoreMLEndToEnd::
-    test_outputs_match_pytorch_supervision_image``.
+    Raw outputs can legitimately differ from eager PyTorch when the two-stage encoder ranking has
+    near-tied scores: fp32 rounding differences between runtimes can swap which queries ``torch.topk``
+    selects. This is not a conversion error, and it is why the end-to-end parity tests in
+    ``tests/export/coreml/test_coreml_export.py`` check that the ranking is well separated before comparing.
+    ``coreml_precision="float16"`` narrows that fp32 safety margin further and makes a rank swap more
+    likely, not less — see the "Raw tensors can differ more than the precision suggests" note under
+    Native CoreML Export in ``docs/exports/coreml.md``.
 """
 
 from __future__ import annotations
@@ -41,10 +42,14 @@ import torch
 
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
+from rfdetr.export._coreml.passes import rfdetr_pass_pipeline
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
-from rfdetr.export.base import ExportConfig, Exporter
+from rfdetr.export._neural_engine import neural_engine_model
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
+from rfdetr.export.base import ExportConfig, Exporter, serialize_notes
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import get_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -92,9 +97,14 @@ class CoreMLConfig(ExportConfig):
 
     Attributes:
         compute_precision: ``"float32"``, ``"float16"``, or ``None`` for coremltools' default.
+        neural_engine: Rewrite the backbone attention and the two-stage query selection into ops the Apple Neural
+            Engine runs natively (:func:`~rfdetr.export._neural_engine.neural_engine_model`). Same weights. Faster on
+            the Neural Engine, slower on the CPU and the GPU. A derived filename carries ``-ane`` after the precision
+            token; an explicit ``output_name`` is used as given.
     """
 
     compute_precision: str | None = None
+    neural_engine: bool = False
 
 
 class CoreMLExporter(Exporter[CoreMLConfig]):
@@ -113,7 +123,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     """
 
     config_class = CoreMLConfig
-    setting_names = {"compute_precision": "coreml_precision"}
+    setting_names = {"compute_precision": "coreml_precision", "neural_engine": "coreml_neural_engine"}
     format = "coreml"
     display_name = "CoreML"
     dynamic_batch_reason = (
@@ -122,7 +132,42 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     experimental = True
     experimental_note = "Dynamic batch is not supported."
     pip_extra = "coreml"
-    notes_reason = "CoreML .mlpackage has no ONNX-style metadata slot"
+    supports_notes = True
+
+    def _check_capabilities(self) -> None:
+        """Refuse an unrecognized precision string before the forward pass.
+
+        A non-string value is passed through to ``coremltools``, as before: telling a ``coremltools.precision`` member
+        apart needs ``coremltools``, and construction reads the configuration only, never the environment.
+
+        ``neural_engine=True`` with an unset or ``"float32"`` precision is legal but logs a warning: the Neural Engine
+        has no float32 path, so that artifact runs on the CPU or the GPU, where the rewritten graph is the slower one.
+
+        Raises:
+            ValueError: If the configured precision is a string naming neither ``"float32"`` nor ``"float16"``.
+        """
+        super()._check_capabilities()
+        compute_precision = self.config.compute_precision
+        if isinstance(compute_precision, str) and compute_precision not in ("float32", "float16"):
+            raise ValueError(
+                f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
+                f"None, got {compute_precision!r}"
+            )
+        if self.config.neural_engine and compute_precision in (None, "float32"):
+            logger.warning(
+                "coreml_neural_engine=True with float32 precision: the Neural Engine runs float16 only, so this "
+                "artifact runs on the CPU or the GPU, where it is slower than the default export. Pass "
+                "coreml_precision='float16' to run it on the Neural Engine."
+            )
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``coremltools`` is installed.
+
+        Raises:
+            ImportError: If ``coremltools`` is not installed.
+        """
+        _check_coremltools_available()
 
     def _convert(self, graph: ExportGraph) -> Path:
         """Write the ``.mlpackage`` bundle and return its path.
@@ -141,9 +186,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 installed (e.g. a partial/ABI-mismatched install).
             NotImplementedError: If the exported graph contains op kinds missing from coremltools'
                 Torch registry (fast-fail checklist).
-            ValueError: If the configured precision is unrecognized, or if ``torch.export`` /
-                ``coremltools.convert`` raises it directly (e.g. invalid shape arguments) — passed
-                through unwrapped rather than re-wrapped as ``RuntimeError``.
+            ValueError: If ``torch.export`` / ``coremltools.convert`` raises it directly (e.g. invalid shape
+                arguments) — passed through unwrapped rather than re-wrapped as ``RuntimeError``.
             RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
         """
         api = self._import_coreml_api()
@@ -195,22 +239,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             The configured ``coremltools.precision`` value, the member its string names, or
             ``FLOAT32`` when unset (tight CPU parity with eager PyTorch).
-
-        Raises:
-            ValueError: If the configured precision is a string naming neither ``"float32"`` nor
-                ``"float16"``.
         """
         compute_precision: Any = self.config.compute_precision
         if compute_precision is None:
             return api.float32
         if isinstance(compute_precision, str):
-            try:
-                return {"float32": api.float32, "float16": api.float16}[compute_precision]
-            except KeyError:
-                raise ValueError(
-                    f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
-                    f"None, got {compute_precision!r}"
-                ) from None
+            return {"float32": api.float32, "float16": api.float16}[compute_precision]
         return compute_precision
 
     def _resolve_output_file(
@@ -221,7 +255,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         *,
         backbone_only: bool,
     ) -> Path:
-        """Name the ``.mlpackage`` bundle from the configured names, the precision, and the graph kind.
+        """Name the ``.mlpackage`` bundle from the configured names, the precision, the rewrite, and the graph kind.
 
         Args:
             output_dir: Directory the bundle is written into.
@@ -248,8 +282,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 f"Unrecognized CoreML compute precision {compute_precision!r}; using the fp32 filename label."
             )
         export_name = stem if is_custom else f"{stem}_{precision_token}"
-        # The marker goes on after the precision token: it names a distinct model graph, not a detail of
-        # how that graph was lowered.
+        # The Neural Engine rewrite lowers the same model to a graph that is slower on the CPU and the GPU: mark a
+        # derived name, so a default export of the same model in the same directory keeps its own file.
+        if self.config.neural_engine and not is_custom:
+            export_name = f"{export_name}-ane"
+        # The backbone marker goes on last, after the precision and rewrite tokens: it names a distinct model graph,
+        # not a detail of how that graph was lowered.
         export_name = append_backbone_marker(
             export_name, backbone_only=backbone_only, named=bool(variant_name or output_name)
         )
@@ -264,7 +302,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             The exported program, after ``run_decompositions``.
         """
-        model = graph.model.eval()
+        model = neural_engine_model(graph.model) if self.config.neural_engine else graph.model
+        model = model.eval()
         # strict=False: same rationale as ExecuTorch — submodule-lifted spatial_shapes constants
         # break lowering under strict=True on current torch.export + converter stacks.
         exported_program = torch.export.export(model, (graph.input_tensors,), strict=False)
@@ -289,7 +328,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             summary = f"CoreML op registry gaps: {dict(coverage)}"
             logger.error(summary)
             raise NotImplementedError(
-                f"{summary}. Fix these ops before convert (see tests/export/test_coreml_op_coverage.py)."
+                f"{summary}. Fix these ops before convert (see tests/export/coreml/test_coreml_op_coverage.py)."
             )
 
     def _build_mlmodel(self, graph: ExportGraph, compute_precision: ct_precision, api: _CoreMLApi) -> Any:
@@ -313,7 +352,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             NotImplementedError: If the exported graph contains op kinds missing from coremltools'
                 Torch registry.
             ValueError: If ``torch.export`` or ``coremltools.convert`` raises it directly.
-            RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
+            RuntimeError: If ``torch.export``, building the RF-DETR pass pipeline or ``coremltools.convert`` fails
+                for any other reason.
         """
         try:
             with torch.no_grad():
@@ -322,8 +362,18 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 return api.convert(
                     exported_program,
                     convert_to="mlprogram",
-                    minimum_deployment_target=api.target.iOS16,
+                    # iOS15 (spec 6), not iOS16 (spec 7): on the Neural Engine the iOS16 program of an fp16 export loses
+                    # ~3 box AP (pretrained RFDETRNano, COCO val2017, M3 Pro) and iOS15 matches eager. See #1024.
+                    # Cause: iOS15 `resample` takes no fp16 `coordinates` (added in iOS16), so the fp16 pass leaves
+                    # that input fp32 and Core ML runs the op on the CPU. If this target is ever raised, keep
+                    # `resample` fp32 via FP16ComputePrecision(op_selector=...) (measured 48.04 AP at iOS16, #1604).
+                    minimum_deployment_target=api.target.iOS15,
                     compute_precision=compute_precision,
+                    # Rewrites every upsample_bilinear (the segmentation masks' 3x resize included) as matmuls: the
+                    # Neural Engine's 3x upsample_bilinear samples half a cell off. Built here, inside the guard,
+                    # because coremltools mutates the pipeline and a coremltools release without the anchor pass
+                    # must fail as a RuntimeError naming the pin.
+                    pass_pipeline=rfdetr_pass_pipeline(),
                 )
         except (ImportError, NotImplementedError, ValueError):
             # ImportError here is not dead code even though _check_coremltools_available() already
@@ -336,7 +386,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             raise RuntimeError(f"CoreML export failed: {exc}") from exc
 
     def _save_mlmodel(self, mlmodel: Any, output_file: Path) -> Path:
-        """Write the converted model to *output_file*.
+        """Stamp the RF-DETR provenance into the model's metadata and write it to *output_file*.
+
+        ``MLModel.user_defined_metadata`` is the ``.mlpackage``'s metadata slot: ``save`` persists it, and
+        ``ct.convert`` already fills it with its own ``com.github.apple.coremltools.*`` keys, which are kept. The
+        ``rfdetr_notes`` and the encoding of *notes* match the ONNX export, and ``rfdetr_version`` matches the Core AI
+        export.
 
         Args:
             mlmodel: The converted ``coremltools.models.MLModel``.
@@ -345,7 +400,17 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             *output_file*, now on disk.
         """
+        metadata = mlmodel.user_defined_metadata
+        rfdetr_version = get_version()
+        if rfdetr_version is not None:
+            metadata["rfdetr_version"] = rfdetr_version
+        if self.config.notes is not None:
+            metadata["rfdetr_notes"] = serialize_notes(self.config.notes)
         mlmodel.save(str(output_file))
         if self.config.verbose:
             logger.info(f"Successfully exported CoreML model to: {output_file}")
         return output_file
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Use CoreML's ordered model outputs as the artifact interface."""
+        return positional_metadata(metadata)

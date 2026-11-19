@@ -27,7 +27,7 @@ from torchvision import tv_tensors
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional
 
-from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS
+from rfdetr.datasets._aug_utils import IMAGE_LEVEL_TARGET_FIELDS, keypoint_flip_permutation
 
 # Fields skipped by the per-instance keep-mask filter. ``labels`` is deliberately NOT included:
 # this torchvision path filters ``labels`` directly with the keep mask (see
@@ -41,7 +41,7 @@ _Target: TypeAlias = Optional[Dict[str, Any]]
 _TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
 
 
-def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
+def _image_size(image: _ImageInput) -> tuple[int, int]:
     """Return image size as ``(height, width)``.
 
     Args:
@@ -125,6 +125,9 @@ def _filter_per_instance_fields(target: Dict[str, Any], keep: torch.Tensor, boxe
 def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Clear keypoints that are invisible or outside the image.
 
+    Keypoints use continuous coordinates, so both image edges are inside: ``0 <= x <= width`` and
+    ``0 <= y <= height``. A horizontal flip maps ``x = 0`` to ``x = width`` and keeps such a point visible.
+
     Args:
         keypoints: Keypoint tensor of shape ``(N, K, 3)``.
         height: Image height.
@@ -137,7 +140,10 @@ def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) 
         return keypoints
     visible = keypoints[..., 2] > 0
     inside = (
-        (keypoints[..., 0] >= 0) & (keypoints[..., 0] < width) & (keypoints[..., 1] >= 0) & (keypoints[..., 1] < height)
+        (keypoints[..., 0] >= 0)
+        & (keypoints[..., 0] <= width)
+        & (keypoints[..., 1] >= 0)
+        & (keypoints[..., 1] <= height)
     )
     invalid = ~(visible & inside)
     if not invalid.any():
@@ -188,9 +194,7 @@ class RandomSelect:
         self.transform2 = transform2
         self.p = p
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Apply one of the configured transforms.
 
         Args:
@@ -229,9 +233,7 @@ class RandomChoice:
             raise ValueError("transforms must contain at least one transform")
         self.transforms = list(transforms)
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Apply one randomly selected transform.
 
         Args:
@@ -266,9 +268,7 @@ class Compose:
     def __init__(self, transforms: Sequence[Any]) -> None:
         self.transforms = list(transforms)
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Apply transforms in order.
 
         Args:
@@ -308,9 +308,7 @@ class RandomResize:
         self.sizes = [int(size) for size in sizes]
         self.max_size = max_size
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Resize the image and spatial target fields.
 
         Args:
@@ -379,9 +377,7 @@ class Resize:
     def __init__(self, size: tuple[int, int]) -> None:
         self.size = (int(size[0]), int(size[1]))
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Resize the image and spatial target fields.
 
         Args:
@@ -423,8 +419,10 @@ class Resize:
             )
         if "keypoints" in target_out:
             keypoints = target_out["keypoints"].float().clone()
-            keypoints[..., 0] = keypoints[..., 0] * ratio_width
-            keypoints[..., 1] = keypoints[..., 1] * ratio_height
+            # Multiply, then divide: an edge point (x == old_width) maps to exactly new_width. Multiplying by the
+            # precomputed float ratio can round one ulp past it in float32 and get the point cleared as outside.
+            keypoints[..., 0] = keypoints[..., 0] * new_width / old_width
+            keypoints[..., 1] = keypoints[..., 1] * new_height / old_height
             keypoints = _mark_invisible_keypoints(keypoints, new_height, new_width)
             target_out["keypoints"] = keypoints
         if "area" in target_out:
@@ -455,9 +453,7 @@ class RandomSizedCrop:
         self.min_max_height = (int(min_max_height[0]), int(min_max_height[1]))
         self.size = (int(size[0]), int(size[1]))
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Crop and resize the image and spatial target fields.
 
         Args:
@@ -492,6 +488,10 @@ class RandomHorizontalFlip:
         :func:`_apply_to_boxes`) and adds the manual keypoint mirror + visibility handling +
         flip-pair swap on top.
 
+        Keypoints use continuous coordinates: the centre of pixel ``i`` is ``i + 0.5``, the same convention as
+        boxes. A flipped keypoint therefore lands at ``width - x``, not ``width - 1 - x``, which would assume
+        integer pixel centres.
+
     Args:
         p: Flip probability.
         keypoint_flip_pairs: Flat even-length list of index pairs ``(left_i, right_i, ...)`` to swap on horizontal flip.
@@ -509,9 +509,7 @@ class RandomHorizontalFlip:
                 f"keypoint_flip_pairs must have an even number of elements, got {len(self.keypoint_flip_pairs)}"
             )
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Randomly flip the image and target.
 
         Args:
@@ -537,29 +535,24 @@ class RandomHorizontalFlip:
         if "keypoints" in target_out:
             keypoints = target_out["keypoints"].clone()
             visible = keypoints[..., 2] > 0
-            keypoints[..., 0] = (width - 1) - keypoints[..., 0]
+            # Continuous coordinates, same as the box flip: width - x, not width - 1 - x (integer pixel centres).
+            keypoints[..., 0] = width - keypoints[..., 0]
             invisible = (~visible).unsqueeze(-1)  # (N, K, 1) for masked_fill on (N, K, 3)
             keypoints[..., :2] = keypoints[..., :2].masked_fill(invisible, 0.0)
             if self.keypoint_flip_pairs:
-                pairs = self.keypoint_flip_pairs
-                perm = list(range(keypoints.shape[1]))
-                for i in range(0, len(pairs), 2):
-                    ai, bi = pairs[i], pairs[i + 1]
-                    if ai < keypoints.shape[1] and bi < keypoints.shape[1]:
-                        perm[ai], perm[bi] = perm[bi], perm[ai]
-                keypoints = keypoints[:, perm, :]
+                keypoints = keypoints[:, keypoint_flip_permutation(self.keypoint_flip_pairs, keypoints.shape[1]), :]
             target_out["keypoints"] = _mark_invisible_keypoints(keypoints, height, width)
         return image, target_out
 
 
 def crop(
-    image: Image.Image | torch.Tensor,
+    image: _ImageInput,
     target: Optional[Dict[str, Any]],
     top: int,
     left: int,
     height: int,
     width: int,
-) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+) -> _TransformResult:
     """Crop an image and associated spatial target fields.
 
     Note:
@@ -602,9 +595,20 @@ def crop(
             lambda boxes: functional.crop(boxes, top=top, left=left, height=height, width=width),
         )
         keep = (cropped[:, 2] > cropped[:, 0]) & (cropped[:, 3] > cropped[:, 1])
+        masks_cropped = False
+        if "masks" in target_out and target_out["masks"].shape[0] == keep.shape[0]:
+            # Drop ghost instances: a box clipped to a partly visible area whose mask lies fully outside the crop.
+            # Box-only instances (empty input mask) are kept.
+            in_masks = target_out["masks"]
+            out_masks = functional.crop(in_masks, top=top, left=left, height=height, width=width)
+            keep = keep & (~in_masks.flatten(1).any(dim=1) | out_masks.flatten(1).any(dim=1))
+            target_out["masks"] = out_masks
+            masks_cropped = True
         boxes = cropped[keep]
         target_out = _filter_per_instance_fields(target_out, keep, boxes)
-    if "masks" in target_out:
+    else:
+        masks_cropped = False
+    if "masks" in target_out and not masks_cropped:
         target_out["masks"] = functional.crop(target_out["masks"], top=top, left=left, height=height, width=width)
     if "keypoints" in target_out:
         keypoints = target_out["keypoints"].clone()

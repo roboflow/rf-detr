@@ -29,6 +29,9 @@ from rfdetr.models._types import BuilderArgs
 from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
+from rfdetr.utilities.compiler import cuda_autocast_dtype as _cuda_autocast_dtype
+from rfdetr.utilities.compiler import is_compiling
+from rfdetr.utilities.compiler import is_tracing as _is_tracing
 
 
 def _tracer_absent() -> bool:
@@ -43,17 +46,38 @@ def _tracer_absent() -> bool:
     return False
 
 
-def _is_compiling() -> bool:
-    """Return whether the current execution is inside a ``torch.compile`` graph.
+#: ROCm builds report AMD devices as ``cuda``. The decoder rewrites were measured (speed and bitwise parity) on NVIDIA
+#: CUDA only, so a HIP build keeps the previous ops.
+_IS_HIP = torch.version.hip is not None
 
-    PyTorch 2.3 added the public ``torch.compiler.is_compiling`` predicate. RF-DETR supports
-    PyTorch 2.2, where the equivalent Dynamo predicate remains the compatible fallback.
+
+def _eager_cuda(tensor: Tensor) -> bool:
+    """Return whether ``tensor`` is on CUDA in eager execution, the only case the decoder rewrites are taken.
+
+    Every eager CUDA rewrite in this module gates on this one predicate, so a device or execution-mode policy is a
+    single edit; each call site adds its own module and dtype checks after it. ROCm (HIP) builds keep the plain ops
+    because the rewrites are unmeasured there. ``torch.compile`` and tracing keep them too: Inductor fuses them itself
+    and the exporters expect no custom autograd function. So does any ``torch.func`` transform (``vmap``, ``grad``,
+    ``jvp``, ...): the rewrites' autograd functions define no ``setup_context`` and would raise under one.
+
+    Args:
+        tensor: The input whose device decides eligibility.
 
     Returns:
-        Whether Dynamo is compiling the current code path.
+        ``True`` for a CUDA tensor on a non-HIP build outside ``torch.compile``, tracing and ``torch.func`` transforms,
+        ``False`` otherwise.
+
+    Examples:
+        >>> _eager_cuda(torch.zeros(1))
+        False
     """
-    is_compiling = getattr(torch.compiler, "is_compiling", None)
-    return is_compiling() if is_compiling is not None else torch._dynamo.is_compiling()
+    return (
+        tensor.is_cuda
+        and not _IS_HIP
+        and not is_compiling()
+        and not _is_tracing()
+        and not torch._C._are_functorch_transforms_active()
+    )
 
 
 def _safe_multinormalize(dim: int) -> int:
@@ -61,12 +85,263 @@ def _safe_multinormalize(dim: int) -> int:
     return max(1, dim)
 
 
-def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
-    # n_query, bs, _ = pos_tensor.size()
-    # sineembed_tensor = torch.zeros(n_query, bs, 256)
+#: Hook registries ``Module.__call__`` consults around ``forward``; each also has a ``_global`` twin in
+#: ``torch.nn.modules.module`` that applies to every module. These, the ``_global`` twins and the
+#: ``_compiled_call_impl`` that ``Module.compile()`` sets are the private torch state :func:`_module_call_is_plain`
+#: reads; a torch release that renames or drops any of them makes it return ``False``, never a silent ``True``.
+_MODULE_HOOK_ATTRS = ("_forward_hooks", "_forward_pre_hooks", "_backward_hooks", "_backward_pre_hooks")
+_GLOBAL_MODULE_HOOK_ATTRS = tuple(f"_global{name}" for name in _MODULE_HOOK_ATTRS)
+_MODULE_CALL_ATTRS = (*_MODULE_HOOK_ATTRS, "_compiled_call_impl")
+
+
+def _module_call_is_plain(*modules: nn.Module) -> bool:
+    """Return whether calling each of ``modules`` runs its ``forward`` and nothing else.
+
+    Code that reads a module's parameters instead of calling the module stands in for the call only when
+    ``Module.__call__`` adds nothing: no instance-level ``forward``, no ``compile()`` wrapper
+    (``_compiled_call_impl``), and no forward, forward-pre, backward or backward-pre hook, whether registered on the
+    module or for every module through ``torch.nn.modules.module``. The check fails closed: if any of those torch
+    attributes is missing, the call is not plain, so the caller keeps the module call.
+
+    Args:
+        *modules: The modules the caller would otherwise call.
+
+    Returns:
+        ``True`` when none of them is overridden or observed, ``False`` otherwise or when an attribute the check reads
+        is missing.
+
+    Examples:
+        >>> linear = nn.Linear(2, 2)
+        >>> _module_call_is_plain(linear)
+        True
+        >>> handle = linear.register_full_backward_hook(lambda *_: None)
+        >>> _module_call_is_plain(linear)
+        False
+        >>> handle.remove()
+    """
+    module_registry = nn.modules.module
+    if not all(hasattr(module_registry, name) for name in _GLOBAL_MODULE_HOOK_ATTRS):
+        return False
+    if any(getattr(module_registry, name) for name in _GLOBAL_MODULE_HOOK_ATTRS):
+        return False
+    return all(
+        all(hasattr(module, name) for name in _MODULE_CALL_ATTRS)
+        and "forward" not in module.__dict__
+        and module._compiled_call_impl is None
+        and not any(getattr(module, name) for name in _MODULE_HOOK_ATTRS)
+        for module in modules
+    )
+
+
+class _AddInDtype(torch.autograd.Function):
+    """``(a + b).to(dtype)`` as one kernel that never writes the full-precision sum.
+
+    ``torch.add`` with a lower-precision ``out=`` computes in the promoted operand dtype and rounds once on the store,
+    so the result is bitwise the two-step one. The backward mirrors the two-step graph as well: the cast's backward
+    upcasts the incoming gradient, and the add hands it to both operands, casting it back for a lower-precision one —
+    that round trip returns the incoming bits, so ``grad.to(b.dtype)`` is it. That holds for a single consumer of the
+    result. When it fans out (the self-attention query and key projections, or the two deformable-attention heads),
+    autograd sums the consumers' gradients in ``dtype`` before this backward upcasts them, where the two-step graph
+    upcasts each one and sums in full precision: the operand gradients carry one extra rounding to ``dtype`` (at most
+    half an ulp), while forward values and losses stay bitwise.
+    """
+
+    @staticmethod
+    def forward(ctx: torch.autograd.function.FunctionCtx, a: Tensor, b: Tensor, dtype: torch.dtype) -> Tensor:
+        ctx.operand_dtypes = (a.dtype, b.dtype)  # type: ignore[attr-defined]
+        out = torch.empty(a.shape, dtype=dtype, device=a.device)
+        return torch.add(a, b, out=out)
+
+    @staticmethod
+    def backward(ctx: torch.autograd.function.FunctionCtx, grad: Tensor) -> tuple[Tensor, Tensor, None]:
+        a_dtype, b_dtype = ctx.operand_dtypes  # type: ignore[attr-defined]
+        return grad.to(a_dtype), grad.to(b_dtype), None
+
+
+class _LinearReLU(torch.autograd.Function):
+    """``relu(x @ weight.T + bias)`` with the bias and the ReLU applied in the GEMM epilogue.
+
+    ``torch._addmm_activation`` rounds ``acc + bias`` once and clamps, and ``round(max(0, y)) == max(0, round(y))`` for
+    finite values under a rounding that keeps sign and zero, so for finite inputs the forward is bitwise
+    ``F.relu(F.linear(x, weight, bias))`` while the separate ReLU pass over the ``[tokens, dim_feedforward]`` activation
+    disappears. Parity for NaN and for the sign of a zero result (``-0.0``) is unverified on CUDA: the cuBLASLt epilogue
+    may differ from ``torch.relu`` there. torch defines no derivative for the fused op, so the backward runs the ops
+    autograd runs for the two-op graph: ``threshold_backward`` on the saved output, the two GEMMs ``AddmmBackward0``
+    issues for a row-major input and an ``nn.Linear`` weight (``grad.mm(weight)``, and ``grad.t().mm(rows)``, which
+    leaves the weight gradient contiguous like the parameter) and the bias reduce, each skipped when its input needs no
+    gradient. Only the input and the returned output are saved (the flattened views are rebuilt in the backward), so the
+    backward is itself differentiable and a double backward (``create_graph=True``) gets every term the two-op graph
+    gives. ``torch.utils.flop_counter.FlopCounterMode`` has no formula for ``_addmm_activation``, so it undercounts
+    ``linear1`` on a CUDA model in eager execution.
+    """
+
+    @staticmethod
+    def forward(ctx: torch.autograd.function.FunctionCtx, x: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
+        rows = x.reshape(-1, x.shape[-1])
+        result = torch._addmm_activation(bias, rows, weight.t()).view(*x.shape[:-1], weight.shape[0])
+        # A saved tensor that is neither an input nor an output (such as ``rows``) is cut off from the graph, which
+        # silently drops its terms from a double backward; save ``x`` and ``result`` and rebuild the views instead.
+        ctx.save_for_backward(x, weight, result)
+        return result
+
+    @staticmethod
+    def backward(
+        ctx: torch.autograd.function.FunctionCtx, grad: Tensor
+    ) -> tuple[Tensor | None, Tensor | None, Tensor | None]:
+        x, weight, result = ctx.saved_tensors  # type: ignore[attr-defined]
+        needs_x, needs_weight, needs_bias = ctx.needs_input_grad  # type: ignore[attr-defined]
+        out = result.reshape(-1, result.shape[-1])
+        grad_rows = grad.reshape(-1, grad.shape[-1])
+        grad_pre = torch.ops.aten.threshold_backward(grad_rows, out, 0)
+        grad_x = grad_pre.mm(weight).view(x.shape) if needs_x else None
+        grad_weight = grad_pre.t().mm(x.reshape(-1, x.shape[-1])) if needs_weight else None
+        grad_bias = grad_pre.sum(0) if needs_bias else None
+        return grad_x, grad_weight, grad_bias
+
+
+def _additive_attn_mask(mask: Tensor | None, dtype: torch.dtype) -> Tensor | None:
+    """Return the float form of a boolean attention mask: ``-inf`` where blocked, ``0`` elsewhere.
+
+    ``nn.MultiheadAttention`` builds this itself from a boolean mask with ``zeros_like(mask, dtype=...)``.
+    coremltools (9.0, 9.1) drops that ``dtype`` keyword when it converts a ``torch.export`` program, so the mask
+    stays boolean and ``scaled_dot_product_attention`` reads it with the opposite meaning. Passing the float mask
+    keeps eager results identical and gives the converters nothing to reinterpret.
+
+    Args:
+        mask: Boolean mask, ``True`` where attention is blocked, or ``None``.
+        dtype: Floating dtype of the attention inputs.
+
+    Returns:
+        The additive mask in *dtype*, or *mask* unchanged when it is ``None`` or already floating.
+
+    Examples:
+        >>> _additive_attn_mask(torch.tensor([[False, True]]), torch.float32)
+        tensor([[0., -inf]])
+        >>> _additive_attn_mask(None, torch.float32) is None
+        True
+    """
+    if mask is None or mask.dtype != torch.bool:
+        return mask
+    return mask.to(dtype).masked_fill(mask, float("-inf"))
+
+
+class _CastThenExpand(torch.autograd.Function):
+    """``x.to(dtype).expand(groups, ...)`` whose backward sums the group gradients straight into ``x``'s dtype.
+
+    The plain graph casts the expanded tensor (a materialised ``groups``-fold copy in ``dtype``) and, in the backward,
+    upcasts the ``groups``-fold gradient before ``expand``'s sum. Casting once before the expand gives the same forward
+    values; the backward reduces the lower-precision gradient with accumulation and output in ``x``'s dtype, the same
+    fp32 sum of the same values (summation order may differ), without the intermediate full-width upcast.
+    """
+
+    @staticmethod
+    def forward(ctx: torch.autograd.function.FunctionCtx, x: Tensor, groups: int, dtype: torch.dtype) -> Tensor:
+        ctx.x_dtype = x.dtype  # type: ignore[attr-defined]
+        return x.to(dtype).unsqueeze(0).expand(groups, *x.shape)
+
+    @staticmethod
+    def backward(ctx: torch.autograd.function.FunctionCtx, grad: Tensor) -> tuple[Tensor, None, None]:
+        return grad.sum(0, dtype=ctx.x_dtype), None, None  # type: ignore[attr-defined]
+
+
+class _InterleavedSinCos(torch.autograd.Function):
+    """``stack((sin(angle), cos(angle)), -1)`` written straight into an interleaved output in ``dtype``.
+
+    Each of ``sin`` and ``cos`` computes in the angle's precision and stores into its own strided half of the output,
+    rounding once — bitwise ``sin(angle).to(dtype)`` — so neither the full-precision values nor the stacked copy is ever
+    written. The backward is the two-op graph's: ``sin`` contributes ``grad * cos(angle)``, ``cos`` contributes ``-(grad
+    * sin(angle))``, each from the incoming gradient upcast to the angle's precision.
+    """
+
+    @staticmethod
+    def forward(ctx: torch.autograd.function.FunctionCtx, angle: Tensor, dtype: torch.dtype) -> Tensor:
+        ctx.save_for_backward(angle)
+        out = torch.empty(*angle.shape, 2, dtype=dtype, device=angle.device)
+        torch.sin(angle, out=out[..., 0])
+        torch.cos(angle, out=out[..., 1])
+        return out
+
+    @staticmethod
+    def backward(ctx: torch.autograd.function.FunctionCtx, grad: Tensor) -> tuple[Tensor, None]:
+        (angle,) = ctx.saved_tensors  # type: ignore[attr-defined]
+        grad_sin = grad[..., 0].to(angle.dtype)
+        grad_cos = grad[..., 1].to(angle.dtype)
+        return grad_sin * angle.cos() - grad_cos * angle.sin(), None
+
+
+def _sineembed_interleaved(pos_tensor: Tensor, dim: int, out_dtype: torch.dtype | None) -> Tensor:
+    """:func:`gen_sineembed_for_position` for CUDA eager execution, without its strided slices.
+
+    ``dim_t`` repeats every frequency twice (``dim_t // 2`` maps 2i and 2i+1 to the same exponent), and the even
+    entries feed ``sin`` while the odd entries feed ``cos``. Dividing by the ``dim // 2`` distinct frequencies once
+    gives, bitwise, the angles the interleaved ``[0::2]`` / ``[1::2]`` slices read, so ``sin`` and ``cos`` run on one
+    contiguous tensor instead of two strided views (whose backward zero-fills and scatters a full-width buffer each),
+    the division does half the work, and :class:`_InterleavedSinCos` writes both straight into the output.
+
+    Args:
+        pos_tensor: Coordinates of shape ``(bs, n_query, 2)`` or ``(bs, n_query, 4)``, on CUDA.
+        dim: Embedding width per coordinate; must be even (the caller routes odd widths to the plain ops).
+        out_dtype: Dtype of the returned embedding, or ``None`` for ``pos_tensor.dtype``.
+
+    Returns:
+        The embedding, ``(bs, n_query, dim * pos_tensor.shape[-1])``, in y, x[, w, h] order.
+
+    Raises:
+        ValueError: If the last dimension of ``pos_tensor`` is neither 2 nor 4.
+    """
     scale = 2 * math.pi
     dim_t = torch.arange(dim, dtype=pos_tensor.dtype, device=pos_tensor.device)
     dim_t = 10000 ** (2 * (dim_t // 2) / dim)
+    frequencies = dim_t[0::2]
+    # Coordinates in output order (y, x[, w, h]) through slices: an index list would build a host index
+    # tensor, and its device copy is not allowed while a CUDA graph is being captured.
+    if pos_tensor.size(-1) == 2:
+        coords = torch.cat((pos_tensor[:, :, 1:2], pos_tensor[:, :, 0:1]), dim=-1)
+    elif pos_tensor.size(-1) == 4:
+        coords = torch.cat((pos_tensor[:, :, 1:2], pos_tensor[:, :, 0:1], pos_tensor[:, :, 2:]), dim=-1)
+    else:
+        raise ValueError(f"Unknown pos_tensor shape(-1):{pos_tensor.size(-1)}")
+    # (bs, n_query, coords, dim // 2): one angle tensor for every coordinate, in output order.
+    angle = (coords * scale)[..., None] / frequencies
+    pos = cast(Tensor, _InterleavedSinCos.apply(angle, pos_tensor.dtype if out_dtype is None else out_dtype))
+    return pos.flatten(2)
+
+
+def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: torch.dtype | None = None) -> Tensor:
+    """Sine/cosine positional embedding of box coordinates, ``dim`` values per coordinate.
+
+    CUDA eager execution takes :func:`_sineembed_interleaved`. Every other case (CPU, MPS, XLA, ``torch.compile`` and
+    tracing) runs the plain ops: compiled and traced graphs keep them (Inductor fuses them itself and the exporters
+    expect no custom autograd function), and the interleaved write is a CUDA rewrite, not one to run unmeasured
+    elsewhere. The plain ops build the frequency table in at least float32 and round it once to the positions' dtype.
+    float16, float32 and float64 keep the values and gradients they always had. In bfloat16, 10 of the 128 frequencies
+    at the default ``dim`` are float32 values rounded once rather than values computed in bfloat16, which moves the
+    outputs and coordinate gradients that use them slightly.
+
+    Args:
+        pos_tensor: Coordinates of shape ``(bs, n_query, 2)`` or ``(bs, n_query, 4)`` in ``[0, 1]``.
+        dim: Embedding width per coordinate; consecutive (sin, cos) pairs share one of ``dim // 2``
+            frequencies.
+        out_dtype: Dtype of the returned embedding. ``None`` keeps ``pos_tensor.dtype``. A lower-precision
+            dtype rounds each sin/cos once, exactly what a later cast of the full-precision result would
+            give; on CUDA in eager execution that rounding happens on store, so the full-precision result
+            is never written.
+
+    Returns:
+        The embedding, ``(bs, n_query, dim * pos_tensor.shape[-1])``, in y, x[, w, h] order.
+    """
+    # An odd ``dim`` has no (sin, cos) pairing: the plain ops raise for it, the interleaved write would not.
+    if dim % 2 == 0 and _eager_cuda(pos_tensor):
+        return _sineembed_interleaved(pos_tensor, dim, out_dtype)
+    # n_query, bs, _ = pos_tensor.size()
+    # sineembed_tensor = torch.zeros(n_query, bs, 256)
+    scale = 2 * math.pi
+    # Computed in at least float32, as PositionEmbeddingSine does, then cast once to the positions' dtype. torch
+    # 2.14 lowers a half-precision ``dim_t // 2`` to ``libdevice.isinf`` on a float16 or bfloat16 operand, which
+    # Triton cannot compile (pytorch/pytorch#197002), so ``inference(dtype="float16",
+    # compile_backend="inductor")`` failed. float32 and float64 positions compute in their own dtype as before.
+    dim_t = torch.arange(dim, dtype=torch.promote_types(pos_tensor.dtype, torch.float32), device=pos_tensor.device)
+    dim_t = (10000 ** (2 * (dim_t // 2) / dim)).to(pos_tensor.dtype)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
     pos_x = x_embed[:, :, None] / dim_t
@@ -86,7 +361,32 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
         pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
     else:
         raise ValueError(f"Unknown pos_tensor shape(-1):{pos_tensor.size(-1)}")
-    return pos
+    return pos if out_dtype is None else pos.to(out_dtype)
+
+
+def select_top_rows(scores: Tensor, k: int) -> Callable[[Tensor], Tensor]:
+    """Rank ``(batch, tokens)`` scores and return a function that picks the ``k`` best rows of a token tensor.
+
+    The per-group two-stage query selection loop calls this through ``Transformer.select_top_rows``, so an exporter can
+    replace the ranking with one its target runs natively (see :mod:`rfdetr.export._neural_engine`). That loop runs in
+    eval and export, and in training whenever the batched ``Transformer._two_stage_group_selection`` path is not taken;
+    the batched path calls ``torch.topk`` itself and never reaches this hook.
+
+    Args:
+        scores: One score per token.
+        k: Number of rows to keep, best first.
+
+    Returns:
+        A function from a ``(batch, tokens, C)`` tensor to its ``(batch, k, C)`` selected rows.
+
+    Examples:
+        >>> rows = torch.arange(4.0).reshape(1, 4, 1)
+        >>> select_top_rows(torch.tensor([[0.1, 0.9, 0.5, 0.3]]), 2)(rows).flatten().tolist()
+        [1.0, 2.0]
+    """
+    indices = torch.topk(scores, k, dim=1)[1]
+    # Tensor.expand keeps the index a broadcast view (stride 0) instead of materialising it per channel.
+    return lambda rows: torch.gather(rows, 1, indices.unsqueeze(-1).expand(-1, -1, rows.shape[-1]))
 
 
 def gen_encoder_output_proposals(
@@ -120,9 +420,11 @@ def gen_encoder_output_proposals(
             valid_height = torch.zeros_like(memory[:, 0, 0], dtype=torch.long) + height
             valid_width = torch.zeros_like(memory[:, 0, 0], dtype=torch.long) + width
 
+        # arange(n) equals linspace(0, n - 1, n) bit for bit, but linspace's integer step count
+        # specialises symbolic sizes under torch.compile(dynamic=True) and recompiles per resolution.
         grid_y, grid_x = torch.meshgrid(
-            torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
-            torch.linspace(0, width - 1, width, dtype=torch.float32, device=memory.device),
+            torch.arange(height, dtype=torch.float32, device=memory.device),
+            torch.arange(width, dtype=torch.float32, device=memory.device),
             indexing="ij",
         )
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
@@ -136,7 +438,7 @@ def gen_encoder_output_proposals(
         proposals.append(proposal)
         _cur += height * width
 
-    output_proposals = torch.cat(proposals, 1)
+    output_proposals = proposals[0] if len(proposals) == 1 else torch.cat(proposals, 1)
     output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
 
     if unsigmoid:
@@ -155,6 +457,65 @@ def gen_encoder_output_proposals(
     output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
 
     return output_memory.to(memory.dtype), output_proposals.to(memory.dtype)
+
+
+def _stack_linear_params(modules: Sequence[nn.Linear]) -> tuple[Tensor, Tensor]:
+    """Stack same-shaped ``nn.Linear`` modules' live parameters for a batched matmul.
+
+    Reads ``.weight``/``.bias`` fresh on every call (never cached) so the stacked tensors always
+    reflect the current, possibly just-updated, parameter values.
+
+    Args:
+        modules: Per-group ``nn.Linear`` layers sharing identical ``in_features``/``out_features``.
+
+    Returns:
+        Stacked ``(weight, bias)``, shaped ``(group, out_features, in_features)`` and
+        ``(group, out_features)``.
+    """
+    return torch.stack([m.weight for m in modules]), torch.stack([m.bias for m in modules])
+
+
+def _batched_group_linear(x: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
+    """Apply ``group`` independent affine transforms via one batched matmul.
+
+    Mathematically equivalent to calling a separate ``nn.Linear`` per group. The batched GEMM may
+    use a different floating-point accumulation order, so callers compare within dtype-appropriate
+    tolerance rather than requiring bit equality.
+
+    Args:
+        x: Input of shape ``(group, ..., in_features)``.
+        weight: Stacked per-group weights of shape ``(group, out_features, in_features)``.
+        bias: Stacked per-group biases of shape ``(group, out_features)``.
+
+    Returns:
+        Output of shape ``(group, ..., out_features)``.
+    """
+    leading_shape = x.shape[1:-1]
+    x_flat = x.reshape(x.shape[0], -1, x.shape[-1])
+    out = torch.baddbmm(bias.unsqueeze(1), x_flat, weight.transpose(1, 2))
+    return out.reshape(*x.shape[:1], *leading_shape, weight.shape[-2])
+
+
+def _batched_group_layer_norm(x: Tensor, weight: Tensor, bias: Tensor, eps: float) -> Tensor:
+    """Apply ``group`` independent ``nn.LayerNorm`` affines after one shared normalization pass.
+
+    ``LayerNorm``'s mean/variance reduction is computed per position regardless of which group's
+    affine follows it, so normalizing once (without affine) and then applying each group's own
+    ``weight``/``bias`` is exactly what ``group`` separate ``nn.LayerNorm`` calls compute, just
+    without ``group`` separate reduction kernels.
+
+    Args:
+        x: Input of shape ``(group, ..., channels)``.
+        weight: Stacked per-group scale of shape ``(group, channels)``.
+        bias: Stacked per-group shift of shape ``(group, channels)``.
+        eps: Shared normalization epsilon; the eligibility guard requires equality across groups.
+
+    Returns:
+        Output of shape ``(group, ..., channels)``.
+    """
+    normalized = F.layer_norm(x, (x.shape[-1],), eps=eps)
+    view_shape = (weight.shape[0], *([1] * (x.dim() - 2)), weight.shape[-1])
+    return normalized * weight.view(view_shape) + bias.view(view_shape)
 
 
 class Transformer(nn.Module):
@@ -265,13 +626,28 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.dec_layers = num_decoder_layers
         self.group_detr = group_detr
+        # Query selection of the per-group two-stage loop: eval, export, and training when the batched
+        # _two_stage_group_selection path (which calls torch.topk directly) is not taken. An exporter can swap it on
+        # its copy of the model.
+        self.select_top_rows: Callable[[Tensor, int], Callable[[Tensor], Tensor]] = select_top_rows
         self.num_feature_levels = num_feature_levels
         self.bbox_reparam = bbox_reparam
 
         self._export = False
+        self._cuda_graph_spatial_shapes: dict[tuple[torch.device, tuple[tuple[int, int], ...]], Tensor] | None = None
 
     def export(self) -> None:
         self._export = True
+
+    def enable_cuda_graph_capture(self) -> None:
+        """Cache immutable spatial-shape tensors before their captured reuse.
+
+        The cache is opt-in so eager, compile, and export tensor construction remain unchanged. Device is part of the
+        key to keep a later model move safe. ``RFDETRModelModule._configure_cuda_graph_runner`` only builds the eager
+        graph runner that calls this when the module was not compiled, so the cached branch in ``forward`` and its
+        ``is_compiling()`` branch are mutually exclusive.
+        """
+        self._cuda_graph_spatial_shapes = {}
 
     def _reset_parameters(self) -> None:
         for p in self.parameters():
@@ -290,6 +666,223 @@ class Transformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
+    def _two_stage_batching_eligible(self) -> bool:
+        """Return whether the per-group modules can safely share stacked operations.
+
+        :meth:`_two_stage_group_selection` stacks each group's own ``.weight``/``.bias`` directly instead
+        of calling the module generically, so it only gives correct results for the exact
+        ``nn.Linear``/``nn.LayerNorm``/:class:`~rfdetr.models.math.MLP` types ``LWDETR.__init__`` always
+        deepcopies per group, each with its affine parameters present. Exact ``type(...) is ...`` checks
+        (not ``isinstance``) are required: a subclass of one of these types would otherwise pass an
+        ``isinstance`` check while its own overridden ``forward`` is silently bypassed, since the batched
+        path never calls the module -- it only reads ``.weight``/``.bias``. The ``is not None`` checks
+        reject a ``bias=False`` ``nn.Linear`` or an ``elementwise_affine=False`` ``nn.LayerNorm``, which
+        would otherwise reach ``torch.stack`` over a ``None`` and crash instead of falling back. Modules
+        must also agree on parameter shapes, dtypes, devices, LayerNorm epsilon, and MLP depth because one
+        stacked operation cannot preserve heterogeneous group contracts. Hooks, instance-level ``forward``
+        overrides, and individually compiled children also require the generic call path. A test double, a
+        future custom head, or any of these edge configurations all fall back to the per-group loop in
+        :meth:`forward`, preserving each module's normal call semantics.
+        """
+        assert self.enc_out_class_embed is not None
+        assert self.enc_out_bbox_embed is not None
+        enc_output = cast(Sequence[nn.Linear], self.enc_output)
+        enc_output_norm = cast(Sequence[nn.LayerNorm], self.enc_output_norm)
+        class_embeds = cast(Sequence[nn.Linear], self.enc_out_class_embed)
+        bbox_mlps = cast(Sequence[MLP], self.enc_out_bbox_embed)
+        module_groups = (enc_output, enc_output_norm, class_embeds, bbox_mlps)
+        if any(len(modules) != self.group_detr for modules in module_groups):
+            return False
+        if not (
+            all(type(m) is nn.Linear and m.bias is not None for m in enc_output)
+            and all(type(m) is nn.LayerNorm and m.weight is not None and m.bias is not None for m in enc_output_norm)
+            and all(type(m) is nn.Linear and m.bias is not None for m in class_embeds)
+            and all(
+                type(m) is MLP and all(type(layer) is nn.Linear and layer.bias is not None for layer in m.layers)
+                for m in bbox_mlps
+            )
+        ):
+            return False
+
+        bbox_layers = [layer for mlp in bbox_mlps for layer in mlp.layers]
+        call_modules = [*enc_output, *enc_output_norm, *class_embeds, *bbox_mlps, *bbox_layers]
+        if not _module_call_is_plain(*call_modules):
+            return False
+
+        for modules in (enc_output, class_embeds):
+            first_weight = modules[0].weight
+            first_bias = cast(Tensor, modules[0].bias)
+            if any(
+                (m.weight.shape, m.weight.dtype, m.weight.device)
+                != (first_weight.shape, first_weight.dtype, first_weight.device)
+                or (cast(Tensor, m.bias).shape, cast(Tensor, m.bias).dtype, cast(Tensor, m.bias).device)
+                != (first_bias.shape, first_bias.dtype, first_bias.device)
+                for m in modules[1:]
+            ):
+                return False
+
+        first_norm = enc_output_norm[0]
+        if first_norm.normalized_shape != (self.d_model,) or any(
+            m.normalized_shape != first_norm.normalized_shape
+            or m.eps != first_norm.eps
+            or cast(Tensor, m.weight).dtype != cast(Tensor, first_norm.weight).dtype
+            or cast(Tensor, m.weight).device != cast(Tensor, first_norm.weight).device
+            or cast(Tensor, m.bias).dtype != cast(Tensor, first_norm.bias).dtype
+            or cast(Tensor, m.bias).device != cast(Tensor, first_norm.bias).device
+            for m in enc_output_norm[1:]
+        ):
+            return False
+
+        num_layers = bbox_mlps[0].num_layers
+        if any(m.num_layers != num_layers or len(m.layers) != num_layers for m in bbox_mlps):
+            return False
+        for layer_idx in range(num_layers):
+            first_layer = cast(nn.Linear, bbox_mlps[0].layers[layer_idx])
+            first_weight = first_layer.weight
+            first_bias = cast(Tensor, first_layer.bias)
+            if any(
+                (
+                    cast(nn.Linear, m.layers[layer_idx]).weight.shape,
+                    cast(nn.Linear, m.layers[layer_idx]).weight.dtype,
+                    cast(nn.Linear, m.layers[layer_idx]).weight.device,
+                )
+                != (first_weight.shape, first_weight.dtype, first_weight.device)
+                or (
+                    cast(Tensor, cast(nn.Linear, m.layers[layer_idx]).bias).shape,
+                    cast(Tensor, cast(nn.Linear, m.layers[layer_idx]).bias).dtype,
+                    cast(Tensor, cast(nn.Linear, m.layers[layer_idx]).bias).device,
+                )
+                != (first_bias.shape, first_bias.dtype, first_bias.device)
+                for m in bbox_mlps[1:]
+            ):
+                return False
+        return True
+
+    def _two_stage_group_selection(
+        self, output_memory: Tensor, output_proposals: Tensor, group_detr: int
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Run every ``group_detr`` group's two-stage top-k proposal selection in one batched pass.
+
+        Replaces a Python loop that calls each group's own ``enc_output``/``enc_output_norm``/
+        ``enc_out_class_embed``/``enc_out_bbox_embed`` on the SAME ``output_memory`` -- the loop issues
+        one kernel per op per group, and on a host-dispatch-bound GPU that launch count dominates the
+        block's wall time far more than its (small) GEMMs do. Stacking the ``group_detr`` copies of
+        each op's weights and running one batched matmul keeps every group's own weights and drops the
+        per-group launch count to a constant.
+
+        Only called for ``group_detr > 1``, which the caller (:meth:`forward`) only reaches while
+        training -- the ``assert self.training`` below enforces that mechanically. Eval/export always
+        pass ``group_detr=1`` and use the original single-group code path. If a training-mode call is
+        nevertheless traced, the cast-once rewrite below also keeps the plain expand-then-cast graph.
+
+        The batched GEMMs can use a different accumulation order than separate calls. The paths match
+        within float32 tolerance at real model scale, but under bf16/fp16 a near-tied class score can
+        cross the discrete ``topk`` boundary. Tests therefore cover float32 output/gradient parity and
+        finite mixed-precision gradients, while the accompanying benchmark checks short-run training
+        quality through the public API.
+
+        Args:
+            output_memory: Encoder memory of shape ``(bs, S, d_model)``, shared by every group.
+            output_proposals: Encoder anchor proposals of shape ``(bs, S, 4)``, shared by every group.
+            group_detr: Number of independent groups (``self.group_detr`` while training, and always
+                greater than 1 for every call site).
+
+        Returns:
+            ``(refpoint_embed_ts, memory_ts, boxes_ts, cls_ts)``, matching the per-group loop's own
+            ``torch.cat(parts, dim=1)`` outputs and query order (group 0's queries first, then group
+            1's, ...). ``cls_ts`` is ``enc_out_class_embed``'s output at the same selected positions,
+            gathered from the ranking pass rather than recomputed by the caller.
+        """
+        # Training-only by contract, and the contract is load-bearing: the eval/export loop in forward
+        # gathers the pre-norm rows so an fp16 CoreML program keeps its Neural Engine placement, while
+        # this path norms the full length and gathers post-norm. An eval or exported graph routed here
+        # would still produce correct numbers, so nothing would fail -- the model would just silently
+        # lose the ANE and fall back to CPU. Assert instead of trusting the caller's guard.
+        assert self.training
+        assert self.enc_out_class_embed is not None
+        assert self.enc_out_bbox_embed is not None
+        bs = output_memory.shape[0]
+        class_embeds = cast(Sequence[nn.Linear], self.enc_out_class_embed)
+        bbox_mlps = cast(Sequence[MLP], self.enc_out_bbox_embed)
+        topk = min(self.num_queries, output_memory.shape[-2])
+
+        enc_output_weight, enc_output_bias = _stack_linear_params(cast(Sequence[nn.Linear], self.enc_output))
+        norm_weight = torch.stack([cast(nn.LayerNorm, m).weight for m in self.enc_output_norm])
+        norm_bias = torch.stack([cast(nn.LayerNorm, m).bias for m in self.enc_output_norm])
+        norm_eps = cast(nn.LayerNorm, self.enc_output_norm[0]).eps
+
+        compute_dtype = _cuda_autocast_dtype() if _eager_cuda(output_memory) else None
+        if compute_dtype is None or output_memory.dtype != torch.float32 or compute_dtype == output_memory.dtype:
+            memory_expanded = output_memory.unsqueeze(0).expand(group_detr, -1, -1, -1)
+        else:
+            # Under autocast the batched GEMM casts its fp32 input: cast the shared memory once instead of its
+            # ``group_detr``-fold expansion, and let the backward sum the group gradients without upcasting.
+            memory_expanded = cast(Tensor, _CastThenExpand.apply(output_memory, group_detr, compute_dtype))
+        output_memory_all = _batched_group_linear(memory_expanded, enc_output_weight, enc_output_bias)
+        output_memory_all = _batched_group_layer_norm(output_memory_all, norm_weight, norm_bias, norm_eps)
+
+        class_weight, class_bias = _stack_linear_params(class_embeds)
+        class_logits_all = _batched_group_linear(output_memory_all, class_weight, class_bias)
+        # (group, bs, S) -> (group, bs, nq); torch.topk batches over every leading dim natively.
+        topk_proposals_all = torch.topk(class_logits_all.max(-1)[0], topk, dim=-1)[1]
+
+        # enc_out_class_embed is a plain per-position Linear, so gathering its already-computed
+        # output at the same indices used below is exactly what re-running it on the gathered
+        # hidden state would produce (Linear(x)[idx] == Linear(x[idx])) -- reuse instead of the
+        # caller re-running enc_out_class_embed a second time on the gathered subset.
+        cls_logits_selected = torch.gather(
+            class_logits_all, 2, topk_proposals_all.unsqueeze(-1).expand(-1, -1, -1, class_logits_all.shape[-1])
+        )
+
+        tgt_undetach_all = torch.gather(
+            output_memory_all, 2, topk_proposals_all.unsqueeze(-1).expand(-1, -1, -1, self.d_model)
+        )
+        proposals_expanded = output_proposals.unsqueeze(0).expand(group_detr, -1, -1, -1)
+        # See the loop's own comment: gather before the pointwise box MLP, not after.
+        output_proposals_all = torch.gather(
+            proposals_expanded, 2, topk_proposals_all.unsqueeze(-1).expand(-1, -1, -1, 4)
+        )
+
+        hidden = tgt_undetach_all
+        num_layers = bbox_mlps[0].num_layers
+        for layer_idx in range(num_layers):
+            layer_weight, layer_bias = _stack_linear_params(
+                cast(Sequence[nn.Linear], [mlp.layers[layer_idx] for mlp in bbox_mlps])
+            )
+            hidden = _batched_group_linear(hidden, layer_weight, layer_bias)
+            if layer_idx < num_layers - 1:
+                hidden = F.relu(hidden)
+        enc_outputs_coord_delta_all = hidden
+
+        if self.bbox_reparam:
+            coord_cxcy_all = (
+                enc_outputs_coord_delta_all[..., :2] * output_proposals_all[..., 2:] + output_proposals_all[..., :2]
+            )
+            coord_wh_all = enc_outputs_coord_delta_all[..., 2:].exp() * output_proposals_all[..., 2:]
+            refpoint_embed_all_undetach = torch.concat([coord_cxcy_all, coord_wh_all], dim=-1)
+        else:
+            refpoint_embed_all_undetach = enc_outputs_coord_delta_all + output_proposals_all
+        refpoint_embed_all = refpoint_embed_all_undetach.detach()
+
+        def _merge_groups(t: Tensor) -> Tensor:
+            """Flatten the leading group dimension into the query dimension, group 0 first.
+
+            Args:
+                t: Tensor of shape ``(group, bs, nq, C)``.
+
+            Returns:
+                Tensor of shape ``(bs, group * nq, C)``, matching the per-group loop's own
+                ``torch.cat(parts, dim=1)`` order (group 0's queries first, then group 1's, ...).
+            """
+            return t.permute(1, 0, 2, 3).reshape(bs, group_detr * topk, t.shape[-1])
+
+        return (
+            _merge_groups(refpoint_embed_all),
+            _merge_groups(tgt_undetach_all),
+            _merge_groups(refpoint_embed_all_undetach),
+            _merge_groups(cls_logits_selected),
+        )
+
     def forward(
         self,
         srcs: list[Tensor],
@@ -299,6 +892,22 @@ class Transformer(nn.Module):
         query_feat: Tensor,
         cross_attn_srcs: Sequence[Tensor] | None = None,
     ) -> tuple[Tensor | None, ...]:
+        """Flatten the multi-scale features, run the two-stage query selection, then the decoder.
+
+        Args:
+            srcs: Per-level feature maps, each ``(bs, d_model, h, w)``.
+            masks: Per-level padding masks, each ``(bs, h, w)``, or ``None`` for unpadded input.
+            pos_embeds: Per-level positional embeddings matching ``srcs``.
+            refpoint_embed: Learned reference points, ``(num_queries * group_detr, 4)``.
+            query_feat: Learned query features, ``(num_queries * group_detr, d_model)``.
+            cross_attn_srcs: Optional separate feature maps for decoder cross-attention.
+
+        Returns:
+            ``(hs, references, memory_ts, boxes_ts)``, followed by ``(keypoint_hs, enc_kp_predictions,
+            keypoint_memory_ts)`` when grouped-pose keypoints are enabled, and always ending with ``cls_ts``.
+            The two-stage entries are ``None`` when ``two_stage`` is off; ``hs``/``references`` are ``None``
+            without a decoder.
+        """
         src_flatten = []
         mask_flatten_parts: list[Tensor] | None = [] if masks is not None else None
         lvl_pos_embed_flatten_parts = []
@@ -338,29 +947,43 @@ class Transformer(nn.Module):
             if len(lvl_pos_embed_flatten_parts) == 1
             else torch.cat(lvl_pos_embed_flatten_parts, 1)
         )  # bs, \sum{hxw}, c
-        # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
-        # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
-        # rejects ("IScatterLayer cannot be used to compute a shape tensor").
-        # torch.as_tensor(python-int list) avoids ScatterND but bakes values as a Constant.
-        # torch.stack of per-level torch._shape_as_tensor slices also produces a Constant
-        # node in TorchScript ONNX export (the tracer records concrete H,W values at trace
-        # time), but that Constant is accepted by TensorRT as a valid shape tensor source —
-        # unlike ScatterND. torch._shape_as_tensor(t) is a private ATen op that returns a
-        # 1-D int64 tensor of t's dimension sizes; [2:4] extracts (H, W) from NCHW.
-        # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
-        # a non-zero number of elements, but its data is not allocated yet". Under that trace build
-        # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
-        # static shapes, so the baked constant is exact. torch.compile needs the same branch for a
-        # different reason: Dynamo polyfills torch._shape_as_tensor to return a torch.Size, so
-        # torch.stack raises "expected Tensor as element 0 in argument 0, but got torch.Size" and
-        # the compile aborts (suppress_errors=True does not catch it — the TypeError comes from
-        # user code, not from Dynamo). Neither guard is true in eager or under torch.jit.trace, so
-        # the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the _shape_as_tensor form.
-        # ``torch.compiler.is_compiling`` is public from torch 2.3 onward. The compatibility
-        # helper uses the legacy Dynamo predicate for supported torch 2.2 environments, while
-        # ``is_exporting`` remains absent below torch 2.7.
-        if getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
+        # spatial_shapes: one form per execution mode, each forced by a constraint the others break. Never
+        # torch.empty(...) + in-place index assignment — the ScatterND it emits feeds a shape tensor
+        # (level_start_index), and TensorRT rejects "IScatterLayer cannot be used to compute a shape tensor".
+        #   cuda-graph capture -> as_tensor cached per (device, resolution): replay needs one immutable tensor
+        #                         per signature (see enable_cuda_graph_capture).
+        #   torch.export       -> as_tensor, ScatterND-free and constant-baking: _shape_as_tensor is untraceable
+        #                         there ("the tensor has a non-zero number of elements, but its data is not
+        #                         allocated yet"), and static export shapes make the baked Constant exact.
+        #   torch.compile      -> one 0-d tensor per size, the only symbolic form: Dynamo polyfills
+        #                         _shape_as_tensor to a torch.Size ("expected Tensor as element 0 in argument
+        #                         0, but got torch.Size" aborts the compile), while as_tensor (torch.tensor on
+        #                         older torch) specialises every size under dynamic=True, recompiling the whole
+        #                         transformer per resolution until multi-scale training exhausts Dynamo's
+        #                         recompile limit.
+        #   eager / jit.trace  -> _shape_as_tensor(src)[2:4], a private ATen op returning src's 1-D int64 dim
+        #                         sizes ([2:4] = (H, W) of NCHW): the Constant it bakes into a TorchScript ONNX
+        #                         graph is one TensorRT accepts as a shape-tensor source, unlike ScatterND (#1155).
+        # Predicates: is_compiling() is public from torch 2.3 (the compat helper uses the legacy Dynamo predicate
+        # on 2.2); is_exporting() is absent below 2.7, so its probe is always False there and a strict
+        # torch.export reports is_compiling() instead, taking the stacked-0-d branch for the same values —
+        # is_exporting() implies is_compiling(), not the reverse.
+        if self._cuda_graph_spatial_shapes is not None:
+            spatial_key = (srcs[0].device, tuple(spatial_shapes_hw))
+            spatial_shapes = self._cuda_graph_spatial_shapes.get(spatial_key)
+            if spatial_shapes is None:
+                spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
+                self._cuda_graph_spatial_shapes[spatial_key] = spatial_shapes
+        # Export must precede compile: non-strict export sets both flags; compile alone does not set is_exporting().
+        elif getattr(torch.compiler, "is_exporting", _tracer_absent)():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
+        elif is_compiling():
+            spatial_shapes = torch.stack(
+                [
+                    torch.stack([torch.scalar_tensor(size, dtype=torch.long, device=srcs[0].device) for size in hw])
+                    for hw in spatial_shapes_hw
+                ]
+            )
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
                 device=srcs[0].device, dtype=torch.long
@@ -382,6 +1005,7 @@ class Transformer(nn.Module):
             # The dual-projector path uses the same MultiScaleProjector layout as memory above.
             cross_attn_memory = ca_flatten[0].contiguous() if len(ca_flatten) == 1 else torch.cat(ca_flatten, 1)
 
+        cls_ts = None
         if self.two_stage:
             assert self.enc_out_class_embed is not None
             assert self.enc_out_bbox_embed is not None
@@ -389,55 +1013,83 @@ class Transformer(nn.Module):
                 memory, mask_flatten, spatial_shapes_hw, unsigmoid=not self.bbox_reparam
             )
             # group detr for first stage
-            refpoint_embed_ts_parts, memory_ts_parts, boxes_ts_parts = [], [], []
             group_detr = self.group_detr if self.training else 1
-            for g_idx in range(group_detr):
-                output_memory_gidx = self.enc_output_norm[g_idx](self.enc_output[g_idx](output_memory))
-
-                enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
-                topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
-                topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
-
-                # get memory tgt
-                tgt_undetach_gidx = torch.gather(
-                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model)
+            if group_detr > 1 and self._two_stage_batching_eligible():
+                # Stack each group's own weights to replace the per-group launches with one batched
+                # call per operation. The eligibility guard keeps custom or heterogeneous modules on
+                # the loop below. Eval/export use group_detr=1, so tracing never sees the batched path.
+                refpoint_embed_ts, memory_ts, boxes_ts, cls_ts = self._two_stage_group_selection(
+                    output_memory, output_proposals, group_detr
                 )
-                # Ranking needs every position's class score, but the box MLP is a pointwise (no
-                # cross-token mixing) transform of a single token's features -- gather the selected
-                # tokens first and run the MLP only on those, instead of on every encoder position and
-                # discarding all but ``topk`` of the results. This is equivalent only while
-                # ``enc_out_bbox_embed`` remains token-pointwise; a future stateful or cross-token head
-                # must move the MLP back before this gather.
-                output_proposals_gidx = torch.gather(
-                    output_proposals, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, 4)
-                )
-                if self.bbox_reparam:
-                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx)
-                    enc_outputs_coord_cxcy_gidx = (
-                        enc_outputs_coord_delta_gidx[..., :2] * output_proposals_gidx[..., 2:]
-                        + output_proposals_gidx[..., :2]
-                    )
-                    enc_outputs_coord_wh_gidx = (
-                        enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals_gidx[..., 2:]
-                    )
-                    refpoint_embed_gidx_undetach = torch.concat(
-                        [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
+            else:
+                refpoint_embed_ts_parts, memory_ts_parts, boxes_ts_parts = [], [], []
+                for g_idx in range(group_detr):
+                    output_memory_prenorm_gidx = self.enc_output[g_idx](output_memory)
+                    output_memory_gidx = self.enc_output_norm[g_idx](output_memory_prenorm_gidx)
+
+                    enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
+                    topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
+                    select_rows = self.select_top_rows(enc_outputs_class_unselected_gidx.max(-1)[0], topk)
+
+                    # get memory tgt. LayerNorm acts per token, so gathering the pre-norm rows and normalizing
+                    # only the selected ones is mathematically the same as gathering the normalized rows. It
+                    # also keeps the full-length norm output from crossing into the CPU-resident topk/gather.
+                    # That crossing makes Apple's Neural Engine compiler reject a whole fp16 CoreML program
+                    # ("Invalid layer") when enc_output_norm still has its identity affine (weight all ones,
+                    # bias all zeros) and the token count is a multiple of 32. This reordering relies on
+                    # enc_output_norm being token-pointwise, like the box-MLP reordering below; a cross-token
+                    # norm must gather after.
+                    # _two_stage_group_selection still gathers post-norm: it runs only while training, and export
+                    # always takes this loop, so no exported graph reaches the ANE through that path.
+                    tgt_undetach_gidx = self.enc_output_norm[g_idx](select_rows(output_memory_prenorm_gidx))
+                    # Ranking needs every position's class score, but the box MLP is a pointwise (no
+                    # cross-token mixing) transform of a single token's features -- gather the selected
+                    # tokens first and run the MLP only on those, instead of on every encoder position and
+                    # discarding all but ``topk`` of the results. This is equivalent only while
+                    # ``enc_out_bbox_embed`` remains token-pointwise; a future stateful or cross-token head
+                    # must move the MLP back before this gather.
+                    output_proposals_gidx = select_rows(output_proposals)
+                    if self.bbox_reparam:
+                        enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx)
+                        enc_outputs_coord_cxcy_gidx = (
+                            enc_outputs_coord_delta_gidx[..., :2] * output_proposals_gidx[..., 2:]
+                            + output_proposals_gidx[..., :2]
+                        )
+                        enc_outputs_coord_wh_gidx = (
+                            enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals_gidx[..., 2:]
+                        )
+                        refpoint_embed_gidx_undetach = torch.concat(
+                            [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
+                        )
+                    else:
+                        refpoint_embed_gidx_undetach = (
+                            self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx) + output_proposals_gidx
+                        )  # unsigmoid
+                    # for decoder layer, detached as initial ones, (bs, nq, 4)
+                    refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
+
+                    refpoint_embed_ts_parts.append(refpoint_embed_gidx)
+                    memory_ts_parts.append(tgt_undetach_gidx)
+                    boxes_ts_parts.append(refpoint_embed_gidx_undetach)
+                # concat on dim=1, the nq dimension, (bs, nq, d) --> (bs, nq, d). Eval/export run one group;
+                # a single-input Concat would reach the ONNX graph, where CoreML rejects it and splits the graph.
+                if group_detr == 1:
+                    # refpoint_embed_ts is a .detach() view sharing boxes_ts's storage; the cat below used to copy.
+                    refpoint_embed_ts, memory_ts, boxes_ts = (
+                        refpoint_embed_ts_parts[0],
+                        memory_ts_parts[0],
+                        boxes_ts_parts[0],
                     )
                 else:
-                    refpoint_embed_gidx_undetach = (
-                        self.enc_out_bbox_embed[g_idx](tgt_undetach_gidx) + output_proposals_gidx
-                    )  # unsigmoid
-                # for decoder layer, detached as initial ones, (bs, nq, 4)
-                refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
-
-                refpoint_embed_ts_parts.append(refpoint_embed_gidx)
-                memory_ts_parts.append(tgt_undetach_gidx)
-                boxes_ts_parts.append(refpoint_embed_gidx_undetach)
-            # concat on dim=1, the nq dimension, (bs, nq, d) --> (bs, nq, d)
-            refpoint_embed_ts = torch.cat(refpoint_embed_ts_parts, dim=1)
-            # (bs, nq, d)
-            memory_ts = torch.cat(memory_ts_parts, dim=1)
-            boxes_ts = torch.cat(boxes_ts_parts, dim=1)
+                    refpoint_embed_ts = torch.cat(refpoint_embed_ts_parts, dim=1)
+                    # (bs, nq, d)
+                    memory_ts = torch.cat(memory_ts_parts, dim=1)
+                    boxes_ts = torch.cat(boxes_ts_parts, dim=1)
+                # This loop discards its own per-group class ranking scores after topk (same as the
+                # batched path above) instead of gathering them -- unlike the batched path, this rare
+                # fallback (custom/heterogeneous group modules, or group_detr==1) is left as is; the
+                # caller re-runs enc_out_class_embed for this case, same as before this change.
+                cls_ts = None
 
         enc_kp_predictions = None
         init_kp_ref_xy = None
@@ -483,7 +1135,12 @@ class Transformer(nn.Module):
                 else:
                     refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
 
-                refpoint_embed = torch.concat([refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
+                # When every query comes from the two-stage selection, the remainder is empty; concatenating it
+                # puts a zero-sized tensor in the exported graph, which CoreML rejects.
+                if refpoint_embed_subset.shape[-2] == 0:
+                    refpoint_embed = refpoint_embed_ts_subset
+                else:
+                    refpoint_embed = torch.concat([refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
 
             # Insert register tokens per group
             original_num_queries_per_group = None
@@ -580,6 +1237,10 @@ class Transformer(nn.Module):
             return_values.append(keypoint_hs)
             return_values.append(enc_kp_predictions)
             return_values.append(keypoint_memory_ts if self.two_stage else None)
+
+        # Always last: callers that need it grab it by position ([-1] or an explicit slice), so this
+        # append must never move without updating every unpacking site (LWDETR.forward, forward_export).
+        return_values.append(cls_ts)
 
         return tuple(return_values)
 
@@ -725,7 +1386,27 @@ class TransformerDecoder(nn.Module):
             else:
                 assert valid_ratios is not None
                 refpoints_input = obj_center[:, :, None] * torch.cat([valid_ratios, valid_ratios], -1)[:, None]
-                query_sine_embed = gen_sineembed_for_position(refpoints_input[:, :, 0, :], self.d_model // 2)
+                # ``ref_point_head`` and its first Linear are the embedding's only consumers. When their calls are
+                # plain, autocast casts an fp32 input inside Linear, so producing it in the compute dtype is bitwise
+                # the same. Hooks, overrides, subclasses, compile wrappers and non-fp32 references (autocast leaves
+                # fp64 alone) keep the original module input.
+                # ``.layers`` is read only after the type check: a replaced head need not have it.
+                ref_point_head = self.ref_point_head
+                ref_point_head_is_plain = (
+                    _eager_cuda(refpoints_input)
+                    and type(ref_point_head) is MLP
+                    and type(ref_point_head.layers[0]) is nn.Linear
+                    and _module_call_is_plain(ref_point_head, ref_point_head.layers[0])
+                )
+                query_sine_embed = gen_sineembed_for_position(
+                    refpoints_input[:, :, 0, :],
+                    self.d_model // 2,
+                    out_dtype=(
+                        _cuda_autocast_dtype()
+                        if ref_point_head_is_plain and refpoints_input.dtype == torch.float32
+                        else None
+                    ),
+                )
 
             query_pos = self.ref_point_head(query_sine_embed)
             return obj_center, refpoints_input, query_pos, query_sine_embed
@@ -934,6 +1615,136 @@ class TransformerDecoderLayer(nn.Module):
     def with_pos_embed(self, tensor: Tensor, pos: Tensor | None) -> Tensor:
         return tensor if pos is None else tensor + pos
 
+    def _pos_embed_for_linear(self, tensor: Tensor, pos: Tensor | None) -> Tensor:
+        """:meth:`with_pos_embed` for a sum whose only consumers are matmuls under autocast.
+
+        Autocast casts fp32 matmul inputs to its compute dtype, so a full-precision sum that feeds nothing else is
+        written once by the add and read once more by the cast. When CUDA autocast is on and the sum is fp32, the
+        training path emits it in the compute dtype directly (:class:`_AddInDtype`, bitwise the same values, one kernel
+        and half the bytes). Eval, CPU, fp32 training, non-fp32 sums (autocast leaves fp64 alone), ``torch.compile`` and
+        tracing keep the plain add. Both callers feed the sum to two matmuls, so the ``tensor``/``pos`` gradients are
+        accumulated in the compute dtype before the upcast (one extra rounding, see :class:`_AddInDtype`); the forward
+        and the losses are unchanged.
+        """
+        # An overridden ``with_pos_embed`` (subclass method or instance attribute) defines the sum; honour it.
+        if type(self).with_pos_embed is not TransformerDecoderLayer.with_pos_embed or "with_pos_embed" in self.__dict__:
+            return self.with_pos_embed(tensor, pos)
+        if pos is None:
+            return tensor
+        if not (self.training and _eager_cuda(tensor) and tensor.shape == pos.shape):
+            return tensor + pos
+        dtype = _cuda_autocast_dtype()
+        if (
+            dtype is None
+            or tensor.dtype != torch.float32
+            or tensor.dtype == dtype
+            or pos.dtype not in (tensor.dtype, dtype)
+        ):
+            return tensor + pos
+        return cast(Tensor, _AddInDtype.apply(tensor, pos, dtype))
+
+    def _ffn_hidden(self, tgt: Tensor) -> Tensor:
+        """``self.activation(self.linear1(tgt))`` with the ReLU folded into the GEMM epilogue on CUDA.
+
+        :class:`_LinearReLU` is bitwise the two-op result, so it is taken whenever ``linear1`` is the plain
+        ``nn.Linear`` the layer builds (exact type, a bias, weight and bias that are exact ``nn.Parameter`` tensors so a
+        tensor subclass keeps ``F.linear``'s dispatch, a call nothing overrides or observes, see
+        :func:`_module_call_is_plain`) and the activation is ReLU, in eager CUDA execution; other activations, CPU,
+        ``torch.compile`` and tracing keep the two ops. Under CUDA autocast fp32 operands are cast to the compute dtype
+        first, exactly as autocast casts them for ``linear``; other operand dtypes (autocast leaves fp64 alone) keep the
+        two ops.
+        """
+        linear1 = self.linear1
+        if (
+            self.activation is F.relu
+            and _eager_cuda(tgt)
+            and type(linear1) is nn.Linear
+            and type(linear1.weight) is nn.Parameter
+            and type(linear1.bias) is nn.Parameter
+            and _module_call_is_plain(linear1)
+        ):
+            dtype = _cuda_autocast_dtype()
+            if dtype is None:
+                if tgt.dtype == linear1.weight.dtype:
+                    return cast(Tensor, _LinearReLU.apply(tgt, linear1.weight, linear1.bias))
+            elif tgt.dtype == linear1.weight.dtype == linear1.bias.dtype == torch.float32:
+                with torch.autocast("cuda", enabled=False):
+                    return cast(
+                        Tensor,
+                        _LinearReLU.apply(tgt.to(dtype), linear1.weight.to(dtype), linear1.bias.to(dtype)),
+                    )
+        return self.activation(linear1(tgt))
+
+    def _grouped_self_attention_eligible(
+        self, tgt: Tensor, tgt_mask: Tensor | None, tgt_key_padding_mask: Tensor | None
+    ) -> bool:
+        """Return whether :meth:`_grouped_self_attention` can stand in for the ``self_attn`` module call.
+
+        The explicit path reads ``in_proj_weight``/``in_proj_bias``/``out_proj`` and never calls the module, so it is
+        limited to the plain ``nn.MultiheadAttention`` ``__init__`` builds (exact type, a call nothing overrides or
+        observes, see :func:`_module_call_is_plain`, packed projections with bias held in exact ``nn.Parameter`` tensors
+        so a tensor subclass keeps the module call, no ``bias_k``/``bias_v``/``add_zero_attn``), to training on CUDA
+        with zero attention dropout and without masks (the only configuration that regroups without changing seeded
+        dropout masks), and to eager execution: under ``torch.compile`` or tracing the module call is what Inductor and
+        the exporters expect.
+        """
+        attn = self.self_attn
+        if type(attn) is not nn.MultiheadAttention:
+            return False
+        if not self.training or tgt_mask is not None or tgt_key_padding_mask is not None:
+            return False
+        if not _eager_cuda(tgt) or tgt.dim() != 3 or tgt.shape[1] % self.group_detr != 0:
+            return False
+        if not _module_call_is_plain(attn):
+            return False
+        return bool(
+            attn.batch_first
+            and attn._qkv_same_embed_dim
+            and type(attn.in_proj_weight) is nn.Parameter
+            and type(attn.in_proj_bias) is nn.Parameter
+            and attn.bias_k is None
+            and attn.bias_v is None
+            and not attn.add_zero_attn
+            and attn.dropout == 0.0
+        )
+
+    def _grouped_self_attention(self, tgt: Tensor, query_pos: Tensor | None) -> Tensor:
+        """Grouped self-attention with the projections on the ungrouped layout and the regrouping as views.
+
+        Computes what ``self.self_attn(q, k, v)`` computes on ``torch.cat(x.split(queries_per_group, 1), 0)``,
+        with the same kernels: the per-token projections commute with the regrouping, and attention is
+        independent per (batch, group) pair, so the rows are bitwise the same whether the flattened batch is
+        group-major (the module path) or batch-major (a view of the ``[batch, groups * queries_per_group]``
+        layout, in both directions). What disappears is the layout work: the three ``cat``s and their
+        backward copies, ``MultiheadAttention``'s ``batch_first`` transposes (which route every in-projection
+        through ``matmul`` on a non-contiguous tensor: a copy per projection) and, under autocast, one of the
+        two casts of the shared query/key input.
+
+        Eligibility requires zero attention dropout because a nonzero mask would be drawn in batch-major rather than
+        the module path's group-major order.
+        """
+        attn = self.self_attn
+        bs, num_queries, d_model = tgt.shape
+        groups = self.group_detr
+        heads = attn.num_heads
+        head_dim = d_model // heads
+        weight, bias = attn.in_proj_weight, attn.in_proj_bias
+        qk_input = self._pos_embed_for_linear(tgt, query_pos)
+
+        def project(x: Tensor, start: int) -> Tensor:
+            # ``mm`` then ``add_`` is what the module path runs (``F.linear`` on its transposed inputs takes the
+            # matmul route), kept so the projections stay bitwise identical to it.
+            out = torch.mm(x.reshape(bs * num_queries, d_model), weight[start : start + d_model].t())
+            out = out.add_(bias[start : start + d_model].to(out.dtype))
+            return out.view(bs * groups, num_queries // groups, heads, head_dim).transpose(1, 2)
+
+        q = project(qk_input, 0)
+        k = project(qk_input, d_model)
+        v = project(tgt, 2 * d_model)
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=attn.dropout)  # eligibility implies training
+        out = out.transpose(1, 2).reshape(bs, num_queries, d_model)
+        return F.linear(out, attn.out_proj.weight, attn.out_proj.bias)
+
     def forward_post(
         self,
         tgt: Tensor,
@@ -958,25 +1769,47 @@ class TransformerDecoderLayer(nn.Module):
         # ========== Begin of Self-Attention =============
         # Apply projections here
         # shape: batch_size x num_queries x 256
-        q = k = self.with_pos_embed(tgt, query_pos)
-        v = tgt
-        if self.training:
-            q = torch.cat(q.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
-            k = q
-            v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
+        if self._grouped_self_attention_eligible(tgt, tgt_mask, tgt_key_padding_mask):
+            tgt2 = self._grouped_self_attention(tgt, query_pos)
+        else:
+            q = k = self.with_pos_embed(tgt, query_pos)
+            v = tgt
+            if self.training:
+                q = torch.cat(q.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
+                k = q
+                v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)  # type: ignore[no-untyped-call]
 
-        tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]
+            tgt2 = self.self_attn(
+                q, k, v, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False
+            )[0]
 
-        if self.training:
-            tgt2 = torch.cat(tgt2.split(bs, dim=0), dim=1)
+            if self.training:
+                tgt2 = torch.cat(tgt2.split(bs, dim=0), dim=1)
 
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
         # ========== End of Self-Attention =============
 
         # ========== Begin of Cross-Attention =============
+        # A plain MSDeformAttn only reads ``query`` through its two Linear heads, which autocast would cast anyway, so
+        # under autocast the positional add can be emitted in the compute dtype directly. Anything that observes or
+        # overrides those three calls keeps the original fp32 query input.
+        cross_attn = self.cross_attn
+        cross_attn_query_is_plain = (
+            self.training
+            and _eager_cuda(tgt)
+            and type(cross_attn) is MSDeformAttn
+            and type(cross_attn.sampling_offsets) is nn.Linear
+            and type(cross_attn.attention_weights) is nn.Linear
+            and _module_call_is_plain(cross_attn, cross_attn.sampling_offsets, cross_attn.attention_weights)
+        )
+        cross_attn_query = (
+            self._pos_embed_for_linear(tgt, query_pos)
+            if cross_attn_query_is_plain
+            else self.with_pos_embed(tgt, query_pos)
+        )
         tgt2 = self.cross_attn(
-            self.with_pos_embed(tgt, query_pos),
+            cross_attn_query,
             reference_points,
             memory,
             spatial_shapes,
@@ -988,7 +1821,7 @@ class TransformerDecoderLayer(nn.Module):
 
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        tgt2 = self.linear2(self.dropout(self._ffn_hidden(tgt)))
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
 
@@ -1015,7 +1848,9 @@ class TransformerDecoderLayer(nn.Module):
             q = k = combined_feat + combined_pos
             v = combined_feat
 
-            combined_out = self.kp_inst_self_attn(q, k, v, attn_mask=keypoint_class_mask, need_weights=False)[0]
+            combined_out = self.kp_inst_self_attn(
+                q, k, v, attn_mask=_additive_attn_mask(keypoint_class_mask, q.dtype), need_weights=False
+            )[0]
             combined_out = combined_out.reshape(bs, num_queries, 1 + num_kp, kp_dim)
             tgt2 = combined_out[:, :, 0, :]
             keypoint_tgt2 = combined_out[:, :, 1:, :]
@@ -1163,12 +1998,13 @@ def build_transformer(args: BuilderArgs) -> Transformer:
     )
 
 
+#: Functional activation per name accepted by the transformer layers.
+_ACTIVATION_FNS: dict[str, Callable[[Tensor], Tensor]] = {"relu": F.relu, "gelu": F.gelu, "glu": F.glu}
+
+
 def _get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     """Return an activation function given a string."""
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(f"activation should be relu/gelu, not {activation}.")
+    try:
+        return _ACTIVATION_FNS[activation]
+    except KeyError:
+        raise RuntimeError(f"activation should be one of {tuple(_ACTIVATION_FNS)}, not {activation}.") from None

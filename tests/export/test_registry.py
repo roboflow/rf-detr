@@ -12,17 +12,22 @@ agree with the exporter classes once they are imported.
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from dataclasses import replace
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 from rfdetr.export import registry as registry_module
+from rfdetr.export._coreai.exporter import CoreAIConfig
 from rfdetr.export._coreml.exporter import CoreMLConfig
 from rfdetr.export._executorch.exporter import ExecuTorchExporter
+from rfdetr.export._litert.exporter import LiteRTConfig
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._openvino.exporter import OpenVINOConfig
+from rfdetr.export._runtime.metadata import ExportFormat
 from rfdetr.export._tensorrt.exporter import TensorRTConfig
 from rfdetr.export._tflite.exporter import TFLiteConfig
 from rfdetr.export.base import ExportConfig, Exporter, reject_unsupported_dynamic_batch
@@ -64,9 +69,44 @@ class TestNormalizeFormat:
         """A name that is already canonical is returned unchanged."""
         assert normalize_format("onnx") == "onnx"
 
-    def test_unknown_name_passes_through_for_the_resolver_to_reject(self) -> None:
-        """An unknown spelling is not rewritten, so the resolver can name it back to the user verbatim."""
-        assert normalize_format("nonesuch") == "nonesuch"
+    @pytest.mark.parametrize("spelling, canonical", [("ONNX", "onnx"), ("Onnx", "onnx"), ("TRT", "tensorrt")])
+    def test_format_spelling_is_case_insensitive(self, spelling: str, canonical: str) -> None:
+        """Format names and aliases match in any case, as ``backend`` already does."""
+        assert normalize_format(spelling) == canonical
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "nonesuch",
+            "NoneSuch",
+            None,
+            123,
+            pytest.param(["onnx"], id="list"),
+            pytest.param(b"onnx", id="bytes"),
+        ],
+    )
+    def test_unknown_name_passes_through_for_the_resolver_to_reject(self, spelling: object) -> None:
+        """An unknown spelling or a non-string value is not rewritten, so the resolver names it back verbatim."""
+        assert normalize_format(spelling) == spelling
+
+
+class TestExporterEntrySuffixes:
+    """``ExporterEntry.suffixes`` lists the file extensions ``load_runtime`` accepts for a format."""
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_suffixes_are_lowercase_dotted_extensions(self, format: str) -> None:
+        """Every checked suffix is lowercase and starts with a dot, so a lowercased ``Path.suffix`` can match it.
+
+        ``load_runtime`` lowercases the artifact's suffix before the lookup; a mixed-case or dotless entry would
+        silently refuse every artifact of its format.
+        """
+        suffixes = REGISTRY[format].suffixes
+
+        assert all(suffix.startswith(".") and suffix == suffix.lower() for suffix in suffixes)
+
+    def test_tensorrt_suffixes_stay_unchecked(self) -> None:
+        """TensorRT engines carry no single extension (``.trt``, ``.engine``, others), so none is enforced."""
+        assert REGISTRY["tensorrt"].suffixes == frozenset()
 
 
 class TestResolveExporter:
@@ -133,6 +173,17 @@ class TestRejectUnsupportedDynamicBatch:
         assert REGISTRY[format].dynamic_batch_reason in str(refusal.value)
         assert REGISTRY[format].dynamic_batch_reason, "a fixed-batch format must explain what to do instead"
 
+    @pytest.mark.parametrize("format", sorted(f for f, e in REGISTRY.items() if not e.supports_dynamic_batch))
+    def test_constructed_exporter_refuses_too(self, tmp_path: Path, format: str) -> None:
+        """A caller that builds the exporter directly, skipping this guard, is refused by the exporter itself.
+
+        Pins that a format's own ``_check_capabilities`` override still runs the base class's check.
+        """
+        exporter_class = resolve_exporter(format)
+
+        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+            exporter_class(exporter_class.config_class(output_dir=tmp_path, dynamic_batch=True))
+
     @pytest.mark.parametrize("format", sorted(f for f, e in REGISTRY.items() if e.supports_dynamic_batch))
     def test_dynamic_capable_formats_are_allowed(self, format: str) -> None:
         """A format that can carry a dynamic batch dimension passes through silently."""
@@ -157,8 +208,10 @@ class TestBuildConfig:
             pytest.param("onnx", OnnxConfig, id="onnx"),
             pytest.param("openvino", OpenVINOConfig, id="openvino"),
             pytest.param("coreml", CoreMLConfig, id="coreml"),
+            pytest.param("coreai", CoreAIConfig, id="coreai"),
             pytest.param("tflite", TFLiteConfig, id="tflite"),
             pytest.param("tensorrt", TensorRTConfig, id="tensorrt"),
+            pytest.param("litert", LiteRTConfig, id="litert"),
         ],
     )
     def test_builds_the_configuration_class_the_exporter_declares(self, format: str, expected_type: type) -> None:
@@ -186,6 +239,8 @@ class TestBuildConfig:
             pytest.param("onnx", {"opset_version": 18}, "opset_version", 18, id="onnx_opset"),
             pytest.param("openvino", {"openvino_precision": "float32"}, "precision", "float32", id="openvino"),
             pytest.param("coreml", {"coreml_precision": "float16"}, "compute_precision", "float16", id="coreml"),
+            pytest.param("coreml", {"coreml_neural_engine": True}, "neural_engine", True, id="coreml_neural_engine"),
+            pytest.param("coreai", {"coreai_precision": "float16"}, "precision", "float16", id="coreai"),
             pytest.param("tflite", {"quantization": "int8"}, "quantization", "int8", id="tflite"),
             pytest.param("tensorrt", {"fp16": False}, "fp16", False, id="tensorrt"),
         ],
@@ -282,7 +337,7 @@ class TestExporterCapabilityChecks:
     """The shared capability checks every exporter inherits, exercised without any optional dependency.
 
     Each format used to carry its own copy of these guards. They now live once on the base class, so a mistake here
-    reaches all six formats — and the branches are cheapest to pin on a subclass that declares nothing.
+    reaches all seven formats — and the branches are cheapest to pin on a subclass that declares nothing.
     """
 
     def test_unsupported_dynamic_batch_is_rejected_at_construction(self) -> None:
@@ -292,8 +347,9 @@ class TestExporterCapabilityChecks:
 
     def test_notes_are_dropped_with_a_warning_when_the_artifact_has_no_metadata_slot(self) -> None:
         """Supplying notes to a format that cannot embed them warns and names the format, rather than failing."""
-        with pytest.warns(UserWarning, match=r"`notes` is not forwarded to format='probe'"):
+        with pytest.warns(UserWarning) as caught:
             _CapabilityProbe(ExportConfig(output_dir=Path("out"), notes="provenance"))
+        assert "`notes` is not forwarded to format='probe'" in str(caught[0].message)
 
     def test_no_warning_when_notes_are_absent(self) -> None:
         """A format without a metadata slot stays silent when the caller supplied no notes."""
@@ -314,3 +370,31 @@ class TestExporterCapabilityChecks:
 
         with pytest.warns(UserWarning, match="Probe export is experimental and work-in-progress"):
             _ExperimentalProbe(ExportConfig(output_dir=Path("out")))
+
+
+class TestRuntimeLoaderRegistry:
+    """Every supported export format has a lazy inference loader."""
+
+    def test_runtime_formats_match_export_formats(self) -> None:
+        """Adding an exporter requires its runtime loader in the same registry."""
+        assert set(registry_module.RUNTIME_LOADERS) == set(REGISTRY)
+
+    def test_metadata_formats_match_export_formats(self) -> None:
+        """Adding an exporter requires its name in ``ExportFormat``, which export metadata validates against."""
+        assert set(get_args(ExportFormat)) == set(REGISTRY)
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_registered_loader_resolves(self, format: str) -> None:
+        """A typo in a dotted loader path fails before users open an artifact."""
+        assert callable(registry_module.resolve_runtime_loader(format))
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_registered_loader_takes_runtime_options(self, format: str) -> None:
+        """Every loader takes the options mapping that ``RFDETRInference(runtime_options=...)`` forwards.
+
+        ``load_runtime`` calls each loader with four positional arguments, so a loader missing ``options`` would only
+        fail once a user opens an artifact of that format.
+        """
+        loader = registry_module.resolve_runtime_loader(format)
+
+        assert list(inspect.signature(loader).parameters) == ["path", "metadata", "device", "options"]

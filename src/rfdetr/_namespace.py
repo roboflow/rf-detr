@@ -18,13 +18,13 @@ from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
 # Fields forwarded from ModelConfig into the namespace.
 # Excludes cls_loss_coef (set explicitly below from TrainConfig, its sole owner).
 _MC_NAMESPACE_FIELDS = {
-    "amp",
     "backbone_lora",
     "bbox_reparam",
     "ca_nheads",
     "dec_layers",
     "dec_n_points",
     "device",
+    "dim_feedforward",
     "encoder",
     "freeze_encoder",
     "gradient_checkpointing",
@@ -98,8 +98,6 @@ _TC_NON_NAMESPACE_FIELDS = {
     "lr_scheduler_kwargs",
     "lr_scheduler_interval",
     "lr_scheduler_monitor",
-    "lr_min_factor",
-    "lr_drop",
     "optimizer",
     "optimizer_kwargs",
     "optimizer_param_group_overrides",

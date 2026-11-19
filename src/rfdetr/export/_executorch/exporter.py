@@ -23,6 +23,11 @@ supported subgraphs to a hardware backend:
   see :data:`_QNN_CPU_FALLBACK_OPS`).  Its delegate is not in the ``executorch`` wheel: it requires an ExecuTorch
   source build against the Qualcomm AI Engine Direct (QAIRT) SDK, and runs only on a Snapdragon device.  Uses a
   dedicated lowering path (:func:`_lower_qnn`) rather than the generic partitioner.
+* **TensorRT** -- NVIDIA GPUs, through Torch-TensorRT.  For the models checked (detection Nano to Large,
+  segmentation Nano, keypoint preview) TensorRT converts every op, so the ``.pte`` holds one TensorRT engine
+  (fp32) and is called with CPU tensors, like the other backends.  The engine is built on the exporting GPU and
+  runs only on GPUs and TensorRT releases it is compatible with.  Requires the ``executorch-tensorrt`` extra and a
+  CUDA GPU at export time.  Uses a dedicated lowering path (:func:`_lower_tensorrt`).
 
 Vulkan is not exposed. It was evaluated end-to-end and rejected because it fails at three independent levels:
 
@@ -37,7 +42,7 @@ Vulkan is not exposed. It was evaluated end-to-end and rejected because it fails
    backend's constant prepack (a convolution weight is serialized as a runtime tensor instead of a ``TensorRef``) --
    reproduced on the from-source ExecuTorch v1.3.1 runtime, so it never runs on any Vulkan device.
 
-XNNPACK covers portable CPU; QNN and CoreML cover the mobile accelerators.
+XNNPACK covers portable CPU; QNN and CoreML cover the mobile accelerators; TensorRT covers NVIDIA GPUs.
 
 RF-DETR's detection graph exports cleanly once the deformable-attention modules are switched into their export-friendly
 path (handled by :meth:`model.export`, which the caller invokes before reaching this exporter).  This module only
@@ -52,6 +57,7 @@ Note:
 
 from __future__ import annotations
 
+import importlib.metadata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,19 +66,23 @@ from typing import Any, Literal, cast
 import torch
 from torch import nn
 
+from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import is_installed
 
 logger = get_logger()
 
 # Backends accepted by :class:`ExecuTorchExporter`.  XNNPACK (portable CPU, fp32) and CoreML (Apple devices, fp16) are
 # validated end-to-end.  Qualcomm QNN (Snapdragon HTP/NPU, fp16) lowers cleanly and delegates
 # the bulk of the network to the HTP -- but its delegate ships neither in the ``executorch`` wheel nor runs off a
-# Snapdragon device, so it requires a source build of ExecuTorch against the Qualcomm AI Engine Direct SDK.  Vulkan is
-# omitted (blocked by two upstream ExecuTorch bugs + missing ops; see triage notes).
-_VALID_BACKENDS: frozenset[str] = frozenset({"xnnpack", "coreml", "qnn"})
+# Snapdragon device, so it requires a source build of ExecuTorch against the Qualcomm AI Engine Direct SDK.  TensorRT
+# (NVIDIA GPUs, fp32) comes from Torch-TensorRT, a separate package with its own extra.  Vulkan is omitted (blocked by
+# two upstream ExecuTorch bugs + missing ops; see triage notes).
+_VALID_BACKENDS: frozenset[str] = frozenset({"xnnpack", "coreml", "qnn", "tensorrt"})
 
 # Backends whose ahead-of-time compilation bakes a target SoC into the ``.pte`` (see :func:`_lower_qnn`), so a SoC
 # must be supplied at export time.  XNNPACK (portable CPU) and CoreML (Apple's runtime selects the device at load)
@@ -90,8 +100,27 @@ SOC_BACKENDS: frozenset[str] = _SOC_BACKENDS
 # construction of the exporter.  "SM8650" is Snapdragon 8 Gen 3.
 _DEFAULT_SOC = "SM8650"
 
-_INSTALL_HINT = "ExecuTorch export requires the `executorch` package. Install it with: pip install rfdetr[executorch]"
+_INSTALL_HINT = (
+    "ExecuTorch export requires the `executorch` package. Install it with: pip install rfdetr[executorch] "
+    "(or, on Linux with Python 3.11 or newer, rfdetr[executorch-tensorrt] for backend='tensorrt')"
+)
 _COREML_HINT = "CoreML export requires `coremltools`. Install it with: pip install coremltools"
+_TENSORRT_HINT = (
+    "ExecuTorch TensorRT export requires Torch-TensorRT with ExecuTorch support (Linux, Python 3.11 or newer). "
+    "Install it with: pip install rfdetr[executorch-tensorrt]"
+)
+# The delegate package `torch-tensorrt[executorch]` installs next to the ExecuTorch release it was built with, and the
+# oldest ExecuTorch the `executorch-tensorrt` extra was validated with (pyproject.toml); the plain `executorch` extra
+# pins an older one, so the two extras do not share an environment.
+_TENSORRT_RUNTIME_MODULE = "torch_tensorrt_executorch_runtime"
+_TENSORRT_MIN_EXECUTORCH: tuple[int, int] = (1, 6)
+_TENSORRT_PARTIAL_CONVERSION_HINT = (
+    "Torch-TensorRT could not convert every op of this model to TensorRT ({reason}). An ExecuTorch TensorRT export "
+    "must hold the whole graph in one TensorRT engine, so a model it converts only in part is refused instead of "
+    "written as a hybrid program. Detection Nano to Large, segmentation Nano and the keypoint preview model converted "
+    "fully when checked; other models may not. For such a model, export with backend='xnnpack' (portable CPU) "
+    "instead, or with format='tensorrt' for a native TensorRT engine."
+)
 _RUNTIME_ABI_HINT = (
     "executorch's compiled runtime extension (executorch.runtime) failed to load against the installed "
     "torch {torch_version} ({exc}). This is a known torch/executorch ABI-compatibility gap: executorch's "
@@ -170,6 +199,32 @@ def _check_executorch_available(*, require_runtime: bool = False) -> None:
             raise ImportError(_RUNTIME_ABI_HINT.format(torch_version=_torch_version, exc=exc)) from exc
 
 
+def _check_tensorrt_executorch_integration() -> None:
+    """Verify that Torch-TensorRT was installed with its ExecuTorch integration, not just on its own.
+
+    Torch-TensorRT imports without it: ``torch-tensorrt[executorch]`` adds the delegate package that loads a TensorRT
+    ``.pte`` and the ExecuTorch release it was built with. A host with Torch-TensorRT beside the plain ``executorch``
+    extra has neither, so the export is refused here instead of failing, or yielding a ``.pte`` that cannot load, later.
+
+    Raises:
+        ImportError: If the delegate package is not installed, or the installed ``executorch`` is older than the release
+            the ``executorch-tensorrt`` extra was validated with (see :data:`_TENSORRT_MIN_EXECUTORCH`).
+    """
+    if not is_installed(_TENSORRT_RUNTIME_MODULE):
+        raise ImportError(_TENSORRT_HINT)
+    try:
+        version = importlib.metadata.version("executorch")
+    except importlib.metadata.PackageNotFoundError:
+        return  # Source-build install -- skip version check.
+    if tuple(int(part) for part in version.split(".")[:2]) < _TENSORRT_MIN_EXECUTORCH:
+        minimum = ".".join(str(part) for part in _TENSORRT_MIN_EXECUTORCH)
+        raise ImportError(
+            f"{_TENSORRT_HINT} Found executorch {version}, but the ExecuTorch TensorRT export was validated with "
+            f"executorch {minimum}; rfdetr[executorch] pins an older release, so the two extras cannot share an "
+            "environment."
+        )
+
+
 def _build_partitioner(backend: str) -> list[Any]:
     """Build the ExecuTorch partitioner list for *backend*.
 
@@ -193,8 +248,21 @@ def _build_partitioner(backend: str) -> list[Any]:
             from executorch.backends.apple.coreml.partition.coreml_partitioner import CoreMLPartitioner
         except ImportError as exc:
             raise ImportError(_COREML_HINT) from exc
+        # No compile specs on purpose. Passing ExecuTorch's own
+        # CoreMLBackend.generate_compile_specs(compute_precision=FLOAT16, minimum_deployment_target=iOS16) was
+        # measured to be worse than the partitioner's own defaults on a pretrained RFDETRNano (Apple M3 Pro,
+        # macOS 27.0.1, COCO val2017, all 5000 images): 48.05 -> 45.06 mAP. #1495 also recorded 14.0 -> 18.4 ms p50
+        # for that `.pte`; it was not re-measured and is not reconciled with the native `.mlpackage` measurements,
+        # where iOS16 is the faster program on the Neural Engine (10.8 vs 12.7 ms p50 back to back). The default path
+        # already runs the delegate in fp16 and already reaches the Neural Engine (verified from the `com.apple.ane`
+        # unified log). The two differ only in the deployment target: with no deployment-target compile spec,
+        # ExecuTorch passes minimum_deployment_target=None and coremltools defaults an mlprogram to its fixed lowest
+        # target, iOS15 (spec 6) (executorch 1.3.1, coremltools 9.0). That is the program the native CoreML export
+        # now also produces, while iOS16 puts `resample` on the Neural Engine in fp16, which is what costs the
+        # accuracy (#1024). With no compute-unit spec, ExecuTorch's CoreMLBackend converts with ct.ComputeUnit.ALL
+        # (`compute_unit_from_compile_specs` fallback, applied in its `ct.convert` call at lowering time).
         return [CoreMLPartitioner()]
-    # QNN uses _lower_qnn instead of this function; this raise is reached only if a new
+    # QNN and TensorRT use their own lowering functions; this raise is reached only if a new
     # backend is added to _VALID_BACKENDS without a corresponding branch above.
     raise ValueError(f"Unsupported ExecuTorch backend {backend!r}.")
 
@@ -283,6 +351,56 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
     return edge_program.to_executorch()
 
 
+def _lower_tensorrt(model: nn.Module, input_tensors: torch.Tensor) -> Any:
+    """Lower an RF-DETR model to an ExecuTorch program whose graph runs as a TensorRT engine.
+
+    Torch-TensorRT compiles the exported graph into TensorRT engines on the current CUDA device, and its ExecuTorch
+    exporter turns each engine into a TensorRT delegate call.  That device is the GPU the engine is built for:
+    :meth:`rfdetr.detr.RFDETR.export` makes the CUDA device of the model being exported current around the export, and
+    a direct call builds on ``torch.cuda.current_device()``.  For the models checked (detection Nano to Large,
+    segmentation Nano, keypoint preview) TensorRT converts every op, so the program is one delegate call plus the
+    copies that move the input to the GPU and the outputs back to the CPU.  The compilation requires that full
+    conversion (``require_full_compilation=True``): a model TensorRT converts only in part fails the export instead of
+    yielding a hybrid program.
+
+    Args:
+        model: RF-DETR module in export mode, on CPU; it is moved to the current CUDA device.
+        input_tensors: Example input ``(batch, channels, height, width)``; its shape is baked in.
+
+    Returns:
+        An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
+
+    Raises:
+        ImportError: If Torch-TensorRT is not installed.
+        RuntimeError: If Torch-TensorRT cannot convert every op of the model; the message names the models known to
+            convert fully and the alternatives.
+    """
+    try:
+        import torch_tensorrt.executorch
+    except ModuleNotFoundError as exc:
+        # An installed Torch-TensorRT that fails to load raises its own error unchanged.
+        if exc.name not in {"torch_tensorrt", "torch_tensorrt.executorch", "executorch"}:
+            raise
+        raise ImportError(_TENSORRT_HINT) from exc
+
+    example = input_tensors.cuda()
+    # Non-strict capture, as for the other backends; parity and the one-engine structure were measured this way.
+    exported_program = torch.export.export(model.cuda(), (example,), strict=False)
+    try:
+        # require_full_compilation turns a partial conversion into an error: without it Torch-TensorRT returns a hybrid
+        # graph, and the .pte would run the unconverted ops outside TensorRT without a word.
+        trt_module = torch_tensorrt.dynamo.compile(
+            exported_program, arg_inputs=[example], require_full_compilation=True
+        )
+    except AssertionError as exc:
+        # Torch-TensorRT 2.15's partitioners raise AssertionError("require_full_compilation=True was specified, but
+        # ..."). Any other assertion is not about how much of the graph converted and keeps its own message.
+        if "require_full_compilation" not in str(exc):
+            raise
+        raise RuntimeError(_TENSORRT_PARTIAL_CONVERSION_HINT.format(reason=exc)) from exc
+    return torch_tensorrt.executorch.export(trt_module).to_executorch()
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutorchConfig(ExportConfig):
     """Settings for ``format="executorch"``.
@@ -292,16 +410,16 @@ class ExecutorchConfig(ExportConfig):
         soc: Target SoC, required by backends that compile ahead-of-time for one chip.
     """
 
-    backend: Literal["xnnpack", "coreml", "qnn"] = "xnnpack"
+    backend: Literal["xnnpack", "coreml", "qnn", "tensorrt"] = "xnnpack"
     soc: str | None = None
 
 
 class ExecuTorchExporter(Exporter[ExecutorchConfig]):
     """Lower a prepared graph to an ExecuTorch ``.pte`` for the configured delegation backend.
 
-    The conversion runs in five steps, each its own method: validate the delegation backend, check the ``executorch``
-    dependency and create the output directory, resolve the artifact filename, lower the graph (QNN through its own
-    entry point, XNNPACK and CoreML through the generic partitioner), then write the ``.pte`` bytes.
+    The conversion runs in four steps, each its own method, after :meth:`check_dependencies`: create the output
+    directory, resolve the artifact filename, lower the graph (QNN and TensorRT through their own
+    entry points, XNNPACK and CoreML through the generic partitioner), then write the ``.pte`` bytes.
 
     The graph arrives already switched into its export-friendly forward and on CPU: the base
     :class:`~rfdetr.export.base.Exporter` and the public :meth:`rfdetr.detr.RFDETR.export` entry point handle both
@@ -363,23 +481,24 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             raise ValueError("format='executorch' requires a backend; none was resolved.")
         # The resolver already validated it against _VALID_BACKENDS; narrow the static type to the Literal the
         # configuration declares.
-        return {"backend": cast("Literal['xnnpack', 'coreml', 'qnn']", backend), "soc": settings.get("soc")}
+        return {"backend": cast("Literal['xnnpack', 'coreml', 'qnn', 'tensorrt']", backend), "soc": settings.get("soc")}
 
-    def _resolve_backend(self) -> str:
-        """Return the configured delegation backend, lowercased and checked against the supported set.
-
-        Returns:
-            The backend name in lowercase, one of :data:`_VALID_BACKENDS`.
+    def _check_capabilities(self) -> None:
+        """Refuse an unsupported delegation backend when the exporter is built.
 
         Raises:
             ValueError: If the configured backend is not one ExecuTorch export supports.
         """
+        super()._check_capabilities()
         backend_name = self.config.backend.lower()
         if backend_name not in _VALID_BACKENDS:
             raise ValueError(
                 f"Unsupported ExecuTorch backend {backend_name!r}. Choose from: {sorted(_VALID_BACKENDS)}."
             )
-        return backend_name
+
+    def _resolve_backend(self) -> str:
+        """Return the configured delegation backend in lowercase, one of :data:`_VALID_BACKENDS`."""
+        return self.config.backend.lower()
 
     def _resolve_soc(self) -> str:
         """Return the target SoC for a backend that compiles ahead-of-time for one chip.
@@ -393,11 +512,9 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         """
         return self.config.soc if self.config.soc is not None else _DEFAULT_SOC
 
-    def _prepare_output_dir(self) -> Path:
-        """Check the ExecuTorch dependency, then create and return the configured output directory.
-
-        Returns:
-            The output directory, created if it did not already exist.
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``executorch``, and the ``executorch.exir`` entry point the lowering goes through.
 
         Raises:
             ImportError: If ``executorch`` is missing, older than 1.3, or ships without ``executorch.exir``.
@@ -407,6 +524,31 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # point the delegated path lowers through -- does not, and that has always failed before anything is written.
         from executorch.exir import to_edge_transform_and_lower  # noqa: F401
 
+    def check_environment(self) -> None:
+        """Refuse a TensorRT export without Torch-TensorRT's ExecuTorch integration or a CUDA device.
+
+        Torch-TensorRT ships outside ``executorch`` and builds its engine on the current CUDA device, so the
+        ``tensorrt`` backend cannot export without both. The other backends lower on the CPU and need nothing here.
+
+        Raises:
+            ImportError: If the backend is ``tensorrt`` and Torch-TensorRT, its ExecuTorch delegate package, or an
+                ``executorch`` release new enough for it is not installed.
+            RuntimeError: If the backend is ``tensorrt`` and no CUDA device is available.
+        """
+        if self._resolve_backend() != "tensorrt":
+            return
+        if not is_installed("torch_tensorrt"):
+            raise ImportError(_TENSORRT_HINT)
+        _check_tensorrt_executorch_integration()
+        if not torch.cuda.is_available():
+            raise RuntimeError("ExecuTorch TensorRT export requires an available CUDA device.")
+
+    def _prepare_output_dir(self) -> Path:
+        """Create and return the configured output directory.
+
+        Returns:
+            The output directory, created if it did not already exist.
+        """
         output_dir = Path(self.config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
@@ -452,7 +594,8 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
 
         Raises:
-            ImportError: If the backend's ExecuTorch extension, or ``AddmmToLinearTransform``, is unavailable.
+            ImportError: If the backend's ExecuTorch extension, ``AddmmToLinearTransform`` or, for XNNPACK,
+                ``executorch.exir.passes.constant_prop_pass`` is unavailable.
         """
         from executorch.exir import to_edge_transform_and_lower
 
@@ -463,6 +606,10 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
         # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
         exported_program = torch.export.export(model, (input_tensors,), strict=False)
+        if backend == "xnnpack":
+            # Unmasked attention and constant weight slices keep the encoder and decoder inside the delegate (the
+            # CHANGELOG entry for PR #1601 has the measurements). Not applied to CoreML, which was not evaluated.
+            exported_program = fold_constants(decompose_attention(exported_program))
         # Imported in the non-QNN path only: the qnn backend never uses this transform, and
         # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
         # they never needed.
@@ -517,6 +664,8 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
                         "your target Snapdragon before relying on this export."
                     )
                     return _lower_qnn(model, graph.input_tensors, soc_model=self._resolve_soc())
+                if backend == "tensorrt":
+                    return _lower_tensorrt(model, graph.input_tensors)
                 return self._lower_generic(model, graph.input_tensors, backend)
         except (ImportError, ValueError):
             raise
@@ -548,8 +697,9 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             Path to the exported ``.pte`` file.
 
         Raises:
-            ImportError: If ``executorch`` or the backend's extension is not installed.
-            ValueError: If the configured backend, or the SoC a SoC-locked backend compiles for, is not supported.
+            ImportError: If the backend's extension is not installed (``executorch`` itself is checked first, by
+                :meth:`check_dependencies`).
+            ValueError: If the SoC a SoC-locked backend compiles for is not supported.
             RuntimeError: If ``torch.export`` or ExecuTorch lowering fails.
         """
         backend = self._resolve_backend()
@@ -557,3 +707,7 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         output_file = self._resolve_output_file(output_dir, backend, backbone_only=graph.backbone_only)
         program = self._lower(graph, backend, output_file)
         return self._write(program, output_file)
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Use ExecuTorch's positional method inputs and outputs."""
+        return positional_metadata(metadata)

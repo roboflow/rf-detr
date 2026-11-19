@@ -11,6 +11,9 @@ export) emitted a ``ScatterND`` that fed a shape tensor, which TensorRT rejects 
 compute a shape tensor"). The constant-baking ``torch.as_tensor`` alternative avoids the ScatterND but regresses the
 symbolic trace back to a baked constant.
 
+Under ``torch.compile`` neither form is used: ``spatial_shapes`` is stacked from one 0-d tensor per size, which keeps
+the sizes symbolic so a single graph serves every multi-scale resolution.
+
 The Transformer is shared by detection, segmentation and keypoint models, so a single low-level export here covers the
 spatial_shapes path for all of them.
 """
@@ -18,25 +21,23 @@ spatial_shapes path for all of them.
 import inspect
 import io
 from typing import TYPE_CHECKING
-from unittest import mock
 
 import numpy as np
 import pytest
 import torch
+from pytest_mock import MockerFixture
 from torch import nn
 
 from rfdetr.models.transformer import Transformer
+from tests._markers import _requires_onnx, _requires_onnx_and_onnxruntime
 
 if TYPE_CHECKING:
     import onnx
 
-# onnx is imported lazily at runtime inside the fixtures that build an ONNX graph
-# (exported_static_onnx, exported_dynamic_onnx_bytes, exported_1lvl_onnx), not at module scope: a
-# module-level pytest.importorskip("onnx") would skip collection of the whole file, including the
-# torch.compile/TorchScript-trace regression tests below, which do not touch onnx at all and must
-# still run in CI environments that install this project without the [onnx] extra (e.g.
-# ci-tests-cpu.yml's "train,augment,cli,visual" set). The TYPE_CHECKING import above only satisfies
-# the "onnx.ModelProto" string annotations used as return/parameter types.
+# onnx is imported lazily inside the fixtures that build an ONNX graph, never at module scope: a module-level import
+# would fail collection of the torch.compile/TorchScript-trace tests, which must still run in CI without the [onnx]
+# extra (e.g. ci-tests-cpu.yml's "train,augment,cli,visual" set). Only the ONNX-dependent tests carry skipif markers.
+
 
 # CI guard: torch._shape_as_tensor is a private ATen API used on the live forward path in
 # Transformer.forward(). If a future PyTorch upgrade removes it, this assertion fails
@@ -135,12 +136,13 @@ class _TransformerExportWrapper1Level(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def transformer_wrapper_2lvl() -> _TransformerExportWrapper:
-    """Build a 2-level Transformer and wrap it for ONNX export.
+def _build_eval_transformer(num_feature_levels: int) -> Transformer:
+    """Build an eval-mode one-layer ``Transformer`` (``d_model=16``, 6 queries) with the given feature-level count.
 
-    Returns:
-        Eval-mode ``_TransformerExportWrapper`` with ``d_model=16``.
+    Examples:
+        >>> transformer = _build_eval_transformer(num_feature_levels=2)
+        >>> transformer.num_feature_levels, transformer.training
+        (2, False)
     """
     transformer = Transformer(
         d_model=16,
@@ -148,13 +150,23 @@ def transformer_wrapper_2lvl() -> _TransformerExportWrapper:
         num_decoder_layers=1,
         sa_nhead=4,
         ca_nhead=4,
-        num_feature_levels=2,
+        num_feature_levels=num_feature_levels,
         dec_n_points=1,
         return_intermediate_dec=True,
         lite_refpoint_refine=True,
         use_grouppose_keypoints=False,
     )
-    return _TransformerExportWrapper(transformer.eval()).eval()
+    return transformer.eval()
+
+
+@pytest.fixture(scope="session")
+def transformer_wrapper_2lvl() -> _TransformerExportWrapper:
+    """Build a 2-level Transformer and wrap it for ONNX export.
+
+    Returns:
+        Eval-mode ``_TransformerExportWrapper`` with ``d_model=16``.
+    """
+    return _TransformerExportWrapper(_build_eval_transformer(num_feature_levels=2)).eval()
 
 
 @pytest.fixture(scope="session")
@@ -164,19 +176,7 @@ def transformer_wrapper_1lvl() -> _TransformerExportWrapper1Level:
     Returns:
         Eval-mode ``_TransformerExportWrapper1Level`` with ``d_model=16``.
     """
-    transformer = Transformer(
-        d_model=16,
-        num_queries=6,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=1,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        use_grouppose_keypoints=False,
-    )
-    return _TransformerExportWrapper1Level(transformer.eval()).eval()
+    return _TransformerExportWrapper1Level(_build_eval_transformer(num_feature_levels=1)).eval()
 
 
 @pytest.fixture(scope="session")
@@ -229,7 +229,8 @@ def exported_static_onnx(
     Returns:
         Loaded ``onnx.ModelProto`` for structural graph assertions.
     """
-    onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+    import onnx
+
     out = tmp_path_factory.mktemp("onnx_static") / "transformer.onnx"
     torch.onnx.export(
         transformer_wrapper_2lvl,
@@ -253,7 +254,6 @@ def exported_dynamic_onnx_bytes(
     Returns:
         Serialized ONNX model bytes for onnxruntime inference with variable batch sizes.
     """
-    pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
     buf = io.BytesIO()
     torch.onnx.export(
         transformer_wrapper_2lvl,
@@ -286,7 +286,8 @@ def exported_1lvl_onnx(
     Returns:
         Loaded ``onnx.ModelProto`` for structural graph assertions.
     """
-    onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+    import onnx
+
     out = tmp_path_factory.mktemp("onnx_1lvl") / "transformer_1lvl.onnx"
     torch.onnx.export(
         transformer_wrapper_1lvl,
@@ -305,26 +306,38 @@ def exported_1lvl_onnx(
 # ---------------------------------------------------------------------------
 
 
-def test_spatial_shapes_export_has_no_scatternd(exported_static_onnx: "onnx.ModelProto") -> None:
-    """The exported Transformer must not contain a ScatterND (TRT shape-tensor killer)."""
-    op_types = [n.op_type for n in exported_static_onnx.graph.node]
+_ONNX_LEVEL_FIXTURES = [
+    pytest.param("exported_static_onnx", id="2-level"),
+    pytest.param("exported_1lvl_onnx", id="1-level"),
+]
+
+
+@_requires_onnx
+@pytest.mark.parametrize("onnx_fixture", _ONNX_LEVEL_FIXTURES)
+def test_export_has_no_scatternd(onnx_fixture: str, request: pytest.FixtureRequest) -> None:
+    """The exported Transformer must not contain a ScatterND (TRT shape-tensor killer), at 1 and 2 feature levels.
+
+    ``torch.stack`` on a one-element list (the single-level case) must still produce a Shape-derived result.
+    """
+    op_types = [n.op_type for n in request.getfixturevalue(onnx_fixture).graph.node]
     assert "ScatterND" not in op_types, (
         "ScatterND reintroduced in Transformer export — spatial_shapes is no longer "
         "built from symbolic Shape ops; this breaks TensorRT engine building."
     )
 
 
-def test_spatial_shapes_export_is_shape_derived(exported_static_onnx: "onnx.ModelProto") -> None:
-    """Sanity-check that the exported 2-level Transformer graph contains Shape ops.
+@_requires_onnx
+@pytest.mark.parametrize("onnx_fixture", _ONNX_LEVEL_FIXTURES)
+def test_export_is_shape_derived(onnx_fixture: str, request: pytest.FixtureRequest) -> None:
+    """Sanity-check that the exported Transformer graph contains Shape ops, at 1 and 2 feature levels.
 
-    Note: ``spatial_shapes`` itself traces as a ``Constant`` node in TorchScript ONNX export —
-    the tracer records concrete H,W values at trace time, not ``Shape`` ops. The ``Shape`` ops
-    present here originate from other model computations (e.g. batch-size extraction). The true
-    regression guards are ``test_spatial_shapes_export_has_no_scatternd`` (no ScatterND) and
-    ``test_spatial_shapes_dynamic_batch_inference`` (runtime correctness at variable batch size).
+    Note: ``spatial_shapes`` itself traces as a ``Constant`` node in TorchScript ONNX export — the tracer records the
+    concrete H,W values at trace time, not ``Shape`` ops. The ``Shape`` ops present here originate from other model
+    computations (e.g. batch-size extraction). The true regression guards are ``test_export_has_no_scatternd`` (no
+    ScatterND) and ``test_dynamic_batch_inference`` (runtime correctness at variable batch size).
     """
-    op_types = [n.op_type for n in exported_static_onnx.graph.node]
-    assert "Shape" in op_types, "No Shape op in 2-level Transformer ONNX graph — unexpected graph structure change."
+    op_types = [n.op_type for n in request.getfixturevalue(onnx_fixture).graph.node]
+    assert "Shape" in op_types, "No Shape op in Transformer ONNX graph — unexpected graph structure change."
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +345,9 @@ def test_spatial_shapes_export_is_shape_derived(exported_static_onnx: "onnx.Mode
 # ---------------------------------------------------------------------------
 
 
+@_requires_onnx_and_onnxruntime
 @pytest.mark.parametrize("batch_size", [pytest.param(1, id="batch1"), pytest.param(2, id="batch2")])
-def test_spatial_shapes_dynamic_batch_inference(
+def test_dynamic_batch_inference(
     exported_dynamic_onnx_bytes: bytes,
     batch_size: int,
 ) -> None:
@@ -342,7 +356,8 @@ def test_spatial_shapes_dynamic_batch_inference(
     Regression guard: a baked batch constant in ``spatial_shapes`` or any upstream tensor
     would cause shape mismatches at runtime for any batch size other than the trace batch (1).
     """
-    onnxruntime = pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
+    import onnxruntime
+
     session = onnxruntime.InferenceSession(exported_dynamic_onnx_bytes, providers=["CPUExecutionProvider"])
     # The TorchScript tracer may constant-fold positional embeddings (p0, p1) into the
     # graph; query the actual session inputs rather than assuming all 8 are present.
@@ -360,37 +375,6 @@ def test_spatial_shapes_dynamic_batch_inference(
     feeds = {k: v for k, v in candidate_feeds.items() if k in actual_names}
     (hs,) = session.run(None, feeds)
     assert hs.shape[1] == batch_size, f"Expected batch dim=={batch_size} at index 1, got shape {hs.shape}"
-
-
-# ---------------------------------------------------------------------------
-# Tests: single-level export (production models use 1 feature level)
-# ---------------------------------------------------------------------------
-
-
-def test_spatial_shapes_single_level_export_has_no_scatternd(
-    exported_1lvl_onnx: "onnx.ModelProto",
-) -> None:
-    """Single-level Transformer ONNX export must not contain ScatterND."""
-    op_types = [n.op_type for n in exported_1lvl_onnx.graph.node]
-    assert "ScatterND" not in op_types, (
-        "ScatterND present in single-level Transformer export — torch.stack on a "
-        "one-element list must still produce a Shape-derived result."
-    )
-
-
-def test_spatial_shapes_single_level_export_is_shape_derived(
-    exported_1lvl_onnx: "onnx.ModelProto",
-) -> None:
-    """Sanity-check that the exported 1-level Transformer graph contains Shape ops.
-
-    Note: ``spatial_shapes`` itself traces as a ``Constant`` node in TorchScript ONNX export —
-    the tracer records the concrete H,W value at trace time. The ``Shape`` ops present here
-    originate from other model computations. The true regression guards are
-    ``test_spatial_shapes_single_level_export_has_no_scatternd`` and the dynamic-batch
-    inference test.
-    """
-    op_types = [n.op_type for n in exported_1lvl_onnx.graph.node]
-    assert "Shape" in op_types, "No Shape op in 1-level Transformer ONNX graph — unexpected graph structure change."
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +408,7 @@ def test_level_start_index_correctness_two_levels() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests: torch.compile takes the Python-int branch (Dynamo polyfills _shape_as_tensor)
+# Tests: torch.compile stacks 0-d tensors per size (Dynamo polyfills _shape_as_tensor)
 # ---------------------------------------------------------------------------
 
 
@@ -443,6 +427,7 @@ def test_spatial_shapes_survives_dynamo_shape_as_tensor_polyfill(
     compile_predicate: str,
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
     """``Transformer.forward`` must not call ``torch._shape_as_tensor`` while compiling.
 
@@ -473,9 +458,9 @@ def test_spatial_shapes_survives_dynamo_shape_as_tensor_polyfill(
         monkeypatch.delattr(torch.compiler, "is_compiling", raising=False)
         monkeypatch.setattr(torch._dynamo, "is_compiling", lambda: True)
 
+    mocker.patch.object(torch, "_shape_as_tensor", new=lambda t: torch.Size(t.shape))
     with torch.no_grad():
-        with mock.patch.object(torch, "_shape_as_tensor", lambda t: torch.Size(t.shape)):
-            compiling = wrapper(*inputs)
+        compiling = wrapper(*inputs)
     assert torch.equal(eager, compiling), "is_compiling() branch changed Transformer output"
 
 

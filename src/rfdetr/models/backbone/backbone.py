@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import Tensor
+from torch import Tensor, nn
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -59,13 +59,113 @@ class Backbone(BackboneBase):
         dual_projector: bool = False,
     ) -> None:
         super().__init__()
+        self.encoder = self._build_encoder(
+            name,
+            out_feature_indexes=out_feature_indexes,
+            target_shape=target_shape,
+            gradient_checkpointing=gradient_checkpointing,
+            load_pretrained_weights=load_dinov2_weights,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            positional_encoding_size=positional_encoding_size,
+            drop_path=drop_path,
+            window_block_indexes=window_block_indexes,
+        )
+        # build encoder + projector as backbone module
+        if freeze_encoder:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+        self.projector_scale = projector_scale
+        assert self.projector_scale is not None and len(self.projector_scale) > 0
+        # x[0]
+        assert sorted(self.projector_scale) == self.projector_scale, (
+            "only support projector scale P3/P4/P5 in ascending order."
+        )
+        level2scalefactor = dict(P3=2.0, P4=1.0, P5=0.5)
+        scale_factors = [level2scalefactor[lvl] for lvl in self.projector_scale]
+
+        # DinoV2 and every registered encoder expose their per-level channels (see _build_encoder).
+        encoder_channels = cast("list[int]", self.encoder._out_feature_channels)
+        self.projector = MultiScaleProjector(
+            in_channels=encoder_channels,
+            out_channels=out_channels,
+            scale_factors=scale_factors,
+            layer_norm=layer_norm,
+            rms_norm=rms_norm,
+        )
+        self.cross_attn_projector = (
+            MultiScaleProjector(
+                in_channels=encoder_channels,
+                out_channels=out_channels,
+                scale_factors=scale_factors,
+                layer_norm=layer_norm,
+                rms_norm=rms_norm,
+            )
+            if dual_projector
+            else None
+        )
+
+        self._export = False
+
+    def _build_encoder(
+        self,
+        name: str,
+        *,
+        out_feature_indexes: list[int] | None,
+        target_shape: tuple[int, int],
+        gradient_checkpointing: bool,
+        load_pretrained_weights: bool,
+        patch_size: int,
+        num_windows: int,
+        positional_encoding_size: int,
+        drop_path: float,
+        window_block_indexes: list[int] | None,
+    ) -> nn.Module:
+        """Build the vision encoder whose feature maps feed the projector.
+
+        Subclasses registered with :func:`rfdetr.models.backbone.register_backbone` override this to supply a
+        non-DINOv2 encoder. The returned module must map an image batch ``(B, 3, H, W)`` to a list of
+        ``(B, C, H / patch_size, W / patch_size)`` feature maps, one per entry of ``out_feature_indexes``, and expose
+        their channel counts as ``_out_feature_channels``. An encoder whose forward resamples position embeddings for
+        inputs other than ``target_shape`` should define ``set_export_shape(shape)``, which export preparation calls
+        before tracing so the resampling happens once, outside the traced graph. Export preparation may call
+        ``set_export_shape`` more than once, possibly with different shapes, so it must re-bake for the given shape
+        each time.
+
+        The set of keyword arguments passed to this hook may grow in future releases, so an override must declare
+        ``**kwargs`` and read only the arguments it needs.
+
+        Args:
+            name: Encoder identifier (``ModelConfig.encoder``).
+            out_feature_indexes: Encoder layers whose outputs are returned.
+            target_shape: Native ``(height, width)`` input resolution.
+            gradient_checkpointing: Whether to checkpoint encoder activations.
+            load_pretrained_weights: Whether to initialize the encoder from its upstream pretrained weights (set
+                when the detector itself has no ``pretrain_weights``).
+            patch_size: Patch size of the encoder's patch embedding.
+            num_windows: Windows per side for windowed attention.
+            positional_encoding_size: Side length, in patches, of the encoder's position-embedding grid.
+            drop_path: Stochastic-depth rate.
+            window_block_indexes: Layers using windowed attention, or ``None`` to derive them.
+
+        Returns:
+            The encoder module.
+        """
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
         # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
         # similarly, if "windowed" is in the name, then use_windowed_attn is set to True, otherwise it is set to False
         # the last part of the name should be the size
         # and the start should be dinov2
         name_parts = name.split("_")
-        assert name_parts[0] == "dinov2"
+        if name_parts[0] != "dinov2":
+            from rfdetr.models.backbone import _BACKBONE_REGISTRY
+
+            registered = ", ".join(sorted(_BACKBONE_REGISTRY)) or "none"
+            raise ValueError(
+                f"Unknown encoder {name!r}: expected a DINOv2 encoder name or a registered encoder "
+                f"(registered: {registered}). Import the package that registers it (e.g. rfdetr_plus) first."
+            )
         # name_parts[-1]
         use_registers = False
         if "registers" in name_parts:
@@ -78,54 +178,20 @@ class Backbone(BackboneBase):
         assert len(name_parts) == 2, (
             "name should be dinov2, then either registers, windowed, both, or none, then the size"
         )
-        self.encoder = DinoV2(
+        return DinoV2(
             size=name_parts[-1],
             out_feature_indexes=out_feature_indexes,
             shape=target_shape,
             use_registers=use_registers,
             use_windowed_attn=use_windowed_attn,
             gradient_checkpointing=gradient_checkpointing,
-            load_dinov2_weights=load_dinov2_weights,
+            load_dinov2_weights=load_pretrained_weights,
             patch_size=patch_size,
             num_windows=num_windows,
             positional_encoding_size=positional_encoding_size,
             drop_path_rate=drop_path,
             window_block_indexes=window_block_indexes,
         )
-        # build encoder + projector as backbone module
-        if freeze_encoder:
-            for param in self.encoder.parameters():
-                param.requires_grad = False
-
-        self.projector_scale = projector_scale
-        assert self.projector_scale is not None and len(self.projector_scale) > 0
-        # x[0]
-        assert sorted(self.projector_scale) == self.projector_scale, (
-            "only support projector scale P3/P4/P5/P6 in ascending order."
-        )
-        level2scalefactor = dict(P3=2.0, P4=1.0, P5=0.5, P6=0.25)
-        scale_factors = [level2scalefactor[lvl] for lvl in self.projector_scale]
-
-        self.projector = MultiScaleProjector(
-            in_channels=self.encoder._out_feature_channels,
-            out_channels=out_channels,
-            scale_factors=scale_factors,
-            layer_norm=layer_norm,
-            rms_norm=rms_norm,
-        )
-        self.cross_attn_projector = (
-            MultiScaleProjector(
-                in_channels=self.encoder._out_feature_channels,
-                out_channels=out_channels,
-                scale_factors=scale_factors,
-                layer_norm=layer_norm,
-                rms_norm=rms_norm,
-            )
-            if dual_projector
-            else None
-        )
-
-        self._export = False
 
     def export(self) -> None:
         self._export = True

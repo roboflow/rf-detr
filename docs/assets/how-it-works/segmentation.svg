@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="470" viewBox="0 0 1000 470" role="img" aria-labelledby="title desc">
+  <!-- Sources: SegmentationHead in src/rfdetr/models/heads/segmentation.py (bilinear upsample to image_size // mask_downsample_ratio, one DepthwiseConvBlock per decoder layer, MLPBlock on queries, einsum "bchw,bnc->bnhw" + bias); RFDETRSegSmallConfig in src/rfdetr/config.py (resolution 384, patch_size 12, mask_downsample_ratio 4); mask logit > 0 in src/rfdetr/models/postprocess.py. -->
+  <title id="title">How the segmentation head turns each query into a mask</title>
+  <desc id="desc">The coarse memory feature map is upsampled to a quarter of the input resolution and refined by small convolutional blocks into per-pixel features. Each query embedding from the decoder passes through a small MLP. The mask logit at every pixel is the dot product of the query embedding with that pixel's feature, plus a bias, so every query paints its own mask; a query below the score threshold is dropped.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; }
+    .s { font-size: 15px; fill: #B8B8B8; }
+    .lbl { font-size: 15px; }
+    .op { font-size: 34px; text-anchor: middle; }
+    .cell { fill: #22252C; stroke: #3A3F49; stroke-width: 1; }
+    .arrow { stroke: #B8B8B8; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .tile { fill: #22252C; stroke: #3A3F49; stroke-width: 1; }
+    .paint { animation: paint 8s infinite; }
+    @keyframes paint { 0%, 30% { opacity: 0; } 45%, 92% { opacity: 1; } 100% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .paint { opacity: 1; } }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B8B8B8"/>
+    </marker>
+    <pattern id="coarse" width="30" height="30" patternUnits="userSpaceOnUse">
+      <rect class="cell" width="30" height="30"/>
+    </pattern>
+    <pattern id="fine" width="15" height="15" patternUnits="userSpaceOnUse">
+      <rect class="cell" width="15" height="15"/>
+    </pattern>
+    <pattern id="tilegrid" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect class="tile" width="10" height="10"/>
+    </pattern>
+  </defs>
+  <rect width="1000" height="470" rx="16" fill="#16181D"/>
+  <text class="h" x="40" y="46">Each query paints its own mask</text>
+  <text class="s" x="40" y="70">mask logit at a pixel = query embedding · pixel feature + bias</text>
+
+  <!-- coarse memory -->
+  <rect x="40" y="110" width="150" height="150" fill="url(#coarse)"/>
+  <text class="lbl" x="40" y="286">memory</text>
+  <text class="s" x="40" y="306">one feature per 12 px patch</text>
+
+  <path class="arrow" d="M 200 185 L 285 185"/>
+  <text class="s" x="203" y="172">upsample</text>
+  <text class="s" x="203" y="208">+ conv</text>
+  <text class="s" x="203" y="226">blocks</text>
+
+  <!-- fine pixel features -->
+  <rect x="300" y="95" width="180" height="180" fill="url(#fine)"/>
+  <text class="lbl" x="300" y="300">pixel features</text>
+  <text class="s" x="300" y="320">1/4 of input resolution</text>
+
+  <!-- queries -->
+  <circle cx="320" cy="395" r="12" fill="#1C758A" stroke="#58C4DD" stroke-width="2"/>
+  <circle cx="360" cy="395" r="12" fill="#8A5A1C" stroke="#F0AC5F" stroke-width="2"/>
+  <circle cx="400" cy="395" r="12" fill="#5B4466" stroke="#9A72AC" stroke-width="2"/>
+  <text class="lbl" x="300" y="438">query embeddings → MLP</text>
+  <text class="s" x="40" y="400">from the last decoder</text>
+  <text class="s" x="40" y="420">layer, one per query</text>
+
+  <!-- dot product -->
+  <circle cx="565" cy="245" r="24" fill="#22252C" stroke="#B8B8B8" stroke-width="1.5"/>
+  <text class="op" x="565" y="257">·</text>
+  <path class="arrow" d="M 485 200 L 543 233"/>
+  <path class="arrow" d="M 420 388 L 546 262"/>
+  <path class="arrow" d="M 592 245 L 625 245"/>
+  <path class="arrow" d="M 592 238 L 632 140"/>
+  <path class="arrow" d="M 592 252 L 632 350"/>
+
+  <!-- output masks -->
+  <rect x="640" y="95" width="90" height="90" fill="url(#tilegrid)"/>
+  <path class="paint" d="M 655 170 C 650 135 670 110 690 112 C 712 114 722 140 716 160 C 712 175 690 178 670 176 z" fill="#58C4DD" fill-opacity=".75"/>
+  <text class="lbl" x="750" y="136">query 1 → dog mask</text>
+  <text class="s" x="750" y="156">logit &gt; 0 marks its pixels</text>
+
+  <rect x="640" y="200" width="90" height="90" fill="url(#tilegrid)"/>
+  <path class="paint" d="M 662 278 L 664 232 L 676 214 L 684 232 L 700 232 L 708 214 L 716 234 L 714 278 z" fill="#F0AC5F" fill-opacity=".75"/>
+  <text class="lbl" x="750" y="241">query 2 → cat mask</text>
+  <text class="s" x="750" y="261">same query gives its box and class</text>
+
+  <rect x="640" y="305" width="90" height="90" fill="url(#tilegrid)"/>
+  <text class="op" x="685" y="362" style="fill:#9A72AC">∅</text>
+  <text class="lbl" x="750" y="346">query 3 → no object</text>
+  <text class="s" x="750" y="366">below threshold, mask never upsampled</text>
+</svg>

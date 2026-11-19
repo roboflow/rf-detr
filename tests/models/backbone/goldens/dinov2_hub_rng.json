@@ -1,0 +1,9 @@
+{
+    "meta": {
+        "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "python": "3.13.16",
+        "torch": "2.14.0"
+    },
+    "rng_digest": "ac63f0183ed1256b8c34c4ca5ec19b232df0fc6dba3acd09941496ad73ccfe30"
+}

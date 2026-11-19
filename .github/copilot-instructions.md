@@ -9,8 +9,8 @@
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation. Built on DINOv2 vision transformer backbone with PyTorch.
 
 - **Project Type:** Python ML library (computer vision)
-- **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13)
-- **License:** Apache 2.0 (Plus models under PML 1.0)
+- **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13, 3.14)
+- **License:** Apache 2.0, commercially usable out of the box (package, Nano–Large detection, every Seg size, Keypoint). Plus models use PML 1.0: commercial use included on Roboflow, commercial self-hosting requires the Enterprise add-on.
 
 > [!TIP]
 >
@@ -22,8 +22,11 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **Package Manager:** This project uses `uv` for all dependency management.
 
 ```bash
-# Development setup
-uv sync --all-groups
+# Create the environment
+uv venv
+
+# Install the dependencies used by the CPU test job (add ,coreml on macOS).
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Run tests (always before committing)
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
@@ -34,9 +37,11 @@ uv build
 
 > [!IMPORTANT]
 >
-> Run `uv sync` after pulling changes to update dependencies.
+> Re-run the install command above after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
+
+**CUDA graph precision:** `cuda_graphs=True` routes BF16 capture through PyTorch and fixed-shape FP8 capture through Transformer Engine when `compile=False`. Keep the registered model unchanged. FP8 graphs require the active Lightning recipe, one GPU, detection, and no accumulation; see `AGENTS.md` for guards. Never wrap a compiled model with the eager capture runner.
 
 ## Code Quality
 
@@ -71,6 +76,7 @@ pre-commit run --all-files
 - Features: Write comprehensive tests → Implement → Refactor
 - Use test classes and `@pytest.mark.parametrize` for organization
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
+- No `pytest.importorskip`, and no `pytest.skip()` for missing optional dependencies: gate optional-dependency tests with a named `skipif` decorator (flag from `rfdetr.export.imports` / `rfdetr.utilities.imports`; add a new flag there and never re-probe with `find_spec` in a test file) and import the package locally inside the test. Reserve `pytest.skip()` for conditions discoverable only at runtime. Details: [CONTRIBUTING.md](CONTRIBUTING.md#test-organization).
 
 **Testing Requirements:**
 
@@ -78,7 +84,7 @@ pre-commit run --all-files
 - ✅ Before PR: Final commit MUST have all tests passing
 - ✅ Before commit: Run `pre-commit run --all-files`
 
-**CI/CD:** See `.github/workflows/` for source of truth. Tests run on Python 3.10-3.13 across Ubuntu, Windows, macOS.
+**CI/CD:** See `.github/workflows/` for source of truth. Tests run on Python 3.10-3.14 on Ubuntu, and on Python 3.10 and 3.13 on Windows and macOS.
 
 ## Coding Standards
 
@@ -101,6 +107,9 @@ from tqdm.auto import tqdm  # NOT from tqdm import tqdm
 - **Logging:** Use `logger.debug()` for detailed tensor/shape info (not `logger.info()`)
 - **Segmentation models:** Return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 - **Checkpoint handling:** Always check file existence before operations
+- **Inference:** Use `model.inference(compile=..., batch_size=..., dtype=..., compile_backend=...)` for an independent native predictor snapshot; capture the returned `RFDETRInference` and call `predictor.predict(images)`. It copies the current base weights, labels, normalization and postprocessing settings once, leaves the source unchanged, and ignores later source mutations. Its defaults are a captured CUDA graph on CUDA, inductor on MPS where the installed PyTorch has its code generator and TorchScript on every other device, with batch 1 and float32. The removed `inplace` keyword is rejected. `remove_optimized_model()` and `is_optimized_inplace` are legacy model-state APIs, not predictor lifecycle controls. `RFDETRInference(source)` remains available for a checkpoint, full export, or explicitly borrowed live model; the borrowed model's current state is read per prediction. Omit `device` for borrowed live sources and configure the native model itself. Only `RFDETRInference.predict()` expands sources and streams results through the private `rfdetr._prediction` package; `RFDETR.predict()` stays images-only and rejects source options. Eager image lists use one batch. Reject incompatible shape or batch requests instead of splitting or padding them.
+- Use validated inference metadata for task, class, output, and preprocessing semantics; do not use user `notes`. ONNX embeds metadata; other formats use an adjacent `<artifact-name>.rfdetr.json` file. Older artifacts can receive missing semantics through `metadata=`. Sidecar-backed loads hash the artifact to check for stale metadata. Intermediate ONNX from TensorRT or TFLite conversion has no ONNX metadata.
+- Keep runtime adapters lazy and limit them to runtime execution and tensor mapping. ONNX and TFLite private NumPy helpers remain for dependency-light numerical references and share raw execution with adapters. TensorRT and OpenVINO adapters call shared session and execution functions directly. Their deprecated raw classes are compatibility facades over the same functions. CoreML and Core AI adapters use vendor APIs directly. Raw runtime interfaces support advanced access and forward-only benchmarks. Reject backbone-only artifacts. See `AGENTS.md` for format constraints.
 - **License headers:** All Python files require Apache 2.0 header (enforced by pre-commit)
 
 **Best Practices:**
@@ -117,7 +126,7 @@ Before submitting changes:
 1. ✅ Run tests: `uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu"`
 2. ✅ Run pre-commit: `pre-commit run --all-files`
 3. ✅ Verify new functions have type hints + docstrings
-4. ✅ Review changes for minimal scope
+4. ✅ For code reviews, follow the [code-review skill](skills/code-review/SKILL.md).
 
 ## Resources
 

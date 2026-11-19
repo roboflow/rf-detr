@@ -11,18 +11,21 @@ import contextlib
 import importlib
 import io
 import logging
+import numbers
 import warnings
-from collections.abc import Callable, Mapping
-from typing import Any, Literal, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, cast
 
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torch import Tensor
+from torch.utils.data import DistributedSampler
 
+from rfdetr.config import CocoEvalBackend
 from rfdetr.datasets import get_coco_api_from_dataset
+from rfdetr.datasets.coco import CrowdRegion, convert_coco_poly_to_mask, crowd_regions_from_coco
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
 from rfdetr.evaluation.keypoint_oks import (
     DEFAULT_KEYPOINT_MAX_DETS,
@@ -34,6 +37,7 @@ from rfdetr.evaluation.matching import (
     distributed_merge_matching_data,
     init_matching_accumulator,
     merge_matching_data,
+    resize_masks_nearest,
 )
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
@@ -114,6 +118,44 @@ def _resolve_eval_base_model(eval_base_model: bool | None, eval_ema_only: bool |
     return False
 
 
+#: Datamodule attribute holding each split's dataset. An unknown split (anything but these three) falls back to
+#: trying all three in this order, which is what the keypoint metric needs for its ``val_ema`` pseudo-split.
+_SPLIT_DATASET_ATTRS: dict[str, tuple[str, ...]] = {
+    "train": ("_dataset_train",),
+    "val": ("_dataset_val",),
+    "test": ("_dataset_test",),
+}
+
+
+def _split_coco_api(trainer: Any, split: str) -> Any | None:
+    """Resolve the COCO API behind an evaluation *split*'s dataset on the trainer's datamodule.
+
+    Shared by the crowd-region lookup and the keypoint OKS metric, which both need the annotation file the split was
+    built from and both reach it through the datamodule's per-split dataset attribute.
+
+    Args:
+        trainer: The PTL Trainer (provides access to the datamodule).
+        split: ``"train"``, ``"val"``, ``"test"``, or a ``"_ema"``-suffixed variant of one of them. Any other value
+            resolves against whichever split's dataset is available first.
+
+    Returns:
+        The split's pycocotools-style ``COCO`` object, or ``None`` when there is no datamodule, no dataset for the
+        split, or the dataset carries no COCO API (a webdataset stream, for instance).
+    """
+    datamodule = getattr(trainer, "datamodule", None)
+    if datamodule is None:
+        return None
+    attrs = _SPLIT_DATASET_ATTRS.get(split.removesuffix("_ema"), ("_dataset_val", "_dataset_test", "_dataset_train"))
+    for attr in attrs:
+        dataset = getattr(datamodule, attr, None)
+        if dataset is None:
+            continue
+        coco_api = get_coco_api_from_dataset(dataset)
+        if coco_api is not None:
+            return coco_api
+    return None
+
+
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
@@ -127,6 +169,14 @@ class COCOEvalCallback(Callback):
 
     For segmentation models (``segmentation=True``) additional metrics ``val/segm_mAP_50_95`` and ``val/segm_mAP_50``
     are logged.
+
+    In mAP, crowd regions (``iscrowd=1``) are scored as in pycocotools: a detection on one is ignored, not counted as a
+    false positive. ``ConvertCoco`` drops them from the dataset targets so training never matches them; for validation
+    and test the callback reads them back from the split's COCO API (by ``image_id``) and appends them to the metric
+    ground truth as ``iscrowd=1`` rows. The macro-F1 sweep sees the same rows but matches them by union IoU, so it
+    ignores a detection only when its IoU with the crowd is at least 0.5. Datasets without a COCO API (webdataset
+    shards) get no crowd rows. Train-split metrics (``compute_train_metrics``) are computed on augmented images, where
+    annotation-file geometry no longer applies, and get none either.
 
     Args:
         max_dets: Maximum detections per image passed to
@@ -145,10 +195,12 @@ class COCOEvalCallback(Callback):
             is skipped and its predictions are routed to the EMA track. When ``True``,
             ``validation_step`` forwards the base model and this callback runs the second, EMA
             forward pass, so both models are evaluated from independent predictions.
-        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`. Both
-            backends return identical metrics; ``"hotcoco"`` is the faster default and ``"faster_coco_eval"`` is
-            the previous evaluator. Appended after the existing parameters rather than grouped with the other
-            evaluation knobs, so that positional callers keep binding the arguments they always did.
+        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`.
+            ``"vernier"`` is the default and computes fastest, ``"faster_coco_eval"`` is the previous
+            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"hotcoco_streaming"`` matches each batch as
+            it arrives; all of them ship with ``rfdetr[train]`` and return identical metrics.
+            Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
+            positional callers keep binding the arguments they always did.
     """
 
     def __init__(
@@ -161,7 +213,7 @@ class COCOEvalCallback(Callback):
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
-        eval_backend: Literal["hotcoco", "faster_coco_eval"] = "hotcoco",
+        eval_backend: CocoEvalBackend = "vernier",
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
@@ -169,6 +221,7 @@ class COCOEvalCallback(Callback):
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
         self._eval_backend = eval_backend
+        self._num_classes: int | None = None
         if eval_ema_only is not None:
             warnings.warn(
                 "COCOEvalCallback.eval_ema_only is deprecated; use eval_base_model to opt into base-model evaluation.",
@@ -192,6 +245,12 @@ class COCOEvalCallback(Callback):
         self._train_segm_skip_warned: bool = False
         self._keypoint_oks_metrics: dict[str, MetricKeypointOKS] = {}
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
+        # Each evaluation loader may have a distinct padded DistributedSampler. Keep its rule and local position
+        # separate so Lightning's interleaved multi-loader hooks never apply loader 0's state to another split.
+        self._eval_padding: dict[int, tuple[int, int, int]] = {}
+        self._eval_samples_seen: dict[int, int] = {}
+        # Crowd regions per evaluation split ("val"/"test"), resolved from the split's COCO annotations on first use.
+        self._crowd_regions: dict[str, dict[int, list[CrowdRegion]]] = {}
         self._in_notebook: bool
         if in_notebook is None:
             self._in_notebook = _is_running_in_notebook()
@@ -233,12 +292,29 @@ class COCOEvalCallback(Callback):
             sync_on_compute=False,
         )
         kwargs["backend"] = self._eval_backend
+        # Only `hotcoco_streaming` reads it; unit shims may give a model_config without an integer class count.
+        num_classes = getattr(model_config, "num_classes", None)
+        # `Integral` admits `np.int64`, which a plain `int` check would turn into a logged streaming fallback. `bool`
+        # is excluded because it is not a class count.
+        self._num_classes = (
+            int(num_classes)
+            if isinstance(num_classes, numbers.Integral) and not isinstance(num_classes, bool)
+            else None
+        )
+        kwargs["num_classes"] = self._num_classes
         self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
-        self.map_metric_train = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
+        # The train split evaluates in one batch: streaming it would put matching inside every training step, which
+        # `hotcoco_streaming` exists to keep out of the hot loop. `hotcoco` reports identical metrics.
+        train_backend = "hotcoco" if self._eval_backend == "hotcoco_streaming" else self._eval_backend
+        self.map_metric_train = OnePassCocoMeanAveragePrecision(
+            iou_type=iou_type, **{**kwargs, "backend": train_backend}
+        )
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
         # cross-rank compute() sync is issued symmetrically and cannot deadlock DDP val.
         self.map_metric_ema: Any = None
+        # A new fit/validate/test run may bring a different datamodule; resolve crowd regions afresh.
+        self._crowd_regions = {}
 
     def teardown(self, trainer: Any, pl_module: Any, stage: str) -> None:
         """Release the notebook output widget when the trainer exits.
@@ -332,6 +408,7 @@ class COCOEvalCallback(Callback):
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("val")
         self._reset_keypoint_split("val_ema")
+        self._reset_padding_filter(getattr(trainer, "val_dataloaders", None))
         self._prepare_ema_metric(trainer)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
@@ -350,6 +427,7 @@ class COCOEvalCallback(Callback):
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("test")
+        self._reset_padding_filter(getattr(trainer, "test_dataloaders", None))
         self._prepare_ema_metric(trainer)
 
     def on_train_batch_end(
@@ -376,6 +454,7 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
             return
 
+        self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         # preds omitted: training pred_masks is a sparse dict lacking "masks", so passing it here is inert.
         targets = self._convert_targets(outputs["targets"])
@@ -469,12 +548,26 @@ class COCOEvalCallback(Callback):
             outputs: Return value of ``validation_step``.
             batch: The device-transferred batch ``(samples, targets)``.
             batch_idx: Batch index within the validation epoch.
-            dataloader_idx: Index of the validation dataloader (unused here).
+            dataloader_idx: Index selecting the validation loader's padding rule.
         """
         if not isinstance(outputs, Mapping):
             return
+        batch_targets = outputs["targets"]
+        keep = self._next_real_sample_mask(len(batch_targets), dataloader_idx)
+        if not all(keep):
+            # A batch that is padding through and through (a split smaller than world_size) still flows on as
+            # empty lists: the accumulators record the update, so this rank votes like every other in the
+            # epoch-end collectives instead of sitting them out and stalling or vetoing the ranks that have data.
+            outputs = {
+                "results": [item for item, real in zip(outputs["results"], keep) if real],
+                "targets": [item for item, real in zip(batch_targets, keep) if real],
+            }
+        self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
+        crowd_regions = self._get_crowd_regions(trainer, "val")
+        targets = self._convert_targets(
+            outputs["targets"], preds if self._use_segm_metrics else None, crowd_regions=crowd_regions
+        )
         # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
         # global step on every rank), so per-rank EMA-forward decisions stay consistent.
         ema_cb = self._get_ema_callback(trainer)
@@ -503,19 +596,28 @@ class COCOEvalCallback(Callback):
         # pass would be pure duplicate compute (#416) — the ~3-3.5%-of-epoch saving PR12 claims.
         if self._eval_base_model and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
-            orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
+            # The forward runs on the whole batch (padding included) so the orig_size row count matches; the
+            # postprocessed results are then trimmed with the same mask as the primary track.
+            orig_sizes = torch.stack([t["orig_size"] for t in batch_targets]).to(pl_module.device)
             ema_underlying = ema_inner.model
             with torch.no_grad():
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
+            if not all(keep):
+                ema_results = [item for item, real in zip(ema_results, keep) if real]
+            self._sync_xla_metric_inputs(pl_module)
             ema_preds = self._convert_preds(ema_results)
             # Outside segmentation the conversion has no prediction-dependent input, so redoing it here would
             # recompute the same boxes and repeat the same orig_size host transfer for every validation batch.
             # Reuse is safe because both accumulators store detached CPU copies of what they are handed
             # (OnePassCocoMeanAveragePrecision.update) rather than holding on to the caller's dicts, and the
             # macro-F1 accumulator between the two updates only reads them.
-            ema_targets = self._convert_targets(outputs["targets"], ema_preds) if self._use_segm_metrics else targets
+            ema_targets = (
+                self._convert_targets(outputs["targets"], ema_preds, crowd_regions=crowd_regions)
+                if self._use_segm_metrics
+                else targets
+            )
             self.map_metric_ema.update(ema_preds, ema_targets)
             self._update_keypoint_oks_metric(
                 trainer,
@@ -565,12 +667,25 @@ class COCOEvalCallback(Callback):
             outputs: Return value of ``test_step``.
             batch: Raw batch (unused here).
             batch_idx: Batch index within the test epoch.
-            dataloader_idx: Index of the test dataloader (unused here).
+            dataloader_idx: Index selecting the test loader's padding rule.
         """
         if not isinstance(outputs, Mapping):
             return
+        keep = self._next_real_sample_mask(len(outputs["targets"]), dataloader_idx)
+        if not all(keep):
+            # Same as the validation hook: an all-padding batch flows on as empty lists so every rank stays a
+            # participant in the epoch-end collectives.
+            outputs = {
+                "results": [item for item, real in zip(outputs["results"], keep) if real],
+                "targets": [item for item, real in zip(outputs["targets"], keep) if real],
+            }
+        self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
-        targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
+        targets = self._convert_targets(
+            outputs["targets"],
+            preds if self._use_segm_metrics else None,
+            crowd_regions=self._get_crowd_regions(trainer, "test"),
+        )
 
         self.map_metric.update(preds, targets)
 
@@ -593,6 +708,66 @@ class COCOEvalCallback(Callback):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _reset_padding_filter(self, dataloaders: Any) -> None:
+        """Derive this epoch's DistributedSampler padding rule from the evaluation loader and reset the counter.
+
+        Lightning replaces the evaluation loader's ``SequentialSampler`` with a ``DistributedSampler`` that pads the
+        index list to a multiple of ``world_size`` by repeating the leading indices, so up to ``world_size - 1``
+        images are forwarded twice per epoch. Rank ``r`` receives global positions ``r, r + W, r + 2W, ...`` in order
+        (``shuffle=False``), and a position at or past the dataset length is such a repeat. The forward still runs
+        on those samples (keeping every rank's batch count equal, which the epoch-end collectives rely on); only the
+        metric accumulators skip them, so each image is scored exactly once across ranks.
+
+        Args:
+            dataloaders: ``trainer.val_dataloaders`` or ``trainer.test_dataloaders`` (a loader or a list of them).
+        """
+        self._eval_samples_seen = {}
+        self._eval_padding = {}
+        loaders = dataloaders if isinstance(dataloaders, (list, tuple)) else [dataloaders]
+        for dataloader_idx, loader in enumerate(loaders):
+            sampler = getattr(loader, "sampler", None)
+            if not isinstance(sampler, DistributedSampler) or sampler.shuffle or sampler.drop_last:
+                continue
+            dataset_len = len(sampler.dataset)  # type: ignore[arg-type]
+            if sampler.total_size > dataset_len:
+                self._eval_padding[dataloader_idx] = (sampler.rank, sampler.num_replicas, dataset_len)
+
+    def _next_real_sample_mask(self, count: int, dataloader_idx: int) -> list[bool]:
+        """Return, for the next ``count`` samples on this rank, whether each is a real image rather than padding.
+
+        Args:
+            count: Number of samples in the batch being accumulated.
+            dataloader_idx: Index selecting the evaluation loader's independent sample position and sampler rule.
+
+        Returns:
+            One flag per sample, in batch order; all ``True`` when the split is not padded.
+        """
+        first = self._eval_samples_seen.get(dataloader_idx, 0)
+        self._eval_samples_seen[dataloader_idx] = first + count
+        padding = self._eval_padding.get(dataloader_idx)
+        if padding is None:
+            return [True] * count
+        rank, num_replicas, dataset_len = padding
+        return [rank + (first + offset) * num_replicas < dataset_len for offset in range(count)]
+
+    @staticmethod
+    def _sync_xla_metric_inputs(pl_module: Any) -> None:
+        """Materialize all live XLA outputs before metric code starts reading individual tensors on the host.
+
+        COCO accumulation keeps CPU-owned state, and target conversion, mAP, F1, and keypoint paths each read
+        different leaves from the same lazy evaluation graph. Without one shared boundary, the first ``.tolist()``
+        or ``.cpu()`` compiles only the requested leaf; later reads then compile overlapping graph fragments. A
+        single XLA step boundary makes those reads transfers from one materialized result instead.
+
+        Args:
+            pl_module: Lightning module supplying the active device.
+        """
+        if getattr(getattr(pl_module, "device", None), "type", None) != "xla":
+            return
+        import torch_xla  # type: ignore[import-not-found]
+
+        torch_xla.sync(wait=True)
 
     def _compute_and_log_ema_metrics(
         self, trainer: Any, pl_module: Any, split: str, pfx: str, mar_key: str
@@ -981,6 +1156,7 @@ class COCOEvalCallback(Callback):
                 class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend=self._eval_backend,
+                num_classes=self._num_classes,
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)
             )
         else:
@@ -1011,6 +1187,31 @@ class COCOEvalCallback(Callback):
             vote = int(flag.item())
         return bool(vote)
 
+    def _get_crowd_regions(self, trainer: Any, split: str) -> dict[int, list[CrowdRegion]]:
+        """Return the crowd regions of evaluation *split* keyed by image id, resolving them on first use.
+
+        Read from the split's COCO API (:func:`_split_coco_api`, as the keypoint OKS metric does), so they are the
+        regions ``ConvertCoco`` removed from the dataset targets. Datasets without a COCO API (webdataset streams,
+        custom datasets), a hand-rolled ``Trainer.validate(module, dataloaders=...)`` run that passes no datamodule at
+        all, and annotation files without crowd annotations resolve to an empty mapping, which makes
+        :meth:`_convert_targets` a no-op for them.
+
+        Args:
+            trainer: The PTL Trainer (provides access to the datamodule).
+            split: ``"val"`` or ``"test"``.
+
+        Returns:
+            Crowd regions per image id, possibly empty.
+        """
+        if split not in self._crowd_regions:
+            coco_api = _split_coco_api(trainer, split)
+            if coco_api is None:
+                logger.debug(
+                    "No COCO annotations resolved for the %s split; its mAP will not score crowd regions.", split
+                )
+            self._crowd_regions[split] = crowd_regions_from_coco(coco_api) if coco_api is not None else {}
+        return self._crowd_regions[split]
+
     def _get_or_create_keypoint_oks_metric(self, trainer: Any, split: str) -> MetricKeypointOKS | None:
         """Return the :class:`~rfdetr.evaluation.keypoint_oks.MetricKeypointOKS` for *split*, creating it if needed.
 
@@ -1028,31 +1229,16 @@ class COCOEvalCallback(Callback):
         if split in self._keypoint_oks_metrics:
             return self._keypoint_oks_metrics[split]
 
-        datamodule = getattr(trainer, "datamodule", None)
-        if datamodule is None:
+        coco_api = _split_coco_api(trainer, split)
+        if coco_api is None:
             return None
-
-        source_split = split.removesuffix("_ema")
-        split_attrs = {
-            "train": ("_dataset_train",),
-            "val": ("_dataset_val",),
-            "test": ("_dataset_test",),
-        }.get(source_split, ("_dataset_val", "_dataset_test", "_dataset_train"))
-        for attr in split_attrs:
-            dataset = getattr(datamodule, attr, None)
-            if dataset is None:
-                continue
-            coco_api = get_coco_api_from_dataset(dataset)
-            if coco_api is None:
-                continue
-            metric = MetricKeypointOKS(
-                coco_api,
-                keypoint_oks_sigmas=self._keypoint_oks_sigmas,
-                max_dets=self._max_dets,
-            )
-            self._keypoint_oks_metrics[split] = metric
-            return metric
-        return None
+        metric = MetricKeypointOKS(
+            coco_api,
+            keypoint_oks_sigmas=self._keypoint_oks_sigmas,
+            max_dets=self._max_dets,
+        )
+        self._keypoint_oks_metrics[split] = metric
+        return metric
 
     def _reset_keypoint_split(self, split: str) -> None:
         """Reset accumulated keypoint predictions for *split*.
@@ -1097,7 +1283,9 @@ class COCOEvalCallback(Callback):
                 "keypoints": result["keypoints"].detach().cpu(),
             }
 
-        if not predictions:
+        # An all-padding batch (see the DistributedSampler filter) arrives with empty results: register the empty
+        # update so this rank's metric reports updates and its epoch-end vote does not silence the other ranks.
+        if not predictions and results:
             return
         metric.update(predictions)
 
@@ -1375,12 +1563,23 @@ class COCOEvalCallback(Callback):
         return out
 
     def _convert_targets(
-        self, targets: list[dict[str, Tensor]], preds: list[dict[str, Tensor]] | None = None
+        self,
+        targets: list[dict[str, Tensor]],
+        preds: list[dict[str, Tensor]] | None = None,
+        *,
+        crowd_regions: Mapping[int, Sequence[CrowdRegion]] | None = None,
     ) -> list[dict[str, Tensor]]:
         """Convert targets from normalised CxCyWH to absolute xyxy boxes.
 
         Masks use each prediction's pixel grid when available, avoiding a lossy
         model-resolution -> original-resolution -> mask-head-resolution round trip.
+
+        Crowd regions of a target's ``image_id`` are appended after its own rows with ``iscrowd=1``: the annotation
+        box, already in the original-image pixels the converted boxes are in, and, when the target has masks, the
+        segmentation decoded from the precomputed RLE :func:`~rfdetr.datasets.coco.crowd_regions_from_coco` built and
+        resized like the other ground-truth masks. Decoding happens here, per batch, so no crowd mask outlives the
+        batch — at a cost that scales with the batch's crowd density, since every crowd-bearing image decodes its own
+        regions again on each pass (twice per batch under segmentation with EMA, once per track).
 
         Args:
             targets: Per-image target dicts with ``boxes`` in normalised
@@ -1390,25 +1589,53 @@ class COCOEvalCallback(Callback):
                 ``preds`` must have the same length and order as ``targets``:
                 the two are paired positionally 1:1 (``preds[i]`` describes the
                 same image as ``targets[i]``).
+            crowd_regions: The split's crowd regions keyed by image id (see :meth:`_get_crowd_regions`). Nothing is
+                appended when it is ``None`` or empty; a single target without an ``image_id`` loses only its own
+                crowd rows, not the rest of the batch's.
 
         Returns:
-            Per-image dicts with ``boxes`` in absolute xyxy, ``labels``, and optionally ``masks`` and ``iscrowd``.
+            Per-image dicts with ``boxes`` in absolute xyxy, ``labels``, and optionally ``masks`` and ``iscrowd``
+            (always present on a target that received crowd rows).
         """
         if preds is not None:
             assert len(preds) == len(targets), (
                 f"preds and targets must be positionally paired 1:1; got {len(preds)} preds vs {len(targets)} targets"
             )
         out = []
-        # Stack every target's orig_size into one device-to-host synchronization instead of
-        # one per target inside the loop (same fix as PostProcess._postprocess_masks).
-        orig_sizes_list = torch.stack([t["orig_size"] for t in targets]).tolist() if targets else []
+        # Per target, not per batch: one target without an image_id must lose only its own crowd rows. A batch-wide
+        # `all(...)` would silently drop every image's crowd regions, which moves mAP for the whole batch.
+        has_image_id = [("image_id" in t) for t in targets]
+        add_crowd = bool(crowd_regions) and any(has_image_id)
+        # Stack every target's orig_size (plus its image_id when crowd regions are looked up) into one device-to-host
+        # synchronization instead of one per target inside the loop (same fix as PostProcess._postprocess_masks).
+        image_rows: list[list[int]] = []
+        if targets:
+            image_info = torch.stack([t["orig_size"] for t in targets])
+            if add_crowd:
+                image_ids = torch.stack(
+                    [
+                        torch.as_tensor(t["image_id"], device=image_info.device).reshape(-1)[0]
+                        if present
+                        else torch.zeros((), device=image_info.device, dtype=image_info.dtype)
+                        for t, present in zip(targets, has_image_id)
+                    ]
+                )
+                image_info = torch.cat([image_info, image_ids.to(image_info.dtype).unsqueeze(1)], dim=1)
+            image_rows = image_info.tolist()
         for index, t in enumerate(targets):
-            h, w = orig_sizes_list[index]
+            h, w = image_rows[index][:2]
+            regions: Sequence[CrowdRegion] = ()
+            if add_crowd and has_image_id[index]:
+                assert crowd_regions is not None, "add_crowd is only set when crowd_regions is non-empty"
+                regions = crowd_regions.get(int(image_rows[index][2]), ())
             scale = t["boxes"].new_tensor([w, h, w, h])
             boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
-            entry: dict[str, Tensor] = {"boxes": boxes, "labels": t["labels"]}
+            labels = t["labels"]
+            if regions:
+                boxes = torch.cat([boxes, boxes.new_tensor([region.box for region in regions])])
+                labels = torch.cat([labels, labels.new_tensor([region.label for region in regions])])
+            entry: dict[str, Tensor] = {"boxes": boxes, "labels": labels}
             if "masks" in t:
-                masks = t["masks"].bool()
                 mask_size = (int(h), int(w))
                 # Native-grid path assumes a uniform (square-resized) batch: every image shares one
                 # grid, so reusing the prediction's mask resolution is safe. Under non-square
@@ -1418,18 +1645,18 @@ class COCOEvalCallback(Callback):
                 if preds is not None and "masks" in preds[index]:
                     pred_mask_shape = preds[index]["masks"].shape
                     mask_size = (int(pred_mask_shape[-2]), int(pred_mask_shape[-1]))
-                if masks.shape[-2:] != mask_size:
-                    masks = (
-                        F.interpolate(
-                            masks.float().unsqueeze(1),
-                            size=mask_size,
-                            mode="nearest",
-                        )
-                        .squeeze(1)
-                        .bool()
-                    )
+                masks = resize_masks_nearest(t["masks"].bool(), mask_size)
+                if regions:
+                    # Resized on the host first: the decoded crowd masks are at original-image resolution, so moving
+                    # them to device before downsampling transfers a grid the metric never sees.
+                    crowd_masks = convert_coco_poly_to_mask([region.segmentation for region in regions], int(h), int(w))
+                    crowd_masks = resize_masks_nearest(crowd_masks.bool(), mask_size).to(masks.device)
+                    masks = torch.cat([masks, crowd_masks])
                 entry["masks"] = masks
-            if "iscrowd" in t:
+            if regions:
+                iscrowd = t["iscrowd"] if "iscrowd" in t else torch.zeros_like(t["labels"])
+                entry["iscrowd"] = torch.cat([iscrowd, iscrowd.new_ones(len(regions))])
+            elif "iscrowd" in t:
                 entry["iscrowd"] = t["iscrowd"]
             out.append(entry)
         return out

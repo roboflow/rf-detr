@@ -25,12 +25,20 @@ Probe assumptions (worst-case so training does not OOM):
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
 import torch
 
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import (
+    ModelConfig,
+    MultiScale,
+    TrainConfig,
+    _cuda_bf16_supported_on_devices,
+    _cuda_native_bf16_on_devices,
+    _resolve_amp_dtype,
+)
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
@@ -547,6 +555,7 @@ def resolve_auto_batch_config(
     train_config: TrainConfig,
     safety_margin: float = 0.9,
     max_micro_batch: int = 128,
+    devices: int | str | Sequence[int] | None = None,
 ) -> AutoBatchResult:
     """Resolve batch_size='auto' into concrete batch_size and grad_accum_steps using a probe.
 
@@ -566,10 +575,14 @@ def resolve_auto_batch_config(
 
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
-        model_config: Architecture config (resolution, num_classes, amp, segmentation_head).
-        train_config: Training config (auto_batch_target_effective); batch_size should be "auto".
+        model_config: Architecture config (resolution, num_classes, segmentation_head).
+        train_config: Training config (auto_batch_target_effective, amp_dtype); batch_size should be "auto".
         safety_margin: Fraction of max batch to use (passed to probe_max_micro_batch).
         max_micro_batch: Upper bound on batch size to try (passed to probe_max_micro_batch).
+        devices: The Lightning ``devices`` value the run trains on, as passed to ``build_trainer``; ``None`` uses
+            ``train_config.devices``. Both bf16 answers come from those GPUs, as the trainer picks its precision:
+            amp_dtype='auto' probes in bf16 only when every one of them has native bf16, and an explicit
+            amp_dtype='bf16' only when every one of them supports bf16 at all.
 
     Returns:
         AutoBatchResult with safe_micro_batch, recommended_grad_accum_steps, effective_batch_size, and device_name.
@@ -582,9 +595,11 @@ def resolve_auto_batch_config(
         raise RuntimeError("batch_size='auto' requires a CUDA device for probing in v1.")
 
     # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
-    multi_scale = getattr(train_config, "multi_scale", False)
-    do_random_resize = getattr(train_config, "do_random_resize_via_padding", False)
-    if multi_scale and not do_random_resize:
+    # Both "batch" and "sample" modes can hit the largest scale, so probe it for either.
+    # The probe is square; with square_resize_div_64=False the aspect-preserving resize lets the long side reach
+    # 1333 px and collate pads per axis, so a mixed portrait/landscape batch can exceed this probe's footprint.
+    multi_scale = MultiScale.from_value(getattr(train_config, "multi_scale", False))
+    if multi_scale is not MultiScale.OFF:
         expanded_scales = getattr(train_config, "expanded_scales", True)
         patch_size = getattr(model_config, "patch_size", 14)
         num_windows = getattr(model_config, "num_windows", 4)
@@ -630,14 +645,22 @@ def resolve_auto_batch_config(
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
-    amp_enabled = bool(model_config.amp)
-    amp_dtype_str = getattr(train_config, "amp_dtype", "auto")
+    amp_dtype_str = _resolve_amp_dtype(model_config, train_config, warn_legacy=False)
+    amp_enabled = amp_dtype_str is not None
     if amp_enabled:
+        # Both bf16 branches below ask about the GPUs the run trains on, from the same devices value the trainer reads.
+        training_devices = getattr(train_config, "devices", 1) if devices is None else devices
         if amp_dtype_str == "fp16":
             probe_autocast_dtype: torch.dtype | None = torch.float16
+        elif amp_dtype_str == "bf16":
+            # Explicit bf16 is honoured even when those GPUs only emulate it (see trainer.py's _resolve_precision)
+            bf16_supported = _cuda_bf16_supported_on_devices(training_devices)
+            probe_autocast_dtype = torch.bfloat16 if bf16_supported else torch.float16
         else:
-            # "bf16" or "auto" — both use bf16 on capable hardware, fp16 as fallback
-            probe_autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            # "auto" uses bf16 only when every GPU the run trains on has native bf16 (Ampere+), fp16 otherwise;
+            # the trainer decides the same way from the same devices value.
+            native_bf16 = _cuda_native_bf16_on_devices(training_devices)
+            probe_autocast_dtype = torch.bfloat16 if native_bf16 else torch.float16
     else:
         probe_autocast_dtype = None
 
@@ -649,8 +672,8 @@ def resolve_auto_batch_config(
     # the managed fused kernel, so a dotted-path config must not be silently upgraded to fused --
     # and (2) the resolved precision is a bf16 variant, which for this function's CUDA-only
     # autocast resolution above is exactly the case where probe_autocast_dtype came out to
-    # torch.bfloat16 (see trainer.py's _resolve_precision: bf16-mixed iff CUDA + bf16-capable +
-    # amp_dtype in {"auto", "bf16"}, the same inputs probe_autocast_dtype was derived from).
+    # torch.bfloat16 (see trainer.py's _resolve_precision: bf16-mixed for amp_dtype "auto" on CUDA with native bf16,
+    # or for amp_dtype "bf16" on CUDA with any bf16 support; the same inputs probe_autocast_dtype was derived from).
     use_fused_optimizer = (
         _is_builtin_fused_adamw(optimizer_cfg)
         and bool(getattr(model_config, "fused_optimizer", True))

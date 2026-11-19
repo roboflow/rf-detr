@@ -5,12 +5,62 @@
 # ------------------------------------------------------------------------
 """Tests for distributed utility helpers."""
 
-from unittest.mock import patch
+import os
+import subprocess
+import sys
 
 import pytest
 import torch
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
-from rfdetr.utilities.distributed import all_gather
+from rfdetr.utilities.distributed import _is_launcher_main_process, all_gather
+from tests._markers import _requires_torch_xla
+
+_RANK_ENV_VARS = (
+    "RANK",
+    "LOCAL_RANK",
+    "NODE_RANK",
+    "SLURM_PROCID",
+    "JSM_NAMESPACE_RANK",
+    "OMPI_COMM_WORLD_RANK",
+    "PMI_RANK",
+)
+
+
+def _minimal_subprocess_env() -> dict[str, str]:
+    """Build a child interpreter environment with every launcher rank variable removed.
+
+    Preserves the parent runtime environment so fresh Windows interpreters retain dependency-specific configuration,
+    then strips every rank/launcher variable ``_is_launcher_main_process`` or Lightning's own rank resolution reads.
+    Each subprocess probe therefore starts from the same non-rank environment as the test process before its case
+    applies its own launcher variables on top.
+
+    Returns:
+        A fresh environment mapping, safe for a caller to mutate per test case.
+
+    Examples:
+        >>> env = _minimal_subprocess_env()
+        >>> "PATH" in env
+        True
+        >>> "RANK" in env
+        False
+    """
+    env = os.environ.copy()
+    for rank_var in _RANK_ENV_VARS:
+        env.pop(rank_var, None)
+    return env
+
+
+def test_minimal_subprocess_env_preserves_non_rank_runtime_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The subprocess environment retains inherited runtime configuration but removes launcher ranks."""
+    monkeypatch.setenv("APPDATA", "C:\\Users\\runneradmin\\AppData\\Roaming")
+    for rank_var in _RANK_ENV_VARS:
+        monkeypatch.setenv(rank_var, "1")
+
+    env = _minimal_subprocess_env()
+
+    assert env["APPDATA"] == "C:\\Users\\runneradmin\\AppData\\Roaming"
+    assert all(rank_var not in env for rank_var in _RANK_ENV_VARS)
 
 
 def _fake_all_gather(output_tensors, input_tensor) -> None:
@@ -26,50 +76,134 @@ def _fake_all_gather(output_tensors, input_tensor) -> None:
         out.copy_(input_tensor)
 
 
-def test_all_gather_supports_cpu_without_tensor_truthiness_error() -> None:
-    """all_gather derives a cpu device and works when the backend is not nccl (e.g. gloo)."""
-    with (
-        patch("rfdetr.utilities.distributed.get_world_size", return_value=2),
-        patch("rfdetr.utilities.distributed.dist.all_gather", side_effect=_fake_all_gather),
-        patch("rfdetr.utilities.distributed.is_dist_avail_and_initialized", return_value=True),
-        patch("rfdetr.utilities.distributed.dist.get_backend", return_value="gloo"),
-    ):
+class TestIsLauncherMainProcess:
+    """_is_launcher_main_process() answers from the launcher's environment, before torch.distributed exists."""
+
+    @pytest.mark.parametrize(
+        ("rank", "node_rank", "expected"),
+        [
+            pytest.param(0, None, True, id="rank-zero-node-zero"),
+            pytest.param(1, None, False, id="off-rank-zero"),
+            pytest.param(0, "1", False, id="rank-zero-secondary-node"),
+        ],
+    )
+    def test_combines_resolved_rank_with_node_rank(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        rank: int,
+        node_rank: str | None,
+        expected: bool,
+    ) -> None:
+        """The guard is True only when both the resolved rank and NODE_RANK say "main".
+
+        An ordinary single-process run (rank 0, no NODE_RANK) is the one that writes. Any process off rank 0 does not,
+        regardless of which launcher variable Lightning folded into rank_zero_only.rank. NODE_RANK is consulted
+        separately from that resolved rank because Lightning's own subprocess launcher leaves LOCAL_RANK at 0 on every
+        node of a multi-node run, so without the separate check one process per node would pass.
+        """
+        monkeypatch.setattr(rank_zero_only, "rank", rank)
+        if node_rank is None:
+            monkeypatch.delenv("NODE_RANK", raising=False)
+        else:
+            monkeypatch.setenv("NODE_RANK", node_rank)
+
+        assert _is_launcher_main_process() is expected
+
+
+class TestIsLauncherMainProcessEnvPrecedence:
+    """_is_launcher_main_process(), probed via real subprocesses, honors Lightning's env-var precedence.
+
+    ``TestIsLauncherMainProcess`` monkeypatches ``rank_zero_only.rank`` directly, so it never exercises the
+    ``RANK`` > ``LOCAL_RANK`` > ``SLURM_PROCID`` > ``JSM_NAMESPACE_RANK`` resolution order Lightning applies once,
+    at first import of ``pytorch_lightning.utilities.rank_zero`` -- nor the guard's own handling of
+    ``LOCAL_RANK``/``OMPI_COMM_WORLD_RANK``/``PMI_RANK``. A fresh subprocess per case is the only way to observe
+    that resolution honestly, since a single process can only resolve it once.
+    """
+
+    @pytest.mark.parametrize(
+        ("env_vars", "expected"),
+        [
+            pytest.param({}, True, id="no-launcher-vars-present"),
+            pytest.param({"LOCAL_RANK": "1"}, False, id="local-rank-nonzero"),
+            pytest.param({"SLURM_PROCID": "1"}, False, id="slurm-procid-nonzero"),
+            pytest.param({"RANK": "0", "NODE_RANK": "1"}, False, id="rank-zero-secondary-node"),
+            pytest.param({"SLURM_PROCID": "0", "LOCAL_RANK": "1"}, False, id="local-rank-precedes-slurm-procid"),
+            pytest.param({"RANK": "0", "LOCAL_RANK": "1"}, False, id="rank-zero-but-local-rank-nonzero"),
+            pytest.param({"RANK": "1"}, False, id="rank-nonzero"),
+            pytest.param({"JSM_NAMESPACE_RANK": "1"}, False, id="jsm-namespace-rank-nonzero"),
+            pytest.param({"OMPI_COMM_WORLD_RANK": "1"}, False, id="ompi-comm-world-rank-nonzero"),
+            pytest.param({"PMI_RANK": "1"}, False, id="pmi-rank-nonzero"),
+            pytest.param({"NODE_RANK": "0", "LOCAL_RANK": "0"}, True, id="node-rank-zero-local-rank-zero"),
+        ],
+    )
+    def test_answers_from_a_fresh_process_env(self, env_vars: dict[str, str], expected: bool) -> None:
+        """A fresh interpreter resolves the launcher's rank the same way a real launched process would.
+
+        Each case starts a subprocess from a minimal, rank-var-stripped environment (see ``_minimal_subprocess_env``),
+        applies only its own launcher variables, imports ``rfdetr.utilities.distributed`` fresh so
+        ``rank_zero_only.rank`` is resolved from exactly that environment rather than carried over from this test
+        process or an earlier case, and prints ``_is_launcher_main_process()``. The ``rank-zero-but-local-rank-
+        nonzero``, ``ompi-comm-world-rank-nonzero``, and ``pmi-rank-nonzero`` cases pin the guard's target contract --
+        requiring ``LOCAL_RANK`` in ``{unset, "0"}`` and rejecting a nonzero ``OMPI_COMM_WORLD_RANK``/``PMI_RANK`` --
+        and fail until that guard change lands in ``_is_launcher_main_process``.
+        """
+        env = _minimal_subprocess_env()
+        env.update(env_vars)
+        code = "import rfdetr.utilities.distributed as d; print(d._is_launcher_main_process())"
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        assert result.stdout.strip() == str(expected), result.stderr
+
+
+class TestAllGather:
+    """all_gather picks the device its byte tensors travel on and returns one entry per rank."""
+
+    @pytest.fixture
+    def mock_all_gather(self, mocker):
+        """Patch the world size to 2 and ``dist.all_gather`` to broadcast the local tensor; return the patched call."""
+        mocker.patch("rfdetr.utilities.distributed.get_world_size", return_value=2)
+        return mocker.patch("rfdetr.utilities.distributed.dist.all_gather", side_effect=_fake_all_gather)
+
+    def test_derives_cpu_device_when_backend_is_not_nccl(self, mocker, mock_all_gather) -> None:
+        """With a gloo backend all_gather derives a cpu device and does not trip on tensor truthiness."""
+        mocker.patch("rfdetr.utilities.distributed.is_dist_avail_and_initialized", return_value=True)
+        mocker.patch("rfdetr.utilities.distributed.dist.get_backend", return_value="gloo")
+
         result = all_gather({"value": 7})
 
-    assert result == [{"value": 7}, {"value": 7}]
+        assert result == [{"value": 7}, {"value": 7}]
 
+    def test_explicit_device_bypasses_backend_probe(self, mocker, mock_all_gather) -> None:
+        """A caller-supplied device (e.g. an XLA device) is used as-is; no backend derivation runs."""
+        mock_get_backend = mocker.patch("rfdetr.utilities.distributed.dist.get_backend")
 
-def test_all_gather_explicit_device_bypasses_backend_probe() -> None:
-    """A caller-supplied device (e.g. an XLA device) is used as-is; no backend derivation runs."""
-    with (
-        patch("rfdetr.utilities.distributed.get_world_size", return_value=2),
-        patch("rfdetr.utilities.distributed.dist.all_gather", side_effect=_fake_all_gather) as mock_all_gather,
-        patch("rfdetr.utilities.distributed.dist.get_backend") as mock_get_backend,
-    ):
         result = all_gather({"value": 7}, device=torch.device("cpu"))
 
-    mock_get_backend.assert_not_called()
-    input_tensor = mock_all_gather.call_args.args[1]
-    assert input_tensor.device == torch.device("cpu")
-    assert result == [{"value": 7}, {"value": 7}]
+        mock_get_backend.assert_not_called()
+        input_tensor = mock_all_gather.call_args.args[1]
+        assert input_tensor.device == torch.device("cpu")
+        assert result == [{"value": 7}, {"value": 7}]
 
+    def test_explicit_device_wins_over_cuda_heuristic(self, mocker, mock_all_gather) -> None:
+        """Explicit device= is still honored when the cuda-available heuristic would otherwise pick cuda.
 
-def test_all_gather_explicit_device_wins_over_cuda_heuristic() -> None:
-    """Explicit device= is still honored when the cuda-available heuristic would otherwise pick cuda.
+        Guards against a regression that silently ignores ``device=`` and falls back to the cuda-if-available-else-cpu
+        heuristic -- such a bug would coincidentally pass on CPU-only CI (where cuda is never available) without this
+        explicit ``is_available=True`` override.
+        """
+        mocker.patch("rfdetr.utilities.distributed.torch.cuda.is_available", return_value=True)
 
-    Guards against a regression that silently ignores ``device=`` and falls back to the cuda-if-available-else-cpu
-    heuristic -- such a bug would coincidentally pass on CPU-only CI (where cuda is never available) without this
-    explicit ``is_available=True`` override.
-    """
-    with (
-        patch("rfdetr.utilities.distributed.get_world_size", return_value=2),
-        patch("rfdetr.utilities.distributed.dist.all_gather", side_effect=_fake_all_gather) as mock_all_gather,
-        patch("rfdetr.utilities.distributed.torch.cuda.is_available", return_value=True),
-    ):
         all_gather({"value": 7}, device=torch.device("cpu"))
 
-    input_tensor = mock_all_gather.call_args.args[1]
-    assert input_tensor.device == torch.device("cpu")
+        input_tensor = mock_all_gather.call_args.args[1]
+        assert input_tensor.device == torch.device("cpu")
 
 
 def _xla_all_gather_worker(_local_index: int) -> None:
@@ -98,6 +232,7 @@ def _xla_all_gather_worker(_local_index: int) -> None:
     assert {item["rank"] for item in result} == set(range(world_size))
 
 
+@_requires_torch_xla
 @pytest.mark.xla
 def test_all_gather_multiprocess_xla_collective_routing() -> None:
     """all_gather(device=<xla device>) round-trips per-rank data through ProcessGroupXla under real multiprocess XLA.
@@ -112,8 +247,6 @@ def test_all_gather_multiprocess_xla_collective_routing() -> None:
     so this skips off real TPU/NEURON hardware; real multi-replica proof is Phase 2b's Kaggle TPU smoke test
     (``notebooks/tpu_phase2b_kaggle_smoke.py``).
     """
-    pytest.importorskip("torch_xla")
-
     from torch_xla import runtime as xr
 
     if xr.device_type() not in ("TPU", "NEURON"):

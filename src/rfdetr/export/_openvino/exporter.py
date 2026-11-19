@@ -17,6 +17,9 @@ import torch
 from torch import nn
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
+from rfdetr.export._runtime.calibration_checks import check_calibration_data
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -40,15 +43,31 @@ def _check_openvino_available() -> None:
         raise ImportError('OpenVINO requires `openvino`. Install it with: pip install "rfdetr[openvino]"') from error
 
 
+def _has_dynamic_batch(path: Path) -> bool:
+    """Read the saved IR to determine whether its statically ranked input accepts a dynamic batch."""
+    _check_openvino_available()
+    import openvino as ov
+
+    shape = ov.Core().read_model(path).input(0).partial_shape
+    return shape.rank.is_static and not shape[0].is_static
+
+
 @dataclass(frozen=True, slots=True)
 class OpenVINOConfig(ExportConfig):
     """Settings for ``format="openvino"``.
 
     Attributes:
         precision: ``"float32"``, ``"float16"``, or ``None`` to keep OpenVINO's own FP16 compression default.
+        quantization: ``None`` / ``"fp32"`` write the converted IR; ``"int8"`` compresses it with NNCF first.
+        calibration_data: Representative images the INT8 activation ranges are collected from. Required for
+            ``"int8"``, unused otherwise.
+        max_images: Maximum images read from a *calibration_data* directory.
     """
 
     precision: str | None = None
+    quantization: str | None = None
+    calibration_data: Any = None
+    max_images: int = 100
 
 
 class ModelWrapper(nn.Module):
@@ -90,6 +109,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     Note:
         Output tensor names in the saved IR are OpenVINO-inferred, not renamed to ``dets``/``labels``/etc. --
         consumers must match outputs by **position**, mirroring the CoreML export's naming limitation.
+        The inference metadata records a dynamic batch axis (``-1``) when the saved IR's batch axis is dynamic, which
+        is what lets ``RFDETRInference`` predict several images in one call.
 
     Examples:
         Requires the optional ``openvino`` dependency and a prepared graph, so this is documentation only
@@ -102,12 +123,56 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     """
 
     config_class = OpenVINOConfig
-    setting_names = {"precision": "openvino_precision"}
+    setting_names = {
+        "precision": "openvino_precision",
+        "quantization": "quantization",
+        "calibration_data": "calibration_data",
+        "max_images": "max_images",
+    }
     format = "openvino"
     display_name = "OpenVINO"
-    dynamic_batch_reason = "(the IR graph bakes a fixed input shape). Export one model per batch size instead."
+    dynamic_batch_reason = "(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size)."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
+
+    def _check_capabilities(self) -> None:
+        """Refuse an unrecognized *precision* or quantization mode, or an INT8 request that cannot calibrate.
+
+        All of these are judged before the forward pass. Static INT8 derives its activation ranges from the data it is
+        shown, so missing calibration data is a refusal rather than a default: absent or out-of-domain data produces
+        a model that loads, runs, and is quietly wrong. What can be judged from the configuration alone -- a path that
+        does not exist, a directory without images, a file that is not ``.npy``, an array that is not a non-empty
+        rank-4 float array, a *max_images* that is not a positive integer -- is judged here too.
+
+        Raises:
+            ValueError: If *precision* is not ``"float32"``, ``"float16"``, or ``None``; if *quantization* is not a
+                recognized mode; or if it is ``"int8"`` without usable *calibration_data*.
+        """
+        super()._check_capabilities()
+        if self.config.precision not in (None, "float32", "float16"):
+            raise ValueError(f"precision must be 'float32', 'float16', or None, got {self.config.precision!r}")
+        if self.config.quantization not in VALID_QUANTIZATIONS:
+            raise ValueError(
+                f"Unsupported quantization mode {self.config.quantization!r} for format='openvino'. "
+                f"Choose from: {sorted(q for q in VALID_QUANTIZATIONS if q is not None)}."
+            )
+        if self.config.quantization == "int8" and self.config.calibration_data is None:
+            raise ValueError(
+                "quantization='int8' requires calibration_data: a directory of representative images, a .npy path, "
+                "or a preprocessed array. Static quantization reads activation ranges from this data, so there is "
+                "no meaningful default."
+            )
+        if self.config.quantization == "int8":
+            check_calibration_data(self.config.calibration_data, max_images=self.config.max_images)
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``openvino`` is installed.
+
+        Raises:
+            ImportError: If ``openvino`` is not installed.
+        """
+        _check_openvino_available()
 
     def _import_converters(self) -> tuple[Callable[..., Any], Callable[..., Any]]:
         """Verify ``openvino`` is installed and return the two entry points the conversion needs.
@@ -139,17 +204,24 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     def _resolve_export_name(self, *, backbone_only: bool) -> str:
         """Resolve the filename stem the ``.xml`` and its companion ``.bin`` share.
 
+        ``quantization="int8"`` appends ``_int8`` so the quantized IR does not overwrite the FP32 one a previous export
+        wrote under the same name -- NNCF changes the activation arithmetic, which is the kind of detail the filename
+        encodes. An *output_name* is written verbatim, so a caller who gives one owns the collision.
+        ``openvino_precision`` stays out of the name: it only picks how weights are stored.
+
         Args:
             backbone_only: Whether the graph is a backbone-only export.
 
         Returns:
             The artifact name, without extension.
         """
-        stem, _ = resolve_export_stem(
+        stem, is_custom = resolve_export_stem(
             self.config.variant_name,
             self.config.output_name,
             default="backbone_model" if backbone_only else "inference_model",
         )
+        if self.config.quantization == "int8" and not is_custom:
+            stem = f"{stem}_int8"
         return append_backbone_marker(
             stem,
             backbone_only=backbone_only,
@@ -161,20 +233,20 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
 
         ``compress_to_fp16`` controls IR *storage* precision only -- execution precision still depends on the
         compiled device and is not guaranteed to match eager PyTorch on non-CPU devices. ``None`` keeps
-        OpenVINO's own compressing default, which ``"float16"`` states explicitly.
+        OpenVINO's own compressing default, which ``"float16"`` states explicitly, and only ``"float32"`` turns
+        compression off.
+
+        The mapping spells out all three legal values rather than testing one of them, so a value that reached here
+        without :meth:`_check_capabilities` refusing it raises :class:`KeyError` instead of silently compressing a
+        model the caller asked to keep in FP32.
 
         Returns:
             Whether weights are stored compressed to FP16.
 
         Raises:
-            ValueError: If *precision* is not ``"float32"``, ``"float16"``, or ``None``.
+            KeyError: If *precision* is not one of ``None``, ``"float16"``, or ``"float32"``.
         """
-        precision = self.config.precision
-        if precision is None or precision == "float16":
-            return True
-        if precision == "float32":
-            return False
-        raise ValueError(f"precision must be 'float32', 'float16', or None, got {precision!r}")
+        return {None: True, "float16": True, "float32": False}[self.config.precision]
 
     def _prepare_module_for_tracing(self, graph: ExportGraph) -> tuple[ModelWrapper, torch.Tensor]:
         """Announce the conversion, then move the graph onto CPU and wrap it for ``convert_model``.
@@ -216,7 +288,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
             compress_to_fp16: Whether to store the weights compressed to FP16.
 
         Raises:
-            ImportError: If ``convert_model``'s lazy submodule imports fail on a partial/ABI-mismatched install.
+            ImportError: If ``convert_model``'s lazy submodule imports fail on a partial/ABI-mismatched install, or
+                if ``quantization="int8"`` was requested without ``nncf`` installed.
             NotImplementedError: If the model was not switched into export mode first (see :class:`ModelWrapper`).
             TypeError: If the model's forward returns an output type :class:`ModelWrapper` cannot wrap.
             ValueError: If the conversion rejects an argument.
@@ -226,6 +299,16 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         try:
             with torch.no_grad():
                 ov_model = convert_model(wrapped_model, example_input=input_tensors)
+            if self.config.quantization == "int8":
+                _, channels, height, width = input_tensors.shape
+                ov_model = quantize_int8(
+                    ov_model,
+                    self.config.calibration_data,
+                    height=int(height),
+                    width=int(width),
+                    channels=int(channels),
+                    max_images=self.config.max_images,
+                )
             save_model(ov_model, str(output_xml), compress_to_fp16=compress_to_fp16)
         except (ImportError, NotImplementedError, TypeError, ValueError):
             # ImportError: convert_model lazily imports private submodules that can still fail on a
@@ -254,3 +337,10 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
             logger.info(f"✓ OpenVINO IR model saved to {output_xml}")
             logger.info(f"✓ Model binary saved to {output_bin}")
         return str(output_xml)
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Record positional outputs and the saved IR's dynamic batch without changing spatial preprocessing."""
+        metadata = positional_metadata(metadata)
+        if _has_dynamic_batch(path):
+            metadata = metadata.model_copy(update={"input_shape": (-1, *metadata.input_shape[1:])})
+        return metadata

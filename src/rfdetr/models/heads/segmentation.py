@@ -6,7 +6,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import functools
+import os
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from typing import Any, cast
 
 import torch
@@ -16,9 +20,31 @@ from torch.nn.grad import conv2d_input, conv2d_weight
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample, _nearest_grid_sample
 
+# ``torch.backends.cudnn.flags`` saves the current values on entry and restores them on exit. It is process-global
+# and not thread-safe: when two threads overlap, the second saves the ``False`` the first one set and restores it
+# last, so cuDNN stays disabled for the rest of the process without any error or warning. Serialising the scope
+# prevents that leak between callers of ``_cudnn_disabled`` and no further — every other thread still observes cuDNN
+# disabled, along with the ``benchmark=False``, ``deterministic=False`` and ``allow_tf32=True`` that ``flags``
+# installs beside it, for as long as the lock is held. A writer that assigns the flags directly, outside the lock, is
+# overwritten rather than merely observed: ``rfdetr.utilities.reproducibility.seed_all`` sets ``deterministic`` and
+# ``benchmark`` that way, and an assignment landing inside the window is undone by the restore on exit, which puts
+# back the values saved on entry. An ``os.fork`` while another thread holds the lock leaves the child with a locked
+# lock and cuDNN disabled, so the child deadlocks on its first CUDA depthwise conv; fork before the first
+# segmentation-head forward, never during one. The scope is deliberately non-reentrant: nothing re-enters it today,
+# and a plain ``Lock`` makes a future re-entry deadlock here, at a documented site, instead of nesting unnoticed
+# under an ``RLock``.
+_CUDNN_FLAGS_LOCK = threading.Lock()
+
+
+@contextmanager
+def _cudnn_disabled() -> Iterator[None]:
+    """Disable cuDNN for the enclosed block, serialised against the other callers of this helper."""
+    with _CUDNN_FLAGS_LOCK, torch.backends.cudnn.flags(enabled=False):
+        yield
+
 
 class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
-    """Depthwise conv2d with cuDNN disabled in both forward and backward.
+    """Depthwise conv2d with cuDNN disabled in both forward and backward for a CUDA input.
 
     ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only covers operations executed within its scope.
     ``nn.Conv2d`` records the forward op in the autograd graph; the corresponding backward kernels run later,
@@ -28,6 +54,10 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         RuntimeError: GET was unable to find an engine to execute this computation
 
     This ``Function`` disables cuDNN in ``backward`` as well, fixing the crash.
+
+    Both scopes are entered only for a CUDA input, keyed off the same tensor in ``forward`` and in ``backward``: ATen
+    reads ``cudnn_enabled`` only when the input is on CUDA, so a CPU call gains nothing from the scope and would pay
+    ``_cudnn_disabled``'s lock, which serialises otherwise independent depthwise convolutions across threads.
 
     See: https://github.com/roboflow/rf-detr/issues/731
     """
@@ -43,7 +73,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         dilation: tuple[int, ...],
         groups: int,
     ) -> Tensor:
-        """Run depthwise conv2d forward with cuDNN disabled.
+        """Run depthwise conv2d forward, with cuDNN disabled when ``x`` is on CUDA.
 
         Args:
             ctx: Autograd context.
@@ -64,11 +94,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         ctx.padding = padding  # type: ignore[attr-defined]
         ctx.dilation = dilation  # type: ignore[attr-defined]
         ctx.groups = groups  # type: ignore[attr-defined]
-        # Note: torch.backends.cudnn.flags() is process-global state, not op-local.
-        # Safe under DDP (separate processes per rank), but concurrent backward passes
-        # in the same process (DataParallel, user threads) could briefly observe the
-        # wrong cuDNN setting.  For DDP-only training this is not a concern.
-        with torch.backends.cudnn.flags(enabled=False):
+        with _cudnn_disabled() if x.is_cuda else nullcontext():
             return F.conv2d(x, weight, bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
 
     @staticmethod
@@ -76,7 +102,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         ctx: torch.autograd.function.FunctionCtx,
         grad_output: Tensor,
     ) -> tuple[Tensor | None, Tensor | None, Tensor | None, None, None, None, None]:
-        """Compute gradients with cuDNN disabled.
+        """Compute gradients, with cuDNN disabled when the saved input is on CUDA.
 
         Args:
             ctx: Autograd context with saved tensors and conv parameters.
@@ -111,8 +137,9 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             # so upcast to weight.dtype (fp32).  grad_input is kept in weight.dtype —
             # casting back to x.dtype would inject a bf16 gradient into fp32 params.
             grad_output_cast = grad_output.to(dtype=weight.dtype)
-            # Same process-global caveat as forward: safe under DDP, not under DataParallel.
-            with torch.backends.cudnn.flags(enabled=False):
+            # Keyed off the saved ``x``, not ``grad_output``: ``conv2d_input`` / ``conv2d_weight`` run on the saved
+            # tensors' device, so forward and backward enter the scope for the same call.
+            with _cudnn_disabled() if x.is_cuda else nullcontext():
                 if needs_x_grad:
                     grad_input = conv2d_input(  # type: ignore[no-untyped-call]
                         x.shape,
@@ -140,6 +167,40 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         return grad_input, grad_weight, grad_bias, None, None, None, None
 
 
+_DEPTHWISE_CUDNN_ENV = "RFDETR_DEPTHWISE_CUDNN"
+
+
+@functools.lru_cache(maxsize=None)
+def _cudnn_depthwise_is_safe(device_index: int) -> bool:
+    """Whether the depthwise conv may run through cuDNN on a CUDA device.
+
+    The cuDNN engine-selection failure behind issue #731 was reported on T4 and P100 (compute capability 7.5 and 6.0).
+    Routing every GPU around cuDNN is expensive at segmentation resolution: the fallback kernels are slow and the
+    backward upcasts to fp32, which at 1104 px input makes this block the largest single cost of a training step. The
+    workaround is therefore kept for pre-Ampere devices only (capability < 8.0), where the failure was seen.
+
+    ``RFDETR_DEPTHWISE_CUDNN`` overrides the detection: ``1`` always uses cuDNN, ``0`` always uses the workaround, and
+    ``auto`` (the default) decides by compute capability.
+
+    Args:
+        device_index: CUDA device index.
+
+    Returns:
+        ``True`` when the plain cuDNN convolution should be used.
+
+    Raises:
+        ValueError: If ``RFDETR_DEPTHWISE_CUDNN`` is not ``auto``, ``1`` or ``0``.
+    """
+    mode = os.environ.get(_DEPTHWISE_CUDNN_ENV, "auto").strip().lower()
+    if mode == "1":
+        return True
+    if mode == "0":
+        return False
+    if mode != "auto":
+        raise ValueError(f"{_DEPTHWISE_CUDNN_ENV} must be 'auto', '1' or '0', got {mode!r}")
+    return torch.cuda.get_device_capability(device_index) >= (8, 0)
+
+
 class DepthwiseConvBlock(nn.Module):
     r"""Simplified ConvNeXt block without the MLP subnet."""
 
@@ -156,6 +217,8 @@ class DepthwiseConvBlock(nn.Module):
         )
 
     def _depthwise_conv(self, x: Tensor) -> Tensor:
+        if x.is_cuda and _cudnn_depthwise_is_safe(x.device.index if x.device.index is not None else 0):
+            return cast(Tensor, self.dwconv(x))
         # Custom autograd Function so cuDNN is disabled in both forward AND
         # backward.  A plain context-manager only covers forward; the backward
         # for nn.Conv2d runs outside that scope and re-enables cuDNN,
@@ -231,11 +294,12 @@ class SegmentationHead(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1), requires_grad=True)
 
         self._export = False
+        self._native_prediction_upsample = False
 
     def export(self) -> None:
         self._export = True
         self._forward_origin = self.forward
-        self.forward = self.forward_export  # type: ignore[method-assign]
+        self.forward = self.forward_export  # type: ignore[method-assign,assignment]
         for name, m in self.named_modules():
             if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()
@@ -246,17 +310,43 @@ class SegmentationHead(nn.Module):
         query_features: list[Tensor],
         image_size: tuple[int, int],
         skip_blocks: bool = False,
+        final_layer_only: bool = False,
     ) -> list[Tensor]:
+        """Compute mask logits for the paired decoder query layers.
+
+        Spatial features are resized to the image dimensions integer-divided by ``downsample_ratio``. Unless
+        ``skip_blocks`` is set, each paired query layer uses the next spatial block; blocks before the selected final
+        layer still run when ``final_layer_only`` is set, but their mask projections and logits are skipped.
+
+        Args:
+            spatial_features: Backbone spatial feature map.
+            query_features: Query features, one entry per decoder layer.
+            image_size: Height and width used to size the output masks.
+            skip_blocks: Skip the spatial blocks and compute a mask from the unblocked features. This path requires
+                exactly one query layer.
+            final_layer_only: Return only the mask for the last paired block and query layer.
+
+        Returns:
+            A list of mask-logit tensors shaped ``(B, N, H, W)``, where ``H`` and ``W`` are the image dimensions
+            integer-divided by ``downsample_ratio``. With blocks enabled, the list contains one tensor per paired block
+            and query layer, or one tensor when ``final_layer_only`` is set and at least one pair exists; it is empty
+            when there are no pairs. With ``skip_blocks=True``, it contains exactly one tensor.
+        """
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
-        # output: (B, N, H*r, W*r)
+        # output: (B, N, H*r, W*r) for each decoder layer, or for the last one only when final_layer_only is set
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
         spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
+        # Both branches below contract with einsum; forward_export writes the same math as a MatMul for CoreML.
         if not skip_blocks:
-            for block, qf in zip(self.blocks, query_features):
+            last_layer = min(len(self.blocks), len(query_features)) - 1
+            for layer, (block, qf) in enumerate(zip(self.blocks, query_features)):
+                # Every block runs, since each feeds the next; the projections and the einsum are per layer.
                 spatial_features = block(spatial_features)
+                if final_layer_only and layer < last_layer:
+                    continue
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
                 mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
@@ -324,7 +414,11 @@ class SegmentationHead(nn.Module):
         assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
 
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
+        if self._native_prediction_upsample:
+            # Prediction snapshots never run backward; bypass only the deterministic-backward decomposition.
+            spatial_features = torch._C._nn.upsample_bilinear2d(spatial_features, target_size, False, None)
+        else:
+            spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         if not skip_blocks:
             for block in self.blocks:
@@ -333,7 +427,12 @@ class SegmentationHead(nn.Module):
         spatial_features_proj = self.spatial_features_proj(spatial_features)
 
         qf = self.query_features_proj(self.query_features_block(query_features[0]))
-        return [torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias]
+        # Same contraction as einsum("bchw,bnc->bnhw") in forward, written as a MatMul: ONNX Runtime's CoreML
+        # provider has no Einsum support, so an exported Einsum runs on the CPU between two CoreML partitions.
+        batch_size, num_queries = qf.shape[:2]
+        height, width = spatial_features_proj.shape[-2:]
+        mask_logits = torch.matmul(qf, spatial_features_proj.flatten(2)).view(batch_size, num_queries, height, width)
+        return [mask_logits + self.bias]
 
 
 def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:

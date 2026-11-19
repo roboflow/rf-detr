@@ -183,6 +183,8 @@ class LWDETR(nn.Module):
             )
         # Flag to ensure the zero-pad warning in ``_aggregate_keypoint_class_logits`` is emitted at most once.
         self._kp_zero_pad_warned = False
+        # Flag to ensure the missing-encoder-layers warning in ``update_drop_path`` is emitted at most once.
+        self._drop_path_layers_warned = False
         self.keypoint_embed: MLP | None
         if self.use_grouppose_keypoints:
             self.keypoint_embed = MLP(
@@ -351,6 +353,12 @@ class LWDETR(nn.Module):
         self._export = True
         self._forward_origin = self.forward
         self.forward = self.forward_export  # type: ignore[method-assign,assignment]
+        # TODO: the Plus ``PECoreEncoder`` (Atto, Femto, Pico) defines ``export()`` but no ``_export`` attribute, so the
+        #  check below skips it: ``inference()`` and every export path run it with timm's attention forward and the
+        #  empty-prefix RoPE concatenations instead of ``_export_attention_forward``. Setting ``_export = False`` on it
+        #  makes this loop call its ``export()``; on Pico that changed Apple M4 Max latency by under 0.1 ms in eager,
+        #  TorchScript and inductor, so the skip is not what keeps the small sizes slow. Output parity of the swapped
+        #  attention is untested (the check ran on noise, 0 detections). Fix in ``rfdetr_plus`` by adding the attribute.
         for name, m in self.named_modules():
             if hasattr(m, "export") and callable(m.export) and hasattr(m, "_export") and not m._export:
                 m.export()
@@ -456,7 +464,13 @@ class LWDETR(nn.Module):
             class_boost = class_boost[..., :detection_num_classes]
         return class_boost
 
-    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None) -> dict[str, Any]:
+    def forward(
+        self,
+        samples: NestedTensor,
+        targets: list[dict[str, Tensor]] | None = None,
+        *,
+        all_layer_masks: bool = False,
+    ) -> dict[str, Any]:
         """The forward expects a NestedTensor, which consists of:
 
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -471,6 +485,20 @@ class LWDETR(nn.Module):
                            information on how to retrieve the unnormalized bounding box.
            - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                             dictionaries containing the two above keys for each decoder layer.
+
+        Segmentation models also return "pred_masks". In training mode the auxiliary layers and "enc_outputs" carry
+        "pred_masks" too, for the loss; in eval mode they do so only when ``all_layer_masks`` is set, because
+        nothing but the criterion reads them and each is a dense ``(B, Q)`` mask map at the segmentation head's
+        resolution, a quarter of the input size by default.
+
+        Args:
+            samples: Batched images, a ``NestedTensor`` or a list or tensor of images.
+            targets: Unused; kept for call compatibility.
+            all_layer_masks: In eval mode, also compute the segmentation masks of the auxiliary decoder layers and
+                of the encoder proposals, as a loss on eval-mode outputs needs. Training mode always computes them.
+
+        Returns:
+            The prediction dict described above.
         """
         if isinstance(samples, (list, Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
@@ -494,6 +522,8 @@ class LWDETR(nn.Module):
 
         if self.segmentation_head is not None:
             seg_head_fwd = self.segmentation_head.sparse_forward if self.training else self.segmentation_head.forward
+        # Only SetCriterion reads the auxiliary-layer and encoder-proposal masks.
+        aux_masks = self.training or all_layer_masks
 
         cross_attn_srcs = None
         if cross_attn_features is not None:
@@ -511,11 +541,15 @@ class LWDETR(nn.Module):
             cross_attn_srcs=cross_attn_srcs,
         )
         if self.use_grouppose_keypoints:
-            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions = transformer_outputs[:6]
         else:
             hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
             keypoint_hs = None
             enc_kp_predictions = None
+        # Last element: enc_out_class_embed's output at the two-stage selected positions, already
+        # gathered by Transformer._two_stage_group_selection -- None on the rare fallback path
+        # (custom/heterogeneous group modules), where the loop below still recomputes it.
+        cls_ts = transformer_outputs[-1]
 
         out: dict[str, Any] = {}
         if hs is not None:
@@ -561,7 +595,13 @@ class LWDETR(nn.Module):
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
 
             if self.segmentation_head is not None:
-                outputs_masks = seg_head_fwd(features[0].tensors, hs, cast(tuple[int, int], samples.tensors.shape[-2:]))
+                image_size = cast(tuple[int, int], samples.tensors.shape[-2:])
+                if aux_masks:
+                    outputs_masks = seg_head_fwd(features[0].tensors, hs, image_size)
+                else:
+                    outputs_masks = self.segmentation_head.forward(
+                        features[0].tensors, hs, image_size, final_layer_only=True
+                    )
 
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
             if self.segmentation_head is not None:
@@ -572,20 +612,26 @@ class LWDETR(nn.Module):
                 out["aux_outputs"] = self._set_aux_loss(
                     outputs_class,
                     outputs_coord,
-                    outputs_masks if self.segmentation_head is not None else None,
+                    outputs_masks if self.segmentation_head is not None and aux_masks else None,
                     outputs_keypoints,
                 )
 
         if self.two_stage:
             assert self.transformer.enc_out_class_embed is not None
-            group_detr = self.group_detr if self.training else 1
-            hs_enc_list = hs_enc.chunk(group_detr, dim=1)
-            cls_enc_list = []
-            for g_idx in range(group_detr):
-                cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
-                cls_enc_list.append(cls_enc_gidx)
+            if cls_ts is not None:
+                # Already computed by Transformer._two_stage_group_selection: enc_out_class_embed is a
+                # plain per-position Linear, so its output gathered at the selected positions there is
+                # exactly what re-running it here on the same gathered hidden state would produce.
+                cls_enc = cls_ts
+            else:
+                group_detr = self.group_detr if self.training else 1
+                hs_enc_list = hs_enc.chunk(group_detr, dim=1)
+                cls_enc_list = []
+                for g_idx in range(group_detr):
+                    cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
+                    cls_enc_list.append(cls_enc_gidx)
 
-            cls_enc = torch.cat(cls_enc_list, dim=1)
+                cls_enc = torch.cat(cls_enc_list, dim=1)
             keypoints_enc = None
             if self.use_grouppose_keypoints and enc_kp_predictions is not None:
                 keypoints_enc = self._format_keypoint_output(
@@ -595,7 +641,8 @@ class LWDETR(nn.Module):
                 )
                 cls_enc = cls_enc + self._aggregate_keypoint_class_logits(keypoints_enc)
 
-            if self.segmentation_head is not None:
+            # Without decoder layers the encoder proposals are the predictions, so their masks are always needed.
+            if self.segmentation_head is not None and (aux_masks or hs is None):
                 masks_enc = seg_head_fwd(
                     features[0].tensors,
                     [
@@ -607,7 +654,7 @@ class LWDETR(nn.Module):
 
             if hs is not None:
                 out["enc_outputs"] = {"pred_logits": cls_enc, "pred_boxes": ref_enc}
-                if self.segmentation_head is not None:
+                if self.segmentation_head is not None and aux_masks:
                     out["enc_outputs"]["pred_masks"] = masks_enc
                 if keypoints_enc is not None:
                     out["enc_outputs"]["pred_keypoints"] = keypoints_enc
@@ -621,6 +668,15 @@ class LWDETR(nn.Module):
         return out
 
     def forward_export(self, tensors: Tensor) -> tuple[Tensor, ...]:
+        """Run the export graph on a plain image batch.
+
+        Args:
+            tensors: Normalized images of shape ``(B, 3, H, W)``.
+
+        Returns:
+            ``(boxes, logits)`` for detection, ``(boxes, logits, masks)`` for segmentation, or
+            ``(boxes, logits, keypoints)`` for keypoint models.
+        """
         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
@@ -635,7 +691,7 @@ class LWDETR(nn.Module):
             cross_attn_srcs=cross_attn_srcs,
         )
         if self.use_grouppose_keypoints:
-            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs[:7]
         else:
             hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
             keypoint_hs = None
@@ -657,9 +713,15 @@ class LWDETR(nn.Module):
                 if keypoint_hs is None:
                     raise ValueError("use_grouppose_keypoints=True requires keypoint_hs from transformer outputs.")
                 outputs_keypoints_delta = self.keypoint_embed(keypoint_hs)
-                ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)
-                ref_xy = ref_unsigmoid[..., :2].unsqueeze(-2)
-                keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy
+                # Same math as ``forward``'s ``delta_xy * ref_wh.unsqueeze(-2) + ref_xy.unsqueeze(-2)``, but on the
+                # flattened ``(..., K * 2)`` layout: onnx2tf mis-transposes the rank-4 broadcast over the keypoint
+                # axis and the TFLite conversion fails (#1514). ``repeat`` with a full-rank argument, not ``tile``: the
+                # ONNX lowering of ``tile`` adds ``If`` nodes that onnxsim cannot simplify.
+                delta_xy = outputs_keypoints_delta[..., :2]
+                repeats = (*([1] * (ref_unsigmoid.dim() - 1)), delta_xy.shape[-2])
+                ref_wh = ref_unsigmoid[..., 2:].repeat(repeats)
+                ref_xy = ref_unsigmoid[..., :2].repeat(repeats)
+                keypoints_xy = (delta_xy.flatten(-2) * ref_wh + ref_xy).view(delta_xy.shape)
                 keypoints_other = outputs_keypoints_delta[..., 2:]
                 outputs_keypoints = torch.cat([keypoints_xy, keypoints_other], dim=-1)
                 if outputs_keypoints.dim() == 5:
@@ -757,12 +819,25 @@ class LWDETR(nn.Module):
         Args:
             drop_path_rate: Maximum drop path rate (applied to last layer).
             vit_encoder_num_layers: Number of encoder layers to update.
+
+        Note:
+            When the encoder exposes no recognised layer layout (see ``_get_backbone_encoder_layers``) the schedule
+            cannot be applied; a positive ``drop_path_rate`` then logs a warning, once per model instance.
         """
         layers = self._get_backbone_encoder_layers()
         if layers is None:
+            if drop_path_rate > 0 and not self._drop_path_layers_warned:
+                logger.warning(
+                    "drop_path_rate=%s was requested but the backbone encoder exposes no recognised layer layout "
+                    "(expected `blocks`, `trunk.blocks` or the HuggingFace DINOv2 `encoder.encoder.layer`); the "
+                    "drop-path schedule is skipped. This warning is emitted once per model instance.",
+                    drop_path_rate,
+                )
+                self._drop_path_layers_warned = True
             return
         n = min(vit_encoder_num_layers, len(layers))
-        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n)]
+        # Float32 can round an accepted rate just below one to one, causing division by zero in drop path.
+        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n, dtype=torch.float64)]
         for i in range(n):
             if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
                 layers[i].drop_path.drop_prob = dp_rates[i]  # type: ignore[union-attr]

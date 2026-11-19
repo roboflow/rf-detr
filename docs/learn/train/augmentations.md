@@ -101,7 +101,7 @@ aug_config = {
 }
 ```
 
-Each child's `p` controls its relative selection weight. The container itself always fires.
+Each child's `p` controls its relative selection weight when the container fires. The container-level `p` controls whether the whole container is applied; RF-DETR defaults an omitted value to `1.0` for backward compatibility, while explicit values follow standard Albumentations semantics.
 
 If you need the same transform twice, or want explicit ordering, pass a list instead of a dict:
 
@@ -132,6 +132,8 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
 - **Default path:** Uses torchvision-native transforms and does not require Albumentations.
 - **Custom CPU path:** Non-empty `aug_config` dictionaries use Albumentations and require `rfdetr[augment]`.
 - **GPU path:** `augmentation_backend="kornia"` uses Kornia and requires `rfdetr[augment]`.
+- **Pixel translation on Kornia:** `{"Affine": {"translate_px": {"x": (-4, 4), "y": (-4, 4)}, "p": 1.0}}` shifts images, boxes and masks by whole pixels; an offset may be any integer or an integral float such as `4.0`. This form supports pure translation with constant-zero or replicate borders. Options that cannot change a whole-pixel shift are accepted and have no effect: `interpolation` and `mask_interpolation` codes 0-4, `keep_ratio`, `balanced_scale`, `rotate_method`, a unit `scale` or zero `shear`, and `fill`/`fill_mask` with a replicate border. Building the pipeline raises for nonzero rotation or shear, nonunit scale (a missing axis in a per-axis `scale`/`shear` mapping counts as `1`, as on Albumentations, so `shear={"x": 0}` raises), `fit_output=True`, interpolation codes outside 0-4, border modes other than constant or replicate, a nonzero `fill`/`fill_mask` with a constant border, the deprecated Albumentations 1.x aliases `cval`, `cval_mask` and `mode` (use `fill`, `fill_mask` and `border_mode`), and boolean, fractional, reversed or out-of-64-bit-range offsets. Use the Albumentations backend for those combinations.
+- **Padded batches on Kornia:** Either `square_resize_div_64=False` or `multi_scale="per-sample"` collates images of different sizes into a padded canvas. The GPU path normalizes targets by that canvas, which is wrong for smaller images, so setup raises `ValueError`. Use `square_resize_div_64=True` with `multi_scale="per-batch"` or `"off"`, or `augmentation_backend="torchvision"` or `"albumentations"`.
 - **CPU-bound custom configs:** More transforms means slower data loading
 - **Use `num_workers`:** Parallelize augmentation across data loader workers
 - **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones
@@ -180,4 +182,4 @@ model.train(
 
 - [Monitor training with TensorBoard](loggers.md#tensorboard)
 - [Use early stopping](advanced.md#early-stopping) to prevent overfitting
-- [Export your trained model](../export.md) for deployment
+- [Export your trained model](../../exports/index.md) for deployment

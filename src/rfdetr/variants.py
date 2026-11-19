@@ -60,6 +60,7 @@ from rfdetr.detr import RFDETR
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
+    template_mgs="Use a size-specific class such as `RFDETRSmall` instead (see the migration guide).",
 )
 class RFDETRBase(RFDETR):
     """Train an RF-DETR Base model.
@@ -160,6 +161,7 @@ class RFDETRSeg(RFDETR):
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
+    template_mgs="Use a size-specific segmentation class such as `RFDETRSegSmall` instead (see the migration guide).",
 )
 class RFDETRSegPreview(RFDETRSeg):
     """Train an RF-DETR Segmentation Preview model.
