@@ -67,6 +67,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_backend = resolve_backend_for_build(augmentation_backend)
     gpu_postprocess = is_gpu_postprocess(resolved_backend)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
 
     if gpu_postprocess:
         logger.warning(
@@ -90,6 +91,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
+            skip_unreadable=skip_unreadable,
         )
     else:
         dataset = CocoDetection(
@@ -106,6 +108,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
+            skip_unreadable=skip_unreadable,
         )
     return dataset
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,7 +31,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
-from rfdetr.datasets.io_utils import decode_image
+from rfdetr.datasets.io_utils import decode_image, read_image_or_substitute, read_image_with_retries
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
 
@@ -134,6 +135,9 @@ class _LazyYoloSample:
     class_id: NDArray[np.int64]
     polygons: tuple[NDArray[np.float32], ...]
     keypoints: NDArray[np.float32]
+    # False when the image header could not be read while the dataset was built with ``skip_unreadable``: the labels
+    # were validated but not kept (they need the image size), so the sample must be substituted, never returned.
+    readable: bool = True
 
     def to_detections(self) -> Detections:
         """Materialize the current sample as a supervision ``Detections`` object."""
@@ -168,10 +172,22 @@ class _LazyYoloDetectionDataset:
     def __getitem__(self, idx: int) -> tuple[str, NDArray[np.uint8], Detections]:
         sample = self._samples[idx]
         try:
-            rgb_image, _ = decode_image(Path(sample.image_path))
+            rgb_image = self.read_image(idx)
         except (FileNotFoundError, OSError, UnidentifiedImageError) as exc:
             raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
         return sample.image_path, rgb_image, sample.to_detections()
+
+    def read_image(self, idx: int) -> NDArray[np.uint8]:
+        """Decode the RGB pixels of one sample, raising the decoder's own ``OSError`` when the file is unreadable.
+
+        A sample whose header was unreadable when the dataset was built raises ``OSError`` without touching the file,
+        because it carries no labels to pair with the pixels.
+        """
+        sample = self._samples[idx]
+        if not sample.readable:
+            raise OSError("image header was unreadable when the dataset was built")
+        rgb_image, _ = decode_image(Path(sample.image_path))
+        return rgb_image
 
     def get_image_info(self, idx: int) -> _LazyYoloSample:
         """Return lightweight metadata without loading pixels or dense masks."""
@@ -355,6 +371,13 @@ def _parse_yolo_pose_label_line(
     return cid, xyxy_px, keypoints
 
 
+def _read_image_size(image_path: str) -> tuple[int, int]:
+    """Return ``(width, height)`` from an image header without decoding its pixels."""
+    with Image.open(image_path) as image:
+        width, height = image.size
+    return width, height
+
+
 def _build_yolo_samples(
     img_folder: str,
     lb_folder: str,
@@ -363,6 +386,7 @@ def _build_yolo_samples(
     include_polygons: bool,
     include_keypoints: bool = False,
     keypoint_schema: YoloKeypointSchema | None = None,
+    skip_unreadable: bool = False,
 ) -> tuple[list[str], list[_LazyYoloSample]]:
     """Build the class list and sample list shared by both YOLO builder functions.
 
@@ -383,6 +407,9 @@ def _build_yolo_samples(
         keypoint_schema: Keypoint schema describing class names, per-class keypoint counts, OKS sigmas, keypoint names,
             flip index, and keypoint dimensionality.  When ``None`` and ``include_keypoints=True`` the schema is
             auto-inferred from ``data_file`` via :func:`infer_yolo_keypoint_schema`.
+        skip_unreadable: When ``True`` a failed header read is retried, and an image whose header stays unreadable
+            is kept as a sample marked ``readable=False`` with no labels, instead of raising.  Its label file is still
+            parsed, so a malformed one raises.
 
     Returns:
         A ``(classes, samples)`` tuple where ``classes`` is the ordered list of class names and ``samples`` is a list of
@@ -408,8 +435,23 @@ def _build_yolo_samples(
 
     for image_path in _list_yolo_image_paths(img_folder):
         label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
-        with Image.open(image_path) as image:
-            width, height = image.size
+        readable = True
+        if skip_unreadable:
+            try:
+                width, height = read_image_with_retries(partial(_read_image_size, image_path), image_path)
+            except OSError as exc:
+                # Keep the sample so indices and the dataset length do not change; its labels are still parsed below,
+                # against a nominal size, so that a malformed label file raises as it would for a readable image.
+                logger.error(
+                    "Image %s (sample %d) has an unreadable header: %s. It will be substituted when it is requested.",
+                    image_path,
+                    len(samples),
+                    exc,
+                )
+                readable, width, height = False, 1, 1
+        else:
+            with Image.open(image_path) as image:
+                width, height = image.size
 
         xyxy: list[NDArray[np.float32]] = []
         class_id: list[int] = []
@@ -449,6 +491,8 @@ def _build_yolo_samples(
                     if include_polygons and polygon_px is not None:
                         polygons.append(polygon_px)
 
+        if not readable:
+            xyxy, class_id, polygons, keypoints = [], [], [], []
         samples.append(
             _LazyYoloSample(
                 image_path=image_path,
@@ -462,13 +506,16 @@ def _build_yolo_samples(
                     if keypoints
                     else np.zeros((0, num_keypoints, 3), dtype=np.float32)
                 ),
+                readable=readable,
             )
         )
 
     return classes, samples
 
 
-def _build_lazy_yolo_detection_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
+def _build_lazy_yolo_detection_dataset(
+    img_folder: str, lb_folder: str, data_file: str, skip_unreadable: bool = False
+) -> _LazyYoloDetectionDataset:
     """Build a YOLO detection dataset that stores bounding boxes lazily.
 
     Unlike :func:`_build_lazy_yolo_segmentation_dataset`, this function does not store polygon coordinates or dense
@@ -481,28 +528,36 @@ def _build_lazy_yolo_detection_dataset(img_folder: str, lb_folder: str, data_fil
         img_folder: Path to the directory containing images.
         lb_folder: Path to the directory containing YOLO ``.txt`` label files.
         data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
+        skip_unreadable: Keep an image whose header is unreadable as a sample to substitute, instead of raising.
 
     Returns:
         A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel data on demand and returns
         ``sv.Detections`` without mask information.
     """
-    classes, samples = _build_yolo_samples(img_folder, lb_folder, data_file, include_polygons=False)
+    classes, samples = _build_yolo_samples(
+        img_folder, lb_folder, data_file, include_polygons=False, skip_unreadable=skip_unreadable
+    )
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
-def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
+def _build_lazy_yolo_segmentation_dataset(
+    img_folder: str, lb_folder: str, data_file: str, skip_unreadable: bool = False
+) -> _LazyYoloDetectionDataset:
     """Build a YOLO dataset that stores polygons and rasterizes masks on demand.
 
     Args:
         img_folder: Path to the directory containing images.
         lb_folder: Path to the directory containing YOLO ``.txt`` label files.
         data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
+        skip_unreadable: Keep an image whose header is unreadable as a sample to substitute, instead of raising.
 
     Returns:
         A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel data on demand and rasterizes polygon
         masks into dense boolean tensors.
     """
-    classes, samples = _build_yolo_samples(img_folder, lb_folder, data_file, include_polygons=True)
+    classes, samples = _build_yolo_samples(
+        img_folder, lb_folder, data_file, include_polygons=True, skip_unreadable=skip_unreadable
+    )
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
@@ -511,6 +566,7 @@ def _build_lazy_yolo_keypoint_dataset(
     lb_folder: str,
     data_file: str,
     keypoint_schema: YoloKeypointSchema,
+    skip_unreadable: bool = False,
 ) -> _LazyYoloDetectionDataset:
     """Build a YOLO pose dataset that stores keypoints without dense masks."""
     classes, samples = _build_yolo_samples(
@@ -520,6 +576,7 @@ def _build_lazy_yolo_keypoint_dataset(
         include_polygons=False,
         include_keypoints=True,
         keypoint_schema=keypoint_schema,
+        skip_unreadable=skip_unreadable,
     )
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
@@ -1160,6 +1217,13 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             When True polygons are parsed and rasterized on demand; when False only bounding-box coordinates are stored.
         include_keypoints: Whether to load Ultralytics YOLO pose keypoints.
         num_keypoints_per_class: Optional keypoint schema used by RF-DETR.
+        skip_unreadable: If ``True``, a failed image read is retried, and an image that stays unreadable is replaced
+            by the next readable sample, image and labels together, with an error naming the file logged (see
+            :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises ``ValueError``
+            on the first failed read.  The same applies while the dataset is built: an image whose header stays
+            unreadable is kept at its index, to be substituted when requested, instead of raising from the
+            constructor.  Meant for training splits only: a substituted sample is a duplicate, which would distort
+            evaluation.
     """
 
     def __init__(
@@ -1171,11 +1235,13 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         include_masks: bool = False,
         include_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
+        skip_unreadable: bool = False,
     ):
         if include_masks and include_keypoints:
             raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
         super().__init__(img_folder)
         self._transforms = transforms
+        self._skip_unreadable = skip_unreadable
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         self.keypoint_schema: YoloKeypointSchema | None
@@ -1202,11 +1268,12 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
                 lb_folder,
                 data_file,
                 self.keypoint_schema,
+                skip_unreadable,
             )
         elif include_masks:
-            self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file)
+            self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file, skip_unreadable)
         else:
-            self.sv_dataset = _build_lazy_yolo_detection_dataset(img_folder, lb_folder, data_file)
+            self.sv_dataset = _build_lazy_yolo_detection_dataset(img_folder, lb_folder, data_file, skip_unreadable)
 
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))
@@ -1218,8 +1285,18 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         return len(self.sv_dataset)
 
     def __getitem__(self, idx: int) -> tuple[Image.Image | torch.Tensor, dict[str, Any] | None]:
+        if self._skip_unreadable:
+            # Only the image read is retried and substituted; label and transform errors below still raise.
+            idx, rgb_image = read_image_or_substitute(
+                self.sv_dataset.read_image,
+                idx,
+                len(self.sv_dataset),
+                lambda index: self.sv_dataset.get_image_info(index).image_path,
+            )
+            detections = self.sv_dataset.get_image_info(idx).to_detections()
+        else:
+            image_path, rgb_image, detections = self.sv_dataset[idx]
         image_id = self.ids[idx]
-        image_path, rgb_image, detections = self.sv_dataset[idx]
 
         img = Image.fromarray(rgb_image)
 
@@ -1295,6 +1372,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
     resolved_augmentation_backend = resolve_backend_for_build(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
 
     if include_keypoints:
         try:
@@ -1323,6 +1401,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            skip_unreadable=skip_unreadable,
         )
     else:
         dataset = YoloDetection(
@@ -1345,5 +1424,6 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            skip_unreadable=skip_unreadable,
         )
     return dataset
