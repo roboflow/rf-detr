@@ -152,9 +152,9 @@ def _download_file(
 ) -> None:
     """Download a file from a URL with optional MD5 validation.
 
-    Keep an existing destination until its replacement is complete and verified.
-    Remove temporary data on failure or cancellation and preserve the existing
-    destination's permission bits when replacing it.
+    Keep an existing destination until its replacement is fully downloaded and, when ``expected_md5`` is given,
+    matches that hash. Remove temporary data on failure or cancellation. On POSIX, preserve the existing destination's
+    permission bits when replacing it; Windows keeps the new file's own mode instead.
 
     Args:
         url: URL to download from.
@@ -163,7 +163,9 @@ def _download_file(
         timeout: Timeout in seconds passed to ``requests.get``.
 
     Raises:
-        ValueError: If MD5 validation fails.
+        ValueError: If the downloaded content does not match ``expected_md5``.
+        requests.RequestException: If the request fails or the server answers with an error status.
+        OSError: If writing the temporary file, hashing it or replacing the destination fails.
     """
     if os.path.exists(filename) and expected_md5:
         if _validate_file_md5(filename, expected_md5):
@@ -209,7 +211,8 @@ def _download_file(
         _replace_keeping_mode(temp_filename, filename)
     finally:
         if temp_filename is not None:
-            with contextlib.suppress(FileNotFoundError):
+            # Best-effort: a removal failure (e.g. Windows ``PermissionError``) must not replace the failure in flight.
+            with contextlib.suppress(OSError):
                 os.remove(temp_filename)
 
 
