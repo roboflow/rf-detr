@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-15T09:29:52">
+  <meta property="article:modified_time" content="2026-11-20T19:50:55">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-15T09:29:52",
+    "dateModified": "2026-11-20T19:50:55",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1810,6 +1810,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#compact-pe-models-on-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compact PE models on CPU
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3361,6 +3372,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#compact-pe-models-on-cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compact PE models on CPU
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3395,6 +3417,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
 </span></code></pre></div>
 <p>This returns <code>supervision.Detections</code> for detection and segmentation models, or <code>supervision.KeyPoints</code> for keypoint models. See <a href="../basics/#predict-with-rfdetrinference">Predict with RFDETRInference</a> for checkpoint inputs, metadata, batch behavior, and runtime settings.</p>
+<p>On the CPU provider <code>RFDETRInference</code> runs ONNX Runtime on every logical core the process may use, where ONNX Runtime alone would use only the physical cores; pass <code>runtime_options={"num_threads": N}</code> to choose another pool size.</p>
 <h2 id="advanced-run-onnx-runtime-directly">Advanced: Run ONNX Runtime directly<a class="headerlink" href="#advanced-run-onnx-runtime-directly" title="Permanent link">&para;</a></h2>
 <p>The exported graph returns <strong>raw</strong> tensors — <code>dets</code> (<code>pred_boxes</code>, normalized <code>cxcywh</code>) and <code>labels</code> (<code>pred_logits</code>, un-activated). The code below shows direct ONNX Runtime execution and NumPy decoding for low-level inspection. The private <code>_run_inference</code> helper remains a dependency-light numerical reference and shares raw execution with the <code>RFDETRInference</code> adapter; use <code>RFDETRInference</code> for normal image prediction.</p>
 <div class="admonition warning">
@@ -3547,9 +3570,24 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <ul>
 <li>ONNX INT8 takes 64% to 83% of the ONNX FP32 time at every size it was timed for.</li>
 <li>ONNX INT8 is among the fastest of the six configurations for 13 of the 16 models. ONNX FP32 is never among them: it is slower than PyTorch TorchScript FP32 at every size.</li>
-<li>No accuracy was scored for these CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.</li>
+<li>ONNX compact, timed for Atto, Femto and Pico only, takes 70% to 73% of the ONNX FP32 time, tied with PyTorch TorchScript FP32 on all three and with OpenVINO FP32 on Femto and Pico.</li>
+<li>No accuracy was scored for the other CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.</li>
 </ul>
 <p>No earlier x86 CPU table remains here: the earlier run had <code>RFDETRInference</code>'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, <a href="../openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> is also a measured route.</p>
+<h3 id="compact-pe-models-on-cpu">Compact PE models on CPU<a class="headerlink" href="#compact-pe-models-on-cpu" title="Permanent link">&para;</a></h3>
+<p>Install <code>pip install "rfdetr-plus[onnx]"</code> to export Atto, Femto or Pico with ONNX Runtime's CPU operators. Export a released detector or reload a fine-tuned checkpoint to retain its trained weights, class head and resolution.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span><span class="p">,</span> <span class="n">from_checkpoint</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr_plus</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRFemto</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">pretrained</span> <span class="o">=</span> <span class="n">RFDETRFemto</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">pretrained</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="s2">"output/pretrained"</span><span class="p">)</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">trained</span> <span class="o">=</span> <span class="n">from_checkpoint</span><span class="p">(</span><span class="s2">"checkpoint_best_total.pth"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">artifact</span> <span class="o">=</span> <span class="n">trained</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="s2">"output/finetuned"</span><span class="p">)</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">artifact</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The compact ONNX file takes one normalized NCHW float image and returns normalized center-format boxes (<code>dets</code>) and class logits (<code>labels</code>). The prediction API handles preprocessing and postprocessing. Compare AP on your held-out images and latency on the deployment CPU against the standard FP32 export before choosing a format.</p>
+<p>To enforce an 8 MB storage budget, pass <code>size_limit_bytes=8_000_000</code> to <code>export_cpu_onnx</code>. The complete uncompressed artifact must be strictly smaller. The released COCO checkpoints produced 7.13 MB for Atto, 11.77 MB for Femto and 13.10 MB for Pico in the <a href="https://github.com/roboflow/rf-detr_plus/pull/83">CPU export qualification</a>. A fine-tuned model can have a different artifact size.</p>
 
 
 
@@ -3570,7 +3608,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
   </span>
 
     

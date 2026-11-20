@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-15T09:29:52">
+  <meta property="article:modified_time" content="2026-11-20T19:50:55">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-15T09:29:52",
+    "dateModified": "2026-11-20T19:50:55",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4023,7 +4023,7 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <li>The measurement is end to end: preprocessing, the forward pass, postprocessing and, for segmentation, decoding the masks on the host. It is not the model-only latency of the Benchmarks page.</li>
 <li>Every call uses the default <code>threshold=0.5</code> on <code>NUM_IMAGES</code> COCO val2017 images, each predicted once in the same order for every configuration. Latency is reported as the median call time with its 95th percentile, because one slow call (OS jitter, throttling) moves a mean but not a median.</li>
 <li>Nothing is detected or substituted for you. You choose <code>HARDWARE</code>; a missing device, package or runtime stops the notebook, and every predictor is checked against the runtime its configuration names before it is timed.</li>
-<li>This notebook does not score accuracy. Static INT8 loses most AP on the PE-Core-T models (Atto, Femto and Pico), so those never try INT8; see the AP columns of the Run pages.</li>
+<li>This notebook does not score accuracy. Static INT8 loses most AP on the PE-Core-T models (Atto, Femto and Pico), so those never try INT8; see the AP columns of the Run pages. The compact CPU ONNX export (<code>onnx-compact</code>) is timed for those three models, and the accuracy cookbook scores it.</li>
 </ul>
 <h2 id="choose-the-hardware-and-install">Choose the hardware and install<a class="anchor-link" href="#choose-the-hardware-and-install">¶</a></h2><p><code>HARDWARE</code> selects the runtimes to install and the configurations to try: <code>cuda</code> (NVIDIA GPU: PyTorch with a CUDA graph and TensorRT engines), <code>apple</code> (Apple Silicon: PyTorch on MPS and CoreML) or <code>cpu</code> (ONNX Runtime and OpenVINO on the CPU, plus PyTorch on the CPU). Set it before installing and restart the kernel after the install, so the recorded package versions are the ones in use; then run the cells again from the top.</p>
 </div>
@@ -4050,14 +4050,14 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">HARDWARE</span> <span class="o">=</span> <span class="s2">"cuda"</span>
 <span class="n">INSTALL_EXTRAS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"cuda"</span><span class="p">:</span> <span class="s2">"plus,tensorrt"</span><span class="p">,</span> <span class="s2">"apple"</span><span class="p">:</span> <span class="s2">"plus,coreml"</span><span class="p">,</span> <span class="s2">"cpu"</span><span class="p">:</span> <span class="s2">"plus,onnx,openvino"</span><span class="p">}</span>
-<span class="c1"># OpenVINO INT8 needs nncf, and the CPU thread count comes from psutil.</span>
-<span class="n">INSTALL_PACKAGES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"cuda"</span><span class="p">:</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">"apple"</span><span class="p">:</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">"cpu"</span><span class="p">:</span> <span class="s2">"nncf psutil"</span><span class="p">}</span>
+<span class="c1"># OpenVINO INT8 needs nncf, the CPU thread count comes from psutil, and the compact ONNX export needs the packages of `rfdetr_plus[onnx]` 1.3 or newer.</span>
+<span class="n">INSTALL_PACKAGES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"cuda"</span><span class="p">:</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">"apple"</span><span class="p">:</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">"cpu"</span><span class="p">:</span> <span class="s2">"nncf psutil 'rfdetr_plus[onnx]&gt;=1.3,&lt;2'"</span><span class="p">}</span>
 <span class="k">assert</span> <span class="n">HARDWARE</span> <span class="ow">in</span> <span class="n">INSTALL_EXTRAS</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"HARDWARE must be one of </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">INSTALL_EXTRAS</span><span class="p">)</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="n">HARDWARE</span><span class="si">!r}</span><span class="s2">."</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-1">HARDWARE = "cuda"
 INSTALL_EXTRAS = {"cuda": "plus,tensorrt", "apple": "plus,coreml", "cpu": "plus,onnx,openvino"}
-# OpenVINO INT8 needs nncf, and the CPU thread count comes from psutil.
-INSTALL_PACKAGES = {"cuda": "", "apple": "", "cpu": "nncf psutil"}
+# OpenVINO INT8 needs nncf, the CPU thread count comes from psutil, and the compact ONNX export needs the packages of `rfdetr_plus[onnx]` 1.3 or newer.
+INSTALL_PACKAGES = {"cuda": "", "apple": "", "cpu": "nncf psutil 'rfdetr_plus[onnx]&gt;=1.3,&lt;2'"}
 assert HARDWARE in INSTALL_EXTRAS, f"HARDWARE must be one of {tuple(INSTALL_EXTRAS)}, got {HARDWARE!r}."</div>
 </div>
 </div>
@@ -4206,7 +4206,7 @@ warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="select-the-checkpoints-and-configurations">Select the checkpoints and configurations<a class="anchor-link" href="#select-the-checkpoints-and-configurations">¶</a></h2><p>A configuration is one way to run a model, named <code>&lt;runtime&gt;-&lt;precision&gt;</code>; a PyTorch name also carries its compile backend, and <code>-graph</code> replays a TensorRT engine as a CUDA graph through the <code>cuda_graph</code> runtime option. Every export is a static batch-1 artifact.</p>
+<h2 id="select-the-checkpoints-and-configurations">Select the checkpoints and configurations<a class="anchor-link" href="#select-the-checkpoints-and-configurations">¶</a></h2><p>A configuration is one way to run a model, named <code>&lt;runtime&gt;-&lt;precision&gt;</code>; a PyTorch name also carries its compile backend, and <code>-graph</code> replays a TensorRT engine as a CUDA graph through the <code>cuda_graph</code> runtime option. Every export is a static batch-1 artifact. <code>onnx-compact</code> is the calibration-free compact CPU export of Atto, Femto and Pico (<code>export_cpu_onnx</code>); it exists only for those three models and is not the static QDQ INT8 model of <code>onnx-int8</code>.</p>
 <blockquote>
 <p><strong>Note:</strong> PML 1.0 covers the Plus detection models (Atto, Femto, Pico, XLarge and 2XLarge): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on. Apache 2.0 covers the package, Nano–Large detection, every Seg size and Keypoint: commercial, closed-source and self-hosted use is included without a license fee or an obligation to open-source your code. Keep <code>ACCEPT_PLATFORM_MODEL_LICENSE = True</code> only if you accept the Plus model terms; set it to <code>False</code> to time the Apache 2.0 models alone.</p>
 </blockquote>
@@ -4252,6 +4252,8 @@ warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)</div>
 <span class="c1"># The PE-Core-T models lose 7.0 to 8.7 AP in static TensorRT INT8 (Run pages). No INT8 configuration is timed for</span>
 <span class="c1"># them on any hardware, because a faster INT8 artifact is not a usable answer when its accuracy was not checked.</span>
 <span class="n">INT8_EXCLUDED</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"RFDETRAtto"</span><span class="p">,</span> <span class="s2">"RFDETRFemto"</span><span class="p">,</span> <span class="s2">"RFDETRPico"</span><span class="p">)</span>
+<span class="c1"># `export_cpu_onnx` exists only on the PE-Core-T Plus models, so `onnx-compact` is timed for no other model.</span>
+<span class="n">COMPACT_MODELS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"RFDETRAtto"</span><span class="p">,</span> <span class="s2">"RFDETRFemto"</span><span class="p">,</span> <span class="s2">"RFDETRPico"</span><span class="p">)</span>
 <span class="n">HARDWARE_CONFIGS</span> <span class="o">=</span> <span class="p">{</span>
     <span class="s2">"cuda"</span><span class="p">:</span> <span class="p">(</span>
         <span class="s2">"pytorch-cudagraph-fp16"</span><span class="p">,</span>
@@ -4273,6 +4275,7 @@ warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)</div>
         <span class="s2">"pytorch-torchscript-fp32"</span><span class="p">,</span>
         <span class="s2">"onnx-fp32"</span><span class="p">,</span>
         <span class="s2">"onnx-int8"</span><span class="p">,</span>
+        <span class="s2">"onnx-compact"</span><span class="p">,</span>
         <span class="s2">"openvino-fp32"</span><span class="p">,</span>
         <span class="s2">"openvino-fp16"</span><span class="p">,</span>
         <span class="s2">"openvino-int8"</span><span class="p">,</span>
@@ -4310,6 +4313,8 @@ if ACCEPT_PLATFORM_MODEL_LICENSE:
 # The PE-Core-T models lose 7.0 to 8.7 AP in static TensorRT INT8 (Run pages). No INT8 configuration is timed for
 # them on any hardware, because a faster INT8 artifact is not a usable answer when its accuracy was not checked.
 INT8_EXCLUDED = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
+# `export_cpu_onnx` exists only on the PE-Core-T Plus models, so `onnx-compact` is timed for no other model.
+COMPACT_MODELS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
 HARDWARE_CONFIGS = {
     "cuda": (
         "pytorch-cudagraph-fp16",
@@ -4331,6 +4336,7 @@ HARDWARE_CONFIGS = {
         "pytorch-torchscript-fp32",
         "onnx-fp32",
         "onnx-int8",
+        "onnx-compact",
         "openvino-fp32",
         "openvino-fp16",
         "openvino-int8",
@@ -4407,7 +4413,7 @@ assert HARDWARE != "apple" or torch.backends.mps.is_available(), "HARDWARE = 'ap
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>On the CPU the thread count decides the result, so pin it to the logical core count for every runtime: PyTorch through <code>torch.set_num_threads</code>, and ONNX Runtime and OpenVINO through the <code>num_threads</code> key of their <code>runtime_options</code>. Without the pin each runtime picks its own default, which is the physical core count and leaves the hyperthread siblings idle (4 of 8 on the usual Colab x86 machine). OpenVINO takes the count as <code>INFERENCE_NUM_THREADS</code>, which overrides its own default and its performance hint, and the notebook also sets <code>ENABLE_HYPER_THREADING</code> because OpenVINO chooses that itself when it is unset. A host that does not report its logical cores stops the notebook rather than guessing.</p>
+<p>On the CPU the thread count decides the result, so pin it to the logical core count for every runtime: PyTorch through <code>torch.set_num_threads</code>, and ONNX Runtime and OpenVINO through the <code>num_threads</code> key of their <code>runtime_options</code>. Without the pin PyTorch, OpenVINO and the TFLite family pick their own defaults, which are not the logical core count and can leave the hyperthread siblings idle (4 of 8 on the usual Colab x86 machine); <code>RFDETRInference</code> itself already sizes the ONNX Runtime pool to every logical core, and the explicit key keeps that visible. OpenVINO takes the count as <code>INFERENCE_NUM_THREADS</code>, which overrides its own default and its performance hint, and the notebook also sets <code>ENABLE_HYPER_THREADING</code> because OpenVINO chooses that itself when it is unset. A host that does not report its logical cores stops the notebook rather than guessing.</p>
 </div>
 </div>
 </div>
@@ -4922,6 +4928,52 @@ EXPORTS = {
 </div>
 </div>
 </div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c75e0681">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>The compact ONNX file does not come from <code>model.export</code>, so it has its own helper: it reuses the one file of its cache directory, or writes it with <code>export_cpu_onnx</code> from the CPU model of this run.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b6601c46">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">export_compact_onnx</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">RFDETR</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Reuse or write the compact ONNX file that `export_cpu_onnx` produces for a PE-Core-T model."""</span>
+    <span class="n">cached</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">output_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.onnx"</span><span class="p">))</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">cached</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Ambiguous compact ONNX cache: </span><span class="si">{</span><span class="n">output_dir</span><span class="si">}</span><span class="s2"> holds </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cached</span><span class="p">)</span><span class="si">}</span><span class="s2"> files."</span>
+    <span class="k">return</span> <span class="n">cached</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">cached</span> <span class="k">else</span> <span class="n">Path</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="n">output_dir</span><span class="p">))</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-15">def export_compact_onnx(model: RFDETR, output_dir: Path) -&gt; Path:
+    """Reuse or write the compact ONNX file that `export_cpu_onnx` produces for a PE-Core-T model."""
+    cached = sorted(output_dir.glob("*.onnx"))
+    assert len(cached) &lt;= 1, f"Ambiguous compact ONNX cache: {output_dir} holds {len(cached)} files."
+    return cached[0] if cached else Path(model.export_cpu_onnx(output_dir))</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=bdd620f0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
@@ -4941,7 +4993,7 @@ EXPORTS = {
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4984,15 +5036,12 @@ EXPORTS = {
         <span class="k">else</span><span class="p">:</span>
             <span class="n">options</span> <span class="o">=</span> <span class="n">RUNTIME_OPTIONS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">backend</span><span class="p">)</span>
         <span class="n">exported</span><span class="p">,</span> <span class="n">core_ml_device</span> <span class="o">=</span> <span class="n">CORE_ML_UNITS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">removesuffix</span><span class="p">(</span><span class="s2">"-graph"</span><span class="p">),</span> <span class="kc">None</span><span class="p">))</span>
-        <span class="n">pattern</span><span class="p">,</span> <span class="n">export_kwargs</span> <span class="o">=</span> <span class="n">EXPORTS</span><span class="p">[</span><span class="n">exported</span><span class="p">]</span>
-        <span class="n">artifact</span> <span class="o">=</span> <span class="n">export_cached</span><span class="p">(</span>
-            <span class="n">model</span><span class="p">,</span>
-            <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="n">model_signatures</span><span class="p">[</span><span class="n">model_name</span><span class="p">]</span> <span class="o">/</span> <span class="n">exported</span><span class="p">,</span>
-            <span class="n">pattern</span><span class="p">,</span>
-            <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-            <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="o">**</span><span class="n">export_kwargs</span><span class="p">,</span>
-        <span class="p">)</span>
+        <span class="n">artifact_dir</span> <span class="o">=</span> <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="n">model_signatures</span><span class="p">[</span><span class="n">model_name</span><span class="p">]</span> <span class="o">/</span> <span class="n">exported</span>
+        <span class="k">if</span> <span class="n">exported</span> <span class="o">==</span> <span class="s2">"onnx-compact"</span><span class="p">:</span>
+            <span class="n">artifact</span> <span class="o">=</span> <span class="n">export_compact_onnx</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">artifact_dir</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">pattern</span><span class="p">,</span> <span class="n">export_kwargs</span> <span class="o">=</span> <span class="n">EXPORTS</span><span class="p">[</span><span class="n">exported</span><span class="p">]</span>
+            <span class="n">artifact</span> <span class="o">=</span> <span class="n">export_cached</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">artifact_dir</span><span class="p">,</span> <span class="n">pattern</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">export_kwargs</span><span class="p">)</span>
         <span class="n">load_kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"device"</span><span class="p">:</span> <span class="s2">"cpu"</span><span class="p">}</span> <span class="k">if</span> <span class="n">HARDWARE</span> <span class="o">==</span> <span class="s2">"cpu"</span> <span class="k">else</span> <span class="p">{}</span>
         <span class="k">if</span> <span class="n">core_ml_device</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">load_kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"device"</span><span class="p">:</span> <span class="n">core_ml_device</span><span class="p">}</span>
@@ -5010,7 +5059,7 @@ EXPORTS = {
     <span class="p">)</span>
     <span class="k">return</span> <span class="n">predictor</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">DTYPES = {"fp32": torch.float32, "fp16": torch.float16}
+<div class="clipboard-copy-txt" id="cell-16">DTYPES = {"fp32": torch.float32, "fp16": torch.float16}
 #: What `runtime_info` must report: (backend, device prefix); a device prefix of None is not checked.
 PYTORCH_DEVICE = {"cuda": "cuda", "apple": "mps", "cpu": "cpu"}[HARDWARE]
 EXPECTED_DEVICE = {"onnx": "CPUExecutionProvider", "openvino": "CPU", "coreml": "auto"}
@@ -5043,15 +5092,12 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
         else:
             options = RUNTIME_OPTIONS.get(backend)
         exported, core_ml_device = CORE_ML_UNITS.get(config, (config.removesuffix("-graph"), None))
-        pattern, export_kwargs = EXPORTS[exported]
-        artifact = export_cached(
-            model,
-            ENGINE_DIR / model_name / model_signatures[model_name] / exported,
-            pattern,
-            batch_size=1,
-            verbose=False,
-            **export_kwargs,
-        )
+        artifact_dir = ENGINE_DIR / model_name / model_signatures[model_name] / exported
+        if exported == "onnx-compact":
+            artifact = export_compact_onnx(model, artifact_dir)
+        else:
+            pattern, export_kwargs = EXPORTS[exported]
+            artifact = export_cached(model, artifact_dir, pattern, batch_size=1, verbose=False, **export_kwargs)
         load_kwargs = {"device": "cpu"} if HARDWARE == "cpu" else {}
         if core_ml_device is not None:
             load_kwargs = {"device": core_ml_device}
@@ -5093,7 +5139,7 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5122,7 +5168,7 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
         <span class="n">runs</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">),</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">def measure_predictor(predictor: RFDETRInference, config: str) -&gt; BenchmarkResult:
+<div class="clipboard-copy-txt" id="cell-17">def measure_predictor(predictor: RFDETRInference, config: str) -&gt; BenchmarkResult:
     """Time batch-1 end-to-end prediction of one predictor, one call per image after ``NUM_WARMUP`` untimed ones.
 
     Args:
@@ -5152,7 +5198,7 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="measure-and-save-each-run">Measure and save each run<a class="anchor-link" href="#measure-and-save-each-run">¶</a></h2><p>List the model and configuration pairs still to measure; INT8 is skipped for <code>INT8_EXCLUDED</code>. Each run times one call per image after <code>NUM_WARMUP</code> untimed ones and appends its row at once so an interruption keeps every finished measurement. A configuration that fails to build, load or match its runtime stops the loop; fix the cause and rerun to continue from the saved rows.</p>
+<h2 id="measure-and-save-each-run">Measure and save each run<a class="anchor-link" href="#measure-and-save-each-run">¶</a></h2><p>List the model and configuration pairs still to measure; INT8 is skipped for <code>INT8_EXCLUDED</code>, and <code>onnx-compact</code> runs only for <code>COMPACT_MODELS</code>. Each run times one call per image after <code>NUM_WARMUP</code> untimed ones and appends its row at once so an interruption keeps every finished measurement. A configuration that fails to build, load or match its runtime stops the loop; fix the cause and rerun to continue from the saved rows.</p>
 </div>
 </div>
 </div>
@@ -5165,7 +5211,7 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5175,10 +5221,20 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">pairs</span> <span class="o">=</span> <span class="p">[(</span><span class="n">m</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">MODELS</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">CONFIGS</span> <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="s2">"int8"</span> <span class="ow">in</span> <span class="n">c</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">INT8_EXCLUDED</span><span class="p">)]</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">pairs</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">MODELS</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">CONFIGS</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="s2">"int8"</span> <span class="ow">in</span> <span class="n">c</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">INT8_EXCLUDED</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="p">(</span><span class="n">c</span> <span class="o">==</span> <span class="s2">"onnx-compact"</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">COMPACT_MODELS</span><span class="p">)</span>
+<span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Checking </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span><span class="si">}</span><span class="s2"> model and configuration pairs against saved measurements."</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-17">pairs = [(m, c) for m in MODELS for c in CONFIGS if not ("int8" in c and m in INT8_EXCLUDED)]
+<div class="clipboard-copy-txt" id="cell-18">pairs = [
+    (m, c)
+    for m in MODELS
+    for c in CONFIGS
+    if not ("int8" in c and m in INT8_EXCLUDED) and not (c == "onnx-compact" and m not in COMPACT_MODELS)
+]
 print(f"Checking {len(pairs)} model and configuration pairs against saved measurements.")</div>
 </div>
 </div>
@@ -5194,7 +5250,7 @@ print(f"Checking {len(pairs)} model and configuration pairs against saved measur
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5250,7 +5306,7 @@ print(f"Checking {len(pairs)} model and configuration pairs against saved measur
 <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
     <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-18">loaded_name, model = None, None
+<div class="clipboard-copy-txt" id="cell-19">loaded_name, model = None, None
 model_signatures = {}
 progress = tqdm(pairs, desc="Runs", unit="run")
 for model_name, config in progress:
@@ -5320,7 +5376,7 @@ if torch.cuda.is_available():
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5337,7 +5393,7 @@ if torch.cuda.is_available():
 <span class="k">for</span> <span class="n">field</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">provenance</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">field</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-19">wanted = {
+<div class="clipboard-copy-txt" id="cell-20">wanted = {
     resume_key({**provenance, "model": m, "config": c, "artifact_signature": model_signatures[m]}) for m, c in pairs
 }
 current = pd.DataFrame([row for row in rows if resume_key(row) in wanted])
@@ -5357,7 +5413,7 @@ for field, value in provenance.items():
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5374,7 +5430,7 @@ for field, value in provenance.items():
     <span class="n">engine</span><span class="o">=</span><span class="n">engine_precision</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">is_graph</span><span class="o">.</span><span class="n">map</span><span class="p">({</span><span class="kc">True</span><span class="p">:</span> <span class="s2">"-graph"</span><span class="p">,</span> <span class="kc">False</span><span class="p">:</span> <span class="s2">""</span><span class="p">}),</span> <span class="n">precision</span><span class="o">=</span><span class="n">engine_precision</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-20"># Strip the graph suffix before separating the precision, preserving it in the engine label.
+<div class="clipboard-copy-txt" id="cell-21"># Strip the graph suffix before separating the precision, preserving it in the engine label.
 is_graph = current["config"].str.endswith("-graph")
 engine_precision = current["config"].str.removesuffix("-graph").str.rsplit("-", n=1, expand=True)
 current = current.assign(
@@ -5394,7 +5450,7 @@ current = current.assign(
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5424,7 +5480,7 @@ current = current.assign(
 <span class="p">)</span>
 <span class="n">display</span><span class="p">(</span><span class="n">table</span><span class="p">[[</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"task"</span><span class="p">,</span> <span class="s2">"engine"</span><span class="p">,</span> <span class="s2">"precision"</span><span class="p">,</span> <span class="s2">"ms"</span><span class="p">,</span> <span class="s2">"p95"</span><span class="p">,</span> <span class="s2">"configs_done"</span><span class="p">]]</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-21">order = {name: index for index, name in enumerate(MODELS)}
+<div class="clipboard-copy-txt" id="cell-22">order = {name: index for index, name in enumerate(MODELS)}
 # A configuration within the noise band of its model's fastest median is as fast as the fastest one.
 fastest_ms = current.groupby("model")["median_ms"].transform("min")
 current = current.assign(is_fastest=current["median_ms"] &lt;= fastest_ms * (1 + TIE_TOLERANCE))
@@ -5468,7 +5524,7 @@ display(table[["model", "task", "engine", "precision", "ms", "p95", "configs_don
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-23">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5491,7 +5547,7 @@ display(table[["model", "task", "engine", "precision", "ms", "p95", "configs_don
     <span class="p">]</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-22">full = current.assign(
+<div class="clipboard-copy-txt" id="cell-23">full = current.assign(
     cell=current["median_ms"].map("{:.2f}".format)
     + " ("
     + current["p95_ms"].map("{:.2f}".format)
@@ -5547,7 +5603,7 @@ display(
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
   </span>
 
     

@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-15T09:29:52">
+  <meta property="article:modified_time" content="2026-11-20T19:50:55">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-15T09:29:52",
+    "dateModified": "2026-11-20T19:50:55",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4014,7 +4014,8 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <li>Keypoint Preview reports box and keypoint AP and AP50.</li>
 </ul>
 <p>AP means COCO AP50:95 unless explicitly labelled AP50. Saved scores are fractions; the results table shows percentages. The Benchmarks page uses a different harness (SAB: T4, TensorRT 10.4, FP16), so small differences are expected.</p>
-<h2 id="install-and-import">Install and import<a class="anchor-link" href="#install-and-import">¶</a></h2><p><code>train</code> brings faster-coco-eval for scoring, <code>plus</code> the Plus models, <code>tensorrt</code> the TensorRT arms. Restart the kernel after installing so the recorded package versions are the ones in use.</p>
+<p>Atto, Femto and Pico also get an <code>onnx-compact</code> arm: the calibration-free compact CPU ONNX export (<code>export_cpu_onnx</code>, <code>rfdetr_plus</code> 1.3 or newer), scored through ONNX Runtime's CPU provider.</p>
+<h2 id="install-and-import">Install and import<a class="anchor-link" href="#install-and-import">¶</a></h2><p><code>train</code> brings faster-coco-eval for scoring, <code>plus</code> the Plus models, <code>tensorrt</code> the TensorRT arms, <code>rfdetr_plus[onnx]</code> the ONNX packages the compact CPU export needs, at the versions <code>rfdetr_plus</code> itself requires. Restart the kernel after installing so the recorded package versions are the ones in use.</p>
 </div>
 </div>
 </div>
@@ -4037,9 +4038,9 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">U</span> <span class="s2">"rfdetr[train,plus,tensorrt]"</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">U</span> <span class="s2">"rfdetr[train,plus,tensorrt]"</span> <span class="s2">"rfdetr_plus[onnx]&gt;=1.3,&lt;2"</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -U "rfdetr[train,plus,tensorrt]"</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -U "rfdetr[train,plus,tensorrt]" "rfdetr_plus[onnx]&gt;=1.3,&lt;2"</div>
 </div>
 </div>
 </div>
@@ -4146,7 +4147,7 @@ warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="select-the-checkpoints-and-runtimes">Select the checkpoints and runtimes<a class="anchor-link" href="#select-the-checkpoints-and-runtimes">¶</a></h2><p>The defaults cover every checkpoint, the Plus models included while <code>ACCEPT_PLATFORM_MODEL_LICENSE = True</code>, and every arm: eager PyTorch FP32, and static TensorRT FP16 and INT8 engines, so an NVIDIA GPU is required. On another device, set <code>ARMS = ("pytorch-fp32",)</code>.</p>
+<h2 id="select-the-checkpoints-and-runtimes">Select the checkpoints and runtimes<a class="anchor-link" href="#select-the-checkpoints-and-runtimes">¶</a></h2><p>The defaults cover every checkpoint, the Plus models included while <code>ACCEPT_PLATFORM_MODEL_LICENSE = True</code>, and every arm: eager PyTorch FP32, and static TensorRT FP16 and INT8 engines, so an NVIDIA GPU is required. <code>onnx-compact</code> runs only for Atto, Femto and Pico. It is exported from a CPU copy of the model and scored on ONNX Runtime's CPU provider, so it needs no GPU. On a device without CUDA, set <code>ARMS = ("pytorch-fp32", "onnx-compact")</code> to skip the TensorRT arms.</p>
 <blockquote>
 <p><strong>Note:</strong> PML 1.0 covers the Plus detection models (Atto, Femto, Pico, XLarge and 2XLarge): commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on. Apache 2.0 covers the package, Nano–Large detection, every Seg size and Keypoint: commercial, closed-source and self-hosted use is included without a license fee or an obligation to open-source your code. Keep <code>ACCEPT_PLATFORM_MODEL_LICENSE = True</code> only if you accept the Plus model terms; set it to <code>False</code> to score the Apache 2.0 models alone.</p>
 </blockquote>
@@ -4189,7 +4190,9 @@ warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)</div>
 <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="o">=</span> <span class="kc">True</span>
 <span class="k">if</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span><span class="p">:</span>
     <span class="n">MODELS</span> <span class="o">+=</span> <span class="n">PLUS_MODELS</span>
-<span class="n">ARMS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"pytorch-fp32"</span><span class="p">,</span> <span class="s2">"tensorrt-fp16"</span><span class="p">,</span> <span class="s2">"tensorrt-int8"</span><span class="p">)</span>
+<span class="n">ARMS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"pytorch-fp32"</span><span class="p">,</span> <span class="s2">"tensorrt-fp16"</span><span class="p">,</span> <span class="s2">"tensorrt-int8"</span><span class="p">,</span> <span class="s2">"onnx-compact"</span><span class="p">)</span>
+<span class="c1">#: The PE-Core-T Plus models, the only ones `export_cpu_onnx` supports; the `onnx-compact` arm skips every other model.</span>
+<span class="n">COMPACT_MODELS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"RFDETRAtto"</span><span class="p">,</span> <span class="s2">"RFDETRFemto"</span><span class="p">,</span> <span class="s2">"RFDETRPico"</span><span class="p">)</span>
 <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
 <span class="n">WORK_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco_accuracy"</span><span class="p">)</span>
 <span class="n">RESULTS_PATH</span> <span class="o">=</span> <span class="n">WORK_DIR</span> <span class="o">/</span> <span class="s2">"results.jsonl"</span>
@@ -4212,7 +4215,9 @@ PLUS_MODELS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico", "RFDETRXLarge", "RFDET
 ACCEPT_PLATFORM_MODEL_LICENSE = True
 if ACCEPT_PLATFORM_MODEL_LICENSE:
     MODELS += PLUS_MODELS
-ARMS = ("pytorch-fp32", "tensorrt-fp16", "tensorrt-int8")
+ARMS = ("pytorch-fp32", "tensorrt-fp16", "tensorrt-int8", "onnx-compact")
+#: The PE-Core-T Plus models, the only ones `export_cpu_onnx` supports; the `onnx-compact` arm skips every other model.
+COMPACT_MODELS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
 COCO_ROOT = Path("coco")
 WORK_DIR = Path("coco_accuracy")
 RESULTS_PATH = WORK_DIR / "results.jsonl"
@@ -4256,13 +4261,15 @@ N_CALIB = 128</div>
 <span class="k">assert</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">set</span><span class="p">(</span><span class="n">MODELS</span><span class="p">)</span> <span class="o">&amp;</span> <span class="nb">set</span><span class="p">(</span><span class="n">PLUS_MODELS</span><span class="p">),</span> <span class="p">(</span>
     <span class="s2">"Plus models require ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."</span>
 <span class="p">)</span>
-<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="ow">or</span> <span class="n">ARMS</span> <span class="o">==</span> <span class="p">(</span><span class="s2">"pytorch-fp32"</span><span class="p">,),</span> <span class="s2">"TensorRT arms require CUDA."</span>
+<span class="n">CPU_ARMS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"pytorch-fp32"</span><span class="p">,</span> <span class="s2">"onnx-compact"</span><span class="p">}</span>
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="ow">or</span> <span class="nb">set</span><span class="p">(</span><span class="n">ARMS</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">CPU_ARMS</span><span class="p">,</span> <span class="s2">"TensorRT arms require CUDA."</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-4">assert MODELS, "Select at least one model."
 assert ACCEPT_PLATFORM_MODEL_LICENSE or not set(MODELS) &amp; set(PLUS_MODELS), (
     "Plus models require ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."
 )
-assert torch.cuda.is_available() or ARMS == ("pytorch-fp32",), "TensorRT arms require CUDA."</div>
+CPU_ARMS = {"pytorch-fp32", "onnx-compact"}
+assert torch.cuda.is_available() or set(ARMS) &lt;= CPU_ARMS, "TensorRT arms require CUDA."</div>
 </div>
 </div>
 </div>
@@ -4807,6 +4814,66 @@ print(f"Calibration: {N_CALIB} train2017 images, first by filename, in {CALIBRAT
 </div>
 </div>
 </div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5e2172f3">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Compact ONNX is the calibration-free CPU export of Atto, Femto and Pico: selected linear projections use dynamic INT8 and the other large filters are stored compactly. A fresh CPU copy of the model writes it, so the export does not depend on the CUDA device the other arms use, and the file is loaded on ONNX Runtime's CPU provider with <code>device="cpu"</code>, the same way the CPU latency cookbook times it. <code>RFDETRInference</code> sizes the ONNX Runtime CPU pool to every logical core the process may use unless <code>runtime_options={"num_threads": ...}</code> says otherwise.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f87f65be">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">build_onnx_compact</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">RFDETR</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RFDETRInference</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Reuse or export the compact ONNX file of a PE-Core-T model and load it on the CPU provider."""</span>
+    <span class="n">export_dir</span> <span class="o">=</span> <span class="n">ENGINE_DIR</span> <span class="o">/</span> <span class="n">model_name</span> <span class="o">/</span> <span class="s2">"onnx-compact"</span>
+    <span class="n">cached</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">export_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.onnx"</span><span class="p">))</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">cached</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Ambiguous compact ONNX cache: </span><span class="si">{</span><span class="n">export_dir</span><span class="si">}</span><span class="s2"> holds </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cached</span><span class="p">)</span><span class="si">}</span><span class="s2"> files."</span>
+    <span class="k">if</span> <span class="n">cached</span><span class="p">:</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">cached</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">cpu_model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">model_name</span><span class="p">)(</span><span class="n">accept_platform_model_license</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">cpu_model</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="n">export_dir</span><span class="p">))</span>
+        <span class="k">del</span> <span class="n">cpu_model</span>
+    <span class="k">return</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-15">def build_onnx_compact(model: RFDETR, model_name: str) -&gt; RFDETRInference:
+    """Reuse or export the compact ONNX file of a PE-Core-T model and load it on the CPU provider."""
+    export_dir = ENGINE_DIR / model_name / "onnx-compact"
+    cached = sorted(export_dir.glob("*.onnx"))
+    assert len(cached) &lt;= 1, f"Ambiguous compact ONNX cache: {export_dir} holds {len(cached)} files."
+    if cached:
+        path = cached[0]
+    else:
+        cpu_model = getattr(rfdetr, model_name)(accept_platform_model_license=True, device="cpu")
+        path = Path(cpu_model.export_cpu_onnx(export_dir))
+        del cpu_model
+    return RFDETRInference(path, device="cpu")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4b1d9e27">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
@@ -4826,7 +4893,7 @@ print(f"Calibration: {N_CALIB} train2017 images, first by filename, in {CALIBRAT
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4836,11 +4903,15 @@ print(f"Calibration: {N_CALIB} train2017 images, first by filename, in {CALIBRAT
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">pairs</span> <span class="o">=</span> <span class="p">[(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">arm</span><span class="p">)</span> <span class="k">for</span> <span class="n">model_name</span> <span class="ow">in</span> <span class="n">MODELS</span> <span class="k">for</span> <span class="n">arm</span> <span class="ow">in</span> <span class="n">ARMS</span><span class="p">]</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">pairs</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">arm</span><span class="p">)</span> <span class="k">for</span> <span class="n">model_name</span> <span class="ow">in</span> <span class="n">MODELS</span> <span class="k">for</span> <span class="n">arm</span> <span class="ow">in</span> <span class="n">ARMS</span> <span class="k">if</span> <span class="n">arm</span> <span class="o">!=</span> <span class="s2">"onnx-compact"</span> <span class="ow">or</span> <span class="n">model_name</span> <span class="ow">in</span> <span class="n">COMPACT_MODELS</span>
+<span class="p">]</span>
 <span class="n">pending</span> <span class="o">=</span> <span class="p">[(</span><span class="n">name</span><span class="p">,</span> <span class="n">arm</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">arm</span> <span class="ow">in</span> <span class="n">pairs</span> <span class="k">if</span> <span class="n">resume_key</span><span class="p">({</span><span class="o">**</span><span class="n">provenance</span><span class="p">,</span> <span class="s2">"model"</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span> <span class="s2">"arm"</span><span class="p">:</span> <span class="n">arm</span><span class="p">})</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">completed</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pending</span><span class="p">)</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span><span class="si">}</span><span class="s2"> runs to score; </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="n">pending</span><span class="p">)</span><span class="si">}</span><span class="s2"> already scored."</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">pairs = [(model_name, arm) for model_name in MODELS for arm in ARMS]
+<div class="clipboard-copy-txt" id="cell-16">pairs = [
+    (model_name, arm) for model_name in MODELS for arm in ARMS if arm != "onnx-compact" or model_name in COMPACT_MODELS
+]
 pending = [(name, arm) for name, arm in pairs if resume_key({**provenance, "model": name, "arm": arm}) not in completed]
 print(f"{len(pending)} of {len(pairs)} runs to score; {len(pairs) - len(pending)} already scored.")</div>
 </div>
@@ -4868,7 +4939,7 @@ print(f"{len(pending)} of {len(pairs)} runs to score; {len(pairs) - len(pending)
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4882,6 +4953,7 @@ print(f"{len(pending)} of {len(pairs)} runs to score; {len(pairs) - len(pending)
     <span class="s2">"pytorch-fp32"</span><span class="p">:</span> <span class="n">build_pytorch_fp32</span><span class="p">,</span>
     <span class="s2">"tensorrt-fp16"</span><span class="p">:</span> <span class="n">build_tensorrt_fp16</span><span class="p">,</span>
     <span class="s2">"tensorrt-int8"</span><span class="p">:</span> <span class="n">build_tensorrt_int8</span><span class="p">,</span>
+    <span class="s2">"onnx-compact"</span><span class="p">:</span> <span class="n">build_onnx_compact</span><span class="p">,</span>
 <span class="p">}</span>
 <span class="n">loaded_name</span><span class="p">,</span> <span class="n">model</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
 <span class="n">progress</span> <span class="o">=</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">pending</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"Runs"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"run"</span><span class="p">)</span>
@@ -4929,10 +5001,11 @@ print(f"{len(pending)} of {len(pairs)} runs to score; {len(pairs) - len(pending)
 <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
     <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">builders = {
+<div class="clipboard-copy-txt" id="cell-17">builders = {
     "pytorch-fp32": build_pytorch_fp32,
     "tensorrt-fp16": build_tensorrt_fp16,
     "tensorrt-int8": build_tensorrt_int8,
+    "onnx-compact": build_onnx_compact,
 }
 loaded_name, model = None, None
 progress = tqdm(pending, desc="Runs", unit="run")
@@ -5004,7 +5077,7 @@ if torch.cuda.is_available():
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5016,7 +5089,7 @@ if torch.cuda.is_available():
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">RESULTS_PATH</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-17">results = pd.DataFrame(json.loads(line) for line in RESULTS_PATH.read_text().splitlines() if line.strip())</div>
+<div class="clipboard-copy-txt" id="cell-18">results = pd.DataFrame(json.loads(line) for line in RESULTS_PATH.read_text().splitlines() if line.strip())</div>
 </div>
 </div>
 </div>
@@ -5042,7 +5115,7 @@ if torch.cuda.is_available():
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5056,7 +5129,7 @@ if torch.cuda.is_available():
 <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">shared</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">field</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">results</span><span class="p">[</span><span class="n">field</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-18">shared = [field for field in provenance if results[field].astype(str).nunique(dropna=False) == 1]
+<div class="clipboard-copy-txt" id="cell-19">shared = [field for field in provenance if results[field].astype(str).nunique(dropna=False) == 1]
 for field in shared:
     print(f"{field}: {results[field].iloc[0]}")</div>
 </div>
@@ -5084,7 +5157,7 @@ for field in shared:
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5097,7 +5170,7 @@ for field in shared:
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">ap_columns</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"box_ap"</span><span class="p">,</span> <span class="s2">"box_ap50"</span><span class="p">,</span> <span class="s2">"task_ap"</span><span class="p">,</span> <span class="s2">"task_ap50"</span><span class="p">]</span>
 <span class="n">display</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="n">shared</span><span class="p">)</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="o">**</span><span class="p">{</span><span class="n">column</span><span class="p">:</span> <span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">results</span><span class="p">[</span><span class="n">column</span><span class="p">])</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">column</span> <span class="ow">in</span> <span class="n">ap_columns</span><span class="p">}))</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-19">ap_columns = ["box_ap", "box_ap50", "task_ap", "task_ap50"]
+<div class="clipboard-copy-txt" id="cell-20">ap_columns = ["box_ap", "box_ap50", "task_ap", "task_ap50"]
 display(results.drop(columns=shared).assign(**{column: (100 * results[column]).round(1) for column in ap_columns}))</div>
 </div>
 </div>
@@ -5143,7 +5216,7 @@ display(results.drop(columns=shared).assign(**{column: (100 * results[column]).r
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
   </span>
 
     

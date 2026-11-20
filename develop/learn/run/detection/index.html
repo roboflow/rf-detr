@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-15T09:29:52">
+  <meta property="article:modified_time" content="2026-11-20T19:50:55">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-15T09:29:52",
+    "dateModified": "2026-11-20T19:50:55",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3991,7 +3991,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Femto's CoreML FP16 time (24.51 ms) is not noise: the Neural Engine compiler fails on its FP16 package under the default compute units, as the <a href="../../../exports/coreml/#measured-latency-on-apple-silicon">CoreML page</a> explains. CoreML GPU FP16 avoids that plan and takes 8.16 ms.</p>
 <h2 id="fastest-configuration-on-an-x86-cpu">Fastest Configuration on an x86 CPU<a class="headerlink" href="#fastest-configuration-on-an-x86-cpu" title="Permanent link">&para;</a></h2>
 <p>The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own CPU to find yours.</p>
-<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu"; Atto, Femto and Pico from the run of 2026-11-20, every other size from the run of 2026-11-14; provenance in docs/learn/run/latency.md). -->
 
 <table>
 <thead>
@@ -4000,6 +4000,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <th style="text-align: center;">PyTorch TorchScript FP32</th>
 <th style="text-align: center;">ONNX FP32</th>
 <th style="text-align: center;">ONNX INT8</th>
+<th style="text-align: center;">ONNX compact</th>
 <th style="text-align: center;">OpenVINO FP32</th>
 <th style="text-align: center;">OpenVINO FP16</th>
 <th style="text-align: center;">OpenVINO INT8</th>
@@ -4008,29 +4009,32 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td style="text-align: center;">Atto (A) △</td>
-<td style="text-align: center;"><strong>49.30 (81.53)</strong></td>
-<td style="text-align: center;">66.30 (102.49)</td>
+<td style="text-align: center;"><strong>50.19 (79.63)</strong></td>
+<td style="text-align: center;">74.52 (108.92)</td>
 <td style="text-align: center;">—</td>
-<td style="text-align: center;">61.89 (110.31)</td>
-<td style="text-align: center;">65.78 (101.60)</td>
+<td style="text-align: center;"><strong>52.10 (86.36)</strong></td>
+<td style="text-align: center;">63.91 (103.90)</td>
+<td style="text-align: center;">68.74 (99.52)</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: center;">Femto (F) △</td>
-<td style="text-align: center;"><strong>71.49 (105.86)</strong></td>
-<td style="text-align: center;">103.99 (139.05)</td>
+<td style="text-align: center;"><strong>76.45 (135.71)</strong></td>
+<td style="text-align: center;">106.03 (137.89)</td>
 <td style="text-align: center;">—</td>
-<td style="text-align: center;">77.12 (131.74)</td>
-<td style="text-align: center;">79.50 (136.18)</td>
+<td style="text-align: center;"><strong>76.05 (109.08)</strong></td>
+<td style="text-align: center;"><strong>76.05 (133.16)</strong></td>
+<td style="text-align: center;"><strong>75.90 (120.54)</strong></td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: center;">Pico (P) △</td>
-<td style="text-align: center;"><strong>96.17 (138.73)</strong></td>
-<td style="text-align: center;">133.67 (168.07)</td>
+<td style="text-align: center;"><strong>105.63 (141.22)</strong></td>
+<td style="text-align: center;">142.46 (173.60)</td>
 <td style="text-align: center;">—</td>
-<td style="text-align: center;">104.31 (172.77)</td>
-<td style="text-align: center;">111.09 (173.81)</td>
+<td style="text-align: center;"><strong>104.56 (138.39)</strong></td>
+<td style="text-align: center;"><strong>100.89 (164.15)</strong></td>
+<td style="text-align: center;">113.34 (172.46)</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
@@ -4038,6 +4042,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;"><strong>144.30 (201.38)</strong></td>
 <td style="text-align: center;">223.88 (258.26)</td>
 <td style="text-align: center;"><strong>142.29 (184.13)</strong></td>
+<td style="text-align: center;">—</td>
 <td style="text-align: center;"><strong>139.62 (236.81)</strong></td>
 <td style="text-align: center;"><strong>140.80 (229.94)</strong></td>
 <td style="text-align: center;">147.03 (251.28)</td>
@@ -4047,6 +4052,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;"><strong>255.07 (316.23)</strong></td>
 <td style="text-align: center;">379.63 (419.53)</td>
 <td style="text-align: center;"><strong>249.21 (294.51)</strong></td>
+<td style="text-align: center;">—</td>
 <td style="text-align: center;"><strong>248.60 (387.60)</strong></td>
 <td style="text-align: center;">262.16 (399.60)</td>
 <td style="text-align: center;"><strong>254.88 (422.05)</strong></td>
@@ -4056,6 +4062,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">328.94 (574.67)</td>
 <td style="text-align: center;">458.90 (510.59)</td>
 <td style="text-align: center;"><strong>301.01 (359.73)</strong></td>
+<td style="text-align: center;">—</td>
 <td style="text-align: center;"><strong>313.77 (496.52)</strong></td>
 <td style="text-align: center;">325.86 (496.62)</td>
 <td style="text-align: center;">331.42 (552.13)</td>
@@ -4065,6 +4072,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">503.23 (834.66)</td>
 <td style="text-align: center;">653.41 (708.16)</td>
 <td style="text-align: center;"><strong>455.91 (521.81)</strong></td>
+<td style="text-align: center;">—</td>
 <td style="text-align: center;">507.50 (744.23)</td>
 <td style="text-align: center;">537.98 (781.94)</td>
 <td style="text-align: center;">509.06 (764.56)</td>
@@ -4074,6 +4082,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1073.06 (1901.00)</td>
 <td style="text-align: center;">1240.19 (1343.50)</td>
 <td style="text-align: center;"><strong>859.06 (990.42)</strong></td>
+<td style="text-align: center;">—</td>
 <td style="text-align: center;">1111.67 (1476.47)</td>
 <td style="text-align: center;">1171.22 (1533.26)</td>
 <td style="text-align: center;">1103.99 (1583.44)</td>
@@ -4083,17 +4092,19 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">1525.65 (2293.85)</td>
 <td style="text-align: center;">1653.97 (1815.14)</td>
 <td style="text-align: center;"><strong>1121.89 (1303.18)</strong></td>
+<td style="text-align: center;">—</td>
 <td style="text-align: center;">1592.33 (2029.86)</td>
 <td style="text-align: center;">1762.35 (2233.25)</td>
 <td style="text-align: center;">1560.11 (2066.94)</td>
 </tr>
 </tbody>
 </table>
-<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>. Atto, Femto and Pico have no INT8 cell.</p>
+<p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>. Atto, Femto and Pico have no INT8 cell, and ONNX compact exists only for them. Their row is from a different run than the other sizes, see <a href="../latency/#x86-cpu">How the numbers were measured</a>.</p>
 <ul>
-<li>Atto, Femto and Pico are fastest with PyTorch TorchScript FP32 alone, the next configuration 7.9% to 25.5% behind. Nano and Small are a four-way tie.</li>
+<li>Atto, Femto and Pico have no single fastest configuration. On Atto, TorchScript FP32 and ONNX compact are tied. On Femto, TorchScript FP32, ONNX compact and both OpenVINO precisions are tied. On Pico, OpenVINO FP32, ONNX compact and TorchScript FP32 are tied. Nano and Small are a four-way tie.</li>
+<li>ONNX compact takes 27% to 30% less time than ONNX FP32 on all three sizes, so it closes the gap that ONNX FP32 has to TorchScript FP32, but it does not beat TorchScript FP32 or OpenVINO FP32. It scored 30.35, 37.45 and 41.45 AP on all 5000 val2017 images, 0.32, 0.16 and 0.21 below PyTorch FP32 on the same CPU.</li>
 <li>From Medium up ONNX INT8 is fastest or tied, and alone from Large up, 10.4% to 36.0% ahead of TorchScript FP32.</li>
-<li>OpenVINO FP16 and INT8 are never more than 2% faster than OpenVINO FP32. The 95th percentile reaches 1.78 times the median (OpenVINO FP32, Atto), so this one shared-host run cannot order configurations inside the 5% band.</li>
+<li>OpenVINO FP16 and INT8 are never more than 2% faster than OpenVINO FP32. The 95th percentile reaches 1.78 times the median (PyTorch TorchScript FP32, Femto), so this one shared-host run cannot order configurations inside the 5% band.</li>
 </ul>
 <div class="admonition warning">
 <p class="admonition-title">FP16 and INT8 can lower accuracy</p>
@@ -4281,7 +4292,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
   </span>
 
     
