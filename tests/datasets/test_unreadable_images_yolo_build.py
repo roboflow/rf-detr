@@ -244,9 +244,7 @@ class TestUnreadableSummary:
         (summary,) = log.warning.call_args_list
         assert "2 of 4 samples" in _message(summary)
 
-    def test_warning_says_the_samples_stay_substituted_for_the_run(
-        self, tmp_path: Path, mocker: MockerFixture
-    ) -> None:
+    def test_warning_says_the_samples_stay_substituted_for_the_run(self, tmp_path: Path, mocker: MockerFixture) -> None:
         log = mocker.patch.object(yolo, "logger")
 
         _build(tmp_path, 3, corrupt={1})
