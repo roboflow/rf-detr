@@ -202,6 +202,10 @@ def _decode_with_pillow(
     ``draft_size`` is set (a no-op for other formats) and ``convert("RGB")`` loads the pixels into an image that
     outlives the closed source.
 
+    Pillow reports some corrupt files with a ``SyntaxError`` while loading the pixels, for example a PNG whose chunk
+    header between two image data chunks is cut short or damaged.  That error is raised here as an ``OSError``
+    chained to it, the type Pillow uses for every other corrupt or truncated file, so callers catch one type.
+
     Args:
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
@@ -209,6 +213,10 @@ def _decode_with_pillow(
 
     Returns:
         Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+
+    Raises:
+        OSError: If the file is missing, truncated, unidentifiable or corrupt.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
 
     Examples:
         >>> encoded = io.BytesIO()
@@ -249,7 +257,11 @@ def _decode_with_pillow(
             errors = {
                 "DecompressionBombError": Image.DecompressionBombError,
                 "UnidentifiedImageError": UnidentifiedImageError,
+                "FileNotFoundError": FileNotFoundError,
+                "PermissionError": PermissionError,
                 "OSError": OSError,
+                # A corrupt file Pillow reports while loading the pixels, raised as ``OSError`` as on the path below.
+                "SyntaxError": OSError,
                 "ValueError": ValueError,
             }
             raise errors.get(header["error"], RuntimeError)(header["message"])
@@ -265,7 +277,10 @@ def _decode_with_pillow(
         full_width, full_height = image.size
         if draft_size is not None:
             image.draft("RGB", (draft_size, draft_size))
-        rgb_image = image.convert("RGB")
+        try:
+            rgb_image = image.convert("RGB")
+        except SyntaxError as exc:
+            raise OSError(str(exc)) from exc
     return rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height)
 
 
@@ -465,11 +480,24 @@ def decode_pil_image_bytes(
     return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels)
 
 
+class _KnownUnreadableImageError(OSError):
+    """Raised by an image read that is known to fail on every attempt, such as a file found unreadable earlier.
+
+    :func:`read_image_with_retries` raises it at once, with no retry, pause or warning, because a retry could only fail
+    again.  It is still an ``OSError``, so :func:`read_image_or_substitute` replaces the sample as for any other
+    unreadable image.
+
+    Examples:
+        >>> isinstance(_KnownUnreadableImageError("image header was unreadable"), OSError)
+        True
+    """
+
+
 def read_image_with_retries(read: Callable[[], _T], path: str | Path) -> _T:
     """Call ``read`` up to ``_IMAGE_READ_ATTEMPTS`` times, pausing longer after each ``OSError``.
 
     Each failed attempt is logged as a warning naming ``path``.  Exceptions other than ``OSError`` propagate from the
-    first attempt.
+    first attempt, and so does a :class:`_KnownUnreadableImageError`, without a warning.
 
     Args:
         read: Reads an image, or its header, from ``path``.
@@ -479,7 +507,8 @@ def read_image_with_retries(read: Callable[[], _T], path: str | Path) -> _T:
         What ``read`` returned on its first successful attempt.
 
     Raises:
-        OSError: The last attempt's error, if every attempt failed.
+        OSError: The last attempt's error, if every attempt failed, or the first one if it is a
+            :class:`_KnownUnreadableImageError`.
 
     Examples:
         >>> read_image_with_retries(lambda: "pixels", "image.jpg")
@@ -489,12 +518,65 @@ def read_image_with_retries(read: Callable[[], _T], path: str | Path) -> _T:
     while True:
         try:
             return read()
+        except _KnownUnreadableImageError:
+            raise
         except OSError as exc:
             logger.warning("Could not read image %s (attempt %d of %d): %s", path, attempt, _IMAGE_READ_ATTEMPTS, exc)
             if attempt == _IMAGE_READ_ATTEMPTS:
                 raise
         time.sleep(_IMAGE_READ_BACKOFF_SECONDS * attempt)
         attempt += 1
+
+
+def _first_readable(
+    read: Callable[[int], _T],
+    candidates: list[int],
+    path_of: Callable[[int], str | Path],
+    errors: dict[int, OSError],
+) -> tuple[int, _T] | None:
+    """Read each candidate sample once, in order, and return the first that reads.
+
+    Each failed read is logged at debug level, naming the file, and recorded in ``errors``.
+
+    Args:
+        read: Reads the image of the sample at a dataset index.
+        candidates: Dataset indices to try, in order.
+        path_of: Returns the image path of the sample at a dataset index, for log messages.
+        errors: Receives the error of each candidate whose read failed, keyed by its index.
+
+    Returns:
+        The first readable candidate and what ``read`` returned for it, or ``None`` when every candidate failed.
+
+    Examples:
+        >>> errors = {}
+        >>> _first_readable(lambda i: f"pixels-{i}", [4, 5], lambda i: f"{i}.jpg", errors), errors
+        ((4, 'pixels-4'), {})
+    """
+    for candidate in candidates:
+        try:
+            return candidate, read(candidate)
+        except OSError as exc:
+            logger.debug("Substitute image %s (sample %d) is unreadable too: %s", path_of(candidate), candidate, exc)
+            errors[candidate] = exc
+    return None
+
+
+def _describe_errors(errors: dict[int, OSError]) -> str:
+    """Return the distinct errors among ``errors``, each with its type, in the order they were first recorded.
+
+    Args:
+        errors: Errors keyed by the dataset index whose read raised them.
+
+    Returns:
+        The distinct ``"<type>: <message>"`` descriptions, joined with ``"; "``.
+
+    Examples:
+        >>> _describe_errors({4: OSError("image file is truncated"), 5: OSError("image file is truncated")})
+        'OSError: image file is truncated'
+        >>> _describe_errors({4: FileNotFoundError("gone"), 5: OSError("image file is truncated")})
+        'FileNotFoundError: gone; OSError: image file is truncated'
+    """
+    return "; ".join(dict.fromkeys(f"{type(error).__name__}: {error}" for error in errors.values()))
 
 
 def read_image_or_substitute(
@@ -505,13 +587,18 @@ def read_image_or_substitute(
 ) -> tuple[int, _T]:
     """Read the image of one dataset sample, retrying a failed read and then falling back to a later sample.
 
-    Only ``OSError`` counts as a failed read: a missing file, an I/O error, and the truncated or unidentifiable file
-    errors Pillow raises (``PIL.UnidentifiedImageError`` is an ``OSError``).  Every other exception propagates from the
-    first attempt.  A failed read is repeated up to ``_IMAGE_READ_ATTEMPTS`` times with a growing pause, each failure
-    logged as a warning naming the file.  If every attempt fails, the following samples, wrapping around the end of
-    the dataset, are read once each until one succeeds, and one error naming the unreadable file and the sample used
-    instead is logged.  The caller must then load the annotations of the returned index, so the image and its targets
-    stay consistent and the dataset keeps its length.  At most ``_MAX_SUBSTITUTIONS`` samples are tried.
+    Only ``OSError`` counts as a failed read: a missing file, an I/O error, and the truncated, unidentifiable or corrupt
+    file errors the decoders raise (``PIL.UnidentifiedImageError`` is an ``OSError``, and the decoders of this module
+    re-raise the ``SyntaxError`` Pillow reports for some corrupt files as one).  Every other exception propagates from
+    the first attempt.  A failed read is repeated up to ``_IMAGE_READ_ATTEMPTS`` times with a growing pause, each
+    failure logged as a warning naming the file.  If every attempt fails, the following samples, wrapping around the end
+    of the dataset, are read once each until one succeeds, and one error naming the unreadable file and the sample used
+    instead is logged.  If none succeeds, which a storage stall longer than the retries also causes, the process pauses
+    once more, as long as the last retry pause, and reads the same samples once more, except those whose error is a
+    :class:`_KnownUnreadableImageError`.  Each failed read of a substitute is logged at debug level, and the error
+    raised when none succeeds lists their distinct errors.  The caller must then load the annotations of the returned
+    index, so the image and its targets stay consistent and the dataset keeps its length.  At most
+    ``_MAX_SUBSTITUTIONS`` samples are tried.
 
     Args:
         read: Reads the image of the sample at a dataset index.
@@ -525,7 +612,8 @@ def read_image_or_substitute(
 
     Raises:
         RuntimeError: If the requested image and every substitute tried are unreadable, which means the dataset or the
-            filesystem holding it is broken, not a single file.
+            filesystem holding it is broken, not a single file, or that its storage stayed unavailable through every
+            retry.
 
     Examples:
         >>> read_image_or_substitute(lambda i: f"pixels-{i}", 3, 10, lambda i: f"{i}.jpg")
@@ -536,24 +624,35 @@ def read_image_or_substitute(
     except OSError as exc:
         failure = exc
 
-    num_candidates = min(_MAX_SUBSTITUTIONS, num_samples - 1)
-    for step in range(1, num_candidates + 1):
-        candidate = (index + step) % num_samples
-        try:
-            result = read(candidate)
-        except OSError:
-            continue
-        logger.error(
-            "Image %s (sample %d) is unreadable: %s. Using sample %d (%s) in its place.",
-            path_of(index),
-            index,
-            failure,
-            candidate,
-            path_of(candidate),
-        )
-        return candidate, result
+    candidates = [(index + step) % num_samples for step in range(1, min(_MAX_SUBSTITUTIONS, num_samples - 1) + 1)]
+    errors: dict[int, OSError] = {}
+    substitute = _first_readable(read, candidates, path_of, errors)
+    if substitute is None:
+        # Storage that stalls for longer than the retries above fails every candidate as well, so pause once more, for
+        # the longest retry pause, before judging the dataset broken.  A known-unreadable candidate cannot recover.
+        recoverable = [
+            candidate for candidate in candidates if not isinstance(errors[candidate], _KnownUnreadableImageError)
+        ]
+        if recoverable:
+            time.sleep(_IMAGE_READ_BACKOFF_SECONDS * (_IMAGE_READ_ATTEMPTS - 1))
+            substitute = _first_readable(read, recoverable, path_of, errors)
+    if substitute is None:
+        # Logged at debug level only, so the candidates' errors are kept here, where they cannot be recovered later.
+        tried = f" The samples tried in its place failed with: {_describe_errors(errors)}." if errors else ""
+        raise RuntimeError(
+            f"{len(candidates) + 1} consecutive samples were unreadable starting at sample {index} "
+            f"({path_of(index)}): {failure}.{tried} The dataset or the filesystem holding it is broken, not a single "
+            "file, or the storage holding it stayed unavailable through every retry, as in a sustained outage. Check "
+            "that the files are present and readable before training again."
+        ) from failure
 
-    raise RuntimeError(
-        f"{num_candidates + 1} consecutive samples were unreadable starting at sample {index} ({path_of(index)}): "
-        f"{failure}. The dataset or the filesystem holding it is broken, not a single file."
-    ) from failure
+    candidate, result = substitute
+    logger.error(
+        "Image %s (sample %d) is unreadable: %s. Using sample %d (%s) in its place.",
+        path_of(index),
+        index,
+        failure,
+        candidate,
+        path_of(candidate),
+    )
+    return candidate, result

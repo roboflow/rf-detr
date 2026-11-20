@@ -20,6 +20,7 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, MultiScale, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
 from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
@@ -1005,7 +1006,7 @@ class RFDETRDataModule(LightningDataModule):
         class_names = self.class_names
         for axis, sample_index in zip(axes_array, range(min(count, dataset_length)), strict=False):
             image_tensor, target = dataset[sample_index]
-            image_path = self._source_image_path(dataset, sample_index)
+            image_path = self._source_image_path(dataset, target)
             image = inv_normalize(image_tensor)
             image_array = image.detach().cpu().numpy()
             scene = np.ascontiguousarray((np.clip(image_array.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
@@ -1107,16 +1108,26 @@ class RFDETRDataModule(LightningDataModule):
         raise ValueError(f"Unsupported split {split!r}.")
 
     @staticmethod
-    def _source_image_path(dataset: torch.utils.data.Dataset[Any], sample_index: int) -> Path | None:
-        """Return a source image path for common COCO-style datasets."""
-        image_folder = getattr(dataset, "root", None)
-        image_ids = getattr(dataset, "ids", None)
-        coco = getattr(dataset, "coco", None)
-        if image_folder is None or image_ids is None or coco is None:
+    def _source_image_path(dataset: torch.utils.data.Dataset[Any], target: dict[str, Any]) -> Path | None:
+        """Return the path of the image a sample was read from, for COCO-style datasets.
+
+        The image id is taken from the sample's target, not looked up from the requested index: a dataset built with
+        ``skip_unreadable`` returns a later sample in place of an unreadable one, and only the target names the image
+        actually returned.
+
+        Args:
+            dataset: Dataset the sample was read from.
+            target: The sample's target, as the dataset returned it.
+
+        Returns:
+            The image path, or ``None`` when the dataset has no ``root`` and COCO API to resolve it, as a multi-source
+            dataset does not, or the target carries no ``image_id``.
+        """
+        image_id = target.get("image_id")
+        if image_id is None or getattr(dataset, "root", None) is None or getattr(dataset, "coco", None) is None:
             return None
-        image_id = image_ids[sample_index]
-        image_info = coco.loadImgs(image_id)[0]
-        return Path(image_folder) / image_info["file_name"]  # type: ignore[no-any-return]
+        # ``YoloDetection`` is no ``CocoDetection``, but it has the ``root`` and the COCO API this lookup reads.
+        return CocoDetection._image_path(cast(CocoDetection, dataset), int(image_id))
 
     def _setup_kornia_pipeline(self) -> None:
         """Build the Kornia pipeline for ``self._resolved_augmentation_backend``.
