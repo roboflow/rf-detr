@@ -633,6 +633,36 @@ class TestTrainConfigT42PromotedFields:
         """The valid range stays accepted, including fractional warmup and zero for both fields."""
         assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("lr_vit_layer_decay", 0.0),
+            ("lr_vit_layer_decay", -0.8),
+            ("lr_component_decay", -0.7),
+        ],
+    )
+    def test_layer_decay_fields_reject_non_positive_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """Reject negative decays and a zero ViT decay."""
+        with pytest.raises(ValidationError, match=field):
+            _make_train_config(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("lr_vit_layer_decay", 0.8),
+            ("lr_vit_layer_decay", 1.0),
+            ("lr_component_decay", 0.7),
+            ("lr_component_decay", 1.0),
+        ],
+    )
+    def test_layer_decay_fields_accept_positive_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """Positive decay rates stay valid, including ``1.0`` for a disabled decay."""
+        assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
+
+    def test_component_decay_accepts_zero(self, tmp_path: Path) -> None:
+        """Zero component decay remains available for freezing encoder and decoder learning rates."""
+        assert _make_train_config(tmp_path, lr_component_decay=0.0).lr_component_decay == 0.0
+
     def test_batch_size_auto_is_accepted(self, tmp_path):
         """batch_size accepts the special 'auto' value."""
         tc = _make_train_config(tmp_path, batch_size="auto")

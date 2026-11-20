@@ -30,6 +30,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - Loading DINOv2 hub weights (only for a patch-14 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs) reads `model.safetensors` through `huggingface_hub`, using pinned commits for `facebook/dinov2-small`, `facebook/dinov2-base`, and `facebook/dinov2-with-registers-small` and the `main` branch for other repositories, and raises if the file's keys differ from the backbone's instead of randomly initializing the missing ones. Without `huggingface_hub` and `safetensors` it raises an `ImportError` that names them.
     - A non-windowed `DinoV2(use_windowed_attn=False)` imports `transformers` when it is built, and raises an `ImportError` with the install command if `transformers` is missing.
 
+### Fixed
+
+- `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
+
 ## [1.12.1] — 2026-11-12
 
 ### Changed
