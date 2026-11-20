@@ -1374,6 +1374,25 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
+    min_class_support: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Minimum ground-truth instances a class needs in the evaluated split to count toward the gated "
+            "'<split>/mAP_50_95_gated' (and its 'ema_' / 'segm_' variants) and toward the macro-F1 that the "
+            "confidence-threshold sweep maximises. Classes below the floor are still reported per class. When above "
+            "0 and best_model_metric='map', best-checkpoint selection and early stopping monitor the gated metric, "
+            "so a class with a handful of instances cannot swing model selection. 0 disables gating."
+        ),
+    )
+    class_agnostic_eval: bool = Field(
+        default=False,
+        description=(
+            "Also evaluate validation and test boxes with every label collapsed to one class, logged as "
+            "'<split>/mAP_50_95_agnostic' and '<split>/mAP_50_agnostic'. Separates localisation quality from "
+            "classification quality. Adds a second box-metric accumulation to every evaluation."
+        ),
+    )
     eval_backend: CocoEvalBackend = Field(
         default="vernier",
         description=(

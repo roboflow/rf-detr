@@ -23,6 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - On a core install, building a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, raises an `ImportError` that asks for `huggingface_hub` and `safetensors`.
     - On a core install, building a non-windowed `DinoV2(use_windowed_attn=False)` raises an `ImportError` that asks for `transformers`.
 
+### Added
+
+- `TrainConfig.min_class_support` and `TrainConfig.class_agnostic_eval`, two opt-in evaluation settings for long-tailed datasets. Both are off by default, and the default metrics, logged keys and console tables are unchanged.
+    - `min_class_support=N` logs `<split>/mAP_50_95_gated` (with `ema_` and, for segmentation, `segm_` variants): the mean per-class AP over classes with at least `N` ground-truth instances in the evaluated split. The confidence-threshold sweep maximises macro-F1 over the same classes, and with `best_model_metric="map"` best-checkpoint selection and early stopping monitor the gated key, so a class with a handful of instances cannot decide which checkpoint is kept. Classes below the floor still get per-class rows and `<split>/AP/<class>` keys; the per-class table gains a `Support` column.
+    - `class_agnostic_eval=True` also evaluates boxes with every label collapsed to one class, logged as `<split>/mAP_50_95_agnostic` and `<split>/mAP_50_agnostic` for validation and test, to separate whether an object was found from whether it was named correctly.
+
 ### Changed
 
 - `import rfdetr`, building a model, prediction and checkpoint loading no longer import `transformers`. The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are plain `torch.nn.Module` subclasses instead of Hugging Face `PreTrainedModel` subclasses, so `from_pretrained`, `save_pretrained`, `push_to_hub` and `transformers` `isinstance` checks no longer apply to them; their outputs are dataclasses read by attribute; `WindowedDinov2WithRegistersConfig` rejects keywords it does not use; and the unused `WindowedDinov2WithRegistersForImageClassification` and head-pruning methods are removed. State-dict keys, initialization for a fixed seed, and outputs are unchanged.
