@@ -158,7 +158,7 @@ No earlier x86 CPU table remains here: the earlier run had `RFDETRInference`'s O
 
 ### Compact PE models on CPU
 
-Install `pip install "rfdetr-plus[cpu-export]"` to export Atto, Femto or Pico with ONNX Runtime's CPU operators. Export a released detector or reload a fine-tuned checkpoint to retain its trained weights, class head and resolution.
+Install `pip install "rfdetr-plus[onnx]"` to export Atto, Femto or Pico with ONNX Runtime's CPU operators. Export a released detector or reload a fine-tuned checkpoint to retain its trained weights, class head and resolution.
 
 ```python
 from rfdetr import RFDETRInference, from_checkpoint
