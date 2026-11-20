@@ -138,12 +138,12 @@ class AugmentationBackend(str, Enum):
     strings keep resolving correctly.
 
     ``"cpu"`` and ``"auto"`` are accepted as *input* strings (on ``TrainConfig.augmentation_backend`` and by
-    :meth:`from_str`) but are never stored or returned as a member of this enum — they are auto-pick sentinels resolved
-    to a concrete member at :meth:`from_str` call time. Resolution stays late (re-checked at dataset-build time against
-    whatever is installed in the current environment) rather than baked into ``TrainConfig`` at construction time, so a
-    saved config using ``"cpu"``/``"auto"`` remains portable across environments with different optional packages
-    installed. Pass a concrete value (``"torchvision"``, ``"albumentations"``, or ``"kornia"``) explicitly to pin the
-    backend regardless of environment.
+    :meth:`from_str`) but are never stored or returned as a member of this enum — they are auto-pick sentinels
+    resolved to a concrete member at :meth:`from_str` call time. Resolution stays late (re-checked at dataset-build time
+    against whatever is installed in the current environment) rather than baked into ``TrainConfig`` at construction
+    time, so a saved config using ``"cpu"``/``"auto"`` remains portable across environments with different optional
+    packages installed. Pass a concrete value (``"torchvision"``, ``"albumentations"``, or ``"kornia"``) explicitly to
+    pin the backend regardless of environment.
     """
 
     TV = "torchvision"
@@ -225,8 +225,8 @@ class AugmentationBackend(str, Enum):
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
     """Warning emitted when ``ModelConfig`` overrides are likely to prevent the variant's published pretrained weights
-    from loading into the model — leaving large portions of the model randomly initialized and typically producing much
-    lower accuracy."""
+    from loading into the model — leaving large portions of the model randomly initialized and typically producing
+    much lower accuracy."""
 
 
 def _detect_device() -> str:
@@ -881,11 +881,9 @@ class ModelConfig(BaseConfig):
             "num_channels",
         )
         # Fields where only an *increase* above the variant default is load-breaking:
-        # num_queries / group_detr add slots whose shape differs — decrease is fine.
-        breaking_on_increase: tuple[str, ...] = (
-            "num_queries",
-            "group_detr",
-        )
+        # group_detr adds groups whose shape differs — decrease is fine. num_queries is not listed: the loader pads
+        # a larger value with freshly initialised slots and warns itself (see load_pretrain_weights).
+        breaking_on_increase: tuple[str, ...] = ("group_detr",)
 
         for name in breaking_fields:
             if name not in fields_set:

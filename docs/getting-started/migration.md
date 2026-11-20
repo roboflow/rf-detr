@@ -30,6 +30,22 @@ The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn
 
 ---
 
+## Unreleased: importing `rfdetr` no longer raises Pillow's pixel limit
+
+Importing `rfdetr` used to set `PIL.Image.MAX_IMAGE_PIXELS` to 2,000,000,000 for the whole process. It now leaves the limit alone, so Pillow's default applies again: a `DecompressionBombWarning` above about 89 million pixels and a `DecompressionBombError` above about 179 million. Only the Objects365 dataset builder keeps the higher limit, and only for the images it decodes itself.
+
+This affects training on COCO, YOLO and WebDataset datasets, and prediction or export from image files, when an image is larger than Pillow's default limit. If you trust your images and need the old behavior, set the limit in your own code:
+
+```python
+import PIL.Image
+
+PIL.Image.MAX_IMAGE_PIXELS = 2_000_000_000
+```
+
+Put the assignment at module level, not inside an `if __name__ == "__main__":` block. DataLoader workers that are spawned, not forked (the default on macOS and Windows, and on Linux from Python 3.14), import your script again without running that block, so a limit set there does not reach them.
+
+---
+
 ## Upgrade 1.11 → 1.12
 
 For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.

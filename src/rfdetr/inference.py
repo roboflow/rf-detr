@@ -70,9 +70,12 @@ class RFDETRInference:
         | TFLite, LiteRT | ``auto``, ``cpu`` |
         | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only), ``cpu_and_gpu``, ``cpu_and_ne`` (preferences) |
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
-        | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+        | ExecuTorch | XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn``, TensorRT ``auto``/``cuda`` |
 
         The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
+
+        The ExecuTorch TensorRT delegate runs on the current CUDA device: ``auto`` and ``cuda`` mean that device, and
+        ``cuda:N`` is accepted only when ``N`` is the current CUDA device; any other index is refused.
 
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
