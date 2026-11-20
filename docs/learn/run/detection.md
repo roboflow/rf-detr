@@ -124,25 +124,26 @@ Femto's CoreML FP16 time (24.51 ms) is not noise: the Neural Engine compiler fai
 
 The configuration with the lowest end-to-end latency for each size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores), batch 1. Run the [latency cookbook](../../../cookbooks/measure-latency/) on your own CPU to find yours.
 
-<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
+<!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu"; Atto, Femto and Pico from the run of 2026-11-20, every other size from the run of 2026-11-14; provenance in docs/learn/run/latency.md). -->
 
-|      Size       | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    OpenVINO FP32    |    OpenVINO FP16    |    OpenVINO INT8    |
-| :-------------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :-----------------: | :-----------------: |
-|   Atto (A) △    |    **49.30 (81.53)**     |  66.30 (102.49)   |           —           |   61.89 (110.31)    |   65.78 (101.60)    |          —          |
-|   Femto (F) △   |    **71.49 (105.86)**    |  103.99 (139.05)  |           —           |   77.12 (131.74)    |   79.50 (136.18)    |          —          |
-|   Pico (P) △    |    **96.17 (138.73)**    |  133.67 (168.07)  |           —           |   104.31 (172.77)   |   111.09 (173.81)   |          —          |
-|    Nano (N)     |   **144.30 (201.38)**    |  223.88 (258.26)  |  **142.29 (184.13)**  | **139.62 (236.81)** | **140.80 (229.94)** |   147.03 (251.28)   |
-|    Small (S)    |   **255.07 (316.23)**    |  379.63 (419.53)  |  **249.21 (294.51)**  | **248.60 (387.60)** |   262.16 (399.60)   | **254.88 (422.05)** |
-|   Medium (M)    |     328.94 (574.67)      |  458.90 (510.59)  |  **301.01 (359.73)**  | **313.77 (496.52)** |   325.86 (496.62)   |   331.42 (552.13)   |
-|    Large (L)    |     503.23 (834.66)      |  653.41 (708.16)  |  **455.91 (521.81)**  |   507.50 (744.23)   |   537.98 (781.94)   |   509.06 (764.56)   |
-|  XLarge (XL) △  |    1073.06 (1901.00)     | 1240.19 (1343.50) |  **859.06 (990.42)**  |  1111.67 (1476.47)  |  1171.22 (1533.26)  |  1103.99 (1583.44)  |
-| 2XLarge (2XL) △ |    1525.65 (2293.85)     | 1653.97 (1815.14) | **1121.89 (1303.18)** |  1592.33 (2029.86)  |  1762.35 (2233.25)  |  1560.11 (2066.94)  |
+|      Size       | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    ONNX compact     |    OpenVINO FP32    |    OpenVINO FP16    |    OpenVINO INT8    |
+| :-------------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :-----------------: | :-----------------: | :-----------------: |
+|   Atto (A) △    |    **50.19 (79.63)**     |  74.52 (108.92)   |           —           |  **52.10 (86.36)**  |   63.91 (103.90)    |    68.74 (99.52)    |          —          |
+|   Femto (F) △   |    **76.45 (135.71)**    |  106.03 (137.89)  |           —           | **76.05 (109.08)**  | **76.05 (133.16)**  | **75.90 (120.54)**  |          —          |
+|   Pico (P) △    |   **105.63 (141.22)**    |  142.46 (173.60)  |           —           | **104.56 (138.39)** | **100.89 (164.15)** |   113.34 (172.46)   |          —          |
+|    Nano (N)     |   **144.30 (201.38)**    |  223.88 (258.26)  |  **142.29 (184.13)**  |          —          | **139.62 (236.81)** | **140.80 (229.94)** |   147.03 (251.28)   |
+|    Small (S)    |   **255.07 (316.23)**    |  379.63 (419.53)  |  **249.21 (294.51)**  |          —          | **248.60 (387.60)** |   262.16 (399.60)   | **254.88 (422.05)** |
+|   Medium (M)    |     328.94 (574.67)      |  458.90 (510.59)  |  **301.01 (359.73)**  |          —          | **313.77 (496.52)** |   325.86 (496.62)   |   331.42 (552.13)   |
+|    Large (L)    |     503.23 (834.66)      |  653.41 (708.16)  |  **455.91 (521.81)**  |          —          |   507.50 (744.23)   |   537.98 (781.94)   |   509.06 (764.56)   |
+|  XLarge (XL) △  |    1073.06 (1901.00)     | 1240.19 (1343.50) |  **859.06 (990.42)**  |          —          |  1111.67 (1476.47)  |  1171.22 (1533.26)  |  1103.99 (1583.44)  |
+| 2XLarge (2XL) △ |    1525.65 (2293.85)     | 1653.97 (1815.14) | **1121.89 (1303.18)** |          —          |  1592.33 (2029.86)  |  1762.35 (2233.25)  |  1560.11 (2066.94)  |
 
-Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell, and ONNX compact exists only for them. Their row is from a different run than the other sizes, see [How the numbers were measured](latency.md#x86-cpu).
 
-- Atto, Femto and Pico are fastest with PyTorch TorchScript FP32 alone, the next configuration 7.9% to 25.5% behind. Nano and Small are a four-way tie.
+- Atto, Femto and Pico have no single fastest configuration. On Atto, TorchScript FP32 and ONNX compact are tied. On Femto, TorchScript FP32, ONNX compact and both OpenVINO precisions are tied. On Pico, OpenVINO FP32, ONNX compact and TorchScript FP32 are tied. Nano and Small are a four-way tie.
+- ONNX compact takes 27% to 30% less time than ONNX FP32 on all three sizes, so it closes the gap that ONNX FP32 has to TorchScript FP32, but it does not beat TorchScript FP32 or OpenVINO FP32. It scored 30.35, 37.45 and 41.45 AP on all 5000 val2017 images, 0.32, 0.16 and 0.21 below PyTorch FP32 on the same CPU.
 - From Medium up ONNX INT8 is fastest or tied, and alone from Large up, 10.4% to 36.0% ahead of TorchScript FP32.
-- OpenVINO FP16 and INT8 are never more than 2% faster than OpenVINO FP32. The 95th percentile reaches 1.78 times the median (OpenVINO FP32, Atto), so this one shared-host run cannot order configurations inside the 5% band.
+- OpenVINO FP16 and INT8 are never more than 2% faster than OpenVINO FP32. The 95th percentile reaches 1.78 times the median (PyTorch TorchScript FP32, Femto), so this one shared-host run cannot order configurations inside the 5% band.
 
 !!! warning "FP16 and INT8 can lower accuracy"
 

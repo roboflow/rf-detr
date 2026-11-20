@@ -8,7 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `RFDETR.export(format="executorch", backend="tensorrt")` writes an ExecuTorch `.pte` that runs on an NVIDIA GPU through TensorRT, built through Torch-TensorRT from the `torch.export` graph with no ONNX step. `RFDETRInference` loads it on the GPU. It needs the new `rfdetr[executorch-tensorrt]` extra (Linux, Python 3.11 or newer), which cannot share an environment with `rfdetr[executorch]`, and a CUDA device at export time. ([#1712](https://github.com/roboflow/rf-detr/pull/1712))
+
+- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. ([#1287](https://github.com/roboflow/rf-detr/pull/1287))
+
 - `RFDETR.predict(..., shift_tta=N)` averages `N` passes with the image moved by fractions of a backbone patch, for confidence scores that change less when objects move by a few pixels ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). Detections match across passes by class and box IoU above 0.6; a pass that missed the object counts as score 0, and `threshold` applies to the averaged score. It costs `N` forward passes. On RF-DETR-N fine-tuned on RF100-VL `deeppcb`, moving test images by up to one patch flipped the keep-or-drop decision of 21.0% of the defects with one pass and 3.7% with `shift_tta=4`, while test mAP50-95 went from 0.702 to 0.708. Detection and segmentation models; keypoint models raise a `ValueError`.
+
+### Documentation
+
+- Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).
 
 ### Breaking Changes
 
@@ -23,6 +31,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
     - Loading DINOv2 hub weights (only for a patch-14 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs) reads `model.safetensors` through `huggingface_hub`, using pinned commits for `facebook/dinov2-small`, `facebook/dinov2-base`, and `facebook/dinov2-with-registers-small` and the `main` branch for other repositories, and raises if the file's keys differ from the backbone's instead of randomly initializing the missing ones. Without `huggingface_hub` and `safetensors` it raises an `ImportError` that names them.
     - A non-windowed `DinoV2(use_windowed_attn=False)` imports `transformers` when it is built, and raises an `ImportError` with the install command if `transformers` is missing.
+
+### Fixed
+
+- `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
+- `download_pretrain_weights(path, redownload=True)` keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.
 
 ## [1.12.1] — 2026-11-12
 
