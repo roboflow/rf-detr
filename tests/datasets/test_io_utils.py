@@ -414,11 +414,11 @@ class TestDecodePilImage:
 class TestDecodePilImagePixelLimit:
     """``max_image_pixels`` raises the decompression-bomb limit for one decode, never for the process (#1716).
 
-    Each case runs on a JPEG (``simplejpeg`` guard when installed, Pillow's otherwise) and a PNG (Pillow's guard).
+    Each case runs on JPEG, PNG and TIFF inputs.
     """
 
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_decodes_image_above_process_limit_without_warning(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, extension: str
     ) -> None:
@@ -435,7 +435,49 @@ class TestDecodePilImagePixelLimit:
 
         assert image.size == (64, 32)
 
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_gif_disposal_uses_per_image_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A GIF disposal buffer admitted by the per-image limit decodes under a lower process limit."""
+        encoded = io.BytesIO()
+        Image.new("RGB", (64, 32), "red").save(encoded, format="GIF", disposal=2)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, _ = decode_pil_image_bytes(encoded.getvalue(), max_image_pixels=5000)
+
+        assert image.size == (64, 32)
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    def test_rejected_header_does_not_read_entire_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reject an oversized image before reading its trailing encoded payload."""
+        path = tmp_path / "image.png"
+        _write_test_image(path, 64, 32)
+        data = path.read_bytes() + bytes(100_000)
+
+        class _BoundedStream(io.BytesIO):
+            def read(self, size: int = -1) -> bytes:
+                assert 0 <= size <= 4096, "read beyond the header before rejecting the image"
+                return super().read(size)
+
+        monkeypatch.setattr(Path, "open", lambda self, *args, **kwargs: _BoundedStream(data))
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+        with pytest.raises(Image.DecompressionBombError):
+            io_utils._open_image(path, max_image_pixels=500)
+
+    @pytest.mark.parametrize("compression", ["raw", "tiff_deflate"])
+    def test_tiff_pixels_match_with_a_raised_limit(self, monkeypatch: pytest.MonkeyPatch, compression: str) -> None:
+        """Raw and compressed TIFF pixels survive decoding under the per-image limit."""
+        pixels = np.random.default_rng(1).integers(0, 256, size=(32, 64, 3), dtype=np.uint8)
+        encoded = io.BytesIO()
+        Image.fromarray(pixels).save(encoded, format="TIFF", compression=compression)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image_bytes(encoded.getvalue(), max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.asarray(image), pixels)
+        assert scales == (1.0, 1.0)
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_process_limit_is_unchanged_after_decode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
     ) -> None:
@@ -448,7 +490,17 @@ class TestDecodePilImagePixelLimit:
 
         assert Image.MAX_IMAGE_PIXELS == 1000
 
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_bomb_warning_as_error_precedes_pixel_decode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A warning promoted to an error stops before a damaged image is decoded."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        encoded = io.BytesIO()
+        Image.new("RGB", (64, 32)).save(encoded, format="PNG")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with pytest.raises(Image.DecompressionBombWarning):
+                decode_pil_image_bytes(encoded.getvalue()[:45], max_image_pixels=1500)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_image_above_twice_the_per_call_limit_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
     ) -> None:
@@ -460,7 +512,7 @@ class TestDecodePilImagePixelLimit:
         with pytest.raises(Image.DecompressionBombError):
             decode_pil_image(image_path, max_image_pixels=1000)
 
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_process_limit_is_restored_after_rejected_image(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
     ) -> None:
@@ -475,7 +527,7 @@ class TestDecodePilImagePixelLimit:
         assert Image.MAX_IMAGE_PIXELS == 100
 
     @pytest.mark.parametrize("process_limit", [None, 1_000_000])
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_never_lowers_a_more_permissive_process_limit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, process_limit: int | None, extension: str
     ) -> None:
@@ -490,7 +542,7 @@ class TestDecodePilImagePixelLimit:
 
         assert image.size == (64, 32)
 
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_process_limit_is_never_changed_while_pillow_reads(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
     ) -> None:
@@ -527,7 +579,7 @@ class TestDecodePilImagePixelLimit:
         with pytest.raises(UnidentifiedImageError):
             decode_pil_image_bytes(b"not an image", max_image_pixels=5000)
 
-    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
     def test_coco_detection_applies_its_limit_to_the_images_it_reads(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
     ) -> None:

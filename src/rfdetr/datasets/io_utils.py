@@ -21,7 +21,10 @@ that :func:`decode_pil_image` avoids for its own callers, a scope call deferred 
 from __future__ import annotations
 
 import io
+import json
 import struct
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 from typing import IO
@@ -92,7 +95,7 @@ def _check_decompression_bomb(width: int, height: int, max_image_pixels: int | N
         max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
 
     Raises:
-        PIL.Image.DecompressionBombError: If ``width * height`` exceeds twice ``PIL.Image.MAX_IMAGE_PIXELS``.
+        PIL.Image.DecompressionBombError: If ``width * height`` exceeds twice the effective pixel limit.
 
     Examples:
         >>> _check_decompression_bomb(10, 10)
@@ -143,21 +146,35 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
     """
     if max_image_pixels is None:
         return Image.open(source)
-    stream = io.BytesIO(source.read_bytes()) if isinstance(source, Path) else source
-    prefix = stream.read(16)
-    Image.init()
-    for image_format in Image.ID:
-        factory, accept = Image.OPEN[image_format]
-        try:
-            accepted = accept is None or accept(prefix)
-            if not accepted or isinstance(accepted, str):
-                continue
-            stream.seek(0)
-            image = factory(stream, "")
-        except (SyntaxError, IndexError, TypeError, struct.error):
-            continue  # the errors ``Image.open`` treats as "not this format"
-        _check_decompression_bomb(*image.size, max_image_pixels)
-        return image
+    stream: IO[bytes]
+    if isinstance(source, Path):
+        stream = source.open("rb")
+        owns_stream = True
+    else:
+        stream = source
+        owns_stream = False
+    try:
+        prefix = stream.read(16)
+        Image.init()
+        for image_format in Image.ID:
+            factory, accept = Image.OPEN[image_format]
+            try:
+                accepted = accept is None or accept(prefix)
+                if not accepted or isinstance(accepted, str):
+                    continue
+                stream.seek(0)
+                image = factory(stream, "")
+            except (SyntaxError, IndexError, TypeError, struct.error):
+                continue  # the errors ``Image.open`` treats as "not this format"
+            _check_decompression_bomb(*image.size, max_image_pixels)
+            image._exclusive_fp = owns_stream
+            return image
+    except BaseException:
+        if owns_stream:
+            stream.close()
+        raise
+    if owns_stream:
+        stream.close()
     raise UnidentifiedImageError(f"cannot identify image file {source!r}")
 
 
@@ -185,6 +202,50 @@ def _decode_with_pillow(
         >>> image.mode, image.size, scales
         ('RGB', (32, 16), (0.5, 0.5))
     """
+    process_limit = Image.MAX_IMAGE_PIXELS
+    if max_image_pixels is not None and process_limit is not None and max_image_pixels > process_limit:
+        # Pillow plugins may check the global limit while opening or loading; isolate those checks per decode.
+        command = [
+            sys.executable,
+            "-B",
+            str(Path(__file__).with_name("_pillow_worker.py")),
+            str(max_image_pixels),
+            str(draft_size or 0),
+        ]
+        command.append("strict")
+        data = None
+        if isinstance(source, Path):
+            command.append(str(source))
+        else:
+            data = source.read()
+        while True:
+            result = subprocess.run(command, input=data, capture_output=True, check=False)
+            if result.returncode:
+                raise RuntimeError(f"Pillow decoder process failed: {result.stderr.decode(errors='replace')}")
+            header_bytes, separator, pixels = result.stdout.partition(b"\n")
+            if not separator:
+                raise RuntimeError("Pillow decoder process returned an invalid response")
+            header = json.loads(header_bytes)
+            if "warning" not in header:
+                break
+            warnings.warn(header["warning"], Image.DecompressionBombWarning, stacklevel=2)
+            command[5] = "allow"
+        if "error" in header:
+            errors = {
+                "DecompressionBombError": Image.DecompressionBombError,
+                "UnidentifiedImageError": UnidentifiedImageError,
+                "OSError": OSError,
+                "ValueError": ValueError,
+            }
+            raise errors.get(header["error"], RuntimeError)(header["message"])
+        warning_categories = {
+            "DecompressionBombWarning": Image.DecompressionBombWarning,
+            "RuntimeWarning": RuntimeWarning,
+        }
+        for message, category in header["warnings"]:
+            warnings.warn(message, warning_categories.get(category, UserWarning), stacklevel=2)
+        return Image.frombytes("RGB", tuple(header["size"]), pixels), tuple(header["scales"])
+
     with _open_image(source, max_image_pixels) as image:
         full_width, full_height = image.size
         if draft_size is not None:
@@ -210,7 +271,7 @@ def _decode_with_simplejpeg(
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, or ``None``.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
 
     Examples:
         >>> _decode_with_simplejpeg(b"not a jpeg", draft_size=None) is None
@@ -295,7 +356,7 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
         decoder did not reduce.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
     """
     data = _read_simplejpeg_candidate(path)
     if data is not None:
@@ -319,7 +380,7 @@ def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDAr
         decoder did not reduce.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
     """
     decoded = _decode_with_simplejpeg(data, draft_size)
     if decoded is not None:
@@ -352,7 +413,7 @@ def decode_pil_image(
         Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
     """
     data = _read_simplejpeg_candidate(path)
     if data is not None:
@@ -380,7 +441,7 @@ def decode_pil_image_bytes(
         Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
     """
     decoded = _decode_with_simplejpeg(data, draft_size, max_image_pixels)
     if decoded is not None:
