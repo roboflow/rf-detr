@@ -881,11 +881,9 @@ class ModelConfig(BaseConfig):
             "num_channels",
         )
         # Fields where only an *increase* above the variant default is load-breaking:
-        # num_queries / group_detr add slots whose shape differs — decrease is fine.
-        breaking_on_increase: tuple[str, ...] = (
-            "num_queries",
-            "group_detr",
-        )
+        # group_detr adds groups whose shape differs — decrease is fine. num_queries is not listed: the loader pads
+        # a larger value with freshly initialised slots and warns itself (see load_pretrain_weights).
+        breaking_on_increase: tuple[str, ...] = ("group_detr",)
 
         for name in breaking_fields:
             if name not in fields_set:
@@ -1279,8 +1277,10 @@ class TrainConfig(BaseConfig):
     smooth_alpha: float = 0.0
     # ge=0: a negative value shifts the managed LR schedule so it starts part-way through its decay.
     warmup_epochs: float = Field(default=0.0, ge=0.0)
-    lr_vit_layer_decay: float = 0.8
-    lr_component_decay: float = 0.7
+    # A negative ViT decay alternates the learning-rate sign across layers; zero partially freezes the encoder.
+    lr_vit_layer_decay: float = Field(default=0.8, gt=0.0)
+    # Zero intentionally freezes the encoder and decoder learning rates; a negative value reverses the decoder update.
+    lr_component_decay: float = Field(default=0.7, ge=0.0)
     # [0, 1): ``drop_path=1.0`` divides by a zero keep probability and turns every drop-path layer output into NaN.
     drop_path: float = Field(default=0.0, ge=0.0, lt=1.0)
     cls_loss_coef: float = 1.0

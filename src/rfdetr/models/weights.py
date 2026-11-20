@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
+from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -92,7 +93,8 @@ def _slice_query_param_per_group(
       drop tail groups; retained groups stay pretrained.
     * Either dimension expands, or one shrinks while the other expands →
       return whatever per-group sub-tensor can be built (``min(target, ckpt)`` along each axis). The result has fewer
-      rows than the model expects, so ``load_state_dict`` will raise a shape mismatch immediately.
+      rows than the model expects; ``load_pretrain_weights`` then pads a ``num_queries`` increase with
+      :func:`_pad_query_param_per_group` and rejects anything else.
 
     When the tensor's flat length disagrees with ``ckpt_num_queries * ckpt_group_detr`` (corrupt or unexpected
     checkpoint shape), fall back to the legacy flat slice so loading continues with the same behavior the codebase had
@@ -143,6 +145,55 @@ def _slice_query_param_per_group(
     keep_per_group = min(target_num_queries, ckpt_num_queries)
     pieces = [tensor[g * ckpt_num_queries : g * ckpt_num_queries + keep_per_group] for g in range(keep_groups)]
     return torch.cat(pieces, dim=0)
+
+
+def _pad_query_param_per_group(
+    tensor: torch.Tensor,
+    ckpt_num_queries: int,
+    target_num_queries: int,
+    target_group_detr: int,
+    fresh: torch.Tensor,
+) -> torch.Tensor:
+    """Grow a ``refpoint_embed`` / ``query_feat`` weight to more queries per group, keeping every pretrained row.
+
+    Each group of the result starts with the checkpoint's rows for that group; the remaining rows of the group come from
+    ``fresh``, the tensor the model initialised for itself. Appending the fresh rows flat would instead push the
+    checkpoint's second group into the new slots of the first, which is the group inference reads.
+
+    Args:
+        tensor: Checkpoint rows already cut to ``target_group_detr`` groups of ``ckpt_num_queries`` rows each.
+        ckpt_num_queries: Queries per group held by ``tensor``.
+        target_num_queries: Queries per group the model needs; at least ``ckpt_num_queries``.
+        target_group_detr: Number of groups in both ``tensor`` and the result.
+        fresh: The model's own tensor of shape ``(target_num_queries * target_group_detr, ...)``.
+
+    Returns:
+        A new tensor shaped like ``fresh``; ``fresh`` itself is not modified.
+
+    Raises:
+        ValueError: If the shapes of ``tensor`` and ``fresh`` do not match the stated layout.
+
+    Examples:
+        >>> pretrained = torch.tensor([[1.0], [2.0]])
+        >>> fresh = torch.tensor([[-1.0], [-2.0], [-3.0], [-4.0]])
+        >>> _pad_query_param_per_group(pretrained, 1, 2, 2, fresh).squeeze(-1).tolist()
+        [1.0, -2.0, 2.0, -4.0]
+    """
+    if ckpt_num_queries > target_num_queries:
+        raise ValueError(f"cannot pad {ckpt_num_queries} queries per group down to {target_num_queries}.")
+    if (
+        tensor.shape[0] != ckpt_num_queries * target_group_detr
+        or fresh.shape[0] != target_num_queries * target_group_detr
+    ):
+        raise ValueError(
+            f"cannot pad: got {tensor.shape[0]} pretrained and {fresh.shape[0]} fresh rows for "
+            f"{target_group_detr} groups of {ckpt_num_queries} -> {target_num_queries} queries."
+        )
+    padded = fresh.clone()
+    for group in range(target_group_detr):
+        start = group * target_num_queries
+        padded[start : start + ckpt_num_queries] = tensor[group * ckpt_num_queries : (group + 1) * ckpt_num_queries]
+    return padded
 
 
 def _filter_intentional_keys(keys: list[str]) -> list[str]:
@@ -375,7 +426,7 @@ def load_pretrain_weights(
     if not os.path.isfile(pretrain_weights):
         logger.warning("Pretrain weights not found after initial download; retrying.")
         download_pretrain_weights(pretrain_weights, redownload=True)
-    validate_pretrain_weights(pretrain_weights, strict=False)
+    validated_weights = validate_pretrain_weights(pretrain_weights, strict=False)
 
     # A failed read does not prove the file is a disposable published weight: it may be a user's checkpoint.
     checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
@@ -474,70 +525,89 @@ def load_pretrain_weights(
     # structure when the checkpoint records its training-time num_queries / group_detr.
     # See _slice_query_param_per_group for why a flat slice is wrong with group_detr > 1.
     ckpt_args = checkpoint.get("args")
-    ckpt_num_queries_raw = _ckpt_args_get(ckpt_args, "num_queries") if ckpt_args is not None else None
-    ckpt_group_detr_raw = _ckpt_args_get(ckpt_args, "group_detr") if ckpt_args is not None else None
+    saved_config = checkpoint.get("model_config")
+    layout_source = (
+        saved_config
+        if isinstance(saved_config, dict) and {"num_queries", "group_detr"} <= saved_config.keys()
+        else ckpt_args
+    )
+    ckpt_num_queries_raw = _ckpt_args_get(layout_source, "num_queries") if layout_source is not None else None
+    ckpt_group_detr_raw = _ckpt_args_get(layout_source, "group_detr") if layout_source is not None else None
     try:
         ckpt_num_queries = int(ckpt_num_queries_raw) if ckpt_num_queries_raw is not None else None
         ckpt_group_detr = int(ckpt_group_detr_raw) if ckpt_group_detr_raw is not None else None
-    except (TypeError, ValueError):
-        logger.warning(
-            "load_pretrain_weights: checkpoint args.num_queries / args.group_detr not coercible "
-            "to int; falling back to legacy flat slice."
-        )
-        ckpt_num_queries = None
-        ckpt_group_detr = None
-    # When exactly one of the pair is present, infer the missing value from the
-    # first matching tensor's shape.  This handles PTL checkpoints where
-    # BestModelCallback writes TrainConfig.model_dump() into checkpoint["args"]
-    # but TrainConfig does not include num_queries (it lives on ModelConfig).
-    if (ckpt_num_queries is None) != (ckpt_group_detr is None):
-        _first_query_key = next(
-            (k for k in checkpoint["model"] if _is_query_param(k)),
-            None,
-        )
-        if _first_query_key is not None:
-            _n = checkpoint["model"][_first_query_key].shape[0]
-            _absent: str | None = None
-            if ckpt_num_queries is not None and ckpt_num_queries > 0 and _n % ckpt_num_queries == 0:
-                ckpt_group_detr = _n // ckpt_num_queries
-                _absent, _inferred, _known, _known_val = "group_detr", ckpt_group_detr, "num_queries", ckpt_num_queries
-            elif ckpt_group_detr is not None and ckpt_group_detr > 0 and _n % ckpt_group_detr == 0:
-                ckpt_num_queries = _n // ckpt_group_detr
-                _absent, _inferred, _known, _known_val = "num_queries", ckpt_num_queries, "group_detr", ckpt_group_detr
-            if _absent is not None:
-                logger.warning(
-                    "load_pretrain_weights: args.%s absent; inferred ckpt_%s=%d from tensor rows %d ÷ ckpt_%s=%d.",
-                    _absent,
-                    _absent,
-                    _inferred,
-                    _n,
-                    _known,
-                    _known_val,
-                )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Checkpoint query layout must contain integer num_queries and group_detr.") from exc
+
+    query_rows = [t.shape[0] for n, t in checkpoint["model"].items() if _is_query_param(n)]
+    # Only a checksum-verified published checkpoint establishes that its encoder heads are complete. Arbitrary
+    # checkpoints can omit trailing heads, so matching contiguous indices alone cannot prove the group count.
+    asset = ModelWeights.from_filename(os.path.basename(pretrain_weights))
+    known_published_weights = asset is not None and asset.md5_hash is not None and validated_weights is True
+    if ckpt_num_queries is None and ckpt_group_detr is None and query_rows and known_published_weights:
+        head_groups = {
+            int(match.group(1))
+            for name in checkpoint["model"]
+            if (match := re.search(r"(?:^|\.)enc_out_class_embed\.(\d+)\.weight$", name))
+        }
+        box_groups = {
+            int(match.group(1))
+            for name in checkpoint["model"]
+            if (match := re.search(r"(?:^|\.)enc_out_bbox_embed\.(\d+)\.layers\.0\.weight$", name))
+        }
+        if (
+            head_groups
+            and head_groups == box_groups == set(range(len(head_groups)))
+            and all(rows % len(head_groups) == 0 for rows in query_rows)
+        ):
+            ckpt_group_detr = len(head_groups)
+            ckpt_num_queries = query_rows[0] // ckpt_group_detr
+
+    if (ckpt_num_queries is None) != (ckpt_group_detr is None) and query_rows:
+        known = ckpt_num_queries if ckpt_num_queries is not None else ckpt_group_detr
+        if known is not None and known > 0 and query_rows[0] % known == 0:
+            if ckpt_num_queries is None:
+                ckpt_num_queries = query_rows[0] // known
+            else:
+                ckpt_group_detr = query_rows[0] // known
+
+    if ckpt_num_queries is not None and ckpt_group_detr is not None:
+        if (
+            ckpt_num_queries <= 0
+            or ckpt_group_detr <= 0
+            or any(rows != ckpt_num_queries * ckpt_group_detr for rows in query_rows)
+        ):
+            raise ValueError("Checkpoint query layout does not match the query tensor shapes.")
+
     target_query_rows = mc.num_queries * mc.group_detr
-    # Warn once (not once per suffix key) only when the fallback truncates a
-    # query tensor. Checkpoints without args.num_queries/args.group_detr
-    # (published legacy files and BestModelCallback output, whose args value is a
-    # TrainConfig dump lacking both fields) already have exactly the configured
-    # number of rows, so their flat slice is a data identity: it cannot reorder
-    # or drop rows, but it does not guarantee that the checkpoint's (num_queries,
-    # group_detr) factorization matches the target.
-    # The truncation scan is the last conjunct so the cheap scalar guards short-circuit
-    # it away on every load that cannot warn.
-    if (
-        mc.group_detr > 1
-        and (ckpt_num_queries is None or ckpt_group_detr is None)
-        and any(
-            tensor.shape[0] > target_query_rows for name, tensor in checkpoint["model"].items() if _is_query_param(name)
-        )
-    ):
-        logger.warning(
-            "load_pretrain_weights: checkpoint lacks args.num_queries / "
-            "args.group_detr; falling back to flat slice. With "
-            "group_detr=%d this may scramble per-group query structure if "
-            "the checkpoint was trained with group_detr > 1.",
-            mc.group_detr,
-        )
+    default_queries = type(mc).model_fields["num_queries"].default
+    default_groups = type(mc).model_fields["group_detr"].default
+    if (ckpt_num_queries is None or ckpt_group_detr is None) and query_rows:
+        # A row total has many possible factorizations. Do not silently reinterpret a custom checkpoint when growth
+        # requires padding, including when fewer target groups make the total appear to shrink.
+        if any(rows < target_query_rows for rows in query_rows) or (
+            mc.num_queries != default_queries or mc.group_detr != default_groups
+        ):
+            raise ValueError(
+                "Cannot change num_queries or group_detr because the checkpoint layout is unknown; "
+                "save model_config or use pretrain_weights=None."
+            )
+        if mc.group_detr > 1 and any(rows > target_query_rows for rows in query_rows):
+            logger.warning(
+                "load_pretrain_weights: checkpoint lacks query layout; falling back to flat slice. "
+                "With group_detr=%d this may scramble per-group query structure.",
+                mc.group_detr,
+            )
+    # Growing num_queries keeps the pretrained rows of every group and takes the extra rows from the model's own
+    # initialisation; group_detr cannot grow, because the extra groups would need encoder heads the checkpoint lacks.
+    can_pad_queries = (
+        ckpt_num_queries is not None
+        and ckpt_group_detr is not None
+        and ckpt_num_queries < mc.num_queries
+        and mc.group_detr <= ckpt_group_detr
+    )
+    fresh_state = nn_model.state_dict() if can_pad_queries else {}
+    padded_any = False
     for name in list(checkpoint["model"].keys()):
         if _is_query_param(name):
             tensor = checkpoint["model"][name]
@@ -549,6 +619,17 @@ def load_pretrain_weights(
                     target_num_queries=mc.num_queries,
                     target_group_detr=mc.group_detr,
                 )
+                fresh = fresh_state.get(name)
+                if (
+                    can_pad_queries
+                    and isinstance(fresh, torch.Tensor)
+                    and fresh.shape[0] == target_query_rows
+                    and fresh.shape[1:] == tensor.shape[1:]
+                ):
+                    checkpoint["model"][name] = _pad_query_param_per_group(
+                        checkpoint["model"][name], ckpt_num_queries, mc.num_queries, mc.group_detr, fresh
+                    )
+                    padded_any = True
             else:
                 # Checkpoint without args.num_queries/args.group_detr (published legacy files
                 # and BestModelCallback output, whose args value is a TrainConfig dump lacking
@@ -558,6 +639,30 @@ def load_pretrain_weights(
                 # without metadata, a different (num_queries, group_detr) split
                 # is still reinterpreted under the target partition undetectably.
                 checkpoint["model"][name] = tensor[:target_query_rows]
+
+    if padded_any:
+        logger.warning(
+            "load_pretrain_weights: num_queries=%d exceeds the %d the checkpoint was trained with; the %d extra query "
+            "slots per group are untrained (initialised like a fresh model) and need fine-tuning before they add "
+            "useful detections.",
+            mc.num_queries,
+            ckpt_num_queries,
+            mc.num_queries - (ckpt_num_queries or 0),
+        )
+    # Anything still short could not be padded (group_detr growth, or a layout that cannot be recovered), and would
+    # surface later as a bare ``load_state_dict`` size mismatch. Fail here with the setting to change instead.
+    short_rows = {
+        name: tensor.shape[0]
+        for name, tensor in checkpoint["model"].items()
+        if _is_query_param(name) and tensor.shape[0] < target_query_rows
+    }
+    if short_rows:
+        raise ValueError(
+            f"Pretrained weights hold {min(short_rows.values())} query rows but the config needs "
+            f"{target_query_rows} (num_queries={mc.num_queries} x group_detr={mc.group_detr}). Pretrained weights "
+            "cannot grow group_detr, and num_queries only when the checkpoint layout is known: keep the defaults and "
+            "raise only num_select, or pass pretrain_weights=None to train with the larger layout from scratch."
+        )
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
 
