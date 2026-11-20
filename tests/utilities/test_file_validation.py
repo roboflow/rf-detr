@@ -177,10 +177,17 @@ def mock_get(mocker: pytest.MonkeyPatch) -> Mock:
 class TestDownloadFile:
     """Test download helper behavior and failure cleanup."""
 
-    def test_download_file_missing_content_length(self, mock_get: Mock, tmp_path: Path):
-        """Download succeeds when content-length is missing."""
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            pytest.param({}, id="missing"),
+            pytest.param({"content-length": "not-a-number"}, id="malformed"),
+        ],
+    )
+    def test_download_file_without_usable_content_length(self, mock_get: Mock, tmp_path: Path, headers: dict[str, str]):
+        """Download succeeds when content-length is missing or not an integer."""
         target_path = tmp_path / "weights.bin"
-        response = _FakeResponse([b"hello", b"world"], headers={})
+        response = _FakeResponse([b"hello", b"world"], headers=headers)
         mock_get.return_value = response
 
         _download_file(_URL, str(target_path))
@@ -367,8 +374,21 @@ class TestDownloadReplacement:
             pytest.param(SystemExit, id="exit"),
         ],
     )
+    @pytest.mark.parametrize(
+        "expected_md5",
+        [
+            pytest.param("0" * 32, id="md5"),
+            pytest.param(None, id="no-md5"),
+        ],
+    )
     def test_stream_error_or_cancellation_cleans_up(
-        self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path, existing: bool, error_type: type[BaseException]
+        self,
+        mock_get: Mock,
+        mocker: MockerFixture,
+        tmp_path: Path,
+        existing: bool,
+        error_type: type[BaseException],
+        expected_md5: Optional[str],
     ) -> None:
         """Partial data is removed and the original failure propagates, including cancellation."""
         target = tmp_path / "weights.bin"
@@ -378,10 +398,33 @@ class TestDownloadReplacement:
         mocker.patch.object(response, "iter_content", return_value=_partial_chunks_then_error(error_type("stopped")))
         mock_get.return_value = response
         with pytest.raises(error_type, match="stopped"):
-            _download_file(_URL, str(target), expected_md5="0" * 32)
+            _download_file(_URL, str(target), expected_md5=expected_md5)
         assert list(tmp_path.iterdir()) == ([target] if existing else [])
         if existing:
             assert target.read_bytes() == b"old"
+        response.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "error_type",
+        [
+            pytest.param(OSError, id="io-error"),
+            pytest.param(KeyboardInterrupt, id="interrupt"),
+        ],
+    )
+    def test_temp_cleanup_failure_keeps_original_error(
+        self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path, error_type: type[BaseException]
+    ) -> None:
+        """A temp file that cannot be removed (e.g. Windows ``PermissionError``) does not mask the failure in flight."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        response = _FakeResponse([])
+        mocker.patch.object(response, "iter_content", return_value=_partial_chunks_then_error(error_type("stopped")))
+        mock_get.return_value = response
+        remove = mocker.patch.object(files.os, "remove", side_effect=PermissionError("remove denied"))
+        with pytest.raises(error_type, match="stopped"):
+            _download_file(_URL, str(target), expected_md5="0" * 32)
+        remove.assert_called_once()
+        assert target.read_bytes() == b"old"
         response.close.assert_called_once()
 
     def test_bad_checksum_keeps_previous_file(self, mock_get: Mock, tmp_path: Path) -> None:
@@ -394,26 +437,57 @@ class TestDownloadReplacement:
         assert target.read_bytes() == b"old"
         _assert_no_download_temp_files(tmp_path)
 
-    def test_hash_read_error_cleans_up(self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path) -> None:
-        """A failure reading the completed temporary file preserves the destination and removes the temp."""
+    @pytest.mark.parametrize(
+        "error_type",
+        [
+            pytest.param(OSError, id="io-error"),
+            pytest.param(KeyboardInterrupt, id="interrupt"),
+            pytest.param(SystemExit, id="exit"),
+        ],
+    )
+    def test_hash_read_error_cleans_up(
+        self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path, error_type: type[BaseException]
+    ) -> None:
+        """A failure or cancellation reading the completed temporary file preserves the destination and the temp."""
         target = tmp_path / "weights.bin"
         target.write_bytes(b"old")
         mock_get.return_value = _FakeResponse([b"new"])
-        mocker.patch.object(files, "_compute_file_md5", side_effect=["1" * 32, OSError("hash read failed")])
-        with pytest.raises(OSError, match="hash read failed"):
+        mocker.patch.object(files, "_compute_file_md5", side_effect=["1" * 32, error_type("hash read failed")])
+        with pytest.raises(error_type, match="hash read failed"):
             _download_file(_URL, str(target), expected_md5="0" * 32)
         assert target.read_bytes() == b"old"
         _assert_no_download_temp_files(tmp_path)
 
-    def test_replace_error_keeps_previous_file(self, mock_get: Mock, mocker: MockerFixture, tmp_path: Path) -> None:
-        """A failed atomic replacement leaves the previous file intact and cleans the new payload."""
+    @pytest.mark.parametrize(
+        "error_type",
+        [
+            pytest.param(PermissionError, id="permission-error"),
+            pytest.param(KeyboardInterrupt, id="interrupt"),
+            pytest.param(SystemExit, id="exit"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "expected_md5",
+        [
+            pytest.param(hashlib.md5(b"new").hexdigest(), id="md5"),
+            pytest.param(None, id="no-md5"),
+        ],
+    )
+    def test_replace_error_keeps_previous_file(
+        self,
+        mock_get: Mock,
+        mocker: MockerFixture,
+        tmp_path: Path,
+        error_type: type[BaseException],
+        expected_md5: Optional[str],
+    ) -> None:
+        """A failed or cancelled atomic replacement leaves the previous file intact and cleans the new payload."""
         target = tmp_path / "weights.bin"
         target.write_bytes(b"old")
         mock_get.return_value = _FakeResponse([b"new"])
-        mocker.patch.object(files.os, "replace", side_effect=PermissionError("replace denied"))
-        expected = hashlib.md5(b"new").hexdigest()
-        with pytest.raises(PermissionError, match="replace denied"):
-            _download_file(_URL, str(target), expected_md5=expected)
+        mocker.patch.object(files.os, "replace", side_effect=error_type("replace denied"))
+        with pytest.raises(error_type, match="replace denied"):
+            _download_file(_URL, str(target), expected_md5=expected_md5)
         assert target.read_bytes() == b"old"
         _assert_no_download_temp_files(tmp_path)
 
@@ -445,6 +519,16 @@ class TestDownloadReplacement:
         _download_file(_URL, str(target), expected_md5=hashlib.md5(b"new").hexdigest())
         assert stat.S_IMODE(target.stat().st_mode) == mode
         assert target.read_bytes() == b"new"
+
+    def test_download_without_checksum_overwrites_existing_file(self, mock_get: Mock, tmp_path: Path) -> None:
+        """Without ``expected_md5`` nothing identifies the old file as current, so it is downloaded over."""
+        target = tmp_path / "weights.bin"
+        target.write_bytes(b"old")
+        mock_get.return_value = _FakeResponse([b"new"])
+        _download_file(_URL, str(target))
+        assert target.read_bytes() == b"new"
+        mock_get.assert_called_once()
+        _assert_no_download_temp_files(tmp_path)
 
     @pytest.mark.parametrize("uppercase", [False, True])
     def test_matching_checksum_skips_request(self, mock_get: Mock, tmp_path: Path, uppercase: bool) -> None:
