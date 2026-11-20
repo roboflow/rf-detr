@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 from rfdetr.datasets import io_utils
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.io_utils import decode_image, decode_image_bytes, decode_pil_image, decode_pil_image_bytes
+from tests._markers import _requires_simplejpeg
 from tests.datasets._memory import peak_traced_bytes
 
 
@@ -78,9 +79,6 @@ def _write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
     image = Image.new("CMYK", (width, height))
     image.putdata([(int(cyan[x]), int(magenta[y]), 128, 64) for y in range(height) for x in range(width)])
     image.save(path, format="JPEG", quality=90)
-
-
-_requires_simplejpeg = pytest.mark.skipif(io_utils.simplejpeg is None, reason="simplejpeg is not installed")
 
 
 class TestDecodeImage:
