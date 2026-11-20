@@ -174,7 +174,7 @@ Pass `runtime_options` to configure the runtime of an exported artifact. Each fo
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TensorRT       | `cuda_graph`, `engine_host_code_allowed`, `verbose`, each a `bool` that defaults to `False`. See [Predict with RFDETRInference](tensorrt.md#predict-with-rfdetrinference). |
 | OpenVINO       | `cache_dir`, `inference_precision`, `config`, `num_threads`, with the meaning they have on the [OpenVINO page](openvino.md#runtime-options).                               |
-| ONNX           | `num_threads`, a positive `int`: size of the CPU thread pool, which ONNX Runtime otherwise sizes to the physical cores.                                                    |
+| ONNX           | `num_threads`, a positive `int`: CPU thread pool size, by default every logical core the process may use. CUDA keeps ONNX Runtime's default.                               |
 | TFLite, LiteRT | `num_threads`, a positive `int`: CPU threads for the interpreter, which otherwise runs on one thread.                                                                      |
 | Other formats  | None.                                                                                                                                                                      |
 

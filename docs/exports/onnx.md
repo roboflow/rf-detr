@@ -17,6 +17,8 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 This returns `supervision.Detections` for detection and segmentation models, or `supervision.KeyPoints` for keypoint models. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, batch behavior, and runtime settings.
 
+On the CPU provider `RFDETRInference` runs ONNX Runtime on every logical core the process may use, where ONNX Runtime alone would use only the physical cores; pass `runtime_options={"num_threads": N}` to choose another pool size.
+
 ## Advanced: Run ONNX Runtime directly
 
 The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). The code below shows direct ONNX Runtime execution and NumPy decoding for low-level inspection. The private `_run_inference` helper remains a dependency-light numerical reference and shares raw execution with the `RFDETRInference` adapter; use `RFDETRInference` for normal image prediction.
