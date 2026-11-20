@@ -152,7 +152,8 @@ The [latency cookbook](../../cookbooks/measure-latency/) times ONNX Runtime FP32
 
 - ONNX INT8 takes 64% to 83% of the ONNX FP32 time at every size it was timed for.
 - ONNX INT8 is among the fastest of the six configurations for 13 of the 16 models. ONNX FP32 is never among them: it is slower than PyTorch TorchScript FP32 at every size.
-- No accuracy was scored for these CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.
+- ONNX compact, timed for Atto, Femto and Pico only, takes 70% to 73% of the ONNX FP32 time, tied with PyTorch TorchScript FP32 on all three and with OpenVINO FP32 on Femto and Pico.
+- No accuracy was scored for the other CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.
 
 No earlier x86 CPU table remains here: the earlier run had `RFDETRInference`'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is also a measured route.
 
