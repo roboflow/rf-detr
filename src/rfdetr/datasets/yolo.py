@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 import torch
@@ -31,7 +32,12 @@ from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
-from rfdetr.datasets.io_utils import decode_image, read_image_or_substitute, read_image_with_retries
+from rfdetr.datasets.io_utils import (
+    _MAX_SUBSTITUTIONS,
+    decode_image,
+    read_image_or_substitute,
+    read_image_with_retries,
+)
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
 
@@ -181,11 +187,14 @@ class _LazyYoloDetectionDataset:
         """Decode the RGB pixels of one sample, raising the decoder's own ``OSError`` when the file is unreadable.
 
         A sample whose header was unreadable when the dataset was built raises ``OSError`` without touching the file,
-        because it carries no labels to pair with the pixels.
+        because it carries no labels to pair with the pixels.  That error is the subclass
+        :func:`~rfdetr.datasets.io_utils.read_image_with_retries` does not retry, since every read would fail.
         """
         sample = self._samples[idx]
         if not sample.readable:
-            raise OSError("image header was unreadable when the dataset was built")
+            from rfdetr.datasets.io_utils import _KnownUnreadableImageError
+
+            raise _KnownUnreadableImageError("image header was unreadable when the dataset was built")
         rgb_image, _ = decode_image(Path(sample.image_path))
         return rgb_image
 
@@ -378,6 +387,32 @@ def _read_image_size(image_path: str) -> tuple[int, int]:
     return width, height
 
 
+def _raise_unreadable_run(run: Sequence[tuple[int, str, OSError]]) -> NoReturn:
+    """Raise the error for a run of consecutive samples whose image headers were all unreadable at build time.
+
+    The wording matches :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`, which raises for the same run at
+    the first read: a failure this widespread points at the dataset or its filesystem, not at one file.
+
+    Args:
+        run: The run in dataset order, as ``(sample index, image path, failure)`` triples; never empty.
+
+    Raises:
+        RuntimeError: Always, naming the first sample of the run and chained from its failure.
+
+    Examples:
+        >>> try:
+        ...     _raise_unreadable_run([(4, "a.jpg", OSError("boom"))])
+        ... except RuntimeError as exc:
+        ...     print(str(exc).split(":")[0])
+        1 consecutive samples were unreadable starting at sample 4 (a.jpg) while the dataset was built
+    """
+    first_index, first_path, first_failure = run[0]
+    raise RuntimeError(
+        f"{len(run)} consecutive samples were unreadable starting at sample {first_index} ({first_path}) while the "
+        f"dataset was built: {first_failure}. The dataset or the filesystem holding it is broken, not a single file."
+    ) from first_failure
+
+
 def _build_yolo_samples(
     img_folder: str,
     lb_folder: str,
@@ -409,11 +444,18 @@ def _build_yolo_samples(
             auto-inferred from ``data_file`` via :func:`infer_yolo_keypoint_schema`.
         skip_unreadable: When ``True`` a failed header read is retried, and an image whose header stays unreadable
             is kept as a sample marked ``readable=False`` with no labels, instead of raising.  Its label file is still
-            parsed, so a malformed one raises.
+            parsed, so a malformed one raises.  More than ``_MAX_SUBSTITUTIONS`` such images in a row, or every image
+            of a dataset too small to have that many, raises :class:`RuntimeError` instead.
 
     Returns:
         A ``(classes, samples)`` tuple where ``classes`` is the ordered list of class names and ``samples`` is a list of
         :class:`_LazyYoloSample` objects.
+
+    Raises:
+        ValueError: If a label file is malformed, or both ``include_polygons`` and ``include_keypoints`` are ``True``.
+        RuntimeError: If ``skip_unreadable`` is ``True`` and the image headers are unreadable for the whole dataset or
+            for more than ``_MAX_SUBSTITUTIONS`` consecutive samples: the dataset or its filesystem is broken, and the
+            run would only fail at its first read.
 
     Examples:
         >>> # Used internally by _build_lazy_yolo_detection_dataset and
@@ -432,6 +474,9 @@ def _build_yolo_samples(
         num_keypoints = 0
         keypoint_dim = 0
     samples: list[_LazyYoloSample] = []
+    # The unreadable headers met in a row, as (sample index, image path, failure): each costs a full retry, so a run
+    # longer than the substitutions ``read_image_or_substitute`` would try ends the build instead of stalling it.
+    unreadable_run: list[tuple[int, str, OSError]] = []
 
     for image_path in _list_yolo_image_paths(img_folder):
         label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
@@ -449,6 +494,11 @@ def _build_yolo_samples(
                     exc,
                 )
                 readable, width, height = False, 1, 1
+                unreadable_run.append((len(samples), image_path, exc))
+                if len(unreadable_run) > _MAX_SUBSTITUTIONS:
+                    _raise_unreadable_run(unreadable_run)
+            else:
+                unreadable_run.clear()
         else:
             with Image.open(image_path) as image:
                 width, height = image.size
@@ -508,6 +558,22 @@ def _build_yolo_samples(
                 ),
                 readable=readable,
             )
+        )
+
+    if samples and len(unreadable_run) == len(samples):
+        # Too few samples for the run bound above to trip, yet none is readable: the dataset is as broken as one that
+        # tripped it, and would otherwise build and fail only at its first read.
+        _raise_unreadable_run(unreadable_run)
+
+    # Each failure above logged its own error; this one line adds what none of them says: how many samples were
+    # frozen, and that they stay that way for the run. ``unreadable_run`` only holds the last run, so count the samples.
+    num_unreadable = sum(not sample.readable for sample in samples)
+    if num_unreadable:
+        logger.warning(
+            "%d of %d samples had an unreadable image header while the dataset was built. They stay substituted for "
+            "the rest of the run, even if their files become readable later, because their labels were not kept.",
+            num_unreadable,
+            len(samples),
         )
 
     return classes, samples
@@ -1222,7 +1288,11 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises ``ValueError``
             on the first failed read.  The same applies while the dataset is built: an image whose header stays
             unreadable is kept at its index, to be substituted when requested, instead of raising from the
-            constructor.  Meant for training splits only: a substituted sample is a duplicate, which would distort
+            constructor.  That sample stays substituted for the rest of the run, even if its file is repaired, because
+            its labels were not kept; one warning at the end of the build counts such samples.  The constructor still
+            raises ``RuntimeError`` when more than ``rfdetr.datasets.io_utils._MAX_SUBSTITUTIONS`` headers in a row are
+            unreadable, or every header of a dataset with fewer images, since the dataset or its filesystem is then
+            broken.  Meant for training splits only: a substituted sample is a duplicate, which would distort
             evaluation.
     """
 
