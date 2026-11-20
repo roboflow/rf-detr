@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `TrainConfig.skip_unreadable_images` (default `False`) lets a training run survive an image that cannot be read: a missing file, an I/O error, or a truncated or unidentifiable file. When it is `True`, the read is tried three times with a short pause; if it still fails, the next readable sample is used in its place and one error naming the file is logged. Without it the DataLoader worker raises, as before, and under DDP the other processes then wait until the backend's watchdog aborts the job. A substituted sample changes that batch, so repair the files the log names if exact reproducibility matters; when the 10 following samples are unreadable as well, a `RuntimeError` reports a broken dataset or filesystem. Validation and test splits always raise. Applies to COCO and YOLO datasets (`CocoDetection` and `YoloDetection` gain a `skip_unreadable` argument), not to WebDataset shards.
 
+- `RFDETR.export(format="executorch", backend="tensorrt")` writes an ExecuTorch `.pte` that runs on an NVIDIA GPU through TensorRT, built through Torch-TensorRT from the `torch.export` graph with no ONNX step. `RFDETRInference` loads it on the GPU. It needs the new `rfdetr[executorch-tensorrt]` extra (Linux, Python 3.11 or newer), which cannot share an environment with `rfdetr[executorch]`, and a CUDA device at export time. ([#1712](https://github.com/roboflow/rf-detr/pull/1712))
+
+- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. ([#1287](https://github.com/roboflow/rf-detr/pull/1287))
+
+### Documentation
+
+- Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).
+
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.
@@ -23,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
     - Loading DINOv2 hub weights (only for a patch-14 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs) reads `model.safetensors` through `huggingface_hub`, using pinned commits for `facebook/dinov2-small`, `facebook/dinov2-base`, and `facebook/dinov2-with-registers-small` and the `main` branch for other repositories, and raises if the file's keys differ from the backbone's instead of randomly initializing the missing ones. Without `huggingface_hub` and `safetensors` it raises an `ImportError` that names them.
     - A non-windowed `DinoV2(use_windowed_attn=False)` imports `transformers` when it is built, and raises an `ImportError` with the install command if `transformers` is missing.
+
+### Fixed
+
+- `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
 
 ## [1.12.1] — 2026-11-12
 

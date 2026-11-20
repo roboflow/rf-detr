@@ -702,6 +702,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, used to enable
             JPEG DCT-domain downscaling during decode (see :meth:`_decode_image`).  ``None`` (the default) decodes at
             full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
+        max_image_pixels: Decompression-bomb limit for the images this dataset reads, used when it is higher than
+            ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
         skip_unreadable: If ``True``, a failed image read is retried, and an image that stays unreadable is replaced
             by the next readable sample, image and annotations together, with an error naming the file logged (see
             :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises the decoder's
@@ -720,11 +722,13 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         remap_category_ids: bool = False,
         cat2label: dict[int, int] | None = None,
         draft_size: int | None = None,
+        max_image_pixels: int | None = None,
         skip_unreadable: bool = False,
     ) -> None:
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self._draft_size = draft_size
+        self._max_image_pixels = max_image_pixels
         self._skip_unreadable = skip_unreadable
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
@@ -777,7 +781,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         Returns:
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
-        return decode_pil_image(self._image_path(image_id), self._draft_size)
+        return decode_pil_image(self._image_path(image_id), self._draft_size, self._max_image_pixels)
 
     def _image_path(self, image_id: int) -> Path:
         """Return the path of the image file of a COCO image id."""

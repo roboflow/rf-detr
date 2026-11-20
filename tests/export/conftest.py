@@ -336,8 +336,10 @@ def _prediction_image(size: int) -> np.ndarray:
     return np.stack(((x * 7) % 256, (y * 11) % 256, ((x + y) * 3) % 256), axis=-1).astype(np.uint8)
 
 
-def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> None:
+def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path, *, backend: str = "xnnpack") -> None:
     """Run the public export and prediction APIs on one image.
+
+    *backend* selects the ExecuTorch delegate and is used only for ``format_name="executorch"``.
 
     Examples:
         Requires a real export runtime and a temporary artifact directory.
@@ -353,7 +355,7 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> 
     if format_name == "tensorrt":
         settings["fp16"] = False
     elif format_name == "executorch":
-        settings["backend"] = "xnnpack"
+        settings["backend"] = backend
     elif format_name == "coreml":
         settings["coreml_precision"] = "float32"
     elif format_name == "coreai":
@@ -361,7 +363,8 @@ def assert_prediction_roundtrip(format_name: str, task: str, tmp_path: Path) -> 
     elif format_name == "openvino":
         settings["openvino_precision"] = "float32"
     artifact = native.export(format=format_name, output_dir=str(tmp_path), verbose=False, **settings)
-    exported = RFDETRInference(artifact, device="cuda:0" if format_name == "tensorrt" else "cpu")
+    device = "cuda:0" if format_name == "tensorrt" or settings.get("backend") == "tensorrt" else "cpu"
+    exported = RFDETRInference(artifact, device=device)
     actual = exported.predict(image, threshold=0.0, include_source_image=False)
 
     assert exported.class_names == native.class_names
