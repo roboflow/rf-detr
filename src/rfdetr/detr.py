@@ -2161,6 +2161,8 @@ class RFDETR:
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
+                For OpenVINO, providing a shape fixes all input dimensions; omitting it leaves the IR input dynamic,
+                but inference still requires the traced spatial resolution.
             batch_size: Static batch size to bake into the ONNX graph; a positive integer. With ``dynamic_batch=True``
                 and ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
             dynamic_batch: If True, export with a dynamic batch dimension
@@ -2174,8 +2176,8 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
-                the converted OpenVINO IR already accepts any batch size.
+                Also refused for ``format="openvino"``: without an explicit ``shape``, the IR already has a dynamic
+                batch; with one, it has a fixed input shape and requires one model per batch size.
                 Also refused for ``format="tflite"``: ``onnx2tf`` fails on the dynamic-batch graph (an ``Add``
                 against the dynamic-shaped encoder input reports mismatched dimensions) — export one ``.tflite``
                 per batch size instead. Also unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed
@@ -2503,6 +2505,7 @@ class RFDETR:
             )
         # The shape needs only the model's configuration, so it is checked with the arguments above, before the exporter
         # is resolved.
+        openvino_static_shape = shape is not None
         shape = validate_export_shape(
             shape,
             patch_size,
@@ -2530,6 +2533,7 @@ class RFDETR:
             coreml_neural_engine=coreml_neural_engine,
             coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
+            openvino_static_shape=openvino_static_shape,
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,

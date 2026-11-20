@@ -2577,6 +2577,8 @@ class _LinearSubclass(nn.Linear):
 class TestGroupedSelfAttention:
     """Group-DETR self-attention fast path: parity, eligibility and CUDA-only routing."""
 
+    @pytest.mark.gpu
+    @_requires_cuda
     @pytest.mark.parametrize(
         ("group_detr", "batch", "queries_per_group", "heads", "d_model"),
         [
@@ -2593,7 +2595,8 @@ class TestGroupedSelfAttention:
     def test_is_bitwise_the_module_path(
         self, group_detr: int, batch: int, queries_per_group: int, heads: int, d_model: int
     ) -> None:
-        """Batch-major regrouping reproduces the group-major ``cat`` module path bit for bit in forward and input grads.
+        """On CUDA, batch-major regrouping reproduces the group-major ``cat`` path bit for bit in forward and input
+        grads.
 
         Projections run on the ungrouped layout plus a batch-major view; every kernel sees the same rows in a different
         order. The weight gradients reduce over those rows, so their summation order changes; they are checked to fp32

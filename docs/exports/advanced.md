@@ -23,7 +23,7 @@ The `export()` method accepts several parameters to customize the export process
 | `verbose`                    | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `shape`                      | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                                                                                                                                                                                                                                                          |
 | `batch_size`                 | `1`        | Batch size for the exported model: a positive integer (numpy integers work, `bool` does not); anything else raises `ValueError`. With `dynamic_batch=True` and `format="tensorrt"`, also the batch the engine's optimization profile is tuned for.                                                                                                                                                                                                                                                                                                                                       |
-| `dynamic_batch`              | `False`    | If `True`, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for `format="onnx"` and `format="tensorrt"` (which then needs `max_batch_size`) — TFLite, ExecuTorch, CoreML, Core AI and LiteRT bake a fixed batch size (TFLite because `onnx2tf` fails on the dynamic-batch graph). OpenVINO refuses `dynamic_batch=True`, but its IR already accepts any batch size, so omit the flag.                                                                                                                                               |
+| `dynamic_batch`              | `False`    | If `True`, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for `format="onnx"` and `format="tensorrt"` (which then needs `max_batch_size`). OpenVINO refuses this flag: its default IR has a dynamic batch, but specifying `shape` fixes the batch. TFLite, ExecuTorch, CoreML, Core AI and LiteRT use fixed batches.                                                                                                                                                                                                              |
 | `patch_size`                 | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `backend`                    | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), `"qnn"` (Qualcomm HTP, fp16), or `"tensorrt"` (NVIDIA GPU, fp32). Required when `format="executorch"`.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `soc`                        | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -44,18 +44,18 @@ The `export()` method accepts several parameters to customize the export process
 
 What each format supports, as declared by its exporter. Parameters a format does not use are ignored with a warning.
 
-| Format       | Extra                | `dynamic_batch`           | Embeds `notes` | Experimental |
-| ------------ | -------------------- | ------------------------- | -------------- | ------------ |
-| `onnx`       | `rfdetr[onnx]`       | yes                       | yes            | no           |
-| `tensorrt`   | `rfdetr[tensorrt]`   | yes                       | yes            | no           |
-| `tflite`     | `rfdetr[tflite]`     | no                        | yes            | yes          |
-| `openvino`   | `rfdetr[openvino]`   | no (IR accepts any batch) | no             | no           |
-| `executorch` | `rfdetr[executorch]` | no                        | no             | yes          |
-| `litert`     | `rfdetr[litert]`     | no                        | no             | yes          |
-| `coreml`     | `rfdetr[coreml]`     | no                        | yes            | yes          |
-| `coreai`     | `rfdetr[coreai]`     | no                        | yes            | yes          |
+| Format       | Extra                | `dynamic_batch`            | Embeds `notes` | Experimental |
+| ------------ | -------------------- | -------------------------- | -------------- | ------------ |
+| `onnx`       | `rfdetr[onnx]`       | yes                        | yes            | no           |
+| `tensorrt`   | `rfdetr[tensorrt]`   | yes                        | yes            | no           |
+| `tflite`     | `rfdetr[tflite]`     | no                         | yes            | yes          |
+| `openvino`   | `rfdetr[openvino]`   | no (default IR is dynamic) | no             | no           |
+| `executorch` | `rfdetr[executorch]` | no                         | no             | yes          |
+| `litert`     | `rfdetr[litert]`     | no                         | no             | yes          |
+| `coreml`     | `rfdetr[coreml]`     | no                         | yes            | yes          |
+| `coreai`     | `rfdetr[coreai]`     | no                         | yes            | yes          |
 
-For a format without dynamic batch, export one artifact per batch size.
+For a format with a fixed batch, export one artifact per batch size.
 
 ## Precision by Format
 

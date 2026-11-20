@@ -49,6 +49,8 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="openvino", shape=(608, 608))
 ```
 
+Without `shape`, the IR input is dynamic and supports variable batch sizes at the model's default resolution. Specifying `shape` fixes all input dimensions, including `batch_size` (default `1`); export a separate model for each required batch size. Despite the dynamic input declaration, changing the spatial resolution at inference is not supported because the model's spatial-dependent operations are traced at export time.
+
 ## OpenVINO Export with Precision
 
 OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only. The precision the device *computes* in is a runtime setting, chosen when the model is compiled (see the warning under [Runtime Options](#runtime-options)):
