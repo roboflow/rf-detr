@@ -138,12 +138,12 @@ class AugmentationBackend(str, Enum):
     strings keep resolving correctly.
 
     ``"cpu"`` and ``"auto"`` are accepted as *input* strings (on ``TrainConfig.augmentation_backend`` and by
-    :meth:`from_str`) but are never stored or returned as a member of this enum — they are auto-pick sentinels
-    resolved to a concrete member at :meth:`from_str` call time. Resolution stays late (re-checked at dataset-build time
-    against whatever is installed in the current environment) rather than baked into ``TrainConfig`` at construction
-    time, so a saved config using ``"cpu"``/``"auto"`` remains portable across environments with different optional
-    packages installed. Pass a concrete value (``"torchvision"``, ``"albumentations"``, or ``"kornia"``) explicitly to
-    pin the backend regardless of environment.
+    :meth:`from_str`) but are never stored or returned as a member of this enum — they are auto-pick sentinels resolved
+    to a concrete member at :meth:`from_str` call time. Resolution stays late (re-checked at dataset-build time against
+    whatever is installed in the current environment) rather than baked into ``TrainConfig`` at construction time, so a
+    saved config using ``"cpu"``/``"auto"`` remains portable across environments with different optional packages
+    installed. Pass a concrete value (``"torchvision"``, ``"albumentations"``, or ``"kornia"``) explicitly to pin the
+    backend regardless of environment.
     """
 
     TV = "torchvision"
@@ -225,8 +225,8 @@ class AugmentationBackend(str, Enum):
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
     """Warning emitted when ``ModelConfig`` overrides are likely to prevent the variant's published pretrained weights
-    from loading into the model — leaving large portions of the model randomly initialized and typically producing
-    much lower accuracy."""
+    from loading into the model — leaving large portions of the model randomly initialized and typically producing much
+    lower accuracy."""
 
 
 def _detect_device() -> str:
@@ -1277,12 +1277,10 @@ class TrainConfig(BaseConfig):
     smooth_alpha: float = 0.0
     # ge=0: a negative value shifts the managed LR schedule so it starts part-way through its decay.
     warmup_epochs: float = Field(default=0.0, ge=0.0)
-    # gt=0: both scale per-parameter learning rates multiplicatively. ``lr_vit_layer_decay`` is raised to a per-depth
-    # power, so a negative rate alternates sign with depth and gives half the ViT blocks a negative learning rate; a
-    # negative ``lr_component_decay`` makes the decoder learning rate negative. Zero freezes every ViT block while the
-    # non-block backbone parameters keep the full rate, a partial freeze ``freeze_encoder`` already expresses.
+    # A negative ViT decay alternates the learning-rate sign across layers; zero partially freezes the encoder.
     lr_vit_layer_decay: float = Field(default=0.8, gt=0.0)
-    lr_component_decay: float = Field(default=0.7, gt=0.0)
+    # Zero intentionally freezes the encoder and decoder learning rates; a negative value reverses the decoder update.
+    lr_component_decay: float = Field(default=0.7, ge=0.0)
     # [0, 1): ``drop_path=1.0`` divides by a zero keep probability and turns every drop-path layer output into NaN.
     drop_path: float = Field(default=0.0, ge=0.0, lt=1.0)
     cls_loss_coef: float = 1.0

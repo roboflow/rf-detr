@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- `TrainConfig` rejects a non-positive `lr_vit_layer_decay` or `lr_component_decay` when it is built, naming the field. Both scale per-parameter learning rates multiplicatively and neither was validated. `lr_vit_layer_decay` is raised to a per-depth power, so a negative rate alternates sign with depth and sends some ViT blocks to the optimizer with a negative learning rate, ascending the loss for those blocks while the rest descend; a negative `lr_component_decay` makes the decoder learning rate negative the same way, while the backbone path squares the same field. Zero freezes every ViT block at a zero learning rate while the non-block backbone parameters keep the full rate, a partial freeze `freeze_encoder` already expresses. Rates above 1 stay valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
+- `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
 
 ## [1.12.1] — 2026-11-12
 

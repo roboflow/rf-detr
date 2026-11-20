@@ -201,6 +201,24 @@ class TestGetParamDict:
 
         assert any(group["lr"] < 0 for group in get_param_dict(args, model))
 
+    def test_zero_component_decay_freezes_encoder_and_decoder_rates(
+        self, nano_model_and_args: tuple[LWDETR, Any]
+    ) -> None:
+        """Zero component decay leaves other trainable parameters at the base rate."""
+        model, args = nano_model_and_args
+        args.lr_component_decay = TrainConfig(
+            dataset_dir=".", output_dir=".", lr_component_decay=0.0
+        ).lr_component_decay
+
+        rates = {id(p): group["lr"] for group in get_param_dict(args, model) for p in group["params"]}
+        encoder = {id(p) for p in model.backbone[0].encoder.parameters() if p.requires_grad}
+        decoder = {id(p) for p in model.transformer.decoder.parameters() if p.requires_grad}
+        other = rates.keys() - encoder - decoder
+
+        assert encoder and decoder and other
+        assert {rates[p] for p in encoder | decoder} == {0.0}
+        assert {rates[p] for p in other} == {args.lr}
+
     def test_no_empty_group(self, nano_model_and_args: tuple[LWDETR, Any]) -> None:
         """An empty group would reach the optimizer as a no-op group; buckets are built from real parameters."""
         model, args = nano_model_and_args
