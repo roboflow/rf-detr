@@ -14,9 +14,9 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 |      Size       | FP32 AP<sub>50:95</sub> | FP16 AP<sub>50:95</sub> | INT8 AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
 | :-------------: | :---------------------: | :---------------------: | :---------------------: | :--------: | :--------: | :--------: |
-|   Atto (A) △    |          30.7           |          30.6           |         30.4 ‡          |    7.4     |  380x380   |  PML 1.0   |
-|   Femto (F) △   |          37.6           |          37.6           |         37.4 ‡          |    7.9     |  384x384   |  PML 1.0   |
-|   Pico (P) △    |          41.7           |          41.6           |         41.0 ‡          |    8.4     |  560x560   |  PML 1.0   |
+|   Atto (A) △    |          30.7           |          30.6           |  30.4 ‡ (23.7 before)   |    7.4     |  380x380   |  PML 1.0   |
+|   Femto (F) △   |          37.6           |          37.6           |  37.4 ‡ (28.9 before)   |    7.9     |  384x384   |  PML 1.0   |
+|   Pico (P) △    |          41.7           |          41.6           |  41.0 ‡ (33.2 before)   |    8.4     |  560x560   |  PML 1.0   |
 |    Nano (N)     |          48.0           |          48.0           |          47.6           |    30.5    |  384x384   | Apache 2.0 |
 |    Small (S)    |          52.8           |          52.8           |          52.3           |    32.1    |  512x512   | Apache 2.0 |
 |   Medium (M)    |          54.7           |          54.6           |          54.0           |    33.7    |  576x576   | Apache 2.0 |
@@ -26,7 +26,7 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 > △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`.
 >
-> ‡ TensorRT INT8 engine built with the placement that keeps the MLPs of the first six PE-Core-T backbone blocks in FP16. The INT8 placement of Atto, Femto and Pico changed after the run that produced the rest of this column, so these three cells come from a separate one-off run on the same GPU (NVIDIA RTX PRO 6000 Blackwell Server Edition, rfdetr 1.13.0.dev0 at commit `167da321`, rfdetr_plus 1.3.0, TensorRT 11.4.0.106, all 5000 val2017 images, same scoring as above), not from `coco-accuracy.ipynb`; they are replaced by that notebook's next run. In that run INT8 was 0.3, 0.3 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.7 below TensorRT FP16 on the three sizes; on the T4, L4 and A100 the INT8 loss against TensorRT FP16 was between 0.2 and 0.7 AP as well. INT8 and FP16 engines of these three sizes run within 5% of each other end to end, so prefer FP16 unless you need INT8 for another reason.
+> ‡ TensorRT INT8 engine built with the placement that keeps the MLPs of the first six PE-Core-T backbone blocks in FP16. **Earlier `rfdetr` releases quantized those MLPs and lost 7.0, 8.7 and 8.5 AP in TensorRT INT8 against PyTorch FP32 on Atto, Femto and Pico; the values in brackets are those engines, scored by `coco-accuracy.ipynb` in the run that produced the rest of this column. With such a release, use FP16 for these three sizes.** The placement then changed, so the new values come from a separate one-off run on the same GPU (NVIDIA RTX PRO 6000 Blackwell Server Edition, rfdetr 1.13.0.dev0 at commit `167da321`, rfdetr_plus 1.3.0, TensorRT 11.4.0.106, all 5000 val2017 images, same scoring as above), not from `coco-accuracy.ipynb`; they are replaced by that notebook's next run. In that run INT8 was 0.3, 0.3 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.7 below TensorRT FP16 on the three sizes; on the T4, L4 and A100 the INT8 loss against TensorRT FP16 was between 0.2 and 0.7 AP as well. INT8 and FP16 engines of these three sizes run within 5% of each other end to end, so prefer FP16 unless you need INT8 for another reason.
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
