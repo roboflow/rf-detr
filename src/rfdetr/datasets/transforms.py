@@ -39,6 +39,7 @@ from rfdetr.datasets._aug_utils import (
     HFLIP_TRANSFORM_NAMES,
     HORIZONTAL_FLIP_ALIAS_NAMES,
     IMAGE_LEVEL_TARGET_FIELDS,
+    cycle_channel_stats,
     filter_keypoint_hflip_augmentations,
 )
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
@@ -53,7 +54,11 @@ class Normalize:
         mean: tuple[float, ...] = (0.485, 0.456, 0.406),
         std: tuple[float, ...] = (0.229, 0.224, 0.225),
     ) -> None:
+        self._mean = tuple(mean)
+        self._std = tuple(std)
         self._normalize = _TVNormalize(mean, std)
+        # Normalizers for other channel counts, built on first use.
+        self._cycled: dict[int, _TVNormalize] = {}
 
     def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
         """Normalize image and convert target coordinates to relative format.
@@ -61,7 +66,9 @@ class Normalize:
         Applies ImageNet-style channel normalization to the image, then converts
         bounding boxes from absolute xyxy pixel coordinates to normalized cxcywh
         format (divided by ``[w, h, w, h]``) and scales keypoint x/y by image
-        width/height respectively.
+        width/height respectively.  An image with another channel count than
+        the configured statistics reuses them in order, so a fourth channel is
+        normalized with the first mean and standard deviation.
 
         Args:
             image: CHW float tensor to normalize.
@@ -82,8 +89,18 @@ class Normalize:
             >>> out_img, out_tgt = normalize(img, None)
             >>> out_tgt is None
             True
+            >>> normalize(torch.zeros(4, 64, 64), None)[0].shape
+            torch.Size([4, 64, 64])
         """
-        image = self._normalize(image)
+        normalize = self._normalize
+        channels = image.shape[-3]
+        if channels != len(self._mean):
+            if channels not in self._cycled:
+                self._cycled[channels] = _TVNormalize(
+                    cycle_channel_stats(self._mean, channels), cycle_channel_stats(self._std, channels)
+                )
+            normalize = self._cycled[channels]
+        image = normalize(image)
         if target is None:
             return image, None
         target = target.copy()

@@ -9,7 +9,8 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRNanoConfig
-from rfdetr.inference import _adapt_input_conv, _build_model_context
+from rfdetr.inference import _build_model_context
+from rfdetr.models.weights import _adapt_input_conv
 from tests._markers import _requires_peft
 
 

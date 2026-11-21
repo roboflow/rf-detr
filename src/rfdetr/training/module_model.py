@@ -40,7 +40,12 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
-from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
+from rfdetr.models.weights import (
+    adapt_input_channels,
+    apply_lora,
+    interpolate_position_embeddings,
+    load_pretrain_weights,
+)
 from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
@@ -475,6 +480,8 @@ class RFDETRModelModule(LightningModule):
         if model_config.backbone_lora:
             # No-op when load_pretrain_weights already wrapped the encoder to load a LoRA checkpoint.
             apply_lora(self.model)
+        # Same stem adaptation as the prediction build, so training takes ``num_channels`` inputs too.
+        adapt_input_channels(self.model, model_config.num_channels, model_config.encoder)
 
         # Build criterion/postprocessors after potential num_classes alignment so
         # they are constructed with a config that matches the current model head.
