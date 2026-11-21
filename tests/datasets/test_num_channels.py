@@ -8,6 +8,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -17,7 +18,7 @@ from pytest_mock import MockerFixture
 
 from rfdetr.datasets import transforms
 from rfdetr.datasets._torchvision import Resize
-from rfdetr.datasets.coco import CocoDetection
+from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.io_utils import decode_image, decode_image_bytes, decode_pil_image, decode_pil_image_bytes
 from rfdetr.datasets.save_grids import denormalize_for_display
 from rfdetr.datasets.transforms import Normalize
@@ -292,6 +293,27 @@ class TestResize:
         resized, _ = Resize((4, 4))(Image.fromarray(pixels, "RGBA"), None)
 
         np.testing.assert_array_equal(np.asarray(resized)[..., :3], np.full((4, 4, 3), 200, dtype=np.uint8))
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(make_coco_transforms, id="aspect"),
+            pytest.param(make_coco_transforms_square_div_64, id="square"),
+        ],
+    )
+    @pytest.mark.parametrize("image_set", ["val", "test"])
+    def test_evaluation_pipeline_keeps_color_where_the_fourth_plane_is_zero(
+        self, build: Callable[..., Any], image_set: str
+    ) -> None:
+        """A zero in the fourth plane, a natural "no data" value, leaves the RGB of a validation image intact."""
+        pixels = np.full((60, 80, 4), 200, dtype=np.uint8)
+        pixels[20:40, 20:60, 3] = 0
+        target = {"boxes": torch.tensor([[20.0, 20.0, 60.0, 40.0]]), "labels": torch.tensor([1])}
+
+        image, _ = build(image_set, 128)(Image.fromarray(pixels, "RGBA"), target)
+
+        expected = image[:3, :1, :1].expand_as(image[:3])
+        torch.testing.assert_close(image[:3], expected)
 
 
 class TestDenormalizeForDisplay:
