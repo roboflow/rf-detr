@@ -507,7 +507,7 @@ class TestShiftTTAPredict:
 
 
 class TestShiftTTAClassThresholds:
-    """Per-class thresholds on a two-class model whose class ``a`` fuses to 0.55 and class ``b`` to 0.4 over two passes."""
+    """Per-class thresholds on a two-class model: class ``a`` fuses to 0.55, class ``b`` to 0.4."""
 
     @pytest.mark.parametrize(
         ("thresholds", "kept"),
