@@ -3281,7 +3281,8 @@ class RFDETR:
                 model pixels (diagonally, on a canvas one ``patch_size * num_windows`` block larger, so nothing is
                 cropped), and the matching detections are averaged: same class, box IoU above 0.6, a pass that
                 missed the object counting as 0. ``2`` or ``4`` is a good choice; it costs ``N`` forward passes.
-                Not supported for keypoint models or with a model optimized for a fixed resolution.
+                Must be an integer from 1 to the patch size, and keypoint models accept only ``1``; both are checked
+                before any image is read.
             **kwargs:
                 Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since
                 v1.12.0 and will raise TypeError in v2.0.0. The source options of
@@ -3344,7 +3345,9 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is
-                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.
+                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN. Also if
+                ``shift_tta`` is not an integer from 1 to the patch size (``True`` and ``1.0`` included) or is above 1
+                for a keypoint model; both are checked before any image is read.
 
         Examples:
             Skipped because this example requires pretrained weights and a local image file.

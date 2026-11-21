@@ -16,7 +16,9 @@ maps each pass back to the image, and averages the matching detections of all pa
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import copy
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -141,20 +143,105 @@ def map_to_image(
     return mapped
 
 
-def fuse_passes(passes: list[Detections]) -> Detections:
+def _group_score(confidence: np.ndarray[Any, Any], members: list[int], num_passes: int) -> float:
+    """Return a group's fused score: the sum of its members' scores over the number of passes.
+
+    A pass with no member in the group adds 0, so the score is the mean over all passes.
+
+    Args:
+        confidence: Float64 scores of every detection, in merged order.
+        members: The group's rows.
+        num_passes: Number of passes.
+
+    Returns:
+        The fused score.
+
+    Examples:
+        >>> _group_score(np.array([0.9, 0.2, 0.7]), [0, 1], num_passes=2)
+        0.55
+    """
+    return float(confidence[members].sum() / num_passes)
+
+
+def group_passes(passes: list[Detections], can_seed: np.ndarray[Any, Any] | None = None) -> list[list[int]]:
+    """Group the detections of several shifted passes over the same image that are the same object.
+
+    Rows are numbered as in ``Detections.merge(passes)``: the rows of every pass, one pass after another. Detections are
+    visited highest score first, ties in row order. Each unused detection that may seed starts a group, which then takes
+    at most one unused detection from every other pass: its highest-scoring one of the same class with box IoU above
+    0.6, the lower row on a tie.
+
+    A group never scores more than its seed, because every member scored at most the seed's score when the seed was
+    visited. A caller that keeps only groups scoring above a per-class threshold can therefore let only the rows above
+    their class's threshold seed: each such row of a class is visited before every row of that class it leaves out, and
+    a group takes only rows of its seed's class, so every group that can be kept comes out the same.
+
+    Args:
+        passes: One ``Detections`` per pass, each with ``confidence`` and ``class_id``.
+        can_seed: Per merged row, whether it may start a group. ``None`` lets every row start one.
+
+    Returns:
+        Each group's rows, its seed first and then its other members in pass order. Groups are sorted by fused score
+        (the sum of the members' scores divided by the number of passes), highest first, ties in seed order.
+
+    Examples:
+        >>> import supervision as sv
+        >>> a = sv.Detections(xyxy=np.array([[0, 0, 10, 10]], np.float32), confidence=np.array([0.9], np.float32),
+        ...                   class_id=np.array([0]))
+        >>> b = sv.Detections(xyxy=np.array([[1, 1, 11, 11], [50, 50, 60, 60]], np.float32),
+        ...                   confidence=np.array([0.2, 0.6], np.float32), class_id=np.array([0, 0]))
+        >>> group_passes([a, b])
+        [[0, 1], [2]]
+        >>> group_passes([a, b], can_seed=np.array([True, False, False]))
+        [[0, 1]]
+    """
+    from supervision.detection.utils.iou_and_nms import box_iou_batch
+
+    source = np.repeat(np.arange(len(passes)), [len(p) for p in passes])
+    xyxy = np.concatenate([p.xyxy for p in passes])
+    confidence = np.concatenate([np.asarray(p.confidence, dtype=np.float64) for p in passes])
+    class_id = np.concatenate([np.asarray(p.class_id) for p in passes])
+    seeds = np.ones(len(source), dtype=bool) if can_seed is None else np.asarray(can_seed, dtype=bool)
+    used = np.zeros(len(source), dtype=bool)
+    groups: list[list[int]] = []
+    scores: list[float] = []
+    for i in np.argsort(-confidence, kind="stable"):
+        if used[i] or not seeds[i]:
+            continue
+        used[i] = True
+        members = [int(i)]
+        # One seed's IoU row at a time: every pass keeps hundreds of low-score rows, too many for a full IoU matrix.
+        candidates = np.flatnonzero(~used & (class_id == class_id[i]) & (source != source[i]))
+        candidates = candidates[box_iou_batch(xyxy[i : i + 1], xyxy[candidates])[0] > _SAME_OBJECT_IOU]
+        if candidates.size:
+            # The highest score, not the highest IoU: DETR often puts a near-copy of a box on a low-score query. Sorted
+            # by pass, then score, highest first, then row, the first candidate of each pass is the one it contributes.
+            candidates = candidates[np.lexsort((candidates, -confidence[candidates], source[candidates]))]
+            _, first = np.unique(source[candidates], return_index=True)
+            picked = candidates[first]
+            used[picked] = True
+            members.extend(int(j) for j in picked)
+        groups.append(members)
+        scores.append(_group_score(confidence, members, len(passes)))
+    return [groups[r] for r in np.argsort(-np.array(scores), kind="stable")]
+
+
+def fuse_passes(passes: list[Detections], groups: list[list[int]] | None = None) -> Detections:
     """Average the detections of several shifted passes over the same image.
 
-    Detections are grouped greedily, highest score first: each group takes at most one detection from every other
-    pass, its highest-scoring one of the same class with box IoU above 0.6. A group's score is the sum of its scores
-    divided by the number of passes, so a pass that missed the object counts as a score of 0. Its box is the mean box,
-    its mask (if any) keeps the pixels that at least half of its masks cover, and its other fields come from its
-    highest-scoring detection.
+    Each group of matching detections from :func:`group_passes` becomes one detection. Its score is the sum of its
+    members' scores divided by the number of passes, so a pass that missed the object counts as a score of 0 and a pass
+    that scored it low still counts at its own score. Its box is the mean box, and its class and other ``data`` fields
+    come from its seed, its highest-scoring detection. Masks are not fused here: :func:`vote_masks` fuses them from
+    the mask logits, for the groups the caller keeps.
 
     Args:
         passes: One ``Detections`` per pass, with the same ``data`` keys.
+        groups: Groups of merged rows from :func:`group_passes`, seed first. ``None`` groups every detection.
 
     Returns:
-        One detection per group, sorted by score, highest first.
+        One detection per group, in the order of ``groups``: by default sorted by score, highest first. When every pass
+        is empty, a copy of the first pass, which keeps the passes' ``data`` keys and dtypes.
 
     Examples:
         >>> import supervision as sv
@@ -167,51 +254,56 @@ def fuse_passes(passes: list[Detections]) -> Detections:
         ([[0.5, 0.5, 10.5, 10.5]], [0.7])
     """
     from supervision import Detections
-    from supervision.detection.utils.iou_and_nms import box_iou_batch
 
+    if passes and all(len(detections) == 0 for detections in passes):
+        # Detections.merge of empty inputs returns Detections.empty(), which drops the passes' data keys and dtypes.
+        return copy.deepcopy(passes[0])
+    groups = group_passes(passes) if groups is None else groups
     merged = Detections.merge(passes)
-    if len(merged) == 0:
-        return merged
-    source = np.repeat(np.arange(len(passes)), [len(p) for p in passes])
     confidence = np.asarray(merged.confidence, dtype=np.float64)
-    class_id = np.asarray(merged.class_id)
-    mask = None if merged.mask is None else np.asarray(merged.mask, dtype=bool)
-    iou = box_iou_batch(merged.xyxy, merged.xyxy)
-    used = np.zeros(len(merged), dtype=bool)
-    seeds: list[int] = []
-    boxes: list[np.ndarray] = []
-    scores: list[float] = []
-    masks: list[np.ndarray] = []
-    for i in np.argsort(-confidence, kind="stable"):
-        if used[i]:
-            continue
-        used[i] = True
-        members = [int(i)]
-        for k in range(len(passes)):
-            if k == source[i]:
-                continue
-            candidates = np.flatnonzero(~used & (source == k) & (class_id == class_id[i]) & (iou[i] > _SAME_OBJECT_IOU))
-            if candidates.size:
-                # The highest score, not the highest IoU: DETR often puts a near-copy of a box on a low-score query.
-                j = int(candidates[np.argmax(confidence[candidates])])
-                used[j] = True
-                members.append(j)
-        seeds.append(int(i))
-        boxes.append(merged.xyxy[members].mean(axis=0))
-        scores.append(float(confidence[members].sum() / len(passes)))
-        if mask is not None:
-            masks.append(mask[members].mean(axis=0) >= 0.5)
-
-    rank = np.argsort(-np.array(scores), kind="stable")
-    order = np.array(seeds)[rank]
+    seeds = [members[0] for members in groups]
+    boxes = [merged.xyxy[members].mean(axis=0) for members in groups]
     return Detections(
-        xyxy=np.stack(boxes)[rank].astype(merged.xyxy.dtype),
-        confidence=np.array(scores, dtype=np.asarray(merged.confidence).dtype)[rank],
-        class_id=class_id[order],
-        mask=np.stack(masks)[rank] if masks else None,
+        xyxy=np.array(boxes, dtype=merged.xyxy.dtype).reshape(-1, 4),
+        confidence=np.array(
+            [_group_score(confidence, members, len(passes)) for members in groups],
+            dtype=np.asarray(merged.confidence).dtype,
+        ),
+        class_id=np.asarray(merged.class_id)[seeds],
         data={
-            key: value[order] if isinstance(value, np.ndarray) else [value[i] for i in order]
+            key: value[seeds] if isinstance(value, np.ndarray) else [value[i] for i in seeds]
             for key, value in merged.data.items()
         },
         metadata=dict(merged.metadata),
     )
+
+
+def vote_masks(
+    mask_logits: Sequence[torch.Tensor], members: Sequence[Sequence[tuple[int, int]]], size: tuple[int, int]
+) -> torch.Tensor:
+    """Fuse each group's masks, keeping the pixels that at least half of its members cover.
+
+    A member's mask is its pass's mask logits for its query, resized to ``size`` and thresholded at 0, as
+    :class:`~rfdetr.models.postprocess.PostProcess` builds masks. Only the members passed in are resized, one group at
+    a time, so at most one group's planes are held at full size.
+
+    Args:
+        mask_logits: Per pass, one image's ``(Q, Hm, Wm)`` mask logits in the image's frame (see :func:`map_to_image`).
+        members: Per group, the ``(pass, query)`` of each member.
+        size: The ``(H, W)`` to resize the masks to.
+
+    Returns:
+        A ``(G, H, W)`` bool tensor on the device of ``mask_logits``.
+
+    Examples:
+        >>> logits = [torch.tensor([[[1.0, -1.0], [1.0, -1.0]]]), torch.tensor([[[1.0, 1.0], [-1.0, -1.0]]])]
+        >>> vote_masks(logits, [[(0, 0), (1, 0)], [(1, 0)]], size=(2, 2)).int().tolist()
+        [[[1, 1], [1, 0]], [[1, 1], [0, 0]]]
+    """
+    height, width = size
+    fused = torch.empty((len(members), height, width), dtype=torch.bool, device=mask_logits[0].device)
+    for g, group in enumerate(members):
+        planes = torch.stack([mask_logits[k][q] for k, q in group]).unsqueeze(1)
+        covered = F.interpolate(planes, size=(height, width), mode="bilinear", align_corners=False) > 0.0
+        fused[g] = covered.sum(dim=0)[0] * 2 >= len(group)
+    return fused
