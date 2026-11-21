@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-15T09:29:52">
+  <meta property="article:modified_time" content="2026-11-21T21:18:00">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-15T09:29:52",
+    "dateModified": "2026-11-21T21:18:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4478,7 +4478,7 @@ assert sys.version_info[:2] == (3, 12), (
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h3><p><code>WARMUP_RUNS</code> discards the first N inferences; <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch matrix every format below measures. <code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module.</p>
-<p><code>MODEL_SIZE</code> (nano, small, medium or large) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
+<p><code>MODEL_SIZE</code> (nano, small, medium or large; atto, femto, pico, xlarge and 2xlarge are Plus detection models and load only with <code>ACCEPT_PLATFORM_MODEL_LICENSE = True</code> after you accept PML 1.0) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
 </div>
 </div>
 </div>
@@ -4516,10 +4516,23 @@ assert sys.version_info[:2] == (3, 12), (
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="n">BenchmarkRows</span><span class="p">,</span> <span class="n">_artifact_size_mb</span><span class="p">,</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
 
-<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium or large</span>
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge</span>
 <span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
-<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="c1">#: `str.capitalize()` gives `Xlarge` and `2xlarge`, names no class carries.</span>
+<span class="n">CLASS_STEMS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"xlarge"</span><span class="p">:</span> <span class="s2">"XLarge"</span><span class="p">,</span> <span class="s2">"2xlarge"</span><span class="p">:</span> <span class="s2">"2XLarge"</span><span class="p">}</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">CLASS_STEMS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">MODEL_SIZE</span><span class="p">,</span><span class="w"> </span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">())</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
 <span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
+
+<span class="c1">#: The Plus detection sizes need `rfdetr_plus` and PML 1.0 acceptance; every Seg size and the other detection sizes are Apache 2.0.</span>
+<span class="n">PLUS_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"atto"</span><span class="p">,</span> <span class="s2">"femto"</span><span class="p">,</span> <span class="s2">"pico"</span><span class="p">,</span> <span class="s2">"xlarge"</span><span class="p">,</span> <span class="s2">"2xlarge"</span><span class="p">)</span>
+<span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">IS_PLUS</span> <span class="o">=</span> <span class="n">TASK</span> <span class="o">==</span> <span class="s2">"detection"</span> <span class="ow">and</span> <span class="n">MODEL_SIZE</span> <span class="ow">in</span> <span class="n">PLUS_SIZES</span>
+<span class="k">assert</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">IS_PLUS</span><span class="p">,</span> <span class="p">(</span>
+    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2"> is a Plus model: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."</span>
+<span class="p">)</span>
+<span class="k">assert</span> <span class="n">TASK</span> <span class="o">==</span> <span class="s2">"detection"</span> <span class="ow">or</span> <span class="n">MODEL_SIZE</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"atto"</span><span class="p">,</span> <span class="s2">"femto"</span><span class="p">,</span> <span class="s2">"pico"</span><span class="p">),</span> <span class="s2">"Atto, Femto and Pico are detection models."</span>
+<span class="c1"># The license keyword exists only on the Plus constructors.</span>
+<span class="n">MODEL_KWARGS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"accept_platform_model_license"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span> <span class="k">if</span> <span class="n">IS_PLUS</span> <span class="k">else</span> <span class="p">{}</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-3">import importlib.metadata
 import os
@@ -4536,10 +4549,23 @@ from rfdetr import RFDETRInference
 from rfdetr.export._benchmark import BenchmarkConfig, BenchmarkRows, _artifact_size_mb, cpu_brand, visualize_detections
 from rfdetr.export.benchmark import measure_latency, measure_memory
 
-MODEL_SIZE = "small"  # nano, small, medium or large
+MODEL_SIZE = "small"  # nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge
 TASK = "detection"  # "detection" or "segmentation"
-MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
-MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files</div>
+#: `str.capitalize()` gives `Xlarge` and `2xlarge`, names no class carries.
+CLASS_STEMS = {"xlarge": "XLarge", "2xlarge": "2XLarge"}
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{CLASS_STEMS.get(MODEL_SIZE, MODEL_SIZE.capitalize())}"  # class name in `rfdetr`
+MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files
+
+#: The Plus detection sizes need `rfdetr_plus` and PML 1.0 acceptance; every Seg size and the other detection sizes are Apache 2.0.
+PLUS_SIZES = ("atto", "femto", "pico", "xlarge", "2xlarge")
+ACCEPT_PLATFORM_MODEL_LICENSE = False
+IS_PLUS = TASK == "detection" and MODEL_SIZE in PLUS_SIZES
+assert ACCEPT_PLATFORM_MODEL_LICENSE or not IS_PLUS, (
+    f"{MODEL_SIZE} is a Plus model: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."
+)
+assert TASK == "detection" or MODEL_SIZE not in ("atto", "femto", "pico"), "Atto, Femto and Pico are detection models."
+# The license keyword exists only on the Plus constructors.
+MODEL_KWARGS = {"accept_platform_model_license": True} if IS_PLUS else {}</div>
 </div>
 </div>
 </div>
@@ -4790,14 +4816,14 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="o">**</span><span class="n">MODEL_KWARGS</span><span class="p">)</span>
     <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="n">pytorch_eager_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-8">with measure_memory() as mem:
-    model = getattr(rfdetr, MODEL_CLASS)(device="cpu")
+    model = getattr(rfdetr, MODEL_CLASS)(device="cpu", **MODEL_KWARGS)
     baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
 pytorch_eager_memory_mb = mem.delta_mb
 print(f"PyTorch baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
@@ -5642,7 +5668,7 @@ downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="setup">Setup<a class="anchor-link" href="#setup">¶</a></h3><p><code>WARMUP_RUNS</code> discards the first N inferences; <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch matrix every format below measures. <code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module.</p>
-<p><code>MODEL_SIZE</code> (nano, small, medium or large) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
+<p><code>MODEL_SIZE</code> (nano, small, medium or large; atto, femto, pico, xlarge and 2xlarge are Plus detection models and load only with <code>ACCEPT_PLATFORM_MODEL_LICENSE = True</code> after you accept PML 1.0) and <code>TASK</code> (detection or segmentation) pick the model every row measures. A segmentation call also decodes masks on the host, so its latencies are not comparable with detection, and the mAP rows stay box mAP for both tasks.</p>
 </div>
 </div>
 </div>
@@ -5680,10 +5706,23 @@ downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="n">BenchmarkRows</span><span class="p">,</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
 
-<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium or large</span>
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge</span>
 <span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
-<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="c1">#: `str.capitalize()` gives `Xlarge` and `2xlarge`, names no class carries.</span>
+<span class="n">CLASS_STEMS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"xlarge"</span><span class="p">:</span> <span class="s2">"XLarge"</span><span class="p">,</span> <span class="s2">"2xlarge"</span><span class="p">:</span> <span class="s2">"2XLarge"</span><span class="p">}</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">CLASS_STEMS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">MODEL_SIZE</span><span class="p">,</span><span class="w"> </span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">())</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
 <span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
+
+<span class="c1">#: The Plus detection sizes need `rfdetr_plus` and PML 1.0 acceptance; every Seg size and the other detection sizes are Apache 2.0.</span>
+<span class="n">PLUS_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"atto"</span><span class="p">,</span> <span class="s2">"femto"</span><span class="p">,</span> <span class="s2">"pico"</span><span class="p">,</span> <span class="s2">"xlarge"</span><span class="p">,</span> <span class="s2">"2xlarge"</span><span class="p">)</span>
+<span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">IS_PLUS</span> <span class="o">=</span> <span class="n">TASK</span> <span class="o">==</span> <span class="s2">"detection"</span> <span class="ow">and</span> <span class="n">MODEL_SIZE</span> <span class="ow">in</span> <span class="n">PLUS_SIZES</span>
+<span class="k">assert</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">IS_PLUS</span><span class="p">,</span> <span class="p">(</span>
+    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2"> is a Plus model: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."</span>
+<span class="p">)</span>
+<span class="k">assert</span> <span class="n">TASK</span> <span class="o">==</span> <span class="s2">"detection"</span> <span class="ow">or</span> <span class="n">MODEL_SIZE</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"atto"</span><span class="p">,</span> <span class="s2">"femto"</span><span class="p">,</span> <span class="s2">"pico"</span><span class="p">),</span> <span class="s2">"Atto, Femto and Pico are detection models."</span>
+<span class="c1"># The license keyword exists only on the Plus constructors.</span>
+<span class="n">MODEL_KWARGS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"accept_platform_model_license"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span> <span class="k">if</span> <span class="n">IS_PLUS</span> <span class="k">else</span> <span class="p">{}</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-23">import importlib.metadata
 import os
@@ -5700,10 +5739,23 @@ from rfdetr import RFDETRInference
 from rfdetr.export._benchmark import BenchmarkConfig, BenchmarkRows, cpu_brand, visualize_detections
 from rfdetr.export.benchmark import measure_latency, measure_memory
 
-MODEL_SIZE = "small"  # nano, small, medium or large
+MODEL_SIZE = "small"  # nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge
 TASK = "detection"  # "detection" or "segmentation"
-MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
-MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files</div>
+#: `str.capitalize()` gives `Xlarge` and `2xlarge`, names no class carries.
+CLASS_STEMS = {"xlarge": "XLarge", "2xlarge": "2XLarge"}
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{CLASS_STEMS.get(MODEL_SIZE, MODEL_SIZE.capitalize())}"  # class name in `rfdetr`
+MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files
+
+#: The Plus detection sizes need `rfdetr_plus` and PML 1.0 acceptance; every Seg size and the other detection sizes are Apache 2.0.
+PLUS_SIZES = ("atto", "femto", "pico", "xlarge", "2xlarge")
+ACCEPT_PLATFORM_MODEL_LICENSE = False
+IS_PLUS = TASK == "detection" and MODEL_SIZE in PLUS_SIZES
+assert ACCEPT_PLATFORM_MODEL_LICENSE or not IS_PLUS, (
+    f"{MODEL_SIZE} is a Plus model: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."
+)
+assert TASK == "detection" or MODEL_SIZE not in ("atto", "femto", "pico"), "Atto, Femto and Pico are detection models."
+# The license keyword exists only on the Plus constructors.
+MODEL_KWARGS = {"accept_platform_model_license": True} if IS_PLUS else {}</div>
 </div>
 </div>
 </div>
@@ -5780,7 +5832,7 @@ artifacts: dict = {}</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=68b56779">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3459c77b">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5924,7 +5976,7 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=175fa687">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a1ac8247">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5935,7 +5987,7 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d057dbd7">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=033bdffa">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5954,14 +6006,14 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">rfdetr</span><span class="p">,</span> <span class="n">MODEL_CLASS</span><span class="p">)(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="o">**</span><span class="n">MODEL_KWARGS</span><span class="p">)</span>
     <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="n">pytorch_eager_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-28">with measure_memory() as mem:
-    model = getattr(rfdetr, MODEL_CLASS)(device="cpu")
+    model = getattr(rfdetr, MODEL_CLASS)(device="cpu", **MODEL_KWARGS)
     baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
 pytorch_eager_memory_mb = mem.delta_mb
 print(f"PyTorch baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
@@ -5972,7 +6024,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=965aef1b">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5e3083a9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -5983,7 +6035,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7a17a9bb">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=70551c31">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6040,7 +6092,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=04bb7b23">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5ca313af">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6051,7 +6103,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7866899f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb6bde28">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6156,7 +6208,7 @@ for batch in BATCH_SIZES:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=44e54d0d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=70100599">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6167,7 +6219,7 @@ for batch in BATCH_SIZES:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=bbcce390">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=63635e84">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6761,7 +6813,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 15, 2026 09:29:52 UTC">2026-11-15 09:29:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:18:00 UTC">2026-11-21 21:18:00</span>
   </span>
 
     

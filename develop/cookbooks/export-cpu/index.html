@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-20T19:50:55">
+  <meta property="article:modified_time" content="2026-11-21T21:18:00">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-20T19:50:55",
+    "dateModified": "2026-11-21T21:18:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4391,20 +4391,25 @@ the host resident-memory growth of constructing a runtime and running its first 
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
 
-<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium, large, or atto, femto, pico (Plus models)</span>
+<span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge</span>
 <span class="n">TASK</span> <span class="o">=</span> <span class="s2">"detection"</span>  <span class="c1"># "detection" or "segmentation"</span>
-<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
+<span class="c1">#: `str.capitalize()` gives `Xlarge` and `2xlarge`, names no class carries.</span>
+<span class="n">CLASS_STEMS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"xlarge"</span><span class="p">:</span> <span class="s2">"XLarge"</span><span class="p">,</span> <span class="s2">"2xlarge"</span><span class="p">:</span> <span class="s2">"2XLarge"</span><span class="p">}</span>
+<span class="n">MODEL_CLASS</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"RFDETR</span><span class="si">{</span><span class="s1">'Seg'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">CLASS_STEMS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">MODEL_SIZE</span><span class="p">,</span><span class="w"> </span><span class="n">MODEL_SIZE</span><span class="o">.</span><span class="n">capitalize</span><span class="p">())</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># class name in `rfdetr`</span>
 <span class="n">MODEL_ID</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"rfdetr-</span><span class="si">{</span><span class="s1">'seg-'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">TASK</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s1">'segmentation'</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># `inference-models` id, names the files</span>
 
 <span class="c1">#: The PE-Core-T Plus models: the only ones `export_cpu_onnx` supports. They need `rfdetr_plus` and PML 1.0 acceptance.</span>
 <span class="n">COMPACT_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"atto"</span><span class="p">,</span> <span class="s2">"femto"</span><span class="p">,</span> <span class="s2">"pico"</span><span class="p">)</span>
+<span class="c1">#: Every Plus detection size needs `rfdetr_plus` and PML 1.0 acceptance; Seg sizes and the other detection sizes are Apache 2.0.</span>
+<span class="n">PLUS_SIZES</span> <span class="o">=</span> <span class="n">COMPACT_SIZES</span> <span class="o">+</span> <span class="p">(</span><span class="s2">"xlarge"</span><span class="p">,</span> <span class="s2">"2xlarge"</span><span class="p">)</span>
 <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="k">assert</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="ow">or</span> <span class="n">MODEL_SIZE</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">COMPACT_SIZES</span><span class="p">,</span> <span class="p">(</span>
-    <span class="s2">"Atto, Femto and Pico are Plus models: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."</span>
+<span class="n">IS_PLUS</span> <span class="o">=</span> <span class="n">TASK</span> <span class="o">==</span> <span class="s2">"detection"</span> <span class="ow">and</span> <span class="n">MODEL_SIZE</span> <span class="ow">in</span> <span class="n">PLUS_SIZES</span>
+<span class="k">assert</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">IS_PLUS</span><span class="p">,</span> <span class="p">(</span>
+    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">MODEL_SIZE</span><span class="si">}</span><span class="s2"> is a Plus model: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."</span>
 <span class="p">)</span>
 <span class="k">assert</span> <span class="n">TASK</span> <span class="o">==</span> <span class="s2">"detection"</span> <span class="ow">or</span> <span class="n">MODEL_SIZE</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">COMPACT_SIZES</span><span class="p">,</span> <span class="s2">"Atto, Femto and Pico are detection models."</span>
 <span class="c1"># The license keyword exists only on the Plus constructors.</span>
-<span class="n">MODEL_KWARGS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"accept_platform_model_license"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span> <span class="k">if</span> <span class="n">MODEL_SIZE</span> <span class="ow">in</span> <span class="n">COMPACT_SIZES</span> <span class="k">else</span> <span class="p">{}</span>
+<span class="n">MODEL_KWARGS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"accept_platform_model_license"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span> <span class="k">if</span> <span class="n">IS_PLUS</span> <span class="k">else</span> <span class="p">{}</span>
 
 <span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_cpu"</span><span class="p">)</span>
 <span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -4448,20 +4453,25 @@ from rfdetr.export._benchmark import (
 )
 from rfdetr.export.benchmark import measure_latency, measure_memory
 
-MODEL_SIZE = "small"  # nano, small, medium, large, or atto, femto, pico (Plus models)
+MODEL_SIZE = "small"  # nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge
 TASK = "detection"  # "detection" or "segmentation"
-MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{MODEL_SIZE.capitalize()}"  # class name in `rfdetr`
+#: `str.capitalize()` gives `Xlarge` and `2xlarge`, names no class carries.
+CLASS_STEMS = {"xlarge": "XLarge", "2xlarge": "2XLarge"}
+MODEL_CLASS = f"RFDETR{'Seg' if TASK == 'segmentation' else ''}{CLASS_STEMS.get(MODEL_SIZE, MODEL_SIZE.capitalize())}"  # class name in `rfdetr`
 MODEL_ID = f"rfdetr-{'seg-' if TASK == 'segmentation' else ''}{MODEL_SIZE}"  # `inference-models` id, names the files
 
 #: The PE-Core-T Plus models: the only ones `export_cpu_onnx` supports. They need `rfdetr_plus` and PML 1.0 acceptance.
 COMPACT_SIZES = ("atto", "femto", "pico")
+#: Every Plus detection size needs `rfdetr_plus` and PML 1.0 acceptance; Seg sizes and the other detection sizes are Apache 2.0.
+PLUS_SIZES = COMPACT_SIZES + ("xlarge", "2xlarge")
 ACCEPT_PLATFORM_MODEL_LICENSE = False
-assert ACCEPT_PLATFORM_MODEL_LICENSE or MODEL_SIZE not in COMPACT_SIZES, (
-    "Atto, Femto and Pico are Plus models: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."
+IS_PLUS = TASK == "detection" and MODEL_SIZE in PLUS_SIZES
+assert ACCEPT_PLATFORM_MODEL_LICENSE or not IS_PLUS, (
+    f"{MODEL_SIZE} is a Plus model: set ACCEPT_PLATFORM_MODEL_LICENSE = True after accepting PML 1.0."
 )
 assert TASK == "detection" or MODEL_SIZE not in COMPACT_SIZES, "Atto, Femto and Pico are detection models."
 # The license keyword exists only on the Plus constructors.
-MODEL_KWARGS = {"accept_platform_model_license": True} if MODEL_SIZE in COMPACT_SIZES else {}
+MODEL_KWARGS = {"accept_platform_model_license": True} if IS_PLUS else {}
 
 EXPORT_DIR = Path("export_cpu")
 EXPORT_DIR.mkdir(exist_ok=True)
@@ -6222,7 +6232,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:18:00 UTC">2026-11-21 21:18:00</span>
   </span>
 
     
