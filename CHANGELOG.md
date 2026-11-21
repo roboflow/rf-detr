@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. ([#1287](https://github.com/roboflow/rf-detr/pull/1287))
 
+- `RFDETR.predict(..., shift_tta=N)` averages `N` passes with the image moved by fractions of a backbone patch, for confidence scores that change less when objects move by a few pixels ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). Detections match across passes by class and box IoU above 0.6; a pass that missed the object counts as score 0, a pass that scored it low counts at its own score, and `threshold` applies only to the averaged score. It costs `N` forward passes. On RF-DETR-N fine-tuned on RF100-VL `deeppcb`, moving test images by up to one patch flipped the keep-or-drop decision of 21.0% of the defects with one pass and 3.7% with `shift_tta=4`, while test mAP50-95 went from 0.702 to 0.708. Detection and segmentation models; keypoint models raise a `ValueError`.
+
 ### Documentation
 
 - Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).

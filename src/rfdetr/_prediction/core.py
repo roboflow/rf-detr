@@ -34,6 +34,15 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
+from rfdetr._prediction.shift_tta import (
+    fuse_passes,
+    group_passes,
+    map_to_image,
+    place_on_canvas,
+    shift_offsets,
+    validate_shift_tta,
+    vote_masks,
+)
 from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source
 from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
@@ -42,6 +51,8 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_t
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
+    from supervision import Detections
+
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
 
 logger = get_logger()
@@ -886,6 +897,7 @@ def _predict_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
+    shift_tta: int = 1,
 ) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -902,6 +914,8 @@ def _predict_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+        shift_tta: Number of sub-patch shifted passes to average; 1 runs a single plain pass. See
+            :func:`_predict_shifted`.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -910,14 +924,197 @@ def _predict_batch(
         TypeError: If ``threshold`` is neither a number nor a ``ClassThresholds``, such as a list or a ``dict``.
         ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
             or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
-            validation, ``threshold`` is NaN, or a ``ClassThresholds`` does not fit the model: it names a class that
-            ``class_names`` does not hold, has a different number of entries than ``class_names``, or is given to a
-            model without classes. A ``ClassThresholds`` also raises when the export's ``class_id_to_name`` does not
-            match ``class_names`` (more ids than names, names in another order, or an id outside
-            ``0..num_classes``).
+            validation, ``threshold`` is NaN, ``shift_tta`` is not an integer from 1 to the patch size (``True`` and
+            ``1.0`` included) or is above 1 for a keypoint model, or a ``ClassThresholds`` does not fit the model: it
+            names a class that ``class_names`` does not hold, has a different number of entries than ``class_names``,
+            or is given to a model without classes. A ``ClassThresholds`` also raises when the export's
+            ``class_id_to_name`` does not match ``class_names`` (more ids than names, names in another order, or an id
+            outside ``0..num_classes``).
     """
-    prepared = _prepare_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+    prepared = _prepare_batch(
+        context_factory, images, threshold, shape, patch_size, include_source_image, antialias, shift_tta=shift_tta
+    )
+    # `_prepare_batch` has checked `shift_tta` is an int, not a bool, so `!= 1` cannot let `True` or `1.0` through.
+    if shift_tta != 1:
+        return _predict_shifted(prepared, shift_tta, patch_size)
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
+
+
+@torch.inference_mode()
+def _predict_shifted(prepared: _PreparedBatch, shift_tta: int, patch_size: int | None) -> _PredictionOutput:
+    """Run a prepared batch at ``shift_tta`` sub-patch offsets and average the matching detections.
+
+    Each pass places the batch at an offset of ``i * patch_size / shift_tta`` pixels (down and right) on a canvas
+    one ``patch_size * num_windows`` block larger, then maps the outputs back to the image. Each pass keeps every
+    top-k detection scoring above 0, with no threshold of its own, so the fused score of
+    :func:`~rfdetr._prediction.shift_tta.fuse_passes` is the plain mean over the passes; ``threshold`` applies to that
+    fused score only. Masks are built only for the detections kept.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        shift_tta: Number of passes, from 2 to the patch size.
+        patch_size: Backbone patch size, or ``None`` for the model's own.
+
+    Returns:
+        One Supervision result or a list matching the input container.
+    """
+    context = prepared.context
+    # `_prepare_batch` has already checked `shift_tta` against this patch size and refused keypoint models.
+    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
+    margin = patch_size * getattr(context.config, "num_windows", 1)
+    size = (prepared.batch_tensor.shape[2], prepared.batch_tensor.shape[3])
+    candidates: list[list[_ShiftCandidates]] = []
+    # Mask logits stay at mask-head resolution until fusion has decided which detections are kept.
+    mask_logits: list[torch.Tensor | None] = []
+    for offset in shift_offsets(patch_size, shift_tta):
+        outputs = context.run(place_on_canvas(prepared.batch_tensor, offset, margin))
+        outputs = map_to_image(outputs, offset, size, margin)
+        candidates.append(_shift_candidates(context.postprocess, outputs, prepared.target_sizes))
+        mask_logits.append(outputs.get("pred_masks"))
+
+    thresholds = (
+        None if prepared.threshold_by_class_id is None else prepared.threshold_by_class_id.float().cpu().numpy()
+    )
+    results: list[_PredictionResult] = [
+        _fuse_shifted_image(
+            prepared,
+            i,
+            [pass_candidates[i] for pass_candidates in candidates],
+            [None if logits is None else logits[i] for logits in mask_logits],
+            thresholds,
+        )
+        for i in range(len(prepared.orig_sizes))
+    ]
+    return results[0] if prepared.single_input else results
+
+
+@dataclass(frozen=True)
+class _ShiftCandidates:
+    """One image's detections from one shifted pass, before fusion.
+
+    Attributes:
+        detections: Boxes in source pixels, scores and class ids of every top-k row scoring above 0.
+        queries: The query each row comes from, to find its mask logits.
+    """
+
+    detections: Detections
+    queries: np.ndarray[Any, Any]
+
+
+def _shift_candidates(
+    postprocess: PostProcess, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor
+) -> list[_ShiftCandidates]:
+    """Decode one shifted pass into every top-k row scoring above 0, per image, without masks.
+
+    Args:
+        postprocess: The model's postprocessor.
+        outputs: The pass's outputs, mapped back to the image's frame.
+        target_sizes: ``(B, 2)`` source heights and widths.
+
+    Returns:
+        One candidate set per image.
+
+    Examples:
+        >>> outputs = {"pred_logits": torch.tensor([[[2.0], [-200.0]]]), "pred_boxes": torch.full((1, 2, 4), 0.5)}
+        >>> [c.queries.tolist() for c in _shift_candidates(PostProcess(), outputs, torch.tensor([[10, 10]]))]
+        [[0]]
+    """
+    from supervision import Detections
+
+    scores, labels, boxes, queries = postprocess.select_queries(outputs, target_sizes)
+    # One copy to the host for the whole batch. Class ids and query indices stay far below 2**24, so float32 holds
+    # them exactly; boxes and scores are float32, as the plain path returns them.
+    rows = torch.cat(
+        [boxes.float(), scores.float().unsqueeze(-1), labels.float().unsqueeze(-1), queries.float().unsqueeze(-1)],
+        dim=-1,
+    ).cpu()
+    candidates = []
+    for image_rows in rows:
+        # Floor 0, the strict comparison of the plain path: a row whose score underflowed to 0 adds nothing to a mean.
+        kept_rows = image_rows[image_rows[:, 4] > 0.0].numpy()
+        detections = Detections(
+            xyxy=kept_rows[:, :4],
+            confidence=kept_rows[:, 4],
+            class_id=kept_rows[:, 5].astype(np.int64),
+        )
+        candidates.append(_ShiftCandidates(detections=detections, queries=kept_rows[:, 6].astype(np.int64)))
+    return candidates
+
+
+def _above_threshold(
+    detections: Detections, score_floor: float, thresholds: np.ndarray[Any, Any] | None
+) -> np.ndarray[Any, Any]:
+    """Return which detections score above their threshold, with the comparison the plain path uses.
+
+    Args:
+        detections: Detections with float32 scores.
+        score_floor: The single threshold, used when ``thresholds`` is ``None``.
+        thresholds: The per-class float32 table, ending in an ``inf`` sentinel, or ``None``.
+
+    Returns:
+        One bool per detection.
+
+    Examples:
+        >>> import supervision as sv
+        >>> scores, class_ids = np.float32([0.5, 0.7]), np.array([0, 5])
+        >>> detections = sv.Detections(xyxy=np.zeros((2, 4)), confidence=scores, class_id=class_ids)
+        >>> _above_threshold(detections, 0.6, None).tolist()
+        [False, True]
+        >>> _above_threshold(detections, 0.0, np.float32([0.4, np.inf])).tolist()
+        [True, False]
+    """
+    scores = np.asarray(detections.confidence)
+    if thresholds is None:
+        return np.asarray(scores > score_floor, dtype=bool)
+    # -1 and every id past the table read the trailing inf sentinel, as in _decode_batch.
+    row_thresholds = thresholds[np.clip(np.asarray(detections.class_id), -1, len(thresholds) - 1)]
+    return np.asarray(scores > row_thresholds, dtype=bool)
+
+
+def _fuse_shifted_image(
+    prepared: _PreparedBatch,
+    index: int,
+    passes: list[_ShiftCandidates],
+    mask_logits: list[torch.Tensor | None],
+    thresholds: np.ndarray[Any, Any] | None,
+) -> Detections:
+    """Fuse one image's shifted passes, keep the fused detections above threshold, and build their masks.
+
+    Only rows above their own threshold may seed a group (see :func:`~rfdetr._prediction.shift_tta.group_passes`):
+    every group that can be kept stays the same, and the many low-score rows of every pass still join groups as members.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        index: The image's position in the batch.
+        passes: The image's candidates from every pass.
+        mask_logits: The image's ``(Q, Hm, Wm)`` mask logits from every pass, or ``None`` for each pass of a detection
+            model.
+        thresholds: The per-class float32 threshold table, or ``None`` for the single ``prepared.score_floor``.
+
+    Returns:
+        The fused detections above threshold, highest score first.
+    """
+    from supervision import Detections
+
+    detections = [candidates.detections for candidates in passes]
+    seeds = _above_threshold(Detections.merge(detections), prepared.score_floor, thresholds)
+    groups = group_passes(detections, can_seed=seeds)
+    fused = fuse_passes(detections, groups)
+    keep = _above_threshold(fused, prepared.score_floor, thresholds)
+    kept = cast("Detections", fused[keep])
+    if mask_logits[0] is not None:
+        source = np.repeat(np.arange(len(passes)), [len(candidates.queries) for candidates in passes])
+        queries = np.concatenate([candidates.queries for candidates in passes])
+        kept_groups = [group for group, kept_group in zip(groups, keep) if kept_group]
+        members = [[(int(source[j]), int(queries[j])) for j in group] for group in kept_groups]
+        logits = cast("list[torch.Tensor]", mask_logits)
+        kept.mask = vote_masks(logits, members, prepared.orig_sizes[index]).cpu().numpy()
+    context = prepared.context
+    kept.data["source_shape"] = np.tile(np.array(prepared.orig_sizes[index], dtype=np.int64), (len(kept), 1))
+    kept.data["class_name"] = _class_names(np.asarray(kept.class_id), context.class_id_to_name, context.num_classes)
+    if prepared.include_source_image:
+        kept.metadata["source_image"] = prepared.source_images[index]
+    return kept
 
 
 @dataclass(frozen=True)
@@ -956,6 +1153,7 @@ def _prepare_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
+    shift_tta: int = 1,
 ) -> _PreparedBatch:
     """Read the batch's context, check its arguments and images, and build the model input on the context device.
 
@@ -970,6 +1168,7 @@ def _prepare_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize.
+        shift_tta: Number of shifted passes the caller will run; checked here, before any image is read.
 
     Returns:
         The model input and the data :func:`_decode_batch` needs.
@@ -991,6 +1190,9 @@ def _prepare_batch(
             raise ValueError(f"Batch size {batch_size} exceeds export maximum {context.max_batch_size}.")
 
     patch_size = _resolve_patch_size(patch_size, context.config, "predict")
+    # Every value, 1 included, is checked before any image is read, so `True` and `1.0` cannot pass as 1.
+    if validate_shift_tta(shift_tta, patch_size) != 1 and any(context.num_keypoints_per_class):
+        raise ValueError("shift_tta does not support keypoint models.")
     num_windows = getattr(context.config, "num_windows", 1)
     if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
         raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
@@ -1245,6 +1447,37 @@ def _prepare_batch(
     )
 
 
+def _class_names(
+    class_ids: np.ndarray[Any, Any], class_id_to_name: dict[int, str], background_id: int
+) -> np.ndarray[Any, Any]:
+    """Name each class id for a result's ``data["class_name"]``.
+
+    Explicit ``class_id_to_name`` entries take precedence, including at the background id. Only an unmapped background
+    id maps to ``"__background__"`` without warning. Other unmapped ids produce an empty string with a one-time
+    warning.
+
+    Args:
+        class_ids: The detections' class ids.
+        class_id_to_name: The model's class id to name map.
+        background_id: The no-object or background class id.
+
+    Returns:
+        An object array of names, one per class id.
+
+    Examples:
+        >>> _class_names(np.array([0, 1]), {0: "cat"}, background_id=1).tolist()
+        ['cat', '__background__']
+    """
+    truly_oob = [cid for cid in class_ids if cid not in class_id_to_name and cid != background_id]
+    if truly_oob:
+        logger.warning_once(
+            "predict() encountered unmapped class_id(s): %s — mapping to empty string",
+            truly_oob[:5],
+        )
+    class_names = [class_id_to_name.get(cid, "__background__" if cid == background_id else "") for cid in class_ids]
+    return np.array(class_names, dtype=object)
+
+
 @torch.inference_mode()
 def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]) -> _PredictionOutput:
     """Post-process one batch's model outputs, apply the confidence threshold, and build Supervision results.
@@ -1411,24 +1644,12 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
 
         # Attach class names so callers can map class_id → name without a
         # separate lookup. Always set data["class_name"] for a consistent interface.
-        #
-        # Explicit _class_id_to_name entries take precedence, including at the
-        # background sentinel. Only an unmapped sentinel maps to "__background__"
-        # without warning. Other unmapped IDs produce an empty string with a
-        # one-time warning.
         class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
         # Sentinel for the no-object / background class differs by model type.
         # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
         # Detection/segmentation models: the no-object slot is at index num_logit_slots.
         _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
-        truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
-        if truly_oob:
-            logger.warning_once(
-                "predict() encountered unmapped class_id(s): %s — mapping to empty string",
-                truly_oob[:5],
-            )
-        class_names = [_class_id_to_name.get(cid, "__background__" if cid == _bg_sentinel else "") for cid in class_ids]
-        detections.data["class_name"] = np.array(class_names, dtype=object)
+        detections.data["class_name"] = _class_names(class_ids, _class_id_to_name, _bg_sentinel)
 
         if has_keypoints and keypoints_array is not None:
             keypoint_data = dict(detections.data)

@@ -3221,6 +3221,7 @@ class RFDETR:
         include_source_image: bool = True,
         *,
         antialias: bool = False,
+        shift_tta: int = 1,
         **kwargs: Any,
     ) -> _PredictionOutput:
         """Performs model inference on the input images.
@@ -3272,6 +3273,16 @@ class RFDETR:
                 models; callers can override it with an explicit ``antialias`` argument. The lower-level
                 ``rfdetr.export`` runtime preprocessing helpers always resize with ``antialias=False``.
                 Defaults to ``False`` to preserve the existing inference behavior.
+            shift_tta:
+                Number of passes of sub-patch shift test-time augmentation; ``1`` (the default) runs one plain pass.
+                The backbone reads the image in ``patch_size`` squares, and a class score can change when an object
+                moves by a fraction of a square while its box stays put, enough to cross the threshold. With
+                ``shift_tta=N`` the image is predicted ``N`` times, moved by ``0, patch_size/N, 2*patch_size/N, ...``
+                model pixels (diagonally, on a canvas one ``patch_size * num_windows`` block larger, so nothing is
+                cropped), and the matching detections are averaged: same class, box IoU above 0.6, a pass that
+                missed the object counting as 0. ``2`` or ``4`` is a good choice; it costs ``N`` forward passes.
+                Must be an integer from 1 to the patch size, and keypoint models accept only ``1``; both are checked
+                before any image is read.
             **kwargs:
                 Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since
                 v1.12.0 and will raise TypeError in v2.0.0. The source options of
@@ -3334,7 +3345,9 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is
-                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.
+                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN. Also if
+                ``shift_tta`` is not an integer from 1 to the patch size (``True`` and ``1.0`` included) or is above 1
+                for a keypoint model; both are checked before any image is read.
 
         Examples:
             Skipped because this example requires pretrained weights and a local image file.
@@ -3342,6 +3355,10 @@ class RFDETR:
             >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
             >>> model = RFDETRSmall()  # doctest: +SKIP
             >>> detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP
+
+            Average four sub-patch shifted passes for steadier scores:
+
+            >>> detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)  # doctest: +SKIP
         """
         source_options = sorted(_SOURCE_PREDICT_OPTIONS.intersection(kwargs))
         if source_options:
@@ -3359,7 +3376,7 @@ class RFDETR:
         if isinstance(images, torch.Tensor) and images.ndim == 4:
             images = list(images.unbind(0))
         return _predict_batch(
-            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias
+            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias, shift_tta
         )
 
     def deploy_to_roboflow(
