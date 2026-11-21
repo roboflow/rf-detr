@@ -24,7 +24,7 @@ The end-to-end `RFDETRInference.predict` call (preprocessing, forward pass and p
 
 ## NVIDIA GPUs
 
-- **Configurations:** PyTorch CUDA graph FP16 is `model.inference()` with fp16 and a captured CUDA graph. TensorRT FP16 and INT8 are static engines from `RFDETR.export(format="tensorrt")`, loaded by `RFDETRInference`, and *graph* replays the same engine as a CUDA graph through the `cuda_graph` runtime option. The INT8 engines are calibrated on 128 train2017 images. Atto, Femto and Pico have no INT8 configuration, because they lose 7.0 to 8.7 AP in TensorRT INT8 and a faster artifact is not a usable answer when its accuracy is not acceptable.
+- **Configurations:** PyTorch CUDA graph FP16 is `model.inference()` with fp16 and a captured CUDA graph. TensorRT FP16 and INT8 are static engines from `RFDETR.export(format="tensorrt")`, loaded by `RFDETRInference`, and *graph* replays the same engine as a CUDA graph through the `cuda_graph` runtime option. The INT8 engines are calibrated on 128 train2017 images. Atto, Femto and Pico have no INT8 configuration in these runs, which predate the INT8 placement that keeps the MLPs of their first six backbone blocks in FP16; their TensorRT INT8 engines are timed in the next run of the cookbook.
 - **Run:** NVIDIA T4, NVIDIA L4, NVIDIA A100-SXM4-40GB and NVIDIA RTX PRO 6000 Blackwell Server Edition, one run of the cookbook per GPU on 2026-11-13, each with the versions in the [table below](#package-versions). Every engine was built on the GPU that timed it.
 - **Host:** the host CPU was not recorded, and a call includes host work, so a small model on a fast GPU can be limited by the host.
 

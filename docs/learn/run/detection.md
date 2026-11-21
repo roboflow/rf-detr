@@ -14,9 +14,9 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 |      Size       | PyTorch FP32 AP<sub>50:95</sub> | TensorRT FP16 AP<sub>50:95</sub> | TensorRT INT8 AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
 | :-------------: | :-----------------------------: | :------------------------------: | :------------------------------: | :--------: | :--------: | :--------: |
-|   Atto (A) △    |              30.7               |               30.6               |               23.7               |    7.4     |  380x380   |  PML 1.0   |
-|   Femto (F) △   |              37.6               |               37.6               |               28.9               |    7.9     |  384x384   |  PML 1.0   |
-|   Pico (P) △    |              41.7               |               41.6               |               33.2               |    8.4     |  560x560   |  PML 1.0   |
+|   Atto (A) △    |              30.7               |               30.6               |                —                 |    7.4     |  380x380   |  PML 1.0   |
+|   Femto (F) △   |              37.6               |               37.6               |                —                 |    7.9     |  384x384   |  PML 1.0   |
+|   Pico (P) △    |              41.7               |               41.6               |                —                 |    8.4     |  560x560   |  PML 1.0   |
 |    Nano (N)     |              48.0               |               48.0               |               47.6               |    30.5    |  384x384   | Apache 2.0 |
 |    Small (S)    |              52.8               |               52.8               |               52.3               |    32.1    |  512x512   | Apache 2.0 |
 |   Medium (M)    |              54.7               |               54.6               |               54.0               |    33.7    |  576x576   | Apache 2.0 |
@@ -24,7 +24,7 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 |  XLarge (XL) △  |              58.7               |               58.7               |               58.3               |   126.4    |  700x700   |  PML 1.0   |
 | 2XLarge (2XL) △ |              60.1               |               60.0               |               59.6               |   126.9    |  880x880   |  PML 1.0   |
 
-> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`. Atto, Femto and Pico lose 7.0 to 8.7 AP in TensorRT INT8 against PyTorch FP32, so prefer FP16 engines for them.
+> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`. The TensorRT INT8 AP of Atto, Femto and Pico is not listed: their INT8 placement changed after the run that produced this column (the MLPs of the first six backbone blocks now stay FP16), so the old values no longer describe the engines `rfdetr` builds. It is added from the next `coco-accuracy.ipynb` run.
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
@@ -92,7 +92,7 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
 Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
-- Atto, Femto and Pico (no INT8 column) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.
+- Atto, Femto and Pico (no INT8 column in these runs) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.
 - From Small up an INT8 engine is among the fastest on every GPU, except at Large on the A100, where FP16 graph alone is.
 - The 95th percentile stays within 1.21 times the median, except for PyTorch CUDA graph FP16 on the T4 at Atto, Femto and Pico (1.27 to 1.58 times).
 
