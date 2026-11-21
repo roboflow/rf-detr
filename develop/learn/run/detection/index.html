@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-20T19:50:55">
+  <meta property="article:modified_time" content="2026-11-21T21:14:52">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-20T19:50:55",
+    "dateModified": "2026-11-21T21:14:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3408,9 +3408,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <thead>
 <tr>
 <th style="text-align: center;">Size</th>
-<th style="text-align: center;">PyTorch FP32 AP<sub>50:95</sub></th>
-<th style="text-align: center;">TensorRT FP16 AP<sub>50:95</sub></th>
-<th style="text-align: center;">TensorRT INT8 AP<sub>50:95</sub></th>
+<th style="text-align: center;">FP32 AP<sub>50:95</sub></th>
+<th style="text-align: center;">FP16 AP<sub>50:95</sub></th>
+<th style="text-align: center;">INT8 AP<sub>50:95</sub></th>
 <th style="text-align: center;">Params (M)</th>
 <th style="text-align: center;">Resolution</th>
 <th style="text-align: center;">License</th>
@@ -3421,7 +3421,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Atto (A) △</td>
 <td style="text-align: center;">30.7</td>
 <td style="text-align: center;">30.6</td>
-<td style="text-align: center;">23.7</td>
+<td style="text-align: center;">30.4 ‡</td>
 <td style="text-align: center;">7.4</td>
 <td style="text-align: center;">380x380</td>
 <td style="text-align: center;">PML 1.0</td>
@@ -3430,7 +3430,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Femto (F) △</td>
 <td style="text-align: center;">37.6</td>
 <td style="text-align: center;">37.6</td>
-<td style="text-align: center;">28.9</td>
+<td style="text-align: center;">37.4 ‡</td>
 <td style="text-align: center;">7.9</td>
 <td style="text-align: center;">384x384</td>
 <td style="text-align: center;">PML 1.0</td>
@@ -3439,7 +3439,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td style="text-align: center;">Pico (P) △</td>
 <td style="text-align: center;">41.7</td>
 <td style="text-align: center;">41.6</td>
-<td style="text-align: center;">33.2</td>
+<td style="text-align: center;">41.0 ‡</td>
 <td style="text-align: center;">8.4</td>
 <td style="text-align: center;">560x560</td>
 <td style="text-align: center;">PML 1.0</td>
@@ -3501,7 +3501,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tbody>
 </table>
 <blockquote>
-<p>△ Requires the <code>rfdetr_plus</code> extension: <code>pip install rfdetr[plus]</code>. Atto, Femto and Pico lose 7.0 to 8.7 AP in TensorRT INT8 against PyTorch FP32, so prefer FP16 engines for them.</p>
+<p>△ Requires the <code>rfdetr_plus</code> extension: <code>pip install rfdetr[plus]</code>.</p>
+<p>‡ TensorRT INT8 engine built with the placement that keeps the MLPs of the first six PE-Core-T backbone blocks in FP16. The first INT8 placement for these sizes quantized those MLPs and lost 7.0, 8.7 and 8.5 AP against PyTorch FP32 on Atto, Femto and Pico (measured on a development build by <code>coco-accuracy.ipynb</code>; it was never released), and this placement replaced it before release. The values here come from a separate one-off run on the same GPU (NVIDIA RTX PRO 6000 Blackwell Server Edition, rfdetr 1.13.0.dev0 at commit <code>167da321</code>, rfdetr_plus 1.3.0, TensorRT 11.4.0.106, all 5000 val2017 images, same scoring as above), not from <code>coco-accuracy.ipynb</code>; they are replaced by that notebook's next run. In that run INT8 was 0.3, 0.3 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.7 below TensorRT FP16 on the three sizes; on the T4, L4 and A100 the INT8 loss against TensorRT FP16 was between 0.2 and 0.7 AP as well. INT8 and FP16 engines of these three sizes run within 5% of each other end to end, so prefer FP16 unless you need INT8 for another reason.</p>
 </blockquote>
 <div class="admonition info">
 <p class="admonition-title">How these numbers were obtained</p>
@@ -3872,7 +3873,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>.</p>
 <ul>
-<li>Atto, Femto and Pico (no INT8 column) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.</li>
+<li>Atto, Femto and Pico (no INT8 column in these runs) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.</li>
 <li>From Small up an INT8 engine is among the fastest on every GPU, except at Large on the A100, where FP16 graph alone is.</li>
 <li>The 95th percentile stays within 1.21 times the median, except for PyTorch CUDA graph FP16 on the T4 at Atto, Femto and Pico (1.27 to 1.58 times).</li>
 </ul>
@@ -4292,7 +4293,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:14:52 UTC">2026-11-21 21:14:52</span>
   </span>
 
     

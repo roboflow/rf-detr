@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-20T19:50:55">
+  <meta property="article:modified_time" content="2026-11-21T21:14:52">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-20T19:50:55",
+    "dateModified": "2026-11-21T21:14:52",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4023,7 +4023,7 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <li>The measurement is end to end: preprocessing, the forward pass, postprocessing and, for segmentation, decoding the masks on the host. It is not the model-only latency of the Benchmarks page.</li>
 <li>Every call uses the default <code>threshold=0.5</code> on <code>NUM_IMAGES</code> COCO val2017 images, each predicted once in the same order for every configuration. Latency is reported as the median call time with its 95th percentile, because one slow call (OS jitter, throttling) moves a mean but not a median.</li>
 <li>Nothing is detected or substituted for you. You choose <code>HARDWARE</code>; a missing device, package or runtime stops the notebook, and every predictor is checked against the runtime its configuration names before it is timed.</li>
-<li>This notebook does not score accuracy. Static INT8 loses most AP on the PE-Core-T models (Atto, Femto and Pico), so those never try INT8; see the AP columns of the Run pages. The compact CPU ONNX export (<code>onnx-compact</code>) is timed for those three models, and the accuracy cookbook scores it.</li>
+<li>This notebook does not score accuracy. Static ONNX and OpenVINO INT8 were never scored on the PE-Core-T models (Atto, Femto and Pico), so those never try them; their TensorRT INT8 engines keep the MLPs of the first six backbone blocks in FP16 and are timed, and the AP columns of the Run pages score them. The compact CPU ONNX export (<code>onnx-compact</code>) is timed for those three models, and the accuracy cookbook scores it.</li>
 </ul>
 <h2 id="choose-the-hardware-and-install">Choose the hardware and install<a class="anchor-link" href="#choose-the-hardware-and-install">¶</a></h2><p><code>HARDWARE</code> selects the runtimes to install and the configurations to try: <code>cuda</code> (NVIDIA GPU: PyTorch with a CUDA graph and TensorRT engines), <code>apple</code> (Apple Silicon: PyTorch on MPS and CoreML) or <code>cpu</code> (ONNX Runtime and OpenVINO on the CPU, plus PyTorch on the CPU). Set it before installing and restart the kernel after the install, so the recorded package versions are the ones in use; then run the cells again from the top.</p>
 </div>
@@ -4249,8 +4249,9 @@ warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)</div>
 <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span> <span class="o">=</span> <span class="kc">True</span>
 <span class="k">if</span> <span class="n">ACCEPT_PLATFORM_MODEL_LICENSE</span><span class="p">:</span>
     <span class="n">MODELS</span> <span class="o">+=</span> <span class="n">PLUS_MODELS</span>
-<span class="c1"># The PE-Core-T models lose 7.0 to 8.7 AP in static TensorRT INT8 (Run pages). No INT8 configuration is timed for</span>
-<span class="c1"># them on any hardware, because a faster INT8 artifact is not a usable answer when its accuracy was not checked.</span>
+<span class="c1"># Static ONNX and OpenVINO INT8 of the PE-Core-T models were not scored for accuracy, so no such configuration is timed</span>
+<span class="c1"># for them: a faster INT8 artifact is not a usable answer when its accuracy was not checked. Their TensorRT INT8 engines</span>
+<span class="c1"># keep the MLPs of the first six backbone blocks in FP16 and are timed.</span>
 <span class="n">INT8_EXCLUDED</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"RFDETRAtto"</span><span class="p">,</span> <span class="s2">"RFDETRFemto"</span><span class="p">,</span> <span class="s2">"RFDETRPico"</span><span class="p">)</span>
 <span class="c1"># `export_cpu_onnx` exists only on the PE-Core-T Plus models, so `onnx-compact` is timed for no other model.</span>
 <span class="n">COMPACT_MODELS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"RFDETRAtto"</span><span class="p">,</span> <span class="s2">"RFDETRFemto"</span><span class="p">,</span> <span class="s2">"RFDETRPico"</span><span class="p">)</span>
@@ -4310,8 +4311,9 @@ PLUS_MODELS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico", "RFDETRXLarge", "RFDET
 ACCEPT_PLATFORM_MODEL_LICENSE = True
 if ACCEPT_PLATFORM_MODEL_LICENSE:
     MODELS += PLUS_MODELS
-# The PE-Core-T models lose 7.0 to 8.7 AP in static TensorRT INT8 (Run pages). No INT8 configuration is timed for
-# them on any hardware, because a faster INT8 artifact is not a usable answer when its accuracy was not checked.
+# Static ONNX and OpenVINO INT8 of the PE-Core-T models were not scored for accuracy, so no such configuration is timed
+# for them: a faster INT8 artifact is not a usable answer when its accuracy was not checked. Their TensorRT INT8 engines
+# keep the MLPs of the first six backbone blocks in FP16 and are timed.
 INT8_EXCLUDED = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
 # `export_cpu_onnx` exists only on the PE-Core-T Plus models, so `onnx-compact` is timed for no other model.
 COMPACT_MODELS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
@@ -5198,7 +5200,7 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="measure-and-save-each-run">Measure and save each run<a class="anchor-link" href="#measure-and-save-each-run">¶</a></h2><p>List the model and configuration pairs still to measure; INT8 is skipped for <code>INT8_EXCLUDED</code>, and <code>onnx-compact</code> runs only for <code>COMPACT_MODELS</code>. Each run times one call per image after <code>NUM_WARMUP</code> untimed ones and appends its row at once so an interruption keeps every finished measurement. A configuration that fails to build, load or match its runtime stops the loop; fix the cause and rerun to continue from the saved rows.</p>
+<h2 id="measure-and-save-each-run">Measure and save each run<a class="anchor-link" href="#measure-and-save-each-run">¶</a></h2><p>List the model and configuration pairs still to measure; ONNX and OpenVINO INT8 are skipped for <code>INT8_EXCLUDED</code>, and <code>onnx-compact</code> runs only for <code>COMPACT_MODELS</code>. Each run times one call per image after <code>NUM_WARMUP</code> untimed ones and appends its row at once so an interruption keeps every finished measurement. A configuration that fails to build, load or match its runtime stops the loop; fix the cause and rerun to continue from the saved rows.</p>
 </div>
 </div>
 </div>
@@ -5225,7 +5227,8 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
     <span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">MODELS</span>
     <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">CONFIGS</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="s2">"int8"</span> <span class="ow">in</span> <span class="n">c</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">INT8_EXCLUDED</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="p">(</span><span class="n">c</span> <span class="o">==</span> <span class="s2">"onnx-compact"</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">COMPACT_MODELS</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="s2">"int8"</span> <span class="ow">in</span> <span class="n">c</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">c</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">"tensorrt"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">INT8_EXCLUDED</span><span class="p">)</span>
+    <span class="ow">and</span> <span class="ow">not</span> <span class="p">(</span><span class="n">c</span> <span class="o">==</span> <span class="s2">"onnx-compact"</span> <span class="ow">and</span> <span class="n">m</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">COMPACT_MODELS</span><span class="p">)</span>
 <span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Checking </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span><span class="si">}</span><span class="s2"> model and configuration pairs against saved measurements."</span><span class="p">)</span>
 </pre></div>
@@ -5233,7 +5236,8 @@ def build_predictor(model: RFDETR, model_name: str, config: str) -&gt; RFDETRInf
     (m, c)
     for m in MODELS
     for c in CONFIGS
-    if not ("int8" in c and m in INT8_EXCLUDED) and not (c == "onnx-compact" and m not in COMPACT_MODELS)
+    if not ("int8" in c and not c.startswith("tensorrt") and m in INT8_EXCLUDED)
+    and not (c == "onnx-compact" and m not in COMPACT_MODELS)
 ]
 print(f"Checking {len(pairs)} model and configuration pairs against saved measurements.")</div>
 </div>
@@ -5603,7 +5607,7 @@ display(
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:14:52 UTC">2026-11-21 21:14:52</span>
   </span>
 
     
