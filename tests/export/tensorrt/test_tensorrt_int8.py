@@ -896,6 +896,42 @@ class TestPlanInt8:
         assert _names(plan) == ["fc1/MatMul", "fc2/MatMul"]
 
     @pytest.mark.parametrize(
+        ("block", "mlp_quantized"),
+        [
+            pytest.param(0, False, id="first-block"),
+            pytest.param(3, False, id="outlier-block"),
+            pytest.param(5, False, id="last-float-block"),
+            pytest.param(6, True, id="first-int8-block"),
+            pytest.param(11, True, id="last-block"),
+        ],
+    )
+    def test_pe_backbone_keeps_the_mlp_of_its_first_six_blocks_float(self, block: int, mlp_quantized: bool) -> None:
+        """A PE-Core-T block below 6 keeps ``fc1`` and ``fc2`` in FP16; its attention placement does not change."""
+        prefix = f"/backbone/backbone.0/encoder/blocks.{block}/"
+        model = _attention_and_mlp(
+            f"{prefix}attn/", sequence=8, head_size=16, mlp_prefix=f"{prefix}mlp/", activation="Erf"
+        )
+        plan = quantize.plan_int8(model)
+        assert _names(plan) == ["q/MatMul", "k/MatMul", "v/MatMul", "o/MatMul"] + (
+            ["fc1/MatMul", "fc2/MatMul"] if mlp_quantized else []
+        )
+        assert sum("/scores/" in name for name, _ in plan.activations) == 2
+
+    def test_pe_float_mlp_leaves_no_planned_activation_behind(self) -> None:
+        """The excluded MLP projections have no Q/DQ input either, so no quantize step lands on the GELU path."""
+        prefix = "/backbone/backbone.0/encoder/blocks.3/"
+        model = _attention_and_mlp(
+            f"{prefix}attn/", sequence=8, head_size=16, mlp_prefix=f"{prefix}mlp/", activation="Erf"
+        )
+        assert [name for name, _ in quantize.plan_int8(model).activations if "/mlp/" in name] == []
+
+    def test_dinov2_backbone_keeps_its_mlp_in_int8(self) -> None:
+        """The first DINOv2 layers are unchanged: the rule keys on the PE block names."""
+        prefix = "/backbone/backbone.0/encoder/encoder/encoder/layer.3/"
+        model = _attention_and_mlp(f"{prefix}attention/", sequence=8, head_size=16, mlp_prefix=f"{prefix}mlp/")
+        assert _names(quantize.plan_int8(model))[-2:] == ["fc1/MatMul", "fc2/MatMul"]
+
+    @pytest.mark.parametrize(
         ("channels", "group", "quantized"),
         [
             pytest.param(3, 1, False, id="rgb"),
