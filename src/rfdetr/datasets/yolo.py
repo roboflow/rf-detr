@@ -32,6 +32,7 @@ from rfdetr.datasets.coco import (
 )
 from rfdetr.datasets.io_utils import decode_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
+from rfdetr.utilities.exif import exif_orientation, swaps_axes
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -410,6 +411,9 @@ def _build_yolo_samples(
         label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
         with Image.open(image_path) as image:
             width, height = image.size
+            # YOLO coordinates are relative to the photo as shown upright, which is how decode_image returns it.
+            if swaps_axes(exif_orientation(image)):
+                width, height = height, width
 
         xyxy: list[NDArray[np.float32]] = []
         class_id: list[int] = []

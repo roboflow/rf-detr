@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for how ``predict()`` prepares images: conversion, range checks, resize and device transfer."""
 
+import io
 import struct
 import zlib
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from typing import Any
 
 import numpy as np
 import PIL.Image
+import PIL.ImageOps
 import pytest
 import requests
 import supervision as sv
@@ -30,6 +32,22 @@ from tests.inference.helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _re
 
 #: Zero mean and unit std for three channels, what a patched ``_normalization_tensors`` returns.
 _UNIT_NORMALIZATION = (torch.zeros(3, 1, 1), torch.ones(3, 1, 1))
+
+
+def _save_oriented_photo(target: Path | io.BytesIO, image_format: str, orientation: int) -> None:
+    """Save a 29 x 17 image whose every pixel differs, tagged with ``orientation`` as a phone tags a turned photo.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> _save_oriented_photo(encoded, "PNG", orientation=6)
+        >>> with PIL.Image.open(encoded) as image:
+        ...     print(image.size, image.getexif()[0x0112])
+        (29, 17) 6
+    """
+    rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 37 + 13) % 256).astype(np.uint8)
+    exif = PIL.Image.Exif()
+    exif[0x0112] = orientation
+    PIL.Image.fromarray(rgb).save(target, format=image_format, exif=exif.tobytes())
 
 
 class TestPredictImagePinning:
@@ -333,22 +351,66 @@ class TestPredictUint8Conversion:
         assert decoded is not None
         np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
 
-    def test_local_image_decoder_ignores_exif_orientation_like_pillow(self, tmp_path: Path) -> None:
-        """Pillow's conversion never rotates by EXIF orientation, so the native route must not either."""
-        image_path = tmp_path / "rotated.jpg"
-        rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 37 + 13) % 256).astype(np.uint8)
-        exif = PIL.Image.Exif()
-        exif[0x0112] = 6  # Orientation: a viewer that honours it would rotate this 29x17 image to 17x29.
-        PIL.Image.fromarray(rgb).save(image_path, format="JPEG", exif=exif)
+    @pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
+    @pytest.mark.parametrize("gpu_device", [None, torch.device("cuda", 0)])
+    def test_local_image_decoder_leaves_an_oriented_photo_to_pillow(
+        self, tmp_path: Path, image_format: str, gpu_device: torch.device | None
+    ) -> None:
+        """Torchvision and nvjpeg cannot turn a tagged photo, so it goes to Pillow, which turns it upright.
+
+        Only the header is read, so this holds without a GPU.
+        """
+        image_path = tmp_path / f"rotated.{image_format.lower()}"
+        _save_oriented_photo(image_path, image_format, orientation=6)
+
+        assert core._decode_local_image(str(image_path), gpu_device) is None
+
+    @pytest.mark.parametrize("orientation", [3, 6, 8])
+    @pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
+    def test_predict_turns_an_oriented_local_photo_upright(
+        self, tmp_path: Path, image_format: str, orientation: int
+    ) -> None:
+        """A tagged file predicts on the upright photo, the frame the training readers and labels use."""
+        image_path = tmp_path / f"rotated.{image_format.lower()}"
+        _save_oriented_photo(image_path, image_format, orientation)
         with PIL.Image.open(image_path) as image:
-            assert image.getexif()[0x0112] == 6
+            expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
+
+        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    def test_predict_turns_an_oriented_url_photo_upright(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A tagged image fetched from a URL is decoded by rf-detr too, so it is turned the same way."""
+        encoded = io.BytesIO()
+        _save_oriented_photo(encoded, "JPEG", orientation=6)
+        with PIL.Image.open(io.BytesIO(encoded.getvalue())) as image:
+            expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
+
+        def fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            """Return the tagged JPEG for the URL conversion boundary.
+
+            Examples:
+                >>> fake_get("https://example.com/photo.jpg").status_code
+                200
+            """
+            return _FakeResponse(content=encoded.getvalue(), status_code=200)
+
+        monkeypatch.setattr(requests, "get", fake_get)
+
+        detections = _DummyRFDETR().predict("https://example.com/photo.jpg", include_source_image=True)
+
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    def test_predict_keeps_a_pil_image_as_the_caller_passed_it(self, tmp_path: Path) -> None:
+        """A PIL image the caller opened is predicted in its own pixel order, which the caller may draw on."""
+        image_path = tmp_path / "rotated.jpg"
+        _save_oriented_photo(image_path, "JPEG", orientation=6)
+        with PIL.Image.open(image_path) as image:
             expected = np.array(image.convert("RGB"))
+            detections = _DummyRFDETR().predict(image, include_source_image=True)
 
-        decoded = core._decode_local_image(str(image_path))
-
-        assert decoded is not None
-        assert expected.shape == (17, 29, 3)
-        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
 
     @pytest.mark.parametrize("image_format", ["TIFF", "PNG"])
     def test_local_image_decoder_returns_none_for_pillow_fallback(self, tmp_path: Path, image_format: str) -> None:

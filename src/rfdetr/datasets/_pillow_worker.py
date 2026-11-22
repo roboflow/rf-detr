@@ -13,9 +13,12 @@ from pathlib import Path
 
 from PIL import Image
 
+#: EXIF orientation tag; the parent process turns the pixels upright, so this worker only reports it.
+_ORIENTATION_TAG = 0x0112
+
 
 def main() -> None:
-    """Decode the requested image and return a JSON header followed by RGB bytes."""
+    """Decode the requested image and return a JSON header followed by RGB bytes in stored order."""
     limit = int(sys.argv[1])
     draft_size = int(sys.argv[2]) or None
     allow_warning = sys.argv[3] == "allow"
@@ -29,10 +32,17 @@ def main() -> None:
                 full_width, full_height = image.size
                 if draft_size is not None:
                     image.draft("RGB", (draft_size, draft_size))
+                # Read as ``rfdetr.utilities.exif.exif_orientation`` reads it, so both processes decode alike: Pillow
+                # turns a TIFF itself, and the base ``getexif`` does not decode a PNG to look for a trailing chunk.
+                try:
+                    orientation = 1 if image.format == "TIFF" else Image.Image.getexif(image).get(_ORIENTATION_TAG, 1)
+                except Exception:
+                    orientation = 1  # EXIF is optional metadata; an unparsable block must not stop the decode
                 rgb = image.convert("RGB")
             header = {
                 "size": rgb.size,
                 "scales": [rgb.width / full_width, rgb.height / full_height],
+                "orientation": orientation if isinstance(orientation, int) else 1,
                 "warnings": [[str(w.message), w.category.__name__] for w in caught],
             }
             pixels = rgb.tobytes()

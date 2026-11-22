@@ -38,6 +38,7 @@ from rfdetr._prediction.sources import has_only_finite_images, is_expanded_sourc
 from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -401,6 +402,10 @@ def _decode_local_image(path: str, gpu_device: torch.device | None = None) -> to
             # torchvision 0.21+ decodes a 16-bit PNG to uint16 (older releases raise), and either way the result is
             # rejected below, so read the bit depth first rather than pay for a full decode.
             if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
+                return None
+            # A photo with an EXIF orientation goes to Pillow, which turns it upright as training decodes it;
+            # nvjpeg cannot apply the tag, and this path keeps one implementation of the turn.
+            if exif_orientation(header) != 1:
                 return None
             on_gpu = gpu_device is not None and _decodes_on_gpu(header, gpu_device)
             sampling = JpegImagePlugin.get_sampling(header) if on_gpu else -1
@@ -1082,7 +1087,10 @@ def _prepare_batch(
                     img = decoded
                     decoded_local_file = True
             if not decoded_local_file:
+                # rf-detr decodes this file itself, so it shows the photo upright, as the dataset readers do.
+                # A PIL image passed in by the caller keeps the pixel order the caller chose.
                 img = Image.open(img)
+                img = upright_image(img, exif_orientation(img))
 
         range_known_valid = decoded_local_file
         deferred_widen = decoded_local_file

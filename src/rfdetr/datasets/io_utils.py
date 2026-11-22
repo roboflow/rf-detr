@@ -36,7 +36,9 @@ try:
     import simplejpeg  # type: ignore[import-untyped,import-not-found,unused-ignore]
 except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to Pillow without it
     simplejpeg = None
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, JpegImagePlugin, UnidentifiedImageError
+
+from rfdetr.utilities.exif import exif_orientation, swaps_axes, upright_image
 
 _JPEG_SOI = b"\xff\xd8"
 
@@ -178,14 +180,62 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
     raise UnidentifiedImageError(f"cannot identify image file {source!r}")
 
 
+def _upright_decode(
+    image: Image.Image, scales: tuple[float, float], orientation: int
+) -> tuple[Image.Image, tuple[float, float]]:
+    """Turn a decoded image upright for its EXIF orientation, keeping each decode scale with the axis it measures.
+
+    Args:
+        image: Decoded RGB image in the order the file stores its pixels.
+        scales: Horizontal and vertical decode scales of ``image``, measured on the stored axes.
+        orientation: The file's EXIF orientation.
+
+    Returns:
+        The upright image and its horizontal/vertical decode scales; a quarter turn swaps the two.
+
+    Examples:
+        >>> image, scales = _upright_decode(Image.new("RGB", (6, 2)), (0.5, 0.25), orientation=6)
+        >>> image.size, scales
+        ((2, 6), (0.25, 0.5))
+    """
+    if swaps_axes(orientation):
+        scales = (scales[1], scales[0])
+    return upright_image(image, orientation), scales
+
+
+def _jpeg_orientation(data: bytes) -> int:
+    """Read the EXIF orientation of encoded JPEG bytes from their header, without decoding any pixels.
+
+    Args:
+        data: Encoded JPEG bytes.
+
+    Returns:
+        The orientation, or ``1`` when the header is one Pillow cannot parse.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="JPEG")
+        >>> _jpeg_orientation(encoded.getvalue())
+        1
+    """
+    try:
+        # Constructing the plugin directly parses the markers without ``Image.open``'s decompression-bomb check, which
+        # the caller applies itself.
+        with JpegImagePlugin.JpegImageFile(io.BytesIO(data)) as header:
+            return exif_orientation(header)
+    except (SyntaxError, IndexError, TypeError, struct.error, OSError):
+        return 1  # simplejpeg then decodes the bytes, or rejects them for Pillow to report
+
+
 def _decode_with_pillow(
     source: Path | IO[bytes], draft_size: int | None, max_image_pixels: int | None = None
 ) -> tuple[Image.Image, tuple[float, float]]:
-    """Decode a file or an in-memory stream through Pillow into an RGB image with its decode scales.
+    """Decode a file or an in-memory stream through Pillow into an upright RGB image with its decode scales.
 
     The Pillow half of the decoder policy every entry point shares: ``PIL.Image.draft`` applies the JPEG reduction when
-    ``draft_size`` is set (a no-op for other formats) and ``convert("RGB")`` loads the pixels into an image that
-    outlives the closed source.
+    ``draft_size`` is set (a no-op for other formats), ``convert("RGB")`` loads the pixels into an image that outlives
+    the closed source, and the image is turned upright for its EXIF orientation, as viewers and annotation tools show
+    it.
 
     Args:
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
@@ -244,14 +294,16 @@ def _decode_with_pillow(
         }
         for message, category in header["warnings"]:
             warnings.warn(message, warning_categories.get(category, UserWarning), stacklevel=2)
-        return Image.frombytes("RGB", tuple(header["size"]), pixels), tuple(header["scales"])
+        image = Image.frombytes("RGB", tuple(header["size"]), pixels)
+        return _upright_decode(image, tuple(header["scales"]), header["orientation"])
 
     with _open_image(source, max_image_pixels) as image:
         full_width, full_height = image.size
         if draft_size is not None:
             image.draft("RGB", (draft_size, draft_size))
+        orientation = exif_orientation(image)
         rgb_image = image.convert("RGB")
-    return rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height)
+    return _upright_decode(rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height), orientation)
 
 
 def _decode_with_simplejpeg(
@@ -259,8 +311,10 @@ def _decode_with_simplejpeg(
 ) -> tuple[NDArray[np.uint8], tuple[float, float]] | None:
     """Decode JPEG bytes with ``simplejpeg``, or return ``None`` to leave them to Pillow.
 
-    ``None`` when ``simplejpeg`` is not installed, when ``data`` does not start with a JPEG marker, or when
-    ``simplejpeg`` rejects it as corrupt or unsupported, so that Pillow decodes it or raises its usual error.
+    ``None`` when ``simplejpeg`` is not installed, when ``data`` does not start with a JPEG marker, when
+    ``simplejpeg`` rejects it as corrupt or unsupported, so that Pillow decodes it or raises its usual error, or when
+    the JPEG has an EXIF orientation other than 1: ``simplejpeg`` returns the pixels in stored order, and Pillow turns
+    them upright.
 
     Args:
         data: Encoded image bytes.
@@ -281,6 +335,8 @@ def _decode_with_simplejpeg(
         return None
     try:
         header = simplejpeg.decode_jpeg_header(data)
+        if _jpeg_orientation(data) != 1:
+            return None
         full_height, full_width = int(header[0]), int(header[1])
         # Pillow's guard on public names, so the limit and its warn/raise tiers stay those of ``Image.open``.
         _check_decompression_bomb(full_width, full_height, max_image_pixels)
@@ -342,6 +398,10 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
 
     When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
     keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
+
+    Pixels come back upright for the file's EXIF orientation, the way viewers and annotation tools show a photo and
+    therefore the frame its labels were drawn in. ``simplejpeg`` cannot turn a JPEG, so one whose orientation is not 1
+    goes to Pillow; the decode scales are reported for the upright axes.
 
     ``RFDETR.predict()`` does not use this function for local files: ``rfdetr.detr._decode_local_image`` decodes them
     with torchvision, a core dependency, straight into the CHW tensor inference consumes, because ``simplejpeg`` is

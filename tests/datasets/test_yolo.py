@@ -1315,3 +1315,55 @@ class TestYoloClassNamesEntryPoints:
         _write_yolo_names_data_file(tmp_path, names)
         with pytest.raises(ValueError, match="0..N-1"):
             RFDETR._load_classes(str(tmp_path))
+
+
+def _write_oriented_yolo_photo(tmp_path: Path, orientation: int) -> tuple[Path, Path, Path]:
+    """Write a one-photo YOLO dataset: a white box on black, stored turned and tagged as a phone stores a photo.
+
+    Upright, the photo is 160 x 100 with the box at ``x 20-60, y 10-40``, and the label is normalised to that view.
+
+    Examples:
+        >>> import tempfile
+        >>> image_dir, label_dir, _ = _write_oriented_yolo_photo(Path(tempfile.mkdtemp()), 6)
+        >>> with Image.open(image_dir / "photo.jpg") as image:
+        ...     print(image.size, image.getexif()[0x0112])
+        (100, 160) 6
+        >>> (label_dir / "photo.txt").read_text(encoding="utf-8")
+        '0 0.25 0.25 0.25 0.3\\n'
+    """
+    image_dir = tmp_path / "images"
+    label_dir = tmp_path / "labels"
+    image_dir.mkdir()
+    label_dir.mkdir()
+    upright = np.zeros((100, 160, 3), dtype=np.uint8)
+    upright[10:40, 20:60] = 255
+    # The transpose exif_transpose undoes for each tag, so a viewer shows ``upright``.
+    undo = {1: None, 3: Image.Transpose.ROTATE_180, 6: Image.Transpose.ROTATE_90, 8: Image.Transpose.ROTATE_270}
+    stored = Image.fromarray(upright)
+    if undo[orientation] is not None:
+        stored = stored.transpose(undo[orientation])
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    stored.save(image_dir / "photo.jpg", quality=95, exif=exif.tobytes())
+    (label_dir / "photo.txt").write_text("0 0.25 0.25 0.25 0.3\n", encoding="utf-8")
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+    return image_dir, label_dir, data_file
+
+
+class TestYoloDetectionExifOrientation:
+    """YOLO labels are relative to the photo as shown upright, so its size and pixels are read upright."""
+
+    @pytest.mark.parametrize("orientation", [1, 3, 6, 8])
+    def test_box_lands_on_the_labelled_object(self, tmp_path: Path, orientation: int) -> None:
+        """The labelled white box is under its target box in the decoded sample, whatever the stored orientation."""
+        dataset = _build_yolo_dataset(_write_oriented_yolo_photo(tmp_path, orientation), include_masks=False)
+
+        sample = dataset.sv_dataset.get_image_info(0)
+        image, target = dataset[0]
+
+        x1, y1, x2, y2 = (int(value) for value in target["boxes"][0].tolist())
+        assert (sample.width, sample.height) == (160, 100)
+        assert image.size == (160, 100)
+        assert (x1, y1, x2, y2) == (20, 10, 60, 40)
+        assert np.asarray(image.convert("L"))[y1:y2, x1:x2].min() > 128
