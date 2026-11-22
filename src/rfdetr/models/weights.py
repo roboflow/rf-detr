@@ -364,47 +364,61 @@ def interpolate_position_embeddings(
 
 
 def _class_rows_for_keypoint_schema(
-    checkpoint_schema: list[int], configured_schema: list[int], num_rows: int
+    checkpoint_schema: list[int], configured_schema: list[int], checkpoint_rows: int, head_rows: int
 ) -> list[int] | None:
     """Match each class-head row of the configured keypoint schema to the checkpoint row of the same class.
 
     A keypoint schema gives the keypoint count of each class row; rows past it carry no-object logits. The preview
     checkpoint's background-first ``[0, 17]`` keeps the person in row 1, while the active-first ``[17]`` puts it in row
-    0 and uses row 1 for no object, so loading one into the other has to move the rows. Only keypoint-free rows, the
-    no-object rows included, trade places: the classes with keypoints have to come in the same order in both schemas,
-    because their keypoint rows are not moved.
+    0 and uses row 1 for no object, so loading one into the other has to move the rows. The classes with keypoints have
+    to come in the same order in both schemas, because their keypoint rows are not moved. Keypoint-free rows, the
+    no-object rows included, take the checkpoint's keypoint-free rows in order, and when the head has more of them, as
+    when the configured classes add box-only ones, the extra rows repeat the checkpoint's last keypoint-free row, the
+    no-object row of the preview checkpoint.
+
+    The head has already been resized from ``checkpoint_rows`` to ``head_rows``, grown by tiling or cut, so only its
+    first ``min(checkpoint_rows, head_rows)`` rows still hold the checkpoint's rows.
 
     Args:
         checkpoint_schema: ``num_keypoints_per_class`` of the checkpoint.
         configured_schema: ``num_keypoints_per_class`` of the model.
-        num_rows: Rows in the class head, the no-object row included.
+        checkpoint_rows: Rows in the checkpoint's class head, the no-object row included.
+        head_rows: Rows in the model's class head after resizing, the no-object row included.
 
     Returns:
-        The checkpoint row each configured row takes, or ``None`` when the classes with keypoints differ between the
-        two schemas or no row moves.
+        The row each class-head row takes, or ``None`` when the classes with keypoints differ between the two schemas,
+        a row it needs was cut, or no row moves.
 
     Examples:
-        >>> _class_rows_for_keypoint_schema([0, 17], [17], num_rows=2)
+        >>> _class_rows_for_keypoint_schema([0, 17], [17], checkpoint_rows=2, head_rows=2)
         [1, 0]
-        >>> _class_rows_for_keypoint_schema([17], [0, 17], num_rows=2)
+        >>> _class_rows_for_keypoint_schema([17], [0, 17], checkpoint_rows=2, head_rows=2)
         [1, 0]
-        >>> _class_rows_for_keypoint_schema([0, 17, 4], [17, 4], num_rows=3)
+        >>> _class_rows_for_keypoint_schema([0, 17], [17, 0], checkpoint_rows=2, head_rows=3)
+        [1, 0, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17, 4], [17, 4], checkpoint_rows=3, head_rows=3)
         [1, 2, 0]
-        >>> _class_rows_for_keypoint_schema([17], [17], num_rows=2) is None
+        >>> _class_rows_for_keypoint_schema([17], [17], checkpoint_rows=2, head_rows=2) is None
         True
-        >>> _class_rows_for_keypoint_schema([17, 4], [4, 17], num_rows=3) is None
+        >>> _class_rows_for_keypoint_schema([17, 4], [4, 17], checkpoint_rows=3, head_rows=3) is None
         True
     """
-    if max(len(checkpoint_schema), len(configured_schema)) > num_rows:
+    checkpoint_kinds = [*checkpoint_schema, *[0] * (checkpoint_rows - len(checkpoint_schema))]
+    configured_kinds = [*configured_schema, *[0] * (head_rows - len(configured_schema))]
+    without_keypoints = [row for row, n in enumerate(checkpoint_kinds) if not n]
+    if (
+        len(checkpoint_kinds) != checkpoint_rows
+        or len(configured_kinds) != head_rows
+        or [n for n in checkpoint_kinds if n] != [n for n in configured_kinds if n]
+        or (0 in configured_kinds and not without_keypoints)
+    ):
         return None
-    if [n for n in checkpoint_schema if n] != [n for n in configured_schema if n]:
+    with_keypoints = iter([row for row, n in enumerate(checkpoint_kinds) if n])
+    spare = iter(without_keypoints)
+    order = [next(with_keypoints) if n else next(spare, without_keypoints[-1]) for n in configured_kinds]
+    if max(order) >= min(checkpoint_rows, head_rows) or order == list(range(head_rows)):
         return None
-    checkpoint_rows = [*checkpoint_schema, *[0] * (num_rows - len(checkpoint_schema))]
-    configured_rows = [*configured_schema, *[0] * (num_rows - len(configured_schema))]
-    with_keypoints = iter([row for row, n in enumerate(checkpoint_rows) if n])
-    without_keypoints = iter([row for row, n in enumerate(checkpoint_rows) if not n])
-    order = [next(with_keypoints) if n else next(without_keypoints) for n in configured_rows]
-    return None if order == list(range(num_rows)) else order
+    return order
 
 
 def load_pretrain_weights(
@@ -790,30 +804,36 @@ def load_pretrain_weights(
     incompatible = _load_model_state(nn_model, checkpoint["model"], backbone_lora=mc.backbone_lora)
     _warn_on_partial_load(incompatible, pretrain_weights)
 
-    if should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+    restore_keypoint_schema = should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head")
+    if restore_keypoint_schema:
         logger.warning(
             "load_pretrain_weights: restoring configured keypoint schema %s after checkpoint load.",
             configured_keypoint_schema,
         )
         nn_model.reinitialize_keypoint_head(configured_keypoint_schema)
-        # The schema decides which class-head row is which class, so the rows move with their classes. Left in place,
-        # [0, 17] loaded as [17] would start the person class from the checkpoint's background row.
-        if checkpoint_keypoint_schema:
-            class_rows = _class_rows_for_keypoint_schema(
-                checkpoint_keypoint_schema, configured_keypoint_schema, checkpoint_num_classes
-            )
-            if class_rows is not None:
-                nn_model.reorder_detection_head(class_rows)
 
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
+    head_rows = checkpoint_num_classes
     if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode:
         nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
+        head_rows = configured_num_classes_plus_bg
 
     # Only trim back down when loading a larger pretrain checkpoint into a
     # smaller configured task-specific class count.
     if num_classes + 1 < checkpoint_num_classes:
         nn_model.reinitialize_detection_head(num_classes + 1)
+        head_rows = num_classes + 1
+
+    # The schema decides which class-head row is which class, so once the head has its final size, each row takes the
+    # checkpoint row of its class. Left alone, [0, 17] loaded as [17] would start the person class from the
+    # checkpoint's background row, and a head grown for box-only classes would hold tiled copies of its rows.
+    if restore_keypoint_schema and checkpoint_keypoint_schema:
+        class_rows = _class_rows_for_keypoint_schema(
+            checkpoint_keypoint_schema, configured_keypoint_schema, checkpoint_num_classes, head_rows
+        )
+        if class_rows is not None:
+            nn_model.reorder_detection_head(class_rows)
 
     return class_names
 

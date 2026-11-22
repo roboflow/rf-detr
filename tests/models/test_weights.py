@@ -327,25 +327,28 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         assert nn_model.reinitialize_keypoint_head.call_args_list == [call([17]), call([0, 17])]
 
 
-def _keypoint_lwdetr(num_keypoints_per_class: list[int]) -> LWDETR:
-    """Build a real two-row keypoint ``LWDETR`` on the dummy transformer, with the given keypoint schema.
+def _keypoint_lwdetr(num_keypoints_per_class: list[int], num_rows: int = 2) -> LWDETR:
+    """Build a real keypoint ``LWDETR`` on the dummy transformer, with the given keypoint schema.
 
     Args:
         num_keypoints_per_class: Keypoint schema, e.g. ``[17]`` (active-first) or ``[0, 17]`` (background-first).
+        num_rows: Rows in each class head, the no-object row included.
 
     Returns:
-        A model with one decoder class head and one two-stage encoder class head, each with two rows.
+        A model with one decoder class head and one two-stage encoder class head, each with ``num_rows`` rows.
 
     Examples:
         >>> model = _keypoint_lwdetr([0, 17])
         >>> model.class_embed.out_features, model.get_num_keypoints_per_class()
         (2, [0, 17])
+        >>> _keypoint_lwdetr([17, 0], num_rows=3).transformer.enc_out_class_embed[0].out_features
+        3
     """
     return LWDETR(
         backbone=MagicMock(),
         transformer=_DummyKeypointTransformer(hidden_dim=_HIDDEN_DIM, num_keypoints_per_class=num_keypoints_per_class),
         segmentation_head=None,
-        num_classes=2,
+        num_classes=num_rows,
         num_queries=2,
         aux_loss=False,
         group_detr=1,
@@ -361,15 +364,24 @@ def _keypoint_lwdetr(num_keypoints_per_class: list[int]) -> LWDETR:
 class TestLoadPretrainWeightsKeypointClassRows(_PatchWeightsIO):
     """The keypoint class keeps its checkpoint weights when the configured schema puts it in another slot."""
 
-    @pytest.mark.parametrize(("checkpoint_schema", "configured_schema"), [([0, 17], [17]), ([17], [0, 17])])
+    @pytest.mark.parametrize(
+        ("checkpoint_schema", "configured_schema", "num_classes"),
+        [([0, 17], [17], 1), ([17], [0, 17], 1), ([0, 17], [17, 0], 2), ([0, 17], [17, 0, 0], 3)],
+    )
     def test_keypoint_class_keeps_its_checkpoint_rows(
-        self, monkeypatch: pytest.MonkeyPatch, checkpoint_schema: list[int], configured_schema: list[int]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        checkpoint_schema: list[int],
+        configured_schema: list[int],
+        num_classes: int,
     ) -> None:
         """Each class-head row follows its class from the checkpoint schema to the configured one.
 
-        The docs' custom keypoint snippet passes ``num_keypoints_per_class=[17]``, while the preview checkpoint uses
-        ``[0, 17]``. The rows stayed in place, so the pretrained person row landed in the slot that ``[17]`` uses for no
-        object, and the person class started fine-tuning from the background row.
+        The docs' custom keypoint snippet passes the dataset's schema, ``[17]`` for people alone, or ``[17, 0]`` and
+        ``[17, 0, 0]`` with box-only classes, while the preview checkpoint uses ``[0, 17]``. The rows stayed in place,
+        so the person class started fine-tuning from the background row. With box-only classes the head also grows after
+        the load, and the rows have to be matched after it grows: otherwise the tiling puts the person row in the wrong
+        slots, the no-object one included.
         """
         source = _keypoint_lwdetr(checkpoint_schema)
         with torch.no_grad():
@@ -385,18 +397,19 @@ class TestLoadPretrainWeightsKeypointClassRows(_PatchWeightsIO):
             },
         )
         mc = _base_config(
-            num_classes=1,
+            num_classes=num_classes,
             num_queries=2,
             num_select=2,
             group_detr=1,
             use_grouppose_keypoints=True,
             num_keypoints_per_class=configured_schema,
         )
-        model = _keypoint_lwdetr(configured_schema)
+        model = _keypoint_lwdetr(configured_schema, num_rows=num_classes + 1)
 
         load_pretrain_weights(model, mc)
 
-        expected = torch.tensor([5.0 if n else -5.0 for n in configured_schema + [0]][:2])
+        rows = num_classes + 1
+        expected = torch.tensor([5.0 if n else -5.0 for n in configured_schema + [0] * rows][:rows])
         for head in [model.class_embed, *model.transformer.enc_out_class_embed]:
             torch.testing.assert_close(head.bias, expected)
 

@@ -250,13 +250,13 @@ class LWDETR(nn.Module):
             )
 
     def reorder_detection_head(self, order: list[int]) -> None:
-        """Move the classification head's rows in place so that row ``i`` takes the weights of row ``order[i]``.
+        """Copy the classification head's rows in place so that row ``i`` takes the weights of row ``order[i]``.
 
-        Moves the rows of ``self.class_embed`` and, when the model uses two-stage detection, of each
+        Copies the rows of ``self.class_embed`` and, when the model uses two-stage detection, of each
         ``enc_out_class_embed``, for a checkpoint whose classes sit in other rows than the model's.
 
         Args:
-            order: A permutation of the head's row indices.
+            order: For each row of the head, the row whose weights it takes; a row can be taken more than once.
         """
         heads = [self.class_embed]
         if self.two_stage:
