@@ -249,6 +249,26 @@ class LWDETR(nn.Module):
                 [_resize_linear(cast(nn.Linear, m), num_classes) for m in self.transformer.enc_out_class_embed]
             )
 
+    def reorder_detection_head(self, order: list[int]) -> None:
+        """Move the classification head's rows in place so that row ``i`` takes the weights of row ``order[i]``.
+
+        Moves the rows of ``self.class_embed`` and, when the model uses two-stage detection, of each
+        ``enc_out_class_embed``, for a checkpoint whose classes sit in other rows than the model's.
+
+        Args:
+            order: A permutation of the head's row indices.
+        """
+        heads = [self.class_embed]
+        if self.two_stage:
+            assert self.transformer.enc_out_class_embed is not None
+            heads += [cast(nn.Linear, m) for m in self.transformer.enc_out_class_embed]
+        with torch.no_grad():
+            for head in heads:
+                index = torch.as_tensor(order, device=head.weight.device)
+                head.weight.copy_(head.weight.index_select(0, index))
+                if head.bias is not None:
+                    head.bias.copy_(head.bias.index_select(0, index))
+
     @staticmethod
     def _create_kp_active_mask(num_keypoints_per_class: list[int]) -> Tensor:
         """Create a compact class-by-keypoint active mask for a keypoint schema."""

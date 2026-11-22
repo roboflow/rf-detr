@@ -21,6 +21,7 @@ import torch
 
 from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import (
     _pad_query_param_per_group,
     _slice_query_param_per_group,
@@ -31,6 +32,7 @@ from rfdetr.models.weights import (
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_peft
+from tests.models.test_lwdetr_keypoints import _HIDDEN_DIM, _DummyKeypointTransformer
 
 #: ``num_classes`` default of ``RFDETRBaseConfig``; an explicit value equal to it must still count as explicit.
 _DEFAULT_NUM_CLASSES = RFDETRBaseConfig.model_fields["num_classes"].default
@@ -323,6 +325,80 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         load_pretrain_weights(nn_model, mc)
 
         assert nn_model.reinitialize_keypoint_head.call_args_list == [call([17]), call([0, 17])]
+
+
+def _keypoint_lwdetr(num_keypoints_per_class: list[int]) -> LWDETR:
+    """Build a real two-row keypoint ``LWDETR`` on the dummy transformer, with the given keypoint schema.
+
+    Args:
+        num_keypoints_per_class: Keypoint schema, e.g. ``[17]`` (active-first) or ``[0, 17]`` (background-first).
+
+    Returns:
+        A model with one decoder class head and one two-stage encoder class head, each with two rows.
+
+    Examples:
+        >>> model = _keypoint_lwdetr([0, 17])
+        >>> model.class_embed.out_features, model.get_num_keypoints_per_class()
+        (2, [0, 17])
+    """
+    return LWDETR(
+        backbone=MagicMock(),
+        transformer=_DummyKeypointTransformer(hidden_dim=_HIDDEN_DIM, num_keypoints_per_class=num_keypoints_per_class),
+        segmentation_head=None,
+        num_classes=2,
+        num_queries=2,
+        aux_loss=False,
+        group_detr=1,
+        two_stage=True,
+        lite_refpoint_refine=True,
+        bbox_reparam=False,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=num_keypoints_per_class,
+        grouppose_keypoint_dim_downscale=1,
+    )
+
+
+class TestLoadPretrainWeightsKeypointClassRows(_PatchWeightsIO):
+    """The keypoint class keeps its checkpoint weights when the configured schema puts it in another slot."""
+
+    @pytest.mark.parametrize(("checkpoint_schema", "configured_schema"), [([0, 17], [17]), ([17], [0, 17])])
+    def test_keypoint_class_keeps_its_checkpoint_rows(
+        self, monkeypatch: pytest.MonkeyPatch, checkpoint_schema: list[int], configured_schema: list[int]
+    ) -> None:
+        """Each class-head row follows its class from the checkpoint schema to the configured one.
+
+        The docs' custom keypoint snippet passes ``num_keypoints_per_class=[17]``, while the preview checkpoint uses
+        ``[0, 17]``. The rows stayed in place, so the pretrained person row landed in the slot that ``[17]`` uses for no
+        object, and the person class started fine-tuning from the background row.
+        """
+        source = _keypoint_lwdetr(checkpoint_schema)
+        with torch.no_grad():
+            for head in [source.class_embed, *source.transformer.enc_out_class_embed]:
+                head.bias.copy_(torch.tensor([5.0 if n else -5.0 for n in checkpoint_schema + [0]][:2]))
+        _serve_checkpoint(
+            monkeypatch,
+            {
+                "model": source.state_dict(),
+                "args": SimpleNamespace(
+                    segmentation_head=False, patch_size=14, class_names=["person"], num_queries=2, group_detr=1
+                ),
+            },
+        )
+        mc = _base_config(
+            num_classes=1,
+            num_queries=2,
+            num_select=2,
+            group_detr=1,
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=configured_schema,
+        )
+        model = _keypoint_lwdetr(configured_schema)
+
+        load_pretrain_weights(model, mc)
+
+        expected = torch.tensor([5.0 if n else -5.0 for n in configured_schema + [0]][:2])
+        for head in [model.class_embed, *model.transformer.enc_out_class_embed]:
+            torch.testing.assert_close(head.bias, expected)
 
 
 # ---------------------------------------------------------------------------
