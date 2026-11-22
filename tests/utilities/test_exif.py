@@ -13,6 +13,21 @@ from PIL import Image, ImageOps
 from pytest_mock import MockerFixture
 
 from rfdetr.utilities.exif import exif_orientation, swaps_axes, upright_image
+from tests._exif import move_exif_after_pixels
+
+
+def _tagged_png(image: Image.Image, orientation: int) -> bytes:
+    """Encode ``image`` as PNG bytes whose eXIf chunk, written before the pixel data, holds ``orientation``.
+
+    Examples:
+        >>> Image.open(io.BytesIO(_tagged_png(Image.new("RGB", (6, 4)), 8))).getexif()[0x0112]
+        8
+    """
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    encoded = io.BytesIO()
+    image.save(encoded, format="PNG", exif=exif.tobytes())
+    return encoded.getvalue()
 
 
 def _jpeg_with_orientation(orientation: object, width: int = 6, height: int = 4) -> Image.Image:
@@ -86,6 +101,30 @@ class TestExifOrientation:
         mocker.patch("PIL.ImageFile.ImageFile.load", side_effect=AssertionError("Pillow decoded the pixels"))
 
         assert exif_orientation(image) == 8
+
+    def test_png_tag_after_the_pixels_is_read_without_decoding_them(self, mocker: MockerFixture) -> None:
+        """An eXIf chunk stored after the pixel data is found from the chunk headers, still without a decode."""
+        image = Image.open(io.BytesIO(move_exif_after_pixels(_tagged_png(_noise_image(), 6))))
+        mocker.patch("PIL.ImageFile.ImageFile.load", side_effect=AssertionError("Pillow decoded the pixels"))
+
+        assert exif_orientation(image) == 6
+
+    def test_png_tag_after_the_pixels_leaves_the_image_decodable(self) -> None:
+        """Walking the chunks puts the stream back, so Pillow then decodes the stored pixels unchanged."""
+        noise = _noise_image()
+        image = Image.open(io.BytesIO(move_exif_after_pixels(_tagged_png(noise, 6))))
+
+        exif_orientation(image)
+
+        np.testing.assert_array_equal(np.asarray(image.convert("RGB")), np.asarray(noise))
+
+    def test_png_cut_short_after_the_pixels_is_upright(self) -> None:
+        """A PNG that ends after its pixel data, with no IEND, has no chunk to find, and the walk stops at the end."""
+        encoded = io.BytesIO()
+        Image.new("RGB", (6, 4)).save(encoded, format="PNG")
+        data = encoded.getvalue()
+
+        assert exif_orientation(Image.open(io.BytesIO(data[: data.rindex(b"IEND") - 4]))) == 1
 
 
 class TestSwapsAxes:

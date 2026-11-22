@@ -17,6 +17,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from rfdetr.datasets import io_utils
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.io_utils import decode_image, decode_image_bytes, decode_pil_image, decode_pil_image_bytes
+from tests._exif import move_exif_after_pixels
 from tests.datasets._memory import peak_traced_bytes
 
 
@@ -759,6 +760,33 @@ class TestDecodeExifOrientation:
         """The subprocess decoder used for a raised per-image limit reports the tag, and the photo is turned."""
         path = tmp_path / f"photo.{extension}"
         _write_oriented_photo(path, 6, width=64, height=32)
+        expected = _upright_reference(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+    def test_png_tag_after_the_pixels_is_upright(self, tmp_path: Path) -> None:
+        """A PNG that stores its eXIf chunk after the pixel data is turned as ``ImageOps.exif_transpose`` turns it."""
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        path.write_bytes(move_exif_after_pixels(path.read_bytes()))
+        expected = _upright_reference(path)
+
+        image, _ = decode_pil_image(path)
+
+        assert expected.shape == (64, 32, 3)
+        np.testing.assert_array_equal(np.array(image), expected)
+
+    def test_png_tag_after_the_pixels_is_upright_under_a_raised_pixel_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The subprocess decoder finds that chunk too, so both decoders turn the file alike."""
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        path.write_bytes(move_exif_after_pixels(path.read_bytes()))
         expected = _upright_reference(path)
         monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
 

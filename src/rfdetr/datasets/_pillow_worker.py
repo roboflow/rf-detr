@@ -11,7 +11,7 @@ import sys
 import warnings
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 #: EXIF orientation tag; the parent process turns the pixels upright, so this worker only reports it.
 _ORIENTATION_TAG = 0x0112
@@ -33,12 +33,22 @@ def main() -> None:
                 if draft_size is not None:
                     image.draft("RGB", (draft_size, draft_size))
                 # Read as ``rfdetr.utilities.exif.exif_orientation`` reads it, so both processes decode alike: Pillow
-                # turns a TIFF itself, and the base ``getexif`` does not decode a PNG to look for a trailing chunk.
+                # turns a TIFF itself, and a still PNG's eXIf chunk counts even when it is stored after the pixels.
+                # That function walks the chunk headers to find it; here Pillow reads it while decoding the pixels.
+                read_on_open = "exif" in image.info
                 try:
-                    orientation = 1 if image.format == "TIFF" else Image.Image.getexif(image).get(_ORIENTATION_TAG, 1)
+                    orientation = 1 if image.format == "TIFF" else Image.Image.getexif(image).get(_ORIENTATION_TAG)
                 except Exception:
                     orientation = 1  # EXIF is optional metadata; an unparsable block must not stop the decode
                 rgb = image.convert("RGB")
+                still_png = isinstance(image, PngImagePlugin.PngImageFile) and not image.is_animated
+                if orientation is None and still_png and not read_on_open and "exif" in image.info:
+                    try:
+                        trailing = Image.Exif()
+                        trailing.load(image.info["exif"])
+                        orientation = trailing.get(_ORIENTATION_TAG)
+                    except Exception:
+                        orientation = 1
             header = {
                 "size": rgb.size,
                 "scales": [rgb.width / full_width, rgb.height / full_height],

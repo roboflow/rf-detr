@@ -27,6 +27,7 @@ from pytest_mock import MockerFixture
 from rfdetr import RFDETRInference
 from rfdetr._prediction import core, pipelines
 from rfdetr.detr import RFDETR
+from tests._exif import move_exif_after_pixels
 from tests._markers import _requires_cuda
 from tests.inference.helpers import _DummyRFDETR, _FakeResponse, _png_bytes, _record_model_inputs
 
@@ -378,6 +379,27 @@ class TestPredictUint8Conversion:
 
         detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
 
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
+    def test_local_image_decoder_leaves_a_png_tagged_after_its_pixels_to_pillow(self, tmp_path: Path) -> None:
+        """A PNG that stores its eXIf chunk after the pixel data is routed like one that stores it first."""
+        image_path = tmp_path / "rotated.png"
+        _save_oriented_photo(image_path, "PNG", orientation=6)
+        image_path.write_bytes(move_exif_after_pixels(image_path.read_bytes()))
+
+        assert core._decode_local_image(str(image_path)) is None
+
+    def test_predict_turns_a_png_tagged_after_its_pixels_upright(self, tmp_path: Path) -> None:
+        """That PNG predicts on the photo as ``ImageOps.exif_transpose`` turns it."""
+        image_path = tmp_path / "rotated.png"
+        _save_oriented_photo(image_path, "PNG", orientation=6)
+        image_path.write_bytes(move_exif_after_pixels(image_path.read_bytes()))
+        with PIL.Image.open(image_path) as image:
+            expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
+
+        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        assert expected.shape == (29, 17, 3)
         np.testing.assert_array_equal(detections.metadata["source_image"], expected)
 
     def test_predict_turns_an_oriented_url_photo_upright(self, monkeypatch: pytest.MonkeyPatch) -> None:
