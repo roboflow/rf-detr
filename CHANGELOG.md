@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `batch_size="auto"` works for keypoint models. The probe's synthetic targets carried boxes and labels but no `keypoints`, so the keypoint loss raised `KeyError: 'keypoints'` on the first probe step and the keypoint quick start in `docs/learn/train/index.md` stopped before training. Each synthetic target now carries fully visible keypoints in the schema the criterion uses, labelled with a class that has keypoints: slot 0 of `[17]`, slot 1 of the background-first `[0, 17]` the pretrained preview checkpoint loads with. On an RTX 4090 with 22.6 GiB free, that quick start now probes batch 3 with 6 accumulation steps and trains; training at that batch peaks at 8.6 GiB.
 - `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
 - `download_pretrain_weights(path, redownload=True)` keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.
 
