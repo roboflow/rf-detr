@@ -139,12 +139,26 @@ class LWDETR(nn.Module):
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
-            num_classes: number of object classes
-            num_queries: number of object queries, ie detection slot. This is the maximal number of objects
-                         Conditional DETR can detect in a single image. For COCO, we recommend 100 queries.
+            segmentation_head: Mask head applied to the decoder outputs, or None for a model without masks.
+            num_classes: Number of outputs of the classification head, with the background slot included.
+            num_queries: Number of object queries per group. This is the maximal number of objects the model can
+                         detect in a single image.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
-            group_detr: Number of groups to speed detr training. Default is 1.
-            lite_refpoint_refine: TODO
+            group_detr: Number of query groups. Training runs ``num_queries * group_detr`` queries, evaluation
+                         runs the first ``num_queries``. Default is 1.
+            two_stage: If True, the encoder output is scored with its own class and box heads (one copy per group),
+                         and the best scoring proposals initialize the decoder's reference points.
+            lite_refpoint_refine: If True, every decoder layer uses the initial reference points, and boxes are
+                         predicted from each layer's output afterwards. If False, the decoder shares the box head
+                         and refines the reference points after every layer.
+            bbox_reparam: If True, the box head predicts a center offset scaled by the reference box size and a
+                         log scale of its width and height. If False, it predicts an offset that is added to the
+                         reference box before a sigmoid.
+            use_grouppose_keypoints: If True, build the GroupPose keypoint head.
+            num_keypoints_per_class: Number of keypoints of each class, indexed by class id. It cannot have more
+                         entries than ``num_classes``. Only used with ``use_grouppose_keypoints``.
+            grouppose_keypoint_dim_downscale: Factor the hidden dimension is divided by to get the width of the
+                         keypoint head.
         """
         super().__init__()
         self.num_queries = num_queries
