@@ -15,15 +15,16 @@ import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from html import escape, unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Mapping, Sequence, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import Request, urlopen
 
 STATE_SCHEMA_VERSION = 1
 STATE_PATTERN = re.compile(r'<metadata id="weekly-metrics-state">(?P<payload>.*?)</metadata>', re.DOTALL)
-DEPENDENTS_PATTERN = re.compile(r"(?P<count>\d[\d,]*)\s+Repositories\b")
+DEPENDENTS_PATTERN = re.compile(r"(?P<count>[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s+(?:Repository|Repositories)")
 MAX_API_RESPONSE_BYTES = 5_000_000
 MAX_SVG_BYTES = 1_000_000
 PLOT_LEFT = 100.0
@@ -176,7 +177,49 @@ def fetch_star_count(repository: str, token: str | None = None) -> int:
         raise MetricsError(msg) from error
 
 
-def parse_used_by(page: str) -> int:
+class _DependentsTabParser(HTMLParser):
+    """Collect count labels from the repository dependents tab."""
+
+    def __init__(self, dependents_path: str) -> None:
+        """Start outside the repository tab with no matching counts."""
+        super().__init__()
+        self._dependents_path = dependents_path
+        self.counts: set[str] = set()
+        self._label: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Collect text only inside links to the repository dependents view."""
+        if tag != "a":
+            return
+        href = dict(attrs).get("href") or ""
+        self._label = None
+        try:
+            link = urlsplit(href)
+        except ValueError:
+            return
+        if (
+            (link.scheme, link.netloc) in {("", ""), ("https", "github.com")}
+            and link.path == self._dependents_path
+            and parse_qs(link.query).get("dependent_type") == ["REPOSITORY"]
+        ):
+            self._label = []
+
+    def handle_data(self, data: str) -> None:
+        """Collect text fragments from the repository tab, including nested markup."""
+        if self._label is not None:
+            self._label.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        """Accept a complete repository tab label."""
+        if tag != "a" or self._label is None:
+            return
+        match = DEPENDENTS_PATTERN.fullmatch(" ".join(self._label).strip())
+        if match is not None:
+            self.counts.add(match.group("count").replace(",", ""))
+        self._label = None
+
+
+def parse_used_by(page: str, dependents_path: str) -> int:
     """Extract the dependent-repository count from a GitHub dependents page.
 
     GitHub exposes no API for the "Used by" figure, so the count is read from the visible
@@ -184,6 +227,7 @@ def parse_used_by(page: str) -> int:
 
     Args:
         page: HTML of ``/network/dependents``.
+        dependents_path: URL path of the repository's dependents page.
 
     Returns:
         Number of dependent repositories.
@@ -192,15 +236,24 @@ def parse_used_by(page: str) -> int:
         MetricsError: If the page carries no ``N Repositories`` label.
 
     Example:
-        >>> parse_used_by('<a>\\n  <svg></svg>\\n  1,209\\n  Repositories\\n</a><a> 52 Packages</a>')
+        >>> parse_used_by(
+        ...     '<a href="/owner/project/network/dependents?dependent_type=REPOSITORY">'
+        ...     '<svg></svg> 1,209 Repositories</a>',
+        ...     '/owner/project/network/dependents',
+        ... )
         1209
     """
-    text = re.sub(r"<[^>]*>", " ", page)
-    match = DEPENDENTS_PATTERN.search(text)
-    if match is None:
-        msg = "GitHub dependents page has no repository count"
+    parser = _DependentsTabParser(dependents_path)
+    parser.feed(page)
+    parser.close()
+    if len(parser.counts) != 1:
+        msg = "GitHub dependents page has no repository count or conflicting counts"
         raise MetricsError(msg)
-    return int(match.group("count").replace(",", ""))
+    try:
+        return int(parser.counts.pop())
+    except ValueError as error:
+        msg = "GitHub dependents page has an invalid repository count"
+        raise MetricsError(msg) from error
 
 
 def fetch_used_by(repository: str) -> int:
@@ -220,11 +273,12 @@ def fetch_used_by(repository: str) -> int:
         msg = "repository must use owner/name format"
         raise MetricsError(msg)
     owner, name = (quote(part, safe="") for part in parts)
+    dependents_path = f"/{owner}/{name}/network/dependents"
     body = _fetch_bytes(
-        f"https://github.com/{owner}/{name}/network/dependents",
+        f"https://github.com{dependents_path}",
         {"Accept": "text/html", "User-Agent": "rf-detr-weekly-metrics"},
     )
-    return parse_used_by(body.decode("utf-8", errors="replace"))
+    return parse_used_by(body.decode("utf-8", errors="replace"), dependents_path)
 
 
 def fetch_daily_downloads(package: str) -> dict[date, int]:
