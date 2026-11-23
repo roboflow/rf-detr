@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-20T19:50:55">
+  <meta property="article:modified_time" content="2026-11-23T17:30:06">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-20T19:50:55",
+    "dateModified": "2026-11-23T17:30:06",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3507,6 +3507,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># output/inference_model_int8.onnx   (INT8, ~3x smaller)</span>
 </span></code></pre></div>
 <p><code>calibration_data</code> is <strong>required</strong> and must be representative of your deployment domain. Static quantization reads activation ranges from that data; out-of-domain or synthetic images produce a model that loads, runs, and is quietly wrong. Accepted forms are a directory of images (preprocessed exactly as <code>predict()</code> does, capped by <code>max_images</code>), a <code>.npy</code> file of shape <code>(N, C, H, W)</code> already normalized, or an equivalent array. A few dozen to a few hundred images from your validation split is the normal choice.</p>
+<p>Pass <code>int8_keep_mlp_float=True</code> to also keep GELU-fed weighted projections in float. This includes the second layer of backbone MLPs and can include projections in segmentation heads. GELU outputs can have outlier channels that determine the 8-bit step for the entire tensor. The option defaults to <code>False</code> and requires <code>quantization="int8"</code> for ONNX.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"onnx"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span> <span class="n">calibration_data</span><span class="o">=</span><span class="s2">"calibration_images/"</span><span class="p">,</span> <span class="n">int8_keep_mlp_float</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">What gets quantized, and why it is not everything</p>
 <p>Only <code>MatMul</code> and <code>Gemm</code> run in 8-bit. Attention-score multiplies, the detection heads, normalization, softmax and the surrounding elementwise math stay in float, and those ops' <em>outputs</em> are not quantized either.</p>
@@ -3576,15 +3579,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>No earlier x86 CPU table remains here: the earlier run had <code>RFDETRInference</code>'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, <a href="../openvino/#measured-latency-on-an-x86-cpu">OpenVINO</a> is also a measured route.</p>
 <h3 id="compact-pe-models-on-cpu">Compact PE models on CPU<a class="headerlink" href="#compact-pe-models-on-cpu" title="Permanent link">&para;</a></h3>
 <p>Install <code>pip install "rfdetr-plus[onnx]"</code> to export Atto, Femto or Pico with ONNX Runtime's CPU operators. Export a released detector or reload a fine-tuned checkpoint to retain its trained weights, class head and resolution.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span><span class="p">,</span> <span class="n">from_checkpoint</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr_plus</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRFemto</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">pretrained</span> <span class="o">=</span> <span class="n">RFDETRFemto</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">pretrained</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="s2">"output/pretrained"</span><span class="p">)</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">trained</span> <span class="o">=</span> <span class="n">from_checkpoint</span><span class="p">(</span><span class="s2">"checkpoint_best_total.pth"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">artifact</span> <span class="o">=</span> <span class="n">trained</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="s2">"output/finetuned"</span><span class="p">)</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">artifact</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span><span class="p">,</span> <span class="n">from_checkpoint</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr_plus</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRFemto</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">pretrained</span> <span class="o">=</span> <span class="n">RFDETRFemto</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">pretrained</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="s2">"output/pretrained"</span><span class="p">)</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">trained</span> <span class="o">=</span> <span class="n">from_checkpoint</span><span class="p">(</span><span class="s2">"checkpoint_best_total.pth"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">artifact</span> <span class="o">=</span> <span class="n">trained</span><span class="o">.</span><span class="n">export_cpu_onnx</span><span class="p">(</span><span class="s2">"output/finetuned"</span><span class="p">)</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">RFDETRInference</span><span class="p">(</span><span class="n">artifact</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The compact ONNX file takes one normalized NCHW float image and returns normalized center-format boxes (<code>dets</code>) and class logits (<code>labels</code>). The prediction API handles preprocessing and postprocessing. Compare AP on your held-out images and latency on the deployment CPU against the standard FP32 export before choosing a format.</p>
 <p>To enforce an 8 MB storage budget, pass <code>size_limit_bytes=8_000_000</code> to <code>export_cpu_onnx</code>. The complete uncompressed artifact must be strictly smaller. The released COCO checkpoints produced 7.13 MB for Atto, 11.77 MB for Femto and 13.10 MB for Pico in the <a href="https://github.com/roboflow/rf-detr_plus/pull/83">CPU export qualification</a>. A fine-tuned model can have a different artifact size.</p>
@@ -3608,7 +3611,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 19:50:55 UTC">2026-11-20 19:50:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 23, 2026 17:30:06 UTC">2026-11-23 17:30:06</span>
   </span>
 
     
