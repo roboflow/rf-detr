@@ -2146,6 +2146,7 @@ class RFDETR:
         coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
+        int8_keep_mlp_float: bool = False,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
@@ -2374,6 +2375,11 @@ class RFDETR:
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
                 Ignored for every other format.
+            int8_keep_mlp_float: For ``format="onnx"`` with ``quantization="int8"``: also keep the second layer of each
+                backbone MLP in float. The default is the fast placement; ``True`` is the more precise one, which
+                recovers accuracy on the larger detection sizes (measured on 2XLarge: -3.80 to +0.13 box AP) and keeps
+                12 more multiplies in float. Refused for ONNX without ``quantization="int8"``; ignored for every other
+                format.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -2533,6 +2539,7 @@ class RFDETR:
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
+            int8_keep_mlp_float=int8_keep_mlp_float,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
             trt_metadata=trt_metadata,

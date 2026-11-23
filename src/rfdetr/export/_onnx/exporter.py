@@ -41,12 +41,15 @@ class OnnxConfig(ExportConfig):
         calibration_data: Representative images the INT8 activation ranges are collected from. Required for
             ``"int8"``, unused otherwise.
         max_images: Maximum images read from a *calibration_data* directory.
+        int8_keep_mlp_float: Also keep the second layer of each backbone MLP in float for ``"int8"``, the more precise
+            and slightly slower placement. Unused (and refused) without ``"int8"``.
     """
 
     opset_version: int = 17
     quantization: str | None = None
     calibration_data: Any = None
     max_images: int = 100
+    int8_keep_mlp_float: bool = False
 
     @classmethod
     def derive(cls, config: ExportConfig, *, opset_version: int) -> OnnxConfig:
@@ -94,6 +97,7 @@ class OnnxExporter(Exporter[OnnxConfig]):
         "quantization": "quantization",
         "calibration_data": "calibration_data",
         "max_images": "max_images",
+        "int8_keep_mlp_float": "int8_keep_mlp_float",
     }
     format = "onnx"
     display_name = "ONNX"
@@ -112,8 +116,8 @@ class OnnxExporter(Exporter[OnnxConfig]):
         not a positive integer -- is judged here too, so it fails before the forward pass instead of after the trace.
 
         Raises:
-            ValueError: If *quantization* is not a recognized mode, or is ``"int8"`` without usable
-                *calibration_data*.
+            ValueError: If *quantization* is not a recognized mode, is ``"int8"`` without usable *calibration_data*,
+                or *int8_keep_mlp_float* is set without ``"int8"``.
         """
         super()._check_capabilities()
         if self.config.quantization not in VALID_QUANTIZATIONS:
@@ -126,6 +130,10 @@ class OnnxExporter(Exporter[OnnxConfig]):
                 "quantization='int8' requires calibration_data: a directory of representative images, a .npy path, "
                 "or a preprocessed array. Static quantization reads activation ranges from this data, so there is "
                 "no meaningful default."
+            )
+        if self.config.int8_keep_mlp_float and self.config.quantization != "int8":
+            raise ValueError(
+                "int8_keep_mlp_float=True needs quantization='int8': it changes which INT8 multiplies stay in float."
             )
         if self.config.quantization == "int8":
             check_calibration_data(self.config.calibration_data, max_images=self.config.max_images)
@@ -232,6 +240,7 @@ class OnnxExporter(Exporter[OnnxConfig]):
                     output_file,
                     self.config.calibration_data,
                     max_images=self.config.max_images,
+                    keep_mlp_float=self.config.int8_keep_mlp_float,
                 )
             )
         return output_file

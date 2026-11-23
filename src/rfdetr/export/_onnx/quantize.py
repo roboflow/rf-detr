@@ -27,8 +27,9 @@ float now (:func:`nodes_to_exclude`); on the same images Large went from -2.83 t
 The detection sizes kept losing more as they grew (2XLarge -3.80 box AP, XLarge -0.61, Large -0.50), and the remainder
 sat in the second layer of each backbone MLP: its input is a GELU output, a few channels of which reach many times the
 typical range, so one 8-bit step per tensor sized by them rounds the others. Keeping those multiplies in float
-(:func:`nodes_to_exclude`) gave, on the same 200 images, 2XLarge +0.13, XLarge -0.05, Large -0.21, Medium +0.16 and
-Small -0.09 box AP against FP32; keeping the first layer of the MLP in float as well did not improve on that.
+(``keep_mlp_float=True`` in :func:`nodes_to_exclude`, opt-in) gave, on the same 200 images, 2XLarge +0.13, XLarge -0.05,
+Large -0.21, Medium +0.16 and Small -0.09 box AP against FP32; keeping the first layer of the MLP in float as well did
+not improve on that.
 
 Three decisions follow from that and are deliberately not configurable:
 
@@ -235,26 +236,28 @@ def _head_matmuls(graph: Any, producer: dict[str, Any]) -> set[str]:
     return excluded
 
 
-def nodes_to_exclude(graph: Any) -> list[str]:
+def nodes_to_exclude(graph: Any, keep_mlp_float: bool = False) -> list[str]:
     """Return the names of nodes that must stay in float even among ``MatMul``/``Gemm``.
 
-    Four groups, all found by walking the graph rather than matched by name, so a renamed or restructured export stays
-    covered:
+    Three groups by default and a fourth on request, all found by walking the graph rather than matched by name, so a
+    renamed or restructured export stays covered:
 
     * the attention-score multiplies -- an activation-by-activation ``MatMul`` reaching a ``Softmax`` directly or
       through constant scaling (``Q @ K^T / sqrt(d)``), where an 8-bit range quantizes the comparison the attention is
       about to make;
     * the attention-value multiplies -- an activation-by-activation ``MatMul`` reading a ``Softmax`` output (weights
       times values), where an 8-bit range over [0, 1] rounds the small weights to zero;
-    * the weighted ``MatMul``/``Gemm`` reading a GELU output -- the second layer of a backbone MLP, where a few outlier
-      channels set the 8-bit step for the whole tensor;
     * the last ``MatMul``/``Gemm`` on each path back from a graph output -- the detection heads' final layers, which
       emit box deltas and class logits directly, so quantizing them quantizes the answer. The walk passes through any
       number of elementwise ops (box refinement, sigmoid, reshapes) up to :data:`_MAX_WALK_HOPS` hops, and stops at a
-      ``Conv``.
+      ``Conv``;
+    * only with *keep_mlp_float*, the weighted ``MatMul``/``Gemm`` reading a GELU output -- the second layer of a
+      backbone MLP, where a few outlier channels set the 8-bit step for the whole tensor.
 
     Args:
         graph: An ``onnx.GraphProto``.
+        keep_mlp_float: Also keep the second layer of each backbone MLP in float. Costs 12 more float multiplies and
+            recovers accuracy on the larger sizes; see the module docstring.
 
     Returns:
         Node names to pass to ``quantize_static(nodes_to_exclude=...)``, sorted and deduplicated.
@@ -276,7 +279,8 @@ def nodes_to_exclude(graph: Any) -> list[str]:
     constants = _constant_names(graph)
     excluded = _attention_score_matmuls(graph, producer, constants)
     excluded |= _attention_value_matmuls(graph, constants)
-    excluded |= _gelu_projection_matmuls(graph, producer, constants)
+    if keep_mlp_float:
+        excluded |= _gelu_projection_matmuls(graph, producer, constants)
     excluded |= _head_matmuls(graph, producer)
     return sorted(excluded)
 
@@ -388,6 +392,7 @@ def quantize_int8(
     calibration_data: str | Path | NDArray[Any],
     *,
     max_images: int = 100,
+    keep_mlp_float: bool = False,
 ) -> Path:
     """Write a static INT8 QDQ copy of the ONNX graph at *model_path* and return its path.
 
@@ -398,6 +403,8 @@ def quantize_int8(
         calibration_data: Directory of representative images, a ``.npy`` path, or a preprocessed array. Images are
             preprocessed exactly as inference does.
         max_images: Maximum images read from a *calibration_data* directory.
+        keep_mlp_float: Also keep the second layer of each backbone MLP in float, the more precise and slightly slower
+            placement. The default is the fast placement.
 
     Returns:
         Path of the written INT8 model.
@@ -435,7 +442,7 @@ def quantize_int8(
         model = onnx.load(str(prepared))
         graph_input = model.graph.input[0]
         batch_size, channels, height, width = _static_input_dims(graph_input)
-        excluded = nodes_to_exclude(model.graph)
+        excluded = nodes_to_exclude(model.graph, keep_mlp_float=keep_mlp_float)
 
         batches = list(
             calibration_batches(

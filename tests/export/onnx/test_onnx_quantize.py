@@ -296,21 +296,25 @@ def _mlp_graph(activation: str) -> object:
 class TestNodeSelection:
     """Which nodes are held back from quantization."""
 
-    def test_excludes_projection_reading_a_gelu(self) -> None:
-        """The second MLP projection, which reads the GELU output, is excluded from INT8 quantization."""
+    def test_excludes_projection_reading_a_gelu_when_asked(self) -> None:
+        """The second MLP projection, which reads the GELU output, is excluded when ``keep_mlp_float`` is set."""
         # The GELU output has a heavy tail (a few outlier channels), so one 8-bit step set by them rounds the rest.
-        assert "fc2" in nodes_to_exclude(_mlp_graph("gelu"))
+        assert "fc2" in nodes_to_exclude(_mlp_graph("gelu"), keep_mlp_float=True)
+
+    def test_quantizes_projection_reading_a_gelu_by_default(self) -> None:
+        """Without ``keep_mlp_float`` the fast placement leaves the second MLP projection in INT8."""
+        assert "fc2" not in nodes_to_exclude(_mlp_graph("gelu"))
 
     def test_keeps_projections_around_the_gelu_quantizable(self) -> None:
         """The projection before the GELU and the next block's first projection stay quantizable."""
         # The walk back from ``fc2`` stops at ``fc2``'s own producer chain, and the walk from ``next_fc1`` stops at
         # ``fc2``, so neither sees the Erf.
-        excluded = nodes_to_exclude(_mlp_graph("gelu"))
+        excluded = nodes_to_exclude(_mlp_graph("gelu"), keep_mlp_float=True)
         assert "fc1" not in excluded and "next_fc1" not in excluded
 
     def test_keeps_projection_reading_a_relu_quantizable(self) -> None:
         """A projection reading a ReLU (a decoder feed-forward layer) is not held back."""
-        assert "fc2" not in nodes_to_exclude(_mlp_graph("relu"))
+        assert "fc2" not in nodes_to_exclude(_mlp_graph("relu"), keep_mlp_float=True)
 
     def test_excludes_matmul_feeding_softmax(self) -> None:
         """A MatMul feeding a Softmax is excluded from INT8 quantization."""
@@ -484,6 +488,12 @@ class TestConfigValidation:
         assert exporter.config.quantization == "int8"
 
     @pytest.mark.parametrize("quantization", [None, "fp32"])
+    def test_rejects_keep_mlp_float_without_int8(self, quantization: str | None, tmp_path: Path) -> None:
+        """The MLP placement setting changes nothing without INT8, so asking for it is refused."""
+        with pytest.raises(ValueError, match="int8_keep_mlp_float"):
+            OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization=quantization, int8_keep_mlp_float=True))
+
+    @pytest.mark.parametrize("quantization", [None, "fp32"])
     def test_accepts_float_modes_without_calibration_data(self, quantization: str | None, tmp_path: Path) -> None:
         """Float modes construct the exporter without calibration_data."""
         exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization=quantization))
@@ -497,6 +507,15 @@ class TestSettingPlumbing:
         """Quantization settings given to build_config reach the exporter config."""
         config = OnnxExporter.build_config(quantization="int8", calibration_data="images/", max_images=32)
         assert (config.quantization, config.calibration_data, config.max_images) == ("int8", "images/", 32)
+
+    def test_mlp_placement_setting_reaches_the_config(self) -> None:
+        """The opt-in precise placement given to build_config reaches the exporter config."""
+        config = OnnxExporter.build_config(quantization="int8", calibration_data="images/", int8_keep_mlp_float=True)
+        assert config.int8_keep_mlp_float is True
+
+    def test_mlp_placement_defaults_to_the_fast_placement(self) -> None:
+        """A config built without the setting keeps the fast placement."""
+        assert OnnxExporter.build_config(quantization="int8", calibration_data="images/").int8_keep_mlp_float is False
 
     @pytest.mark.parametrize(
         "two_stage_config",

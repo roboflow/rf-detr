@@ -119,6 +119,19 @@ class TestCalibrationSettings:
         quantize_int8(source_model, _CALIBRATION)
         assert received["calibrate_method"] == "MinMax"
 
+    @pytest.mark.parametrize("keep_mlp_float", [False, True])
+    def test_passes_the_mlp_placement_to_the_node_selection(
+        self, source_model: Path, keep_mlp_float: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``keep_mlp_float`` reaches ``nodes_to_exclude``, so the opt-in decides which multiplies stay in float."""
+        received: list[bool] = []
+        monkeypatch.setattr(
+            "rfdetr.export._onnx.quantize.nodes_to_exclude",
+            lambda graph, keep_mlp_float=False: received.append(keep_mlp_float) or [],
+        )
+        quantize_int8(source_model, _CALIBRATION, keep_mlp_float=keep_mlp_float)
+        assert received == [keep_mlp_float]
+
     def test_checks_calibration_channels_against_the_graph(self, source_model: Path) -> None:
         """The ONNX quantizer passes the graph's channel count (input dim 1) to the calibration-array check.
 
