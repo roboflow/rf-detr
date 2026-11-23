@@ -7,8 +7,8 @@
 
 The document is built by a pure function from the exporter configuration, the prepared graph and a few facts about the
 build, so most of it is tested without TensorRT. The class that drives ``TensorRTExporter._convert`` stubs the
-polygraphy chain the same way ``test_tensorrt_export.py`` does. The end-to-end check against a real engine lives in
-``TestTensorRTEndToEnd`` there.
+polygraphy chain the same way ``test_tensorrt_build_engine.py`` does. The end-to-end check against a real engine lives
+in ``TestTensorRTEndToEnd`` in ``test_tensorrt_end_to_end.py``.
 """
 
 from __future__ import annotations

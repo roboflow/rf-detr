@@ -15,9 +15,11 @@ import pytest
 import torch
 
 from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
+from rfdetr.export._tensorrt.exporter import _IS_POLYGRAPHY_AVAILABLE, _IS_TENSORRT_AVAILABLE
 from rfdetr.export.imports import (
     _IS_COREAI_INSTALLED,
     _IS_ONNX_INSTALLED,
+    _IS_ONNXCONVERTER_COMMON_INSTALLED,
     _IS_ONNXRUNTIME_INSTALLED,
     _IS_OPENVINO_INSTALLED,
 )
@@ -86,6 +88,16 @@ _requires_onnxruntime = pytest.mark.skipif(
 _requires_onnx_and_onnxruntime = pytest.mark.skipif(
     not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx/onnxruntime not installed; skip ONNX inference tests",
+)
+
+#: Skip a test node that needs ``onnxconverter-common``, the FP16 graph rewrite behind the TensorRT INT8 source graph.
+_requires_onnxconverter_common = pytest.mark.skipif(
+    not _IS_ONNXCONVERTER_COMMON_INSTALLED, reason="onnxconverter-common not installed (the FP16 graph rewrite)"
+)
+
+#: Skip a test node that needs TensorRT and polygraphy, which build the engine.
+_requires_tensorrt = pytest.mark.skipif(
+    not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
 )
 
 #: Skip a test node that needs two CUDA devices, such as a model and its input on different GPUs.
