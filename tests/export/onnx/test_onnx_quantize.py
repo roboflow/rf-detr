@@ -27,6 +27,7 @@ __doctest_requires__ = {
         "_matmul_chain",
         "_relu_tail",
         "_attention_graph",
+        "_mlp_graph",
     ): ["onnx"],
 }
 
@@ -244,9 +245,72 @@ def _attention_graph() -> object:
     return helper.make_graph(nodes, "attention", inputs, outputs)
 
 
+def _mlp_graph(activation: str) -> object:
+    """Build a two-layer MLP block with a residual connection and a following block's first projection.
+
+    ``fc1`` reads the graph input, ``fc2`` reads the activation of ``fc1``, and ``next_fc1`` reads the residual sum that
+    ``fc2``'s output joins. The graph ends in a run of ``Relu`` nodes longer than the head walk, so no multiply is held
+    back as a head and what ``nodes_to_exclude`` returns is decided by the activation alone.
+
+    Args:
+        activation: ``"gelu"`` for the exact GELU as the exporter writes it (``Div``, ``Erf``, ``Add``, two ``Mul``), or
+            ``"relu"`` for a single ``Relu``.
+
+    Returns:
+        An ``onnx.GraphProto``.
+
+    Examples:
+        >>> sorted(n.name for n in _mlp_graph("relu").node if n.op_type == "MatMul")
+        ['fc1', 'fc2', 'next_fc1']
+    """
+    from onnx import TensorProto, helper
+
+    nodes = [helper.make_node("MatMul", ["x", "w_fc1"], ["h"], name="fc1")]
+    if activation == "gelu":
+        nodes += [
+            helper.make_node("Div", ["h", "sqrt2"], ["scaled"], name="gelu_div"),
+            helper.make_node("Erf", ["scaled"], ["erf"], name="gelu_erf"),
+            helper.make_node("Add", ["erf", "one"], ["erf_plus_one"], name="gelu_add"),
+            helper.make_node("Mul", ["h", "erf_plus_one"], ["gated"], name="gelu_gate"),
+            helper.make_node("Mul", ["gated", "half"], ["act"], name="gelu_half"),
+        ]
+    else:
+        nodes.append(helper.make_node("Relu", ["h"], ["act"], name="act"))
+    nodes += [
+        helper.make_node("MatMul", ["act", "w_fc2"], ["y"], name="fc2"),
+        helper.make_node("Add", ["y", "x"], ["residual"], name="residual"),
+        helper.make_node("MatMul", ["residual", "w_next"], ["z"], name="next_fc1"),
+    ]
+    tail, tail_end = _relu_tail("z", 11, "tail")
+    constants = [_weights(name, (1, 1)) for name in ("w_fc1", "w_fc2", "w_next", "sqrt2", "one", "half")]
+    return helper.make_graph(
+        nodes + tail,
+        "mlp",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1])],
+        [helper.make_tensor_value_info(tail_end, TensorProto.FLOAT, [1, 1])],
+        initializer=constants,
+    )
+
+
 @_requires_onnx
 class TestNodeSelection:
     """Which nodes are held back from quantization."""
+
+    def test_excludes_projection_reading_a_gelu(self) -> None:
+        """The second MLP projection, which reads the GELU output, is excluded from INT8 quantization."""
+        # The GELU output has a heavy tail (a few outlier channels), so one 8-bit step set by them rounds the rest.
+        assert "fc2" in nodes_to_exclude(_mlp_graph("gelu"))
+
+    def test_keeps_projections_around_the_gelu_quantizable(self) -> None:
+        """The projection before the GELU and the next block's first projection stay quantizable."""
+        # The walk back from ``fc2`` stops at ``fc2``'s own producer chain, and the walk from ``next_fc1`` stops at
+        # ``fc2``, so neither sees the Erf.
+        excluded = nodes_to_exclude(_mlp_graph("gelu"))
+        assert "fc1" not in excluded and "next_fc1" not in excluded
+
+    def test_keeps_projection_reading_a_relu_quantizable(self) -> None:
+        """A projection reading a ReLU (a decoder feed-forward layer) is not held back."""
+        assert "fc2" not in nodes_to_exclude(_mlp_graph("relu"))
 
     def test_excludes_matmul_feeding_softmax(self) -> None:
         """A MatMul feeding a Softmax is excluded from INT8 quantization."""

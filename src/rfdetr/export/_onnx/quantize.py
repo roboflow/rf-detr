@@ -24,6 +24,12 @@ over [0, 1] round the small weights to zero, and a window with more tokens has m
 float now (:func:`nodes_to_exclude`); on the same images Large went from -2.83 to -0.50 box AP and Seg 2XLarge from
 -9.47 to -1.41 mask AP against FP32 (ONNX Runtime 1.24.3, arm64).
 
+The detection sizes kept losing more as they grew (2XLarge -3.80 box AP, XLarge -0.61, Large -0.50), and the remainder
+sat in the second layer of each backbone MLP: its input is a GELU output, a few channels of which reach many times the
+typical range, so one 8-bit step per tensor sized by them rounds the others. Keeping those multiplies in float
+(:func:`nodes_to_exclude`) gave, on the same 200 images, 2XLarge +0.13, XLarge -0.05, Large -0.21, Medium +0.16 and
+Small -0.09 box AP against FP32; keeping the first layer of the MLP in float as well did not improve on that.
+
 Three decisions follow from that and are deliberately not configurable:
 
 * **Only ``MatMul`` and ``Gemm``.** Everything else stays float. Quantizing more is both less accurate and *slower*
@@ -152,6 +158,50 @@ def _attention_value_matmuls(graph: Any, constants: set[str]) -> set[str]:
     }
 
 
+def _gelu_projection_matmuls(graph: Any, producer: dict[str, Any], constants: set[str]) -> set[str]:
+    """Return the weighted ``MatMul``/``Gemm`` nodes that read a GELU output (the second layer of a transformer MLP).
+
+    The exporter writes the exact GELU as ``Div``, ``Erf``, ``Add`` and two ``Mul``, so an ``Erf`` behind a multiply's
+    activation input marks it. The walk goes back from that input through any op that is not a ``MatMul``, ``Gemm`` or
+    ``Conv`` for at most :data:`_MAX_WALK_HOPS` hops, so the first layer of the same MLP and the next block's layers,
+    which sit behind another multiply, never reach it. Decoder feed-forward layers use ``ReLU`` and are not marked.
+
+    The GELU output has a heavy tail: a few channels reach many times the typical range, and one 8-bit step per tensor
+    sized by them rounds every other channel to a few levels. The loss grows with the model (measured: detection
+    2XLarge lost 3.8 box AP with these multiplies in INT8 and none with them in float).
+
+    Args:
+        graph: An ``onnx.GraphProto``.
+        producer: Tensor name -> node producing it.
+        constants: Names of constant tensors, from :func:`_constant_names`.
+
+    Returns:
+        Names of the multiplies that read a GELU output.
+    """
+    excluded: set[str] = set()
+    for node in graph.node:
+        if node.op_type not in _QUANTIZED_OP_TYPES or not node.name:
+            continue
+        dynamic = [name for name in node.input[:2] if name not in constants]
+        if len(dynamic) != 1:
+            continue
+        visited: set[str] = set()
+        frontier = dynamic
+        for _ in range(_MAX_WALK_HOPS):
+            next_frontier: list[str] = []
+            for tensor in frontier:
+                source = producer.get(tensor)
+                if source is None or tensor in visited:
+                    continue
+                visited.add(tensor)
+                if source.op_type == "Erf":
+                    excluded.add(node.name)
+                elif source.op_type not in _HEAD_STOP_OP_TYPES:
+                    next_frontier.extend(source.input)
+            frontier = next_frontier
+    return excluded
+
+
 def _head_matmuls(graph: Any, producer: dict[str, Any]) -> set[str]:
     """Return the last ``MatMul``/``Gemm`` on each path back from a graph output.
 
@@ -188,7 +238,7 @@ def _head_matmuls(graph: Any, producer: dict[str, Any]) -> set[str]:
 def nodes_to_exclude(graph: Any) -> list[str]:
     """Return the names of nodes that must stay in float even among ``MatMul``/``Gemm``.
 
-    Three groups, all found by walking the graph rather than matched by name, so a renamed or restructured export stays
+    Four groups, all found by walking the graph rather than matched by name, so a renamed or restructured export stays
     covered:
 
     * the attention-score multiplies -- an activation-by-activation ``MatMul`` reaching a ``Softmax`` directly or
@@ -196,6 +246,8 @@ def nodes_to_exclude(graph: Any) -> list[str]:
       about to make;
     * the attention-value multiplies -- an activation-by-activation ``MatMul`` reading a ``Softmax`` output (weights
       times values), where an 8-bit range over [0, 1] rounds the small weights to zero;
+    * the weighted ``MatMul``/``Gemm`` reading a GELU output -- the second layer of a backbone MLP, where a few outlier
+      channels set the 8-bit step for the whole tensor;
     * the last ``MatMul``/``Gemm`` on each path back from a graph output -- the detection heads' final layers, which
       emit box deltas and class logits directly, so quantizing them quantizes the answer. The walk passes through any
       number of elementwise ops (box refinement, sigmoid, reshapes) up to :data:`_MAX_WALK_HOPS` hops, and stops at a
@@ -224,6 +276,7 @@ def nodes_to_exclude(graph: Any) -> list[str]:
     constants = _constant_names(graph)
     excluded = _attention_score_matmuls(graph, producer, constants)
     excluded |= _attention_value_matmuls(graph, constants)
+    excluded |= _gelu_projection_matmuls(graph, producer, constants)
     excluded |= _head_matmuls(graph, producer)
     return sorted(excluded)
 
@@ -398,7 +451,7 @@ def quantize_int8(
         warn_if_too_few_samples(len(batches))
         logger.info(
             f"Quantizing {source.name} to INT8 from {len(batches)} calibration samples "
-            f"({len(excluded)} attention/head nodes kept in float)"
+            f"({len(excluded)} attention, MLP and head nodes kept in float)"
         )
 
         quantize_static(
