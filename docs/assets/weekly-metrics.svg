@@ -1,21 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title description">
   <title id="title">RF-DETR weekly project metrics</title>
-  <desc id="description">For week ending 2026-11-22, RF-DETR had +64 new GitHub stars and 114,513 PyPI downloads.</desc>
-  <metadata id="weekly-metrics-state">{"history":[{"downloads":100370,"new_stars":null,"stars_total":9026,"week_end":"2026-08-23","week_start":"2026-08-17"},{"downloads":52689,"new_stars":70,"stars_total":9096,"week_end":"2026-08-30","week_start":"2026-08-24"},{"downloads":44203,"new_stars":201,"stars_total":9297,"week_end":"2026-09-06","week_start":"2026-08-31"},{"downloads":51877,"new_stars":170,"stars_total":9467,"week_end":"2026-09-13","week_start":"2026-09-07"},{"downloads":50614,"new_stars":74,"stars_total":9541,"week_end":"2026-09-20","week_start":"2026-09-14"},{"downloads":47796,"new_stars":84,"stars_total":9625,"week_end":"2026-09-27","week_start":"2026-09-21"},{"downloads":56103,"new_stars":62,"stars_total":9687,"week_end":"2026-10-04","week_start":"2026-09-28"},{"downloads":65160,"new_stars":85,"stars_total":9772,"week_end":"2026-10-11","week_start":"2026-10-05"},{"downloads":68932,"new_stars":60,"stars_total":9832,"week_end":"2026-10-18","week_start":"2026-10-12"},{"downloads":83824,"new_stars":62,"stars_total":9894,"week_end":"2026-10-25","week_start":"2026-10-19"},{"downloads":93123,"new_stars":54,"stars_total":9948,"week_end":"2026-11-01","week_start":"2026-10-26"},{"downloads":95645,"new_stars":58,"stars_total":10006,"week_end":"2026-11-08","week_start":"2026-11-02"},{"downloads":115070,"new_stars":65,"stars_total":10071,"week_end":"2026-11-15","week_start":"2026-11-09"},{"downloads":114513,"new_stars":64,"stars_total":10135,"week_end":"2026-11-22","week_start":"2026-11-16"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
+  <desc id="description">For week ending 2026-11-22, RF-DETR had +64 new GitHub stars and 114,513 PyPI downloads. 209 repositories depend on the package.</desc>
+  <metadata id="weekly-metrics-state">{"history":[{"downloads":100370,"new_stars":null,"stars_total":9026,"week_end":"2026-08-23","week_start":"2026-08-17"},{"downloads":52689,"new_stars":70,"stars_total":9096,"week_end":"2026-08-30","week_start":"2026-08-24"},{"downloads":44203,"new_stars":201,"stars_total":9297,"week_end":"2026-09-06","week_start":"2026-08-31"},{"downloads":51877,"new_stars":170,"stars_total":9467,"week_end":"2026-09-13","week_start":"2026-09-07"},{"downloads":50614,"new_stars":74,"stars_total":9541,"week_end":"2026-09-20","week_start":"2026-09-14"},{"downloads":47796,"new_stars":84,"stars_total":9625,"week_end":"2026-09-27","week_start":"2026-09-21"},{"downloads":56103,"new_stars":62,"stars_total":9687,"week_end":"2026-10-04","week_start":"2026-09-28"},{"downloads":65160,"new_stars":85,"stars_total":9772,"week_end":"2026-10-11","week_start":"2026-10-05"},{"downloads":68932,"new_stars":60,"stars_total":9832,"week_end":"2026-10-18","week_start":"2026-10-12"},{"downloads":83824,"new_stars":62,"stars_total":9894,"week_end":"2026-10-25","week_start":"2026-10-19"},{"downloads":93123,"new_stars":54,"stars_total":9948,"week_end":"2026-11-01","week_start":"2026-10-26"},{"downloads":95645,"new_stars":58,"stars_total":10006,"week_end":"2026-11-08","week_start":"2026-11-02"},{"downloads":115070,"new_stars":65,"stars_total":10071,"week_end":"2026-11-15","week_start":"2026-11-09"},{"downloads":114513,"new_stars":64,"stars_total":10135,"used_by":209,"week_end":"2026-11-22","week_start":"2026-11-16"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
   <rect width="1200" height="640" rx="18" fill="#ffffff"/>
   <text x="56" y="58" fill="#0b0b0b" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="700">RF-DETR weekly growth</text>
   <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="15">Latest completed week · Nov 16–Nov 22, 2026</text>
   <g font-family="DejaVu Sans, Arial, sans-serif">
-    <rect x="56" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
+    <rect x="56" y="112" width="190" height="82" rx="10" fill="#f5f1fa"/>
     <text x="76" y="141" fill="#6b6a66" font-size="14">GITHUB STARS</text>
-    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">10,135</text>
-    <rect x="410" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
-    <text x="430" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>
-    <text x="430" y="176" fill="#8315f9" font-size="28" font-weight="700">+64 new stars</text>
-    <rect x="764" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>
-    <text x="784" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>
-    <text x="784" y="176" fill="#2a78d6" font-size="28" font-weight="700">114,513 weekly downloads</text>
+    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">10.1k</text>
+    <rect x="264" y="112" width="270" height="82" rx="10" fill="#f5f1fa"/>
+    <text x="284" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>
+    <text x="284" y="176" fill="#8315f9" font-size="28" font-weight="700">+64 new stars</text>
+    <rect x="552" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>
+    <text x="572" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>
+    <text x="572" y="176" fill="#2a78d6" font-size="28" font-weight="700">114k weekly downloads</text>
+    <rect x="950" y="112" width="194" height="82" rx="10" fill="#f5f1fa"/>
+    <text x="970" y="141" fill="#6b6a66" font-size="14">USED BY</text>
+    <text x="970" y="176" fill="#0b0b0b" font-size="28" font-weight="700">209 repos</text>
   </g>
   <g aria-hidden="true" fill="none" stroke="#e1e0d9" stroke-width="1">
     <path d="M100 530.0H1100"/>
@@ -27,9 +30,9 @@
     <text x="88" y="535.0" text-anchor="end">+0</text>
     <text x="1112" y="535.0" text-anchor="start">0</text>
     <text x="88" y="390.0" text-anchor="end">+100</text>
-    <text x="1112" y="390.0" text-anchor="start">57,535</text>
+    <text x="1112" y="390.0" text-anchor="start">57.5k</text>
     <text x="88" y="245.0" text-anchor="end">+201</text>
-    <text x="1112" y="245.0" text-anchor="start">115,070</text>
+    <text x="1112" y="245.0" text-anchor="start">115k</text>
     <text x="100" y="221" fill="#8315f9" font-size="14" font-weight="700">NEW STARS</text>
     <text x="1100" y="221" fill="#2a78d6" font-size="14" font-weight="700" text-anchor="end">WEEKLY DOWNLOADS</text>
   </g>
