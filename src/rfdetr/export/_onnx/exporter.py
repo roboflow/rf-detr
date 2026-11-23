@@ -41,8 +41,8 @@ class OnnxConfig(ExportConfig):
         calibration_data: Representative images the INT8 activation ranges are collected from. Required for
             ``"int8"``, unused otherwise.
         max_images: Maximum images read from a *calibration_data* directory.
-        int8_keep_mlp_float: Also keep the second layer of each backbone MLP in float for ``"int8"``, the more precise
-            and slightly slower placement. Unused (and refused) without ``"int8"``.
+        int8_keep_mlp_float: Also keep GELU-fed weighted projections in float for ``"int8"``. Refused without
+            ``"int8"``.
     """
 
     opset_version: int = 17

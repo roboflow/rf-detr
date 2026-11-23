@@ -118,7 +118,7 @@ model.export(format="onnx", quantization="int8", calibration_data="calibration_i
 
 `calibration_data` is **required** and must be representative of your deployment domain. Static quantization reads activation ranges from that data; out-of-domain or synthetic images produce a model that loads, runs, and is quietly wrong. Accepted forms are a directory of images (preprocessed exactly as `predict()` does, capped by `max_images`), a `.npy` file of shape `(N, C, H, W)` already normalized, or an equivalent array. A few dozen to a few hundred images from your validation split is the normal choice.
 
-The default placement is the faster one. Pass `int8_keep_mlp_float=True` for the more precise one, which also keeps the second layer of each backbone MLP in float (12 more multiplies, 13 on Seg 2XLarge): on 200 val2017 images it recovered 0.1 to 3.9 box AP on Small to 2XLarge against the default placement on an Apple M4 Max with ONNX Runtime 1.24.3, and it showed no consistent speed cost there; it has not been measured on x86 and is refused without `quantization="int8"`.
+Pass `int8_keep_mlp_float=True` to also keep GELU-fed weighted projections in float. This includes the second layer of backbone MLPs and can include projections in segmentation heads. GELU outputs can have outlier channels that determine the 8-bit step for the entire tensor. The option defaults to `False` and requires `quantization="int8"` for ONNX.
 
 ```python
 model.export(format="onnx", quantization="int8", calibration_data="calibration_images/", int8_keep_mlp_float=True)

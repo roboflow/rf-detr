@@ -24,12 +24,9 @@ over [0, 1] round the small weights to zero, and a window with more tokens has m
 float now (:func:`nodes_to_exclude`); on the same images Large went from -2.83 to -0.50 box AP and Seg 2XLarge from
 -9.47 to -1.41 mask AP against FP32 (ONNX Runtime 1.24.3, arm64).
 
-The detection sizes kept losing more as they grew (2XLarge -3.80 box AP, XLarge -0.61, Large -0.50), and the remainder
-sat in the second layer of each backbone MLP: its input is a GELU output, a few channels of which reach many times the
-typical range, so one 8-bit step per tensor sized by them rounds the others. Keeping those multiplies in float
-(``keep_mlp_float=True`` in :func:`nodes_to_exclude`, opt-in) gave, on the same 200 images, 2XLarge +0.13, XLarge -0.05,
-Large -0.21, Medium +0.16 and Small -0.09 box AP against FP32; keeping the first layer of the MLP in float as well did
-not improve on that.
+GELU outputs can have outlier channels that set the 8-bit step for the entire tensor. The optional
+``keep_mlp_float=True`` setting leaves GELU-fed weighted projections in float, including the second layer of
+backbone MLPs and matching projections elsewhere in the graph.
 
 Three decisions follow from that and are deliberately not configurable:
 
@@ -160,16 +157,11 @@ def _attention_value_matmuls(graph: Any, constants: set[str]) -> set[str]:
 
 
 def _gelu_projection_matmuls(graph: Any, producer: dict[str, Any], constants: set[str]) -> set[str]:
-    """Return the weighted ``MatMul``/``Gemm`` nodes that read a GELU output (the second layer of a transformer MLP).
+    """Return the weighted ``MatMul``/``Gemm`` nodes fed by GELU activations.
 
-    The exporter writes the exact GELU as ``Div``, ``Erf``, ``Add`` and two ``Mul``, so an ``Erf`` behind a multiply's
-    activation input marks it. The walk goes back from that input through any op that is not a ``MatMul``, ``Gemm`` or
-    ``Conv`` for at most :data:`_MAX_WALK_HOPS` hops, so the first layer of the same MLP and the next block's layers,
-    which sit behind another multiply, never reach it. Decoder feed-forward layers use ``ReLU`` and are not marked.
-
-    The GELU output has a heavy tail: a few channels reach many times the typical range, and one 8-bit step per tensor
-    sized by them rounds every other channel to a few levels. The loss grows with the model (measured: detection
-    2XLarge lost 3.8 box AP with these multiplies in INT8 and none with them in float).
+    Older opsets decompose GELU into arithmetic around ``Erf``. Opset 20 can use the native ``Gelu`` operator.
+    The walk from the activation input finds either form within :data:`_MAX_WALK_HOPS` hops and stops at each
+    ``MatMul``, ``Gemm`` or ``Conv``, so it cannot follow GELU across a preceding projection.
 
     Args:
         graph: An ``onnx.GraphProto``.
@@ -195,7 +187,7 @@ def _gelu_projection_matmuls(graph: Any, producer: dict[str, Any], constants: se
                 if source is None or tensor in visited:
                     continue
                 visited.add(tensor)
-                if source.op_type == "Erf":
+                if source.op_type in ("Erf", "Gelu"):
                     excluded.add(node.name)
                 elif source.op_type not in _HEAD_STOP_OP_TYPES:
                     next_frontier.extend(source.input)
@@ -251,13 +243,12 @@ def nodes_to_exclude(graph: Any, keep_mlp_float: bool = False) -> list[str]:
       emit box deltas and class logits directly, so quantizing them quantizes the answer. The walk passes through any
       number of elementwise ops (box refinement, sigmoid, reshapes) up to :data:`_MAX_WALK_HOPS` hops, and stops at a
       ``Conv``;
-    * only with *keep_mlp_float*, the weighted ``MatMul``/``Gemm`` reading a GELU output -- the second layer of a
-      backbone MLP, where a few outlier channels set the 8-bit step for the whole tensor.
+    * only with *keep_mlp_float*, weighted ``MatMul``/``Gemm`` nodes fed by GELU, including the second layer of
+      backbone MLPs and matching projections in other parts of the graph.
 
     Args:
         graph: An ``onnx.GraphProto``.
-        keep_mlp_float: Also keep the second layer of each backbone MLP in float. Costs 12 more float multiplies and
-            recovers accuracy on the larger sizes; see the module docstring.
+        keep_mlp_float: Also keep GELU-fed weighted projections in float.
 
     Returns:
         Node names to pass to ``quantize_static(nodes_to_exclude=...)``, sorted and deduplicated.
@@ -403,8 +394,7 @@ def quantize_int8(
         calibration_data: Directory of representative images, a ``.npy`` path, or a preprocessed array. Images are
             preprocessed exactly as inference does.
         max_images: Maximum images read from a *calibration_data* directory.
-        keep_mlp_float: Also keep the second layer of each backbone MLP in float, the more precise and slightly slower
-            placement. The default is the fast placement.
+        keep_mlp_float: Also keep GELU-fed weighted projections in float. Defaults to ``False``.
 
     Returns:
         Path of the written INT8 model.
@@ -436,8 +426,20 @@ def quantize_int8(
         prepared = Path(scratch) / f"{source.stem}_prep.onnx"
         staged = Path(scratch) / target.name
 
-        # Shape inference and constant folding first: quantize_static refuses many graphs without it.
-        quant_pre_process(str(source), str(prepared), skip_symbolic_shape=False)
+        # ORT's per-node symbolic inference loses the rank of ReduceMax when proposal selection passes its axes
+        # as a tensor (opset 18+). Whole-graph ONNX shape inference can read that constant and still runs after
+        # ORT's graph optimization.
+        source_model = onnx.load(str(source), load_external_data=False)
+        tensor_axes_reductions = {
+            node.output[0]
+            for node in source_model.graph.node
+            if node.op_type == "ReduceMax" and len(node.input) > 1 and node.input[1]
+        }
+        skip_symbolic_shape = any(
+            node.op_type == "TopK" and node.input[0] in tensor_axes_reductions for node in source_model.graph.node
+        )
+        del source_model
+        quant_pre_process(str(source), str(prepared), skip_symbolic_shape=skip_symbolic_shape)
 
         model = onnx.load(str(prepared))
         graph_input = model.graph.input[0]

@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for static INT8 quantization of ONNX exports (:mod:`rfdetr.export._onnx.quantize`)."""
 
+from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -253,8 +254,7 @@ def _mlp_graph(activation: str) -> object:
     back as a head and what ``nodes_to_exclude`` returns is decided by the activation alone.
 
     Args:
-        activation: ``"gelu"`` for the exact GELU as the exporter writes it (``Div``, ``Erf``, ``Add``, two ``Mul``), or
-            ``"relu"`` for a single ``Relu``.
+        activation: ``"gelu"`` for decomposed GELU, ``"native-gelu"`` for the opset-20 operator, or ``"relu"`` for ReLU.
 
     Returns:
         An ``onnx.GraphProto``.
@@ -274,6 +274,8 @@ def _mlp_graph(activation: str) -> object:
             helper.make_node("Mul", ["h", "erf_plus_one"], ["gated"], name="gelu_gate"),
             helper.make_node("Mul", ["gated", "half"], ["act"], name="gelu_half"),
         ]
+    elif activation == "native-gelu":
+        nodes.append(helper.make_node("Gelu", ["h"], ["act"], name="act"))
     else:
         nodes.append(helper.make_node("Relu", ["h"], ["act"], name="act"))
     nodes += [
@@ -282,12 +284,23 @@ def _mlp_graph(activation: str) -> object:
         helper.make_node("MatMul", ["residual", "w_next"], ["z"], name="next_fc1"),
     ]
     tail, tail_end = _relu_tail("z", 11, "tail")
-    constants = [_weights(name, (1, 1)) for name in ("w_fc1", "w_fc2", "w_next", "sqrt2", "one", "half")]
+    # Use distinct weights so ORT cannot share one quantized initializer across the projections.
+    constants = [
+        helper.make_tensor(name, TensorProto.FLOAT, [1, 1], [value])
+        for name, value in {
+            "w_fc1": 0.25,
+            "w_fc2": 0.75,
+            "w_next": 1.5,
+            "sqrt2": sqrt(2),
+            "one": 1.0,
+            "half": 0.5,
+        }.items()
+    ]
     return helper.make_graph(
         nodes + tail,
         "mlp",
-        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1])],
-        [helper.make_tensor_value_info(tail_end, TensorProto.FLOAT, [1, 1])],
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 1, 1])],
+        [helper.make_tensor_value_info(tail_end, TensorProto.FLOAT, [1, 1, 1, 1])],
         initializer=constants,
     )
 
@@ -559,6 +572,60 @@ class TestQuantizeInt8EndToEnd:
     Unmarked on purpose: ``e2e_onnx`` tests are by convention also ``integration`` and so skipped by the default CPU CI
     job, but this graph is a few nodes and the runtime is in the ``tests`` group, so it can run there.
     """
+
+    @pytest.mark.parametrize(
+        ("opset", "activation"),
+        [pytest.param(17, "gelu", id="decomposed-gelu"), pytest.param(20, "native-gelu", id="native-gelu")],
+    )
+    @pytest.mark.parametrize("keep_mlp_float", [False, True])
+    def test_mlp_placement_in_quantized_artifact(
+        self, tmp_path: Path, opset: int, activation: str, keep_mlp_float: bool
+    ) -> None:
+        """Both GELU forms leave the first projection quantized and keep the second in float only on request."""
+        import onnx
+        from onnx import helper
+
+        source = tmp_path / "mlp.onnx"
+        model = helper.make_model(_mlp_graph(activation), opset_imports=[helper.make_opsetid("", opset)], ir_version=9)
+        onnx.save(model, source)
+        data = np.linspace(-2, 2, 8, dtype=np.float32).reshape(8, 1, 1, 1)
+        artifact = onnx.load(quantize_int8(source, data, keep_mlp_float=keep_mlp_float))
+
+        assert _dequantized_inputs(artifact, "fc1") == [True, True]
+        assert _dequantized_inputs(artifact, "fc2") == [not keep_mlp_float, not keep_mlp_float]
+
+    def test_quantizes_graph_with_tensor_axes_reduce_max_feeding_topk(
+        self, tmp_path: Path, onnxruntime: object
+    ) -> None:
+        """Preserve proposal selection when ReduceMax takes axes as a tensor, as it does at opset 20."""
+        import onnx
+        from onnx import TensorProto, helper
+
+        graph = _mlp_graph("native-gelu")
+        graph.node.extend(
+            [
+                helper.make_node("Neg", ["x"], ["neg"]),
+                helper.make_node("Concat", ["x", "neg"], ["proposals"], axis=-1),
+                helper.make_node(
+                    "Constant", [], ["axes"], value=helper.make_tensor("axes", TensorProto.INT64, [1], [-2])
+                ),
+                helper.make_node(
+                    "Constant", [], ["one_row"], value=helper.make_tensor("k", TensorProto.INT64, [1], [1])
+                ),
+                helper.make_node("ReduceMax", ["proposals", "axes"], ["scores"], keepdims=0),
+                helper.make_node("TopK", ["scores", "one_row"], ["values", "indices"]),
+            ]
+        )
+        graph.output.append(helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 1, 1]))
+        source = tmp_path / "proposals.onnx"
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 20)], ir_version=9), source)
+        data = np.linspace(-2, 2, 8, dtype=np.float32).reshape(8, 1, 1, 1)
+
+        artifact = quantize_int8(source, data, keep_mlp_float=True)
+
+        session = onnxruntime.InferenceSession(str(artifact), providers=["CPUExecutionProvider"])
+        (indices,) = session.run(["indices"], {"x": data[:1]})
+        np.testing.assert_array_equal(indices, np.array([[[1]]], dtype=np.int64))
 
     @pytest.fixture
     def onnxruntime(self) -> object:

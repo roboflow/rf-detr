@@ -2375,11 +2375,9 @@ class RFDETR:
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
                 Ignored for every other format.
-            int8_keep_mlp_float: For ``format="onnx"`` with ``quantization="int8"``: also keep the second layer of each
-                backbone MLP in float. The default is the fast placement; ``True`` is the more precise one, which
-                recovers accuracy on the larger detection sizes (measured on 2XLarge: -3.80 to +0.13 box AP) and keeps
-                12 more multiplies in float. Refused for ONNX without ``quantization="int8"``; ignored for every other
-                format.
+            int8_keep_mlp_float: For ONNX INT8, also keep GELU-fed weighted projections in float. This includes the
+                second layer of backbone MLPs and can include other projections, such as in segmentation heads.
+                Defaults to ``False``. Refused for ONNX without ``quantization="int8"`` and ignored for other formats.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
