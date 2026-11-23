@@ -103,8 +103,8 @@ def _renumber_zero_annotation_id(coco_gt: COCO) -> None:
     """Give the ground-truth annotation with id 0 a fresh positive id, in place.
 
     COCO evaluation records the ground-truth id each detection matched and reads 0 as "no match", so a detection
-    matched to annotation 0 would be scored as a false positive.  YOLO-format datasets number annotations from 0, and
-    so do some COCO exports.
+    matched to annotation 0 would be scored as a false positive for every iou type (``bbox``, ``segm`` and
+    ``keypoints``).  YOLO-format datasets number annotations from 0.
 
     Args:
         coco_gt: Ground truth owned by the evaluator; its annotation index is rebuilt when an id changes.
