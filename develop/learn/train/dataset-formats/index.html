@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-12T14:23:34">
+  <meta property="article:modified_time" content="2026-11-23T21:57:23">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-12T14:23:34",
+    "dateModified": "2026-11-23T21:57:23",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1621,6 +1621,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grayscale-and-four-channel-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grayscale and Four-Channel Images
+      
+    </span>
+  </a>
   
 </li>
       
@@ -3878,6 +3889,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#grayscale-and-four-channel-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grayscale and Four-Channel Images
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#converting-between-formats" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4473,33 +4495,73 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Keypoint training rejects <code>dataset_file="webdataset"</code> with an explicit error. Its label space is inferred from a whole parsed COCO annotation file, which a shard index does not carry — use <code>coco</code>, <code>roboflow</code> or <code>yolo</code> for keypoints. Detection and segmentation splits are supported.</p>
 <p>Validation and test metrics on shards do not score crowd regions (<code>iscrowd: 1</code>): a detection on one counts as a false positive, where the loose-file <code>coco</code> loader ignores it as pycocotools does. Evaluate from the loose-file split when comparing against COCO numbers.</p>
 <hr />
+<h2 id="grayscale-and-four-channel-images">Grayscale and Four-Channel Images<a class="headerlink" href="#grayscale-and-four-channel-images" title="Permanent link">&para;</a></h2>
+<p>Models take RGB images by default. Set <code>num_channels</code> on the model to train on grayscale or four-channel data. The dataset loaders of every format (COCO, YOLO and WebDataset) then decode each image for that channel count.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">num_channels</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"&lt;DATASET_PATH&gt;"</span><span class="p">,</span> <span class="n">epochs</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="c1"># Later: predict or fine-tune from that run.</span>
+</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">num_channels</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"output/checkpoint_best_total.pth"</span><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th><code>num_channels</code></th>
+<th>Images are loaded as</th>
+<th>What the files must contain</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1</code></td>
+<td>Grayscale</td>
+<td>Any 8-bit image. Color images are converted to luminance.</td>
+</tr>
+<tr>
+<td><code>3</code> (default)</td>
+<td>RGB</td>
+<td>Any image.</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>RGBA</td>
+<td>A fourth channel in every file, for example a PNG with an alpha channel.</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>num_channels=4</code> the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (<code>ExtraSamples=1</code>) is un-premultiplied on read, so tag data planes <code>ExtraSamples=2</code>. 16-bit grayscale (<code>I;16</code>, <code>I</code>, <code>F</code>) is refused for the 1-channel target. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A <code>num_channels</code> other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a <code>ValueError</code>.</p>
+<p>The pretrained RGB filters are reused for the extra channel, and the fourth channel is normalized with the red mean and standard deviation, the same values <code>predict()</code> uses. A checkpoint saved from a four-channel model loads only into a model built with <code>num_channels=4</code>. With <code>freeze_encoder=True</code> or <code>backbone_lora=True</code> the patch embedding is frozen, so the filters of the extra channel keep that initialization and are not trained; a warning says so. Without either option the patch embedding still trains slowly: layer-wise decay puts it at the lowest rate, about 2% of <code>lr_encoder</code> with the default <code>lr_vit_layer_decay=0.8</code> and <code>lr_component_decay=0.7</code>.</p>
+<p>Color augmentations that need RGB input, such as <code>HueSaturationValue</code>, <code>ColorJitter</code> and <code>ToGray</code>, do not accept four-channel images. Geometric augmentations work. Pixel augmentations that accept any channel count, such as <code>RandomBrightnessContrast</code>, change the fourth channel as well. An Albumentations transform that changes the channel count now raises an error instead of silently continuing. <code>predict()</code> reads grayscale and RGB from files; pass four-channel input as an array or tensor.</p>
+<hr />
 <h2 id="converting-between-formats">Converting Between Formats<a class="headerlink" href="#converting-between-formats" title="Permanent link">&para;</a></h2>
 <h3 id="yolo-to-coco">YOLO to COCO<a class="headerlink" href="#yolo-to-coco" title="Permanent link">&para;</a></h3>
 <p>You can use the <a href="https://github.com/roboflow/supervision">supervision</a> library to convert datasets:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c1"># Load YOLO dataset</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_yolo</span><span class="p">(</span>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"path/to/labels"</span><span class="p">,</span>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"path/to/data.yaml"</span><span class="p">,</span>
-</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="p">)</span>
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>
-</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="c1"># Save as COCO</span>
-</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_coco</span><span class="p">(</span><span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"output/annotations.json"</span><span class="p">)</span>
-</span></code></pre></div>
-<h3 id="coco-to-yolo">COCO to YOLO<a class="headerlink" href="#coco-to-yolo" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
 </span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="c1"># Load COCO dataset</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_coco</span><span class="p">(</span>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"path/to/annotations.json"</span>
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="p">)</span>
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>
-</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="c1"># Save as YOLO</span>
-</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_yolo</span><span class="p">(</span>
-</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"output/labels"</span><span class="p">,</span> <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"output/data.yaml"</span>
-</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="p">)</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="c1"># Load YOLO dataset</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_yolo</span><span class="p">(</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>    <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"path/to/labels"</span><span class="p">,</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>    <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"path/to/data.yaml"</span><span class="p">,</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="p">)</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="c1"># Save as COCO</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_coco</span><span class="p">(</span><span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"output/annotations.json"</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="coco-to-yolo">COCO to YOLO<a class="headerlink" href="#coco-to-yolo" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="c1"># Load COCO dataset</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_coco</span><span class="p">(</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"path/to/annotations.json"</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="p">)</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="c1"># Save as YOLO</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_yolo</span><span class="p">(</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"output/labels"</span><span class="p">,</span> <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"output/data.yaml"</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="using-roboflow">Using Roboflow<a class="headerlink" href="#using-roboflow" title="Permanent link">&para;</a></h3>
 <p><a href="https://roboflow.com">Roboflow</a> provides a web interface to:</p>
@@ -4556,7 +4618,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="format-detection-fails">Format Detection Fails<a class="headerlink" href="#format-detection-fails" title="Permanent link">&para;</a></h3>
 <p>If you see an error like:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Could not detect dataset format in /path/to/dataset
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>Could not detect dataset format in /path/to/dataset
 </span></code></pre></div>
 <p>Check that:</p>
 <p><strong>For COCO format:</strong></p>
@@ -4596,7 +4658,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 12, 2026 14:23:34 UTC">2026-11-12 14:23:34</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 23, 2026 21:57:23 UTC">2026-11-23 21:57:23</span>
   </span>
 
     

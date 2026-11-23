@@ -7551,6 +7551,8 @@ applied in order:</p>
 </ol>
 <p>A checkpoint carrying optimizer state also orders the run's learning-rate and weight-decay settings as defaults,
 then the checkpoint, then <code>train_config</code>'s explicit values; see :meth:<code>_adopt_resumed_param_group_settings</code>.</p>
+<p>A checkpoint with a 3-channel stem is refused with a <code>ValueError</code> when <code>num_channels</code> is not 3, before
+PTL would fail on the size mismatch.</p>
 
 
 <details class="note" open>
@@ -7586,6 +7588,29 @@ key, <code>_orig_mod</code> strip) and PE interpolation, so the two code paths i
             </td>
             <td>
                 <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="ValueError">ValueError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If the checkpoint's stem is 3 channels wide and <code>num_channels</code> is not 3.</p>
+              </div>
             </td>
           </tr>
       </tbody>
