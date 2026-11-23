@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- Photos with an EXIF orientation tag, as phones save them, are read upright for training, validation and `predict()`; before, labels drawn on the upright photo landed on the wrong pixels. Files without the tag, or with orientation 1, decode as before.
+- EXIF-tagged photos are read upright for training and `predict()`.
 - `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
 - `download_pretrain_weights(path, redownload=True)` keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.
 - Static TensorRT INT8 engines of Atto, Femto and Pico keep `fc1` and `fc2` of the first six backbone MLP blocks in FP16. The PE-Core-T backbone has an input range 52 to 55 times its typical 99.9th percentile at block 3's `fc2`, which one INT8 step per tensor cannot represent: an earlier development build lost 7.0 to 8.7 AP against PyTorch FP32, and with this placement INT8 loses 0.3, 0.2 and 0.7 AP. INT8 is at most 9% faster than FP16 end to end on these sizes, so prefer FP16 unless you need INT8. ([#1732](https://github.com/roboflow/rf-detr/pull/1732))
