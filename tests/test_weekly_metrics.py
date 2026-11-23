@@ -479,7 +479,7 @@ class TestSvgRendering:
     @pytest.mark.parametrize(
         ("used_by", "shown"),
         [
-            pytest.param(1_209, "1,209 repos", id="known"),
+            pytest.param(1_209, "1.2k repos", id="known"),
             pytest.param(None, "—</text>", id="unknown"),
         ],
     )
@@ -504,9 +504,25 @@ class TestSvgRendering:
         assert 'id="weekly-stars-bars"' in svg
         assert 'id="weekly-downloads-line"' in svg
         assert "+125 new stars" in svg
-        assert "80,000 weekly downloads" in svg
+        assert "80k weekly downloads" in svg
         assert "Aug 30" in svg
         assert "Aug 23" not in svg
+
+    def test_drawn_counts_are_shortened_while_state_and_description_stay_exact(self) -> None:
+        """Cards and axis shorten large counts, yet the stored history and the accessible text keep every digit."""
+        state = _state(
+            _metric(date(2026, 8, 17), stars_total=10_000, new_stars=None, downloads=90_000),
+            _metric(date(2026, 8, 24), stars_total=10_135, new_stars=135, downloads=114_513, used_by=209),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert "114k weekly downloads" in svg
+        assert ">10.1k</text>" in svg
+        assert ">114k</text>" in svg
+        assert "114,513 PyPI downloads" in svg
+        assert '"downloads":114513' in svg
+        assert update_weekly_metrics.parse_state(svg, "roboflow/rf-detr", "rfdetr") == state
 
 
 class TestFetchJson:

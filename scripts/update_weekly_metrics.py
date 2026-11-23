@@ -503,8 +503,34 @@ def parse_state(svg: str, repository: str, package: str) -> MetricsState:
     return state
 
 
+def format_count(value: int) -> str:
+    """Shorten a count for display, with ``k`` for thousands and ``M`` for millions.
+
+    Only the drawn labels use this. The embedded checkpoint state and the accessible description keep every exact
+    value, so the history loses nothing.
+
+    Args:
+        value: Non-negative count.
+
+    Returns:
+        The count as is below 1,000. From there one decimal below 100k and none from 100k up, with a trailing
+        ``.0`` dropped. The digits are cut, never rounded up, so a label never claims more than was counted.
+
+    Example:
+        >>> [format_count(count) for count in (209, 999, 1_000, 10_135, 99_960, 114_513, 999_600, 2_400_000)]
+        ['209', '999', '1k', '10.1k', '99.9k', '114k', '999k', '2.4M']
+    """
+    if value < 1_000:
+        return f"{value:,}"
+    if value < 100_000:
+        return f"{value // 100 / 10:.1f}".removesuffix(".0") + "k"
+    if value < 1_000_000:
+        return f"{value // 1_000}k"
+    return f"{value // 100_000 / 10:.1f}".removesuffix(".0") + "M"
+
+
 def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[str]:
-    """Render the document header and the three headline metric cards.
+    """Render the document header and the four headline metric cards.
 
     Args:
         metadata: Serialized checkpoint state, already escaped for XML text content.
@@ -527,9 +553,9 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         start_label = latest.week_start.strftime("%b %d").replace(" 0", " ")
         end_label = latest.week_end.strftime("%b %d, %Y").replace(" 0", " ")
         latest_period = f"Latest completed week · {start_label}–{end_label}"
-        stars_total = f"{latest.stars_total:,}"
+        stars_total = format_count(latest.stars_total)
         new_stars = "— baseline"
-        downloads = f"{latest.downloads:,} weekly downloads"
+        downloads = f"{format_count(latest.downloads)} weekly downloads"
     else:
         description = (
             f"For week ending {latest.week_end.isoformat()}, RF-DETR had {latest.new_stars:+,} new GitHub stars "
@@ -538,11 +564,11 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         start_label = latest.week_start.strftime("%b %d").replace(" 0", " ")
         end_label = latest.week_end.strftime("%b %d, %Y").replace(" 0", " ")
         latest_period = f"Latest completed week · {start_label}–{end_label}"
-        stars_total = f"{latest.stars_total:,}"
+        stars_total = format_count(latest.stars_total)
         new_stars = f"{latest.new_stars:+,} new stars"
-        downloads = f"{latest.downloads:,} weekly downloads"
+        downloads = f"{format_count(latest.downloads)} weekly downloads"
 
-    used_by_value = "—" if latest is None or latest.used_by is None else f"{latest.used_by:,} repos"
+    used_by_value = "—" if latest is None or latest.used_by is None else f"{format_count(latest.used_by)} repos"
     if latest is not None and latest.used_by is not None:
         description += f" {latest.used_by:,} repositories depend on the package."
 
@@ -608,7 +634,7 @@ def _render_axes(star_min: int, star_max: int, download_max: int) -> list[str]:
         star_tick = round(star_min + fraction * (star_max - star_min))
         download_tick = round(fraction * download_max)
         lines.append(f'    <text x="88" y="{y + 5:.1f}" text-anchor="end">{star_tick:+,}</text>')
-        lines.append(f'    <text x="1112" y="{y + 5:.1f}" text-anchor="start">{download_tick:,}</text>')
+        lines.append(f'    <text x="1112" y="{y + 5:.1f}" text-anchor="start">{format_count(download_tick)}</text>')
     lines.extend(
         [
             '    <text x="100" y="221" fill="#8315f9" font-size="14" font-weight="700">NEW STARS</text>',
