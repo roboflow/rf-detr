@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import numbers
 import os
 from dataclasses import dataclass
 from typing import Any, cast
@@ -117,13 +118,20 @@ def _renumber_zero_annotation_id(coco_gt: COCO) -> None:
         >>> sorted(coco_gt.anns)
         [5, 6]
     """
-    annotations = coco_gt.dataset.get("annotations", [])
-    ids = [annotation["id"] for annotation in annotations if isinstance(annotation.get("id"), int)]
-    if 0 not in ids:
+    ids: list[int] = []
+    zero_id_annotations: list[dict[str, Any]] = []
+    for annotation in coco_gt.dataset.get("annotations", []):
+        annotation_id = annotation.get("id")
+        # One predicate for both collections: NumPy integers count, bool does not.
+        if isinstance(annotation_id, numbers.Integral) and not isinstance(annotation_id, bool):
+            ids.append(int(annotation_id))
+            if int(annotation_id) == 0:
+                zero_id_annotations.append(annotation)
+    if not zero_id_annotations:
         return
-    for annotation in annotations:
-        if annotation.get("id") == 0:
-            annotation["id"] = max(ids) + 1
+    fresh_id = max(ids) + 1
+    for annotation in zero_id_annotations:
+        annotation["id"] = fresh_id
     coco_gt.createIndex()
 
 
