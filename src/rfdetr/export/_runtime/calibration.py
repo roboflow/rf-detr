@@ -199,8 +199,8 @@ def calibration_batches(
 ) -> Generator[NDArray[np.float32], None, None]:
     """Yield ``(1, C, H, W)`` float32 batches to calibrate activation ranges with.
 
-    A directory of images is the normal case: each is preprocessed exactly as
-    :meth:`~rfdetr.detr.RFDETR.predict` would, so the ranges reflect what the model sees at inference. A ``.npy``
+    A directory of images is the normal case: each is turned upright for its EXIF orientation and preprocessed exactly
+    as :meth:`~rfdetr.detr.RFDETR.predict` would for that file, so the ranges reflect what the model sees at inference. A ``.npy``
     path or array is taken as already preprocessed and is passed through unchanged. A ``.npy`` file is memory-mapped
     rather than read up front, so only the samples being converted are paged in.
 
@@ -255,6 +255,8 @@ def calibration_batches(
 
     from PIL import Image, UnidentifiedImageError  # Pillow is an inference-time dependency, not an import-time one.
 
+    from rfdetr.utilities.exif import exif_orientation, upright_image  # imports Pillow, so it waits until here too
+
     for image_path in _image_paths(path, max_images):
         try:
             image = Image.open(image_path)
@@ -263,5 +265,7 @@ def calibration_batches(
                 f"Calibration image {image_path} is not a readable image. Remove it from the directory or replace it."
             ) from exc
         with image:
+            # Read before the pixels load; the photo is then calibrated upright, as training and predict() see it.
+            orientation = exif_orientation(image)
             image.load()
-            yield preprocess_to_nchw(image, height=height, width=width, channels=channels)
+            yield preprocess_to_nchw(upright_image(image, orientation), height=height, width=width, channels=channels)

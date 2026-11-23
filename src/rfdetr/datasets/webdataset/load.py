@@ -36,7 +36,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
     scale_coco_annotation,
 )
-from rfdetr.datasets.io_utils import decode_pil_image_bytes
+from rfdetr.datasets.io_utils import _warn_if_labels_follow_stored_pixels, decode_pil_image_bytes
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.webdataset.index import (
     IMAGE_EXTENSIONS,
@@ -208,6 +208,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         self._shard_shuffle = shard_shuffle
         self._seed = seed
         self._draft_size = draft_size
+        # Set once a sample's boxes fit its quarter-turned photo only as stored; later samples are then not checked.
+        self._warned_stored_frame_labels = False
         self.index = read_shard_index(self._shard_dir, split)
         self._label_categories = self.index.categories
         self.cat2label = self.index.cat2label() if cat2label is None else dict(cat2label)
@@ -351,6 +353,13 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         annotations = metadata["annotations"]
         if (x_scale, y_scale) != (1.0, 1.0):
             annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
+        if not self._warned_stored_frame_labels:
+            self._warned_stored_frame_labels = _warn_if_labels_follow_stored_pixels(
+                sample[extension],
+                annotations,
+                image.size,
+                label=f"WebDataset sample {sample.get('__key__', '?')} from shard {sample.get('__url__', '?')}",
+            )
         target: dict[str, Any] = {"image_id": metadata["image_id"], "annotations": annotations}
         image, target = self.prepare(image, target)
         if self._transforms is not None:
