@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -1016,8 +1017,12 @@ def pr_sandbox(tmp_path: Path) -> tuple[Path, Path]:
         stubs,
         "git",
         'echo "git $*" >> "$STUB_LOG"\n'
-        'case $1 in\n  ls-remote)\n    printf "%s\\trefs/heads/%s\\n" "$METRICS_BASE_SHA" "$METRICS_BRANCH"\n'
-        '    exit "${STUB_LS_REMOTE_STATUS:-0}"\n    ;;\nesac',
+        "case $1 in\n"
+        "  ls-remote)\n"
+        '    printf "%s\\trefs/heads/%s\\n" "${STUB_REMOTE_SHA:-$METRICS_BASE_SHA}" "$METRICS_BRANCH"\n'
+        '    exit "${STUB_LS_REMOTE_STATUS:-0}"\n    ;;\n'
+        '  diff)\n    exit "${STUB_DIFF_STATUS:-0}"\n    ;;\n'
+        "esac",
     )
     _write_stub(
         stubs,
@@ -1058,6 +1063,18 @@ def _pr_env(workspace: Path, **stub_controls: str) -> dict[str, str]:
         "STUB_LOG": str(workspace / STUB_LOG_NAME),
         **stub_controls,
     }
+
+
+@pytest.fixture
+def recovery_sandbox(pr_sandbox: tuple[Path, Path], repo_root: Path) -> tuple[Path, Path, dict[str, str]]:
+    """Stage a valid checkpoint and use pytest's Python interpreter for real validation."""
+    workspace, stubs = pr_sandbox
+    checkpoint = workspace / TRACKED_SVG
+    checkpoint.parent.mkdir(parents=True)
+    shutil.copyfile(repo_root / TRACKED_SVG, checkpoint)
+    _write_stub(stubs, "python", 'echo "validate checkpoint" >> "$STUB_LOG"\nexec "$TEST_PYTHON" "$@"')
+    env = _pr_env(workspace, GENERATION_FAILED="true", TEST_PYTHON=sys.executable, PYTHONPATH=str(repo_root))
+    return workspace, stubs, env
 
 
 @requires_bash
@@ -1102,19 +1119,63 @@ class TestOpenPullRequestStep:
     def test_corrupt_restored_checkpoint_blocks_recovery_publication(
         self,
         metrics_steps: dict[str, dict[str, Any]],
-        pr_sandbox: tuple[Path, Path],
+        recovery_sandbox: tuple[Path, Path, dict[str, str]],
     ) -> None:
         """A generation failure must validate the restored checkpoint before publishing it."""
-        workspace, stubs = pr_sandbox
-        _write_stub(stubs, "python", 'echo "validate checkpoint" >> "$STUB_LOG"\nexit 1')
+        workspace, stubs, env = recovery_sandbox
+        (workspace / TRACKED_SVG).write_text(UNMERGED_SVG, encoding="utf-8")
 
-        result = _run_step(
-            metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, GENERATION_FAILED="true")
-        )
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, env)
 
         assert result.returncode != 0
-        assert "validate checkpoint" in self._logged(workspace)
-        assert "gh pr create" not in self._logged(workspace)
+        assert "Expected exactly one weekly-metrics-state metadata element" in result.stderr
+        assert "gh " not in self._logged(workspace)
+
+    def test_valid_restored_checkpoint_publishes_after_generation_failure(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        recovery_sandbox: tuple[Path, Path, dict[str, str]],
+    ) -> None:
+        """An unchanged checkpoint can pass real validation and reach PR creation after a failed refresh."""
+        workspace, stubs, env = recovery_sandbox
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, env)
+
+        assert result.returncode == 0, result.stderr
+        commands = self._logged(workspace)
+        assert commands.index("validate checkpoint") < commands.index("gh api") < commands.index("gh pr create")
+
+    def test_moved_remote_branch_blocks_recovery_before_any_pr_api_call(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A new remote head requires another restore before opening a PR."""
+        workspace, stubs = pr_sandbox
+        env = _pr_env(workspace, GENERATION_FAILED="true", STUB_REMOTE_SHA="cafebabe")
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, env)
+
+        assert result.returncode != 0
+        assert "metrics branch moved after restore" in result.stdout
+        assert "gh " not in self._logged(workspace)
+
+    def test_modified_restored_svg_blocks_recovery_before_any_pr_api_call(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """An SVG modified by the failed refresh cannot validate the restored branch."""
+        workspace, stubs = pr_sandbox
+        env = _pr_env(workspace, GENERATION_FAILED="true", STUB_DIFF_STATUS="1")
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, env)
+
+        assert result.returncode != 0
+        assert "failed refresh changed the restored SVG" in result.stdout
+        commands = self._logged(workspace)
+        assert f"git diff --quiet -- {TRACKED_SVG}\n" in commands
+        assert "gh " not in commands
 
     def test_branch_identical_to_the_default_branch_opens_nothing(
         self,
