@@ -29,6 +29,9 @@ from rfdetr.utilities.imports import _IS_WEBDATASET_INSTALLED
 
 _requires_webdataset = pytest.mark.skipif(not _IS_WEBDATASET_INSTALLED, reason="webdataset not installed")
 
+# Reading shards needs the optional ``webdataset`` package, so its helper doctest runs only when it is installed.
+__doctest_requires__ = {"_webdataset_sample": ["webdataset"]}
+
 _Decoder = Callable[[Path, int], np.ndarray]
 
 
@@ -120,10 +123,9 @@ def _webdataset_sample(folder: Path, mode: str, num_channels: int) -> Image.Imag
 
     Examples:
         >>> import tempfile
-        >>> _webdataset_sample(Path(tempfile.mkdtemp()), "RGBA", 4).mode  # doctest: +SKIP
+        >>> _webdataset_sample(Path(tempfile.mkdtemp()), "RGBA", 4).mode
         'RGBA'
     """
-    # The doctest is skipped because reading shards needs the optional ``webdataset`` package.
     image_dir, annotations = _write_coco(folder, mode)
     pack_coco_to_shards(image_dir, annotations, folder / "shards", split="train")
     dataset = WebDatasetDetection(folder / "shards", "train", transforms=None, num_channels=num_channels)
