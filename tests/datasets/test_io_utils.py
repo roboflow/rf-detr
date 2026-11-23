@@ -15,6 +15,7 @@ import pytest
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from rfdetr.datasets import io_utils
+from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.io_utils import decode_image, decode_image_bytes, decode_pil_image, decode_pil_image_bytes
 from tests._exif import move_exif_after_pixels
@@ -682,10 +683,11 @@ class TestCocoDetectionRealPathParity:
         assert peak_traced_bytes(dataset.__getitem__, 0) < 800 * 600 * 3 // 2
 
 
-def _write_oriented_photo(path: Path, orientation: int, width: int = 29, height: int = 17) -> None:
+def _write_oriented_photo(path: Path, orientation: int, width: int = 29, height: int = 17, mode: str = "RGB") -> None:
     """Write noise in the format ``path``'s suffix names, tagged with ``orientation`` the way a camera tags a photo.
 
-    The pixels are stored ``width`` x ``height``; a viewer shows them turned by the tag. JPEG files use quality 90.
+    The pixels are stored ``width`` x ``height`` in Pillow ``mode``; a viewer shows them turned by the tag. JPEG files
+    use quality 90.
 
     Examples:
         >>> import tempfile
@@ -700,11 +702,11 @@ def _write_oriented_photo(path: Path, orientation: int, width: int = 29, height:
     exif = Image.Exif()
     exif[0x0112] = orientation
     options = {"quality": 90} if path.suffix.lower() in (".jpg", ".jpeg") else {}
-    Image.fromarray(pixels).save(path, exif=exif.tobytes(), **options)
+    Image.fromarray(pixels).convert(mode).save(path, exif=exif.tobytes(), **options)
 
 
-def _upright_reference(path: Path) -> np.ndarray:
-    """Decode ``path`` through Pillow alone and turn it upright with ``ImageOps.exif_transpose``.
+def _upright_reference(path: Path, mode: str = "RGB") -> np.ndarray:
+    """Decode ``path`` through Pillow alone into ``mode`` and turn it upright with ``ImageOps.exif_transpose``.
 
     Examples:
         >>> import tempfile
@@ -715,7 +717,7 @@ def _upright_reference(path: Path) -> np.ndarray:
         (29, 17, 3)
     """
     with Image.open(path) as image:
-        return np.asarray(ImageOps.exif_transpose(image).convert("RGB"))
+        return np.asarray(ImageOps.exif_transpose(image).convert(mode))
 
 
 class TestDecodeExifOrientation:
@@ -822,6 +824,37 @@ class TestDecodeExifOrientation:
         pixels, _ = decode_image(path)
 
         np.testing.assert_array_equal(pixels, expected)
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_one_and_four_channel_decodes_are_upright(self, tmp_path: Path, num_channels: int) -> None:
+        """A model with ``num_channels`` 1 or 4 gets the photo upright in its own mode, as the RGB decode does."""
+        mode = image_mode(num_channels)
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32, mode=mode)
+        expected = _upright_reference(path, mode)
+
+        image, scales = decode_pil_image(path, num_channels=num_channels)
+
+        assert image.mode == mode
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_one_and_four_channel_decodes_are_upright_under_a_raised_pixel_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, num_channels: int
+    ) -> None:
+        """The subprocess decoder reports the tag in those modes too, so both decoders turn the photo alike."""
+        mode = image_mode(num_channels)
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32, mode=mode)
+        expected = _upright_reference(path, mode)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000, num_channels=num_channels)
+
+        assert image.mode == mode
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
 
 
 class TestCocoDetectionExifOrientation:
