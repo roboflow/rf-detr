@@ -129,7 +129,7 @@ class TestKorniaNormalizeChannels:
 
     @pytest.mark.parametrize("num_channels", [1, 4])
     def test_normalizes_every_channel_with_cycled_imagenet_statistics(self, num_channels: int) -> None:
-        """A 4-channel batch normalizes its fourth channel like the first, and a 1-channel one uses the red statistics."""
+        """A 4-channel batch cycles the ImageNet statistics, a 1-channel one uses the red statistics."""
         normalize = build_normalize(
             mean=cycle_channel_stats(IMAGENET_MEAN, num_channels), std=cycle_channel_stats(IMAGENET_STD, num_channels)
         )

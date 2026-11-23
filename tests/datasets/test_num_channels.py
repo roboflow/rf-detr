@@ -398,7 +398,8 @@ class TestTrainingStep:
         )
         resolution = model_config.resolution
         samples = NestedTensor(
-            torch.randn(2, num_channels, resolution, resolution), torch.zeros(2, resolution, resolution, dtype=torch.bool)
+            torch.randn(2, num_channels, resolution, resolution),
+            torch.zeros(2, resolution, resolution, dtype=torch.bool),
         )
         targets = [
             {
