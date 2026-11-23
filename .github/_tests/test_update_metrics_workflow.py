@@ -357,19 +357,25 @@ class TestUpdateMetricsWorkflow:
 
         assert names.index(RESTORE_STEP) < names.index(GENERATE_STEP) < names.index(COMMIT_STEP)
 
-    def test_sync_precedes_pull_request_creation_after_the_commit(self, metrics_workflow: dict[str, Any]) -> None:
-        """The branch must be synced before the pull request step, and both must follow the commit.
-
-        The pull request step judges what a merge would publish from the branch as the sync step leaves it, and it must
-        run on runs that committed nothing, so it cannot live inside the commit step's early exit.
-        """
+    def test_sync_precedes_restoring_and_pushing_metrics(self, metrics_workflow: dict[str, Any]) -> None:
+        """An independent published correction must stop the run before it can update an open PR."""
         names = [step["name"] for step in metrics_workflow["jobs"]["update-metrics"]["steps"]]
 
-        assert names.index(COMMIT_STEP) < names.index(SYNC_STEP) < names.index(PR_STEP)
+        assert names.index(SYNC_STEP) < names.index(RESTORE_STEP) < names.index(COMMIT_STEP) < names.index(PR_STEP)
 
     def test_pull_request_token_prefers_the_dedicated_secret(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
-        """A dedicated token must win over GITHUB_TOKEN, which cannot trigger the pull request's checks."""
-        assert metrics_steps[PR_STEP]["env"]["GH_TOKEN"] == "${{ secrets.METRICS_PR_TOKEN || secrets.GITHUB_TOKEN }}"
+        """Checkout's Git pushes and PR creation must use the same automation credential."""
+        token = "${{ secrets.METRICS_PR_TOKEN || secrets.GITHUB_TOKEN }}"
+        checkout = next(step for step in metrics_steps.values() if step.get("uses", "").startswith("actions/checkout@"))
+        assert checkout["with"]["token"] == token
+        assert metrics_steps[PR_STEP]["env"]["GH_TOKEN"] == token
+
+    def test_publish_can_recover_after_generation_failure(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
+        """An existing checkpoint can still publish after a transient generation failure."""
+        publish = metrics_steps[PR_STEP]
+        assert "steps.generate.outcome == 'failure'" in publish.get("if", "")
+        assert "steps.restore.outcome == 'success'" in publish["if"]
+        assert "steps.sync.outcome == 'success'" in publish["if"]
 
     def test_checkout_reads_the_default_branch(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
         """Checkout must read the default branch rather than the automation branch.
@@ -912,14 +918,14 @@ class TestSyncStepAgainstRealGit:
         return _run_step(metrics_steps[SYNC_STEP]["run"], workspace, workspace, env)
 
     @staticmethod
-    def _advance_default_branch(tmp_path: Path, origin: Path) -> None:
+    def _advance_default_branch(tmp_path: Path, origin: Path, svg: str) -> None:
         """Land a squash-merge-like commit on the origin's default branch.
 
         It rewrites the SVG the way a squashed weekly pull request does, and adds a file only the default branch has.
         """
         other = tmp_path / "other"
         _git(tmp_path, "clone", "--branch", "main", origin.as_uri(), str(other))
-        (other / TRACKED_SVG).write_text("<svg><!-- squashed history --></svg>\n", encoding="utf-8")
+        (other / TRACKED_SVG).write_text(svg, encoding="utf-8")
         (other / "NOTES.md").write_text("default branch only\n", encoding="utf-8")
         _git(other, "add", "--", TRACKED_SVG, "NOTES.md")
         _git(other, "commit", "-m", "squashed weekly metrics")
@@ -932,8 +938,10 @@ class TestSyncStepAgainstRealGit:
         real_remote: tuple[Path, Path, str],
     ) -> None:
         """A branch behind the default branch must absorb it, keeping its own SVG and taking every other file."""
-        workspace, origin, tip = real_remote
-        self._advance_default_branch(tmp_path, origin)
+        _, origin, tip = real_remote
+        self._advance_default_branch(tmp_path, origin, UNMERGED_SVG)
+        workspace = tmp_path / "runner"
+        _git(tmp_path, "clone", "--depth=1", "--branch", "main", origin.as_uri(), str(workspace))
 
         result = self._sync(metrics_steps, workspace)
 
@@ -942,6 +950,24 @@ class TestSyncStepAgainstRealGit:
         assert _git(origin, "show", f"{METRICS_BRANCH}:{TRACKED_SVG}") + "\n" == UNMERGED_SVG
         assert _git(origin, "show", f"{METRICS_BRANCH}:NOTES.md") == "default branch only"
         assert _git(origin, "rev-parse", f"{METRICS_BRANCH}^1") == tip
+        assert _git(workspace, "rev-parse", "HEAD") == _git(origin, "rev-parse", "main")
+
+    def test_independent_default_branch_svg_edit_stops_the_sync(
+        self,
+        tmp_path: Path,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """Fail before publishing a merge that would discard a separately edited checkpoint."""
+        workspace, origin, tip = real_remote
+        corrected = "<svg><!-- independently corrected history --></svg>\n"
+        self._advance_default_branch(tmp_path, origin, corrected)
+
+        result = self._sync(metrics_steps, workspace)
+
+        assert result.returncode != 0
+        assert "independent metrics SVG" in result.stdout
+        assert _git(origin, "rev-parse", METRICS_BRANCH) == tip
 
     def test_branch_already_containing_the_default_branch_is_not_pushed(
         self,
@@ -975,8 +1001,8 @@ class TestSyncStepAgainstRealGit:
 def pr_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     """Workspace plus `git` and `gh` stubs for exercising the pull request step.
 
-    `git ls-remote` exits with `STUB_LS_REMOTE_STATUS`. `gh pr list` prints `STUB_OPEN_COUNT`, `gh api` prints
-    `STUB_CHANGED_FILES`, and `gh pr create` fails when `STUB_CREATE_FAILS` is set. Every call lands in `STUB_LOG`.
+    `git ls-remote` exits with `STUB_LS_REMOTE_STATUS`. The pulls and compare endpoints print `STUB_OPEN_COUNT`
+    and `STUB_CHANGED_FILES` respectively. `gh pr create` fails when `STUB_CREATE_FAILS` is set.
 
     Examples:
         >>> pr_sandbox  # doctest: +SKIP
@@ -989,14 +1015,16 @@ def pr_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     _write_stub(
         stubs,
         "git",
-        'echo "git $*" >> "$STUB_LOG"\ncase $1 in\n  ls-remote)\n    exit "${STUB_LS_REMOTE_STATUS:-0}"\n    ;;\nesac',
+        'echo "git $*" >> "$STUB_LOG"\n'
+        'case $1 in\n  ls-remote)\n    printf "%s\\trefs/heads/%s\\n" "$METRICS_BASE_SHA" "$METRICS_BRANCH"\n'
+        '    exit "${STUB_LS_REMOTE_STATUS:-0}"\n    ;;\nesac',
     )
     _write_stub(
         stubs,
         "gh",
         'echo "gh $*" >> "$STUB_LOG"\n'
         'case "$1 $2" in\n'
-        '  "pr list")\n    echo "${STUB_OPEN_COUNT:-0}"\n    ;;\n'
+        '  "api --method")\n    echo "${STUB_OPEN_COUNT:-0}"\n    ;;\n'
         '  "pr create")\n'
         '    if [ -n "${STUB_CREATE_FAILS:-}" ]; then\n'
         '      echo "GraphQL: GitHub Actions is not permitted to create pull requests" >&2\n'
@@ -1020,8 +1048,10 @@ def _pr_env(workspace: Path, **stub_controls: str) -> dict[str, str]:
     """
     return {
         "METRICS_BRANCH": METRICS_BRANCH,
+        "METRICS_BASE_SHA": STUB_BRANCH_SHA,
         "DEFAULT_BRANCH": "main",
         "GITHUB_REPOSITORY": "roboflow/rf-detr",
+        "GITHUB_REPOSITORY_OWNER": "roboflow",
         "GITHUB_SERVER_URL": "https://github.com",
         "GITHUB_RUN_ID": "42",
         "GITHUB_STEP_SUMMARY": str(workspace / STEP_SUMMARY_NAME),
@@ -1051,6 +1081,7 @@ class TestOpenPullRequestStep:
 
         assert result.returncode == 0, result.stderr
         create = next(line for line in self._logged(workspace).splitlines() if line.startswith("gh pr create"))
+        assert f"head=roboflow:{METRICS_BRANCH}" in self._logged(workspace)
         assert f"--head {METRICS_BRANCH}" in create
         assert "--base main" in create
         assert "https://github.com/roboflow/rf-detr/pull/1" in (workspace / STEP_SUMMARY_NAME).read_text("utf-8")
@@ -1066,6 +1097,23 @@ class TestOpenPullRequestStep:
         result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, STUB_OPEN_COUNT="1"))
 
         assert result.returncode == 0, result.stderr
+        assert "gh pr create" not in self._logged(workspace)
+
+    def test_corrupt_restored_checkpoint_blocks_recovery_publication(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A generation failure must validate the restored checkpoint before publishing it."""
+        workspace, stubs = pr_sandbox
+        _write_stub(stubs, "python", 'echo "validate checkpoint" >> "$STUB_LOG"\nexit 1')
+
+        result = _run_step(
+            metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, GENERATION_FAILED="true")
+        )
+
+        assert result.returncode != 0
+        assert "validate checkpoint" in self._logged(workspace)
         assert "gh pr create" not in self._logged(workspace)
 
     def test_branch_identical_to_the_default_branch_opens_nothing(
