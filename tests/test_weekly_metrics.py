@@ -443,8 +443,8 @@ class TestSvgRendering:
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
 
-        assert "— baseline" in svg
-        assert "+0 new stars" not in svg
+        assert "star baseline of 12,125" in svg
+        assert "+0 new" not in svg
 
     def test_baseline_week_draws_no_download_mark(self) -> None:
         """A baseline week must draw no download point either, so both series start together.
@@ -492,6 +492,96 @@ class TestSvgRendering:
         assert "USED BY" in svg
         assert shown in svg
 
+    def test_each_headline_metric_has_its_own_colour(self) -> None:
+        """Stars must be gold, used by purple and downloads blue, in the headline and in the chart.
+
+        Matching the card value to its chart series lets a reader follow one metric from the header to the plot.
+        """
+        state = _state(
+            _metric(date(2026, 8, 17), stars_total=12_000, new_stars=None, downloads=70_000),
+            _metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+        stars = update_weekly_metrics.STARS_COLOR
+        used_by = update_weekly_metrics.USED_BY_COLOR
+        downloads = update_weekly_metrics.DOWNLOADS_COLOR
+
+        assert f'fill="{stars}" font-size="28" font-weight="700">12.1k<' in svg
+        assert f'fill="{used_by}" font-size="28" font-weight="700">209 repos<' in svg
+        assert f'fill="{downloads}" font-size="28" font-weight="700">80k weekly downloads<' in svg
+        assert f'rx="4" fill="{stars}"/>' in svg
+        assert f'r="5" fill="{downloads}"' in svg
+        assert {stars, used_by, downloads} == {"#b8860b", "#8315f9", "#2a78d6"}
+
+    def test_card_widths_follow_their_content(self) -> None:
+        """A card holding a short count must be narrower than one holding a long value, and the row stays full.
+
+        The cards run stars, downloads, used by, so the downloads card is the widest and the stars card the narrowest.
+        """
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=114_513, used_by=209))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+        widths = [float(line.split('width="')[1].split('"')[0]) for line in svg.splitlines() if 'height="82"' in line]
+
+        assert len(widths) == 3
+        assert widths[0] < widths[2] < widths[1]
+        assert sum(widths) + 2 * 18 == pytest.approx(1088)
+
+    def test_card_label_is_left_aligned_and_value_centred(self) -> None:
+        """Each card's label must start at the card's padded left edge and its value sit at the card's middle."""
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=114_513, used_by=209))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+        lines = svg.splitlines()
+        for index, line in enumerate(lines):
+            if 'height="82"' not in line:
+                continue
+            left = float(line.split(' x="')[1].split('"')[0])
+            width = float(line.split('width="')[1].split('"')[0])
+            label, value = lines[index + 1 : index + 3]
+            assert "text-anchor" not in label
+            assert float(label.split(' x="')[1].split('"')[0]) == pytest.approx(left + 20, abs=0.1)
+            assert 'text-anchor="middle"' in value
+            assert float(value.split(' x="')[1].split('"')[0]) == pytest.approx(left + width / 2, abs=0.1)
+
+    def test_used_by_change_is_derived_from_consecutive_readings(self) -> None:
+        """The change needs a reading in both weeks and no gap between them, like a star delta."""
+        first, second, third, after_gap = (
+            _metric(date(2026, 8, 3), 100, None, 1, used_by=200),
+            _metric(date(2026, 8, 10), 110, 10, 1, used_by=209),
+            _metric(date(2026, 8, 17), 120, 10, 1),
+            _metric(date(2026, 8, 31), 130, None, 1, used_by=215),
+        )
+
+        changes = update_weekly_metrics.used_by_changes([first, second, third, after_gap])
+
+        assert changes == [None, 9, None, None]
+
+    def test_used_by_bars_sit_beside_star_bars_in_their_own_colour(self) -> None:
+        """Once a used-by change exists, its week draws a gold and a purple bar and the legend names both."""
+        state = _state(
+            _metric(date(2026, 8, 10), stars_total=12_000, new_stars=None, downloads=70_000, used_by=200),
+            _metric(date(2026, 8, 17), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert svg.count(f'rx="4" fill="{update_weekly_metrics.STARS_COLOR}"/>') == 1
+        assert svg.count(f'rx="4" fill="{update_weekly_metrics.USED_BY_COLOR}"/>') == 1
+        assert "NEW USED BY" in svg
+        assert "New used-by repos" in svg
+
+    def test_chart_without_used_by_change_keeps_a_single_centred_star_bar(self) -> None:
+        """With one used-by reading there is no change to draw, so no purple bar and no extra legend entry."""
+        state = _state(_metric(date(2026, 8, 17), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert f'rx="4" fill="{update_weekly_metrics.USED_BY_COLOR}"' not in svg
+        assert "NEW USED BY" not in svg
+        assert "New used-by repos" not in svg
+
     def test_chart_uses_display_window_and_latest_summary(self) -> None:
         """Chart marks must show only configured recent periods plus latest totals."""
         state = _state(
@@ -503,7 +593,8 @@ class TestSvgRendering:
 
         assert 'id="weekly-stars-bars"' in svg
         assert 'id="weekly-downloads-line"' in svg
-        assert "+125 new stars" in svg
+        assert "+125 new GitHub stars" in svg
+        assert "WEEKLY STAR CHANGE" not in svg
         assert "80k weekly downloads" in svg
         assert "Aug 30" in svg
         assert "Aug 23" not in svg

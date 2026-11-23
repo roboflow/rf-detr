@@ -31,6 +31,11 @@ PLOT_TOP = 240.0
 PLOT_WIDTH = 1000.0
 PLOT_HEIGHT = 290.0
 PLOT_BOTTOM = PLOT_TOP + PLOT_HEIGHT
+# One colour per metric, shared by its headline card and its chart series so the eye can follow it.
+STARS_COLOR = "#b8860b"
+USED_BY_COLOR = "#8315f9"
+DOWNLOADS_COLOR = "#2a78d6"
+CARD_FILL = "#f6f5f0"
 
 
 class MetricsError(RuntimeError):
@@ -530,7 +535,7 @@ def format_count(value: int) -> str:
 
 
 def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[str]:
-    """Render the document header and the four headline metric cards.
+    """Render the document header and the three headline metric cards: stars, downloads and used by.
 
     Args:
         metadata: Serialized checkpoint state, already escaped for XML text content.
@@ -543,7 +548,6 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         description = "Weekly GitHub star growth and PyPI download history. No completed periods recorded."
         latest_period = "Awaiting first completed week"
         stars_total = "—"
-        new_stars = "— new stars"
         downloads = "— weekly downloads"
     elif latest.new_stars is None:
         description = (
@@ -554,7 +558,6 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         end_label = latest.week_end.strftime("%b %d, %Y").replace(" 0", " ")
         latest_period = f"Latest completed week · {start_label}–{end_label}"
         stars_total = format_count(latest.stars_total)
-        new_stars = "— baseline"
         downloads = f"{format_count(latest.downloads)} weekly downloads"
     else:
         description = (
@@ -565,7 +568,6 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         end_label = latest.week_end.strftime("%b %d, %Y").replace(" 0", " ")
         latest_period = f"Latest completed week · {start_label}–{end_label}"
         stars_total = format_count(latest.stars_total)
-        new_stars = f"{latest.new_stars:+,} new stars"
         downloads = f"{format_count(latest.downloads)} weekly downloads"
 
     used_by_value = "—" if latest is None or latest.used_by is None else f"{format_count(latest.used_by)} repos"
@@ -585,32 +587,96 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         f'  <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" '
         f'font-size="15">{escape(latest_period)}</text>',
         '  <g font-family="DejaVu Sans, Arial, sans-serif">',
-        '    <rect x="56" y="112" width="190" height="82" rx="10" fill="#f5f1fa"/>',
-        '    <text x="76" y="141" fill="#6b6a66" font-size="14">GITHUB STARS</text>',
-        f'    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">{stars_total}</text>',
-        '    <rect x="264" y="112" width="270" height="82" rx="10" fill="#f5f1fa"/>',
-        '    <text x="284" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>',
-        f'    <text x="284" y="176" fill="#8315f9" font-size="28" font-weight="700">{new_stars}</text>',
-        '    <rect x="552" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>',
-        '    <text x="572" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>',
-        f'    <text x="572" y="176" fill="#2a78d6" font-size="28" font-weight="700">{downloads}</text>',
-        '    <rect x="950" y="112" width="194" height="82" rx="10" fill="#f5f1fa"/>',
-        '    <text x="970" y="141" fill="#6b6a66" font-size="14">USED BY</text>',
-        f'    <text x="970" y="176" fill="#0b0b0b" font-size="28" font-weight="700">{used_by_value}</text>',
+        *_render_cards(
+            [
+                ("GITHUB STARS", stars_total, STARS_COLOR),
+                ("PYPI · EXCLUDING MIRRORS", downloads, DOWNLOADS_COLOR),
+                ("USED BY", used_by_value, USED_BY_COLOR),
+            ]
+        ),
         "  </g>",
     ]
 
 
-def _render_axes(star_min: int, star_max: int, download_max: int) -> list[str]:
+def _render_cards(cards: Sequence[tuple[str, str, str]]) -> list[str]:
+    """Render a row of metric cards whose widths follow the length of their text.
+
+    Each card needs room for its label and its value; the row then splits its fixed width in proportion to
+    those needs, so a short count gets a narrow card and a long one a wide card. The label sits at the left
+    edge of its card and the value is centred.
+
+    Args:
+        cards: One ``(label, value, value colour)`` triple per card, left to right.
+
+    Returns:
+        SVG lines, one background rectangle and two text lines per card.
+
+    Example:
+        >>> lines = _render_cards([("A", "1", "#000000"), ("B", "1,000,000 downloads", "#000000")])
+        >>> [line.split('width="')[1].split('"')[0] for line in lines if "<rect" in line]
+        ['137.2', '932.8']
+    """
+    row_left, row_width, gap = 56.0, 1088.0, 18.0
+    needs = [max(len(label) * 9.0, len(value) * 19.0) + 40.0 for label, value, _ in cards]
+    scale = (row_width - gap * (len(cards) - 1)) / sum(needs)
+    lines = []
+    x = row_left
+    for (label, value, color), need in zip(cards, needs, strict=True):
+        width = need * scale
+        lines.extend(
+            [
+                f'    <rect x="{x:.1f}" y="112" width="{width:.1f}" height="82" rx="10" fill="{CARD_FILL}"/>',
+                f'    <text x="{x + 20:.1f}" y="141" fill="#6b6a66" font-size="14">{escape(label)}</text>',
+                f'    <text x="{x + width / 2:.1f}" y="176" text-anchor="middle" fill="{color}" font-size="28" '
+                f'font-weight="700">{escape(value)}</text>',
+            ]
+        )
+        x += width + gap
+    return lines
+
+
+def used_by_changes(history: Sequence[WeeklyMetric]) -> list[int | None]:
+    """Derive the weekly change of the used-by count, aligned with ``history``.
+
+    A change exists only between two directly consecutive weeks that both carry a reading, the same
+    rule that gives a star baseline week no star delta.
+
+    Args:
+        history: Recorded weeks, oldest first.
+
+    Returns:
+        One entry per week: the used-by count minus the previous week's, or None when unknown.
+
+    Example:
+        >>> week = WeeklyMetric(date(2026, 11, 9), date(2026, 11, 15), 10, None, 5, 200)
+        >>> following = WeeklyMetric(date(2026, 11, 16), date(2026, 11, 22), 12, 2, 6, 209)
+        >>> used_by_changes([week, following])
+        [None, 9]
+    """
+    changes: list[int | None] = []
+    for index, metric in enumerate(history):
+        previous = history[index - 1] if index else None
+        known = (
+            previous is not None
+            and previous.used_by is not None
+            and metric.used_by is not None
+            and metric.week_start == previous.week_end + timedelta(days=1)
+        )
+        changes.append(metric.used_by - previous.used_by if known else None)  # type: ignore[operator, union-attr]
+    return changes
+
+
+def _render_axes(star_min: int, star_max: int, download_max: int, show_used_by: bool = False) -> list[str]:
     """Render the chart gridlines, frame, and the two opposing value axes.
 
     Star counts read against the left axis and download counts against the right one, so both ranges
     are drawn against the same three gridlines.
 
     Args:
-        star_min: Lowest new-star value the left axis must reach, never above zero.
-        star_max: Highest new-star value the left axis must reach, never below zero.
+        star_min: Lowest weekly change the left axis must reach, never above zero.
+        star_max: Highest weekly change the left axis must reach, never below zero.
         download_max: Highest weekly download total the right axis must reach.
+        show_used_by: Name the used-by change in the left axis caption, because its bars share that axis.
 
     Returns:
         SVG lines for the gridlines, the axis frame, the tick labels, and the axis captions.
@@ -637,8 +703,10 @@ def _render_axes(star_min: int, star_max: int, download_max: int) -> list[str]:
         lines.append(f'    <text x="1112" y="{y + 5:.1f}" text-anchor="start">{format_count(download_tick)}</text>')
     lines.extend(
         [
-            '    <text x="100" y="221" fill="#8315f9" font-size="14" font-weight="700">NEW STARS</text>',
-            '    <text x="1100" y="221" fill="#2a78d6" font-size="14" font-weight="700" '
+            f'    <text x="100" y="221" fill="{STARS_COLOR}" font-size="14" font-weight="700">NEW STARS'
+            + (f'<tspan fill="{USED_BY_COLOR}"> · NEW USED BY</tspan>' if show_used_by else "")
+            + "</text>",
+            f'    <text x="1100" y="221" fill="{DOWNLOADS_COLOR}" font-size="14" font-weight="700" '
             'text-anchor="end">WEEKLY DOWNLOADS</text>',
             "  </g>",
         ]
@@ -646,8 +714,17 @@ def _render_axes(star_min: int, star_max: int, download_max: int) -> list[str]:
     return lines
 
 
-def _render_marks(display: Sequence[WeeklyMetric], star_min: int, star_max: int, download_max: int) -> list[str]:
-    """Render one star bar and one download point per displayed week, plus the week labels.
+def _render_marks(
+    display: Sequence[WeeklyMetric],
+    used_by: Sequence[int | None],
+    star_min: int,
+    star_max: int,
+    download_max: int,
+) -> list[str]:
+    """Render the star bar, the used-by bar and the download point of each displayed week, plus the week labels.
+
+    The two bars share the left axis and sit side by side. While no displayed week has a used-by change the
+    star bar stays centred on its week, as before used-by tracking.
 
     A week with no known star delta (``new_stars is None``, a checkpoint gap or the chain's first
     entry) is a baseline used only to compute the next week's delta: it draws neither a star bar nor
@@ -655,8 +732,9 @@ def _render_marks(display: Sequence[WeeklyMetric], star_min: int, star_max: int,
 
     Args:
         display: Weeks shown in the chart, oldest first.
-        star_min: Lowest new-star value the left axis reaches, as used by `_render_axes`.
-        star_max: Highest new-star value the left axis reaches, as used by `_render_axes`.
+        used_by: Weekly used-by change of each displayed week, from `used_by_changes`; None where unknown.
+        star_min: Lowest weekly change the left axis reaches, as used by `_render_axes`.
+        star_max: Highest weekly change the left axis reaches, as used by `_render_axes`.
         download_max: Highest weekly download total the right axis reaches.
 
     Returns:
@@ -671,34 +749,42 @@ def _render_marks(display: Sequence[WeeklyMetric], star_min: int, star_max: int,
             'font-size="18" text-anchor="middle">Metrics will appear after first scheduled update.</text>',
         ]
     spacing = PLOT_WIDTH / len(display)
-    bar_width = min(44.0, spacing * 0.5)
+    paired = any(change is not None for change in used_by)
+    bar_width = min(22.0, spacing * 0.25) if paired else min(44.0, spacing * 0.5)
     zero_y = PLOT_BOTTOM - ((0 - star_min) / (star_max - star_min)) * PLOT_HEIGHT
+
+    def bar(center: float, value: int, color: str) -> str:
+        """Draw one bar from the zero line to ``value`` on the shared left axis."""
+        value_y = PLOT_BOTTOM - ((value - star_min) / (star_max - star_min)) * PLOT_HEIGHT
+        return (
+            f'    <rect x="{center - bar_width / 2:.1f}" y="{min(value_y, zero_y):.1f}" width="{bar_width:.1f}" '
+            f'height="{max(abs(zero_y - value_y), 1.0):.1f}" rx="4" fill="{color}"/>'
+        )
+
     points = []
     lines = ['  <g id="weekly-stars-bars">']
     for index, metric in enumerate(display):
         x = PLOT_LEFT + (index + 0.5) * spacing
         if metric.new_stars is not None:
-            value_y = PLOT_BOTTOM - ((metric.new_stars - star_min) / (star_max - star_min)) * PLOT_HEIGHT
-            bar_y = min(value_y, zero_y)
-            bar_height = max(abs(zero_y - value_y), 1.0)
-            color = "#8315f9" if metric.new_stars >= 0 else "#e85d75"
-            lines.append(
-                f'    <rect x="{x - bar_width / 2:.1f}" y="{bar_y:.1f}" width="{bar_width:.1f}" '
-                f'height="{bar_height:.1f}" rx="4" fill="{color}"/>'
-            )
+            star_x = x - bar_width / 2 - 1 if paired else x
+            lines.append(bar(star_x, metric.new_stars, STARS_COLOR if metric.new_stars >= 0 else "#e85d75"))
             download_y = PLOT_BOTTOM - (metric.downloads / download_max) * PLOT_HEIGHT
             points.append(f"{x:.1f},{download_y:.1f}")
+        change = used_by[index]
+        if change is not None:
+            lines.append(bar(x + bar_width / 2 + 1, change, USED_BY_COLOR if change >= 0 else "#e85d75"))
     lines.append("  </g>")
     lines.append('  <g id="weekly-downloads-line">')
     if len(points) > 1:
         lines.append(
-            f'    <polyline points="{" ".join(points)}" fill="none" stroke="#2a78d6" stroke-width="4" '
+            f'    <polyline points="{" ".join(points)}" fill="none" stroke="{DOWNLOADS_COLOR}" stroke-width="4" '
             'stroke-linecap="round" stroke-linejoin="round"/>'
         )
     for point in points:
         point_x, point_y = point.split(",")
         lines.append(
-            f'    <circle cx="{point_x}" cy="{point_y}" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>'
+            f'    <circle cx="{point_x}" cy="{point_y}" r="5" fill="{DOWNLOADS_COLOR}" '
+            'stroke="#ffffff" stroke-width="2"/>'
         )
     lines.append("  </g>")
     lines.append(
@@ -732,7 +818,9 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
     metadata = escape(_serialize_state(state), quote=False)
     display = state.history[-window_weeks:]
     # Weeks opening a checkpoint gap carry no delta, and a flat range would divide by zero below.
-    star_values = [metric.new_stars for metric in display if metric.new_stars is not None] or [0]
+    used_by = used_by_changes(state.history)[len(state.history) - len(display) :]
+    star_values = [metric.new_stars for metric in display if metric.new_stars is not None]
+    star_values = [*star_values, *(change for change in used_by if change is not None)] or [0]
     star_min = min(0, min(star_values))
     star_max = max(0, max(star_values))
     if star_min == star_max:
@@ -744,16 +832,26 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
     download_max = max(download_max, 1)
 
     lines = _render_summary_cards(metadata, display[-1] if display else None)
-    lines.extend(_render_axes(star_min, star_max, download_max))
-    lines.extend(_render_marks(display, star_min, star_max, download_max))
+    paired = any(change is not None for change in used_by)
+    lines.extend(_render_axes(star_min, star_max, download_max, paired))
+    lines.extend(_render_marks(display, used_by, star_min, star_max, download_max))
+    # The used-by entry only appears once a bar for it is drawn; the other two keep their original place until then.
+    shift = 0 if not paired else -105
+    lines.append('  <g font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#52514e">')
+    lines.append(f'    <rect x="{396 + shift}" y="593" width="18" height="12" rx="2" fill="{STARS_COLOR}"/>')
+    lines.append(f'    <text x="{424 + shift}" y="604">New GitHub stars</text>')
+    if paired:
+        lines.append(
+            f'    <rect x="{396 + shift + 150}" y="593" width="18" height="12" rx="2" fill="{USED_BY_COLOR}"/>'
+        )
+        lines.append(f'    <text x="{424 + shift + 150}" y="604">New used-by repos</text>')
+        shift += 150
     lines.extend(
         [
-            '  <g font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#52514e">',
-            '    <rect x="396" y="593" width="18" height="12" rx="2" fill="#8315f9"/>',
-            '    <text x="424" y="604">New GitHub stars</text>',
-            '    <path d="M582 599H610" fill="none" stroke="#2a78d6" stroke-width="4" stroke-linecap="round"/>',
-            '    <circle cx="596" cy="599" r="4" fill="#2a78d6"/>',
-            '    <text x="620" y="604">PyPI downloads</text>',
+            f'    <path d="M{582 + shift} 599H{610 + shift}" fill="none" stroke="{DOWNLOADS_COLOR}" stroke-width="4" '
+            'stroke-linecap="round"/>',
+            f'    <circle cx="{596 + shift}" cy="599" r="4" fill="{DOWNLOADS_COLOR}"/>',
+            f'    <text x="{620 + shift}" y="604">PyPI downloads</text>',
             "  </g>",
             "</svg>",
         ]
