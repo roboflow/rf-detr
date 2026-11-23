@@ -689,7 +689,8 @@ class TestEvaluateCocoMap:
 
 
 class TestCocoImagesAreUpright:
-    """The scoring helpers hand the runtime each photo upright, as ``predict(path)`` and the training readers read it."""
+    """The scoring helpers hand the runtime each photo upright, as ``predict(path)`` and the training readers read
+    it."""
 
     @pytest.mark.parametrize(
         "evaluate",

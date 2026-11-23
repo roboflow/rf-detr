@@ -795,7 +795,8 @@ class TestDecodeExifOrientation:
     def test_raised_pixel_limit_decode_equals_the_in_process_decode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str, orientation: int
     ) -> None:
-        """Whatever the tag holds, 0 to 9, the subprocess decoder returns the pixels and scales the in-process one does."""
+        """Whatever the tag holds, 0 to 9, the subprocess decoder returns the pixels and scales the in-process one
+        does."""
         path = tmp_path / f"photo.{extension}"
         _write_oriented_photo(path, orientation, width=64, height=32)
         expected, expected_scales = decode_pil_image(path)

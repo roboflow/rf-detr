@@ -398,8 +398,8 @@ class TestPredictUint8Conversion:
     ) -> None:
         """A tagged file predicts on the upright photo, the frame the training readers and labels use.
 
-        The model must receive the batch of the upright pixels, with or without the source image kept; the source
-        image copy alone being turned would leave the prediction in the stored frame.
+        The model must receive the batch of the upright pixels, with or without the source image kept; the source image
+        copy alone being turned would leave the prediction in the stored frame.
         """
         image_path = tmp_path / f"rotated.{image_format.lower()}"
         _save_oriented_photo(image_path, image_format, orientation)

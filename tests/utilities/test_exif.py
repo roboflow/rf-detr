@@ -276,7 +276,8 @@ class TestExifOrientation:
         assert (orientation, stream.largest_read <= _PNG_EXIF_READ_CAP) == (expected, True)
 
     def test_animated_png_is_not_walked_for_trailing_chunks(self) -> None:
-        """An animated PNG's later chunks belong to frames Pillow has not loaded, so its tag is never taken from them."""
+        """An animated PNG's later chunks belong to frames Pillow has not loaded, so its tag is never taken from
+        them."""
         image = Image.open(io.BytesIO(_png_without_iend(_png_chunk(b"eXIf", _exif_block(6)), animated=True)))
 
         assert (image.is_animated, exif_orientation(image)) == (True, 1)
@@ -285,7 +286,8 @@ class TestExifOrientation:
     def test_png_closed_after_decoding_is_read_without_the_stream(
         self, tmp_path: Path, tagged: bool, expected: int
     ) -> None:
-        """Pillow closes a path-opened PNG once it has decoded it, and the orientation is then read from what it parsed."""
+        """Pillow closes a path-opened PNG once it has decoded it, and the orientation is then read from what it
+        parsed."""
         path = tmp_path / "photo.png"
         if tagged:
             path.write_bytes(move_exif_after_pixels(_tagged_png(_noise_image(), 6)))
@@ -313,9 +315,7 @@ class TestSwapsAxes:
 
 
 class TestUprightImage:
-    @pytest.mark.parametrize(
-        "image_format", ["JPEG", "MPO", pytest.param("WEBP", marks=_requires_webp, id="WEBP")]
-    )
+    @pytest.mark.parametrize("image_format", ["JPEG", "MPO", pytest.param("WEBP", marks=_requires_webp, id="WEBP")])
     @pytest.mark.parametrize("orientation", [1, 2, 3, 4, 5, 6, 7, 8])
     def test_matches_pillow_exif_transpose(self, image_format: str, orientation: int) -> None:
         """The orientation read from a file and the turn it names equal ``ImageOps.exif_transpose`` of that file."""

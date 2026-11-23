@@ -11,9 +11,9 @@ masks and keypoints are drawn on the upright image. RF-DETR decodes image files 
 transposes, so a label always lands on the pixels it was drawn on.
 
 That agreement covers the EXIF block. Pillow, and so RF-DETR and ``PIL.ImageOps.exif_transpose``, also reads
-``tiff:Orientation`` from the XMP packet when the EXIF block records no orientation, and a PNG's
-``Raw profile type exif`` text chunk when the file has no EXIF block. OpenCV's ``imread``, which Supervision's dataset
-loaders call, reads neither and shows such a file as stored.
+``tiff:Orientation`` from the XMP packet when the EXIF block records no orientation, and a PNG's ``Raw profile type
+exif`` text chunk when the file has no EXIF block. OpenCV's ``imread``, which Supervision's dataset loaders call, reads
+neither and shows such a file as stored.
 """
 
 from __future__ import annotations

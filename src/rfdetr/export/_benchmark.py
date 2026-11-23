@@ -1203,9 +1203,10 @@ def evaluate_coco_map(
 ) -> CocoMapResult:
     """Score one runtime's box mAP on a COCO val2017 subset, one image at a time (batch 1).
 
-    *run* receives each image as an RGB PIL image, upright for its EXIF orientation, and returns either the raw ``(dets, labels)`` arrays (normalized
-    ``cxcywh`` boxes and class logits, with or without a leading batch axis of one) or already-decoded
-    :class:`supervision.Detections` in pixel ``xyxy`` (the ``RFDETR.predict()`` path). Raw outputs are decoded with
+    *run* receives each image as an RGB PIL image, upright for its EXIF orientation, and returns either the raw
+    ``(dets, labels)`` arrays (normalized ``cxcywh`` boxes and class logits, with or without a leading batch axis of
+    one) or already-decoded :class:`supervision.Detections` in pixel ``xyxy``
+    (the ``RFDETR.predict()`` path). Raw outputs are decoded with
     :func:`~rfdetr.export._runtime.decode.decode_detections` at a 0.001 score floor.
 
     Args:

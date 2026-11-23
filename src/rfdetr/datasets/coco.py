@@ -796,7 +796,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         Returns:
             Path of the image file.
         """
-        return Path(self.root) / self.coco.loadImgs(image_id)[0]["file_name"]
+        file_name: str = self.coco.loadImgs(image_id)[0]["file_name"]
+        return Path(self.root) / file_name
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]

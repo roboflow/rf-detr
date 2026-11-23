@@ -200,9 +200,9 @@ def calibration_batches(
     """Yield ``(1, C, H, W)`` float32 batches to calibrate activation ranges with.
 
     A directory of images is the normal case: each is turned upright for its EXIF orientation and preprocessed exactly
-    as :meth:`~rfdetr.detr.RFDETR.predict` would for that file, so the ranges reflect what the model sees at inference. A ``.npy``
-    path or array is taken as already preprocessed and is passed through unchanged. A ``.npy`` file is memory-mapped
-    rather than read up front, so only the samples being converted are paged in.
+    as :meth:`~rfdetr.detr.RFDETR.predict` would for that file, so the ranges reflect what the model sees at inference.
+    A ``.npy`` path or array is taken as already preprocessed and is passed through unchanged. A ``.npy`` file is
+    memory-mapped rather than read up front, so only the samples being converted are paged in.
 
     The ONNX and OpenVINO quantizers materialize the whole sequence before calibrating (ONNX Runtime rewinds its
     reader, NNCF takes a sized dataset), so their peak memory grows with the number of samples: roughly
