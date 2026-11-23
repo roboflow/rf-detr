@@ -39,6 +39,7 @@ from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets._keypoint_schema import (
     active_keypoint_counts,
     infer_coco_keypoint_schema,
@@ -765,12 +766,10 @@ class RFDETR:
         self.means = list(self.means)
         self.stds = list(self.stds)
 
-        # repeat means and stds for non-rgb images
+        # repeat means and stds for non-rgb images, the rule training normalization applies too
         if self.model_config.num_channels != 3:
-            from itertools import cycle
-
-            self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
-            self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
+            self.means = list(cycle_channel_stats(self.means, self.model_config.num_channels))
+            self.stds = list(cycle_channel_stats(self.stds, self.model_config.num_channels))
 
         self.model.inference_model = None
         self._is_optimized_for_inference = False

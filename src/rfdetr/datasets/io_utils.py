@@ -38,6 +38,7 @@ except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to
     simplejpeg = None
 from PIL import Image, JpegImagePlugin, UnidentifiedImageError
 
+from rfdetr.datasets._pillow_worker import convert_image, image_mode
 from rfdetr.utilities.exif import exif_orientation, swaps_axes, upright_image
 
 _JPEG_SOI = b"\xff\xd8"
@@ -228,9 +229,9 @@ def _jpeg_orientation(data: bytes) -> int:
 
 
 def _decode_with_pillow(
-    source: Path | IO[bytes], draft_size: int | None, max_image_pixels: int | None = None
+    source: Path | IO[bytes], draft_size: int | None, max_image_pixels: int | None = None, num_channels: int = 3
 ) -> tuple[Image.Image, tuple[float, float]]:
-    """Decode a file or an in-memory stream through Pillow into an upright RGB image with its decode scales.
+    """Decode a file or an in-memory stream through Pillow into an upright image (RGB by default) and its decode scales.
 
     The Pillow half of the decoder policy every entry point shares: ``PIL.Image.draft`` applies the JPEG reduction when
     ``draft_size`` is set (a no-op for other formats), ``convert("RGB")`` loads the pixels into an image that outlives
@@ -241,9 +242,14 @@ def _decode_with_pillow(
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
         max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+        num_channels: Input channel count of the model: ``1`` decodes to ``L``, ``3`` to ``RGB`` and ``4`` to ``RGBA``.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+
+    Raises:
+        ValueError: If image files cannot supply *num_channels* channels, or ``num_channels=4`` and the image stores
+            no fourth channel.
 
     Examples:
         >>> encoded = io.BytesIO()
@@ -252,6 +258,7 @@ def _decode_with_pillow(
         >>> image.mode, image.size, scales
         ('RGB', (32, 16), (0.5, 0.5))
     """
+    mode = image_mode(num_channels)
     process_limit = Image.MAX_IMAGE_PIXELS
     if max_image_pixels is not None and process_limit is not None and max_image_pixels > process_limit:
         # Pillow plugins may check the global limit while opening or loading; isolate those checks per decode.
@@ -261,6 +268,7 @@ def _decode_with_pillow(
             str(Path(__file__).with_name("_pillow_worker.py")),
             str(max_image_pixels),
             str(draft_size or 0),
+            mode,
         ]
         command.append("strict")
         data = None
@@ -279,7 +287,7 @@ def _decode_with_pillow(
             if "warning" not in header:
                 break
             warnings.warn(header["warning"], Image.DecompressionBombWarning, stacklevel=2)
-            command[5] = "allow"
+            command[6] = "allow"
         if "error" in header:
             errors = {
                 "DecompressionBombError": Image.DecompressionBombError,
@@ -294,7 +302,7 @@ def _decode_with_pillow(
         }
         for message, category in header["warnings"]:
             warnings.warn(message, warning_categories.get(category, UserWarning), stacklevel=2)
-        image = Image.frombytes("RGB", tuple(header["size"]), pixels)
+        image = Image.frombytes(mode, tuple(header["size"]), pixels)
         return _upright_decode(image, tuple(header["scales"]), header["orientation"])
 
     with _open_image(source, max_image_pixels) as image:
@@ -302,7 +310,7 @@ def _decode_with_pillow(
         if draft_size is not None:
             image.draft("RGB", (draft_size, draft_size))
         orientation = exif_orientation(image)
-        rgb_image = image.convert("RGB")
+        rgb_image = convert_image(image, mode, str(source) if isinstance(source, Path) else "The image")
     return _upright_decode(rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height), orientation)
 
 
@@ -381,7 +389,9 @@ def _read_simplejpeg_candidate(path: Path) -> bytes | None:
         return encoded.read()
 
 
-def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+def decode_image(
+    path: Path, draft_size: int | None = None, num_channels: int = 3
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
     """Decode an image file to RGB, optionally downscaling during the JPEG discrete cosine transform (DCT) decode.
 
     JPEG files go through ``simplejpeg`` (libjpeg-turbo straight into a NumPy buffer) when it is installed.  Its
@@ -410,22 +420,28 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     Args:
         path: Image file to decode.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
-        decoder did not reduce.
+        decoder did not reduce.  ``(H, W)`` for ``num_channels=1`` and ``(H, W, 4)`` for ``num_channels=4``.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    data = _read_simplejpeg_candidate(path)
+    # ``simplejpeg`` is the RGB fast path; other channel counts are Pillow's.
+    data = _read_simplejpeg_candidate(path) if num_channels == 3 else None
     if data is not None:
         return decode_image_bytes(data, draft_size)
-    image, scales = _decode_with_pillow(path, draft_size)
+    image, scales = _decode_with_pillow(path, draft_size, num_channels=num_channels)
     return np.array(image), scales
 
 
-def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+def decode_image_bytes(
+    data: bytes, draft_size: int | None = None, num_channels: int = 3
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
     """Decode encoded image bytes to RGB, optionally downscaling during the JPEG DCT (discrete cosine transform) decode.
 
     Holds the decoder policy :func:`decode_image` applies to encoded bytes already in memory; :func:`decode_image`
@@ -434,23 +450,26 @@ def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDAr
     Args:
         data: Encoded image bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
-        decoder did not reduce.
+        decoder did not reduce.  ``(H, W)`` for ``num_channels=1`` and ``(H, W, 4)`` for ``num_channels=4``.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    decoded = _decode_with_simplejpeg(data, draft_size)
+    decoded = _decode_with_simplejpeg(data, draft_size) if num_channels == 3 else None
     if decoded is not None:
         return decoded
-    image, scales = _decode_with_pillow(io.BytesIO(data), draft_size)
+    image, scales = _decode_with_pillow(io.BytesIO(data), draft_size, num_channels=num_channels)
     return np.array(image), scales
 
 
 def decode_pil_image(
-    path: Path, draft_size: int | None = None, max_image_pixels: int | None = None
+    path: Path, draft_size: int | None = None, max_image_pixels: int | None = None, num_channels: int = 3
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Decode an image file to an RGB PIL image under the same decoder policy as :func:`decode_image`.
 
@@ -468,21 +487,25 @@ def decode_pil_image(
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
         max_image_pixels: Decompression-bomb limit for this image, used when it is higher than
             ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image (RGB by default) and its horizontal/vertical decode scales, both ``1.0`` when the decoder did
+        not reduce.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    data = _read_simplejpeg_candidate(path)
+    data = _read_simplejpeg_candidate(path) if num_channels == 3 else None
     if data is not None:
         return decode_pil_image_bytes(data, draft_size, max_image_pixels)
-    return _decode_with_pillow(path, draft_size, max_image_pixels)
+    return _decode_with_pillow(path, draft_size, max_image_pixels, num_channels)
 
 
 def decode_pil_image_bytes(
-    data: bytes, draft_size: int | None = None, max_image_pixels: int | None = None
+    data: bytes, draft_size: int | None = None, max_image_pixels: int | None = None, num_channels: int = 3
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Decode encoded image bytes to an RGB PIL image under the same decoder policy as :func:`decode_image_bytes`.
 
@@ -496,15 +519,19 @@ def decode_pil_image_bytes(
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
         max_image_pixels: Decompression-bomb limit for this image, used when it is higher than
             ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image (RGB by default) and its horizontal/vertical decode scales, both ``1.0`` when the decoder did
+        not reduce.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    decoded = _decode_with_simplejpeg(data, draft_size, max_image_pixels)
+    decoded = _decode_with_simplejpeg(data, draft_size, max_image_pixels) if num_channels == 3 else None
     if decoded is not None:
         pixels, scales = decoded
         return Image.fromarray(pixels), scales
-    return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels)
+    return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels, num_channels)

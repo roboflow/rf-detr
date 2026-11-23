@@ -464,6 +464,24 @@ class TestDecodePilImagePixelLimit:
         with pytest.raises(Image.DecompressionBombError):
             io_utils._open_image(path, max_image_pixels=500)
 
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_four_channel_decode_in_warning_tier_retries_and_keeps_alpha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+    ) -> None:
+        """An RGBA image between the per-call limit and twice that limit warns once, then decodes with its alpha."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        pixels = np.random.default_rng(2).integers(0, 256, size=(32, 64, 4), dtype=np.uint8)
+        image_path = tmp_path / "img.png"
+        Image.fromarray(pixels).save(image_path)
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # 2048 pixels fall in the warning tier of a 1500 limit
+
+        with pytest.warns(Image.DecompressionBombWarning):
+            image, scales = decode_pil(source, max_image_pixels=1500, num_channels=4)
+
+        np.testing.assert_array_equal(np.asarray(image), pixels)
+        assert (image.mode, scales) == ("RGBA", (1.0, 1.0))
+
     @pytest.mark.parametrize("compression", ["raw", "tiff_deflate"])
     def test_tiff_pixels_match_with_a_raised_limit(self, monkeypatch: pytest.MonkeyPatch, compression: str) -> None:
         """Raw and compressed TIFF pixels survive decoding under the per-image limit."""
