@@ -262,11 +262,11 @@ class TestNodeSelection:
         # output must still be quantized, or the mode buys nothing.
         assert "projection" not in nodes_to_exclude(_attention_graph())
 
-    def test_head_walk_stops_at_the_first_matmul_of_a_path(self) -> None:
-        """The head walk stops at the first MatMul of a path, so a multiply behind it stays quantizable."""
-        # "values" feeds the head Gemm; the walk from the output ends at that Gemm, so a multiply behind it is
-        # not part of the head and stays quantizable.
-        assert "values" not in nodes_to_exclude(_attention_graph())
+    def test_excludes_value_matmul_reading_the_softmax_output(self) -> None:
+        """The multiply that applies the Softmax weights to the values is excluded from INT8 quantization."""
+        # "values" reads the Softmax output and a second activation. An 8-bit range over [0, 1] rounds small attention
+        # weights to zero, and a window with more tokens has more of them.
+        assert "values" in nodes_to_exclude(_attention_graph())
 
     def test_excludes_output_end_of_a_matmul_chain_but_not_its_start(self) -> None:
         """In a long chain of multiplies only a run at the output end is held back; the start stays quantizable."""
