@@ -1360,12 +1360,12 @@ class RFDETRModelModule(LightningModule):
     def on_validation_epoch_start(self) -> None:
         """Resolve the validation-loss policy for this epoch, announcing an ``"auto"`` skip the first time it happens.
 
-        The resolution is cached here — unconditionally, before every early return below — because ``validation_step``
-        reads it on every batch while it depends only on configuration that cannot change mid-epoch.
+        The resolution is cached here — unconditionally, before every early return below — because
+        ``validation_step`` reads it on every batch while it depends only on configuration that cannot change mid-epoch.
 
-        The consumer scan behind ``compute_val_loss="auto"`` only sees programmatic consumers — a plateau scheduler or a
-        monitoring callback. It cannot see a human reading a ``val/loss`` curve out of ``metrics.csv``, TensorBoard, or
-        Weights & Biases, who would otherwise find the curve silently gone. Stating the resolution once, on the first
+        The consumer scan behind ``compute_val_loss="auto"`` only sees programmatic consumers — a plateau scheduler or
+        a monitoring callback. It cannot see a human reading a ``val/loss`` curve out of ``metrics.csv``, TensorBoard,
+        or Weights & Biases, who would otherwise find the curve silently gone. Stating the resolution once, on the first
         real validation epoch of the global-zero rank, gives that reader the knob to turn.
         """
         self._resolved_compute_val_loss = self._resolve_should_compute_val_loss()
@@ -2118,9 +2118,7 @@ class RFDETRModelModule(LightningModule):
 
         # A 3-channel stem cannot load into a widened one; fail with the way out instead of a size mismatch.
         if "state_dict" in checkpoint:
-            _refuse_narrow_stem_checkpoint(
-                checkpoint["state_dict"], getattr(self.model_config, "num_channels", 3)
-            )
+            _refuse_narrow_stem_checkpoint(checkpoint["state_dict"], getattr(self.model_config, "num_channels", 3))
 
         # Interpolate DINOv2 positional embeddings when the checkpoint was saved
         # at a different resolution than the current model.  PTL applies
