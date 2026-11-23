@@ -738,6 +738,17 @@ class TestWebDatasetDetection:
         image_ids = [int(target["image_id"]) for _, target in dataset]
         assert sorted(image_ids) == list(range(1000, 1012))
 
+    def test_missing_fourth_channel_error_names_the_sample_and_shard(self, tmp_path: Path) -> None:
+        """An RGB member read with ``num_channels=4`` raises an error naming its sample key and shard URL."""
+        shard_dir = _pack(tmp_path, count=2)
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None, num_channels=4)
+        with pytest.raises(ValueError, match="no fourth channel") as excinfo:
+            next(iter(dataset))
+        message = str(excinfo.value)
+        assert "sample img_0000" in message
+        assert _shard_url(shard_dir / dataset.index.shards[0]) in message
+        assert isinstance(excinfo.value.__cause__, ValueError)
+
     @pytest.mark.parametrize("extension", ["jpg", "png"])
     def test_output_matches_the_loose_file_dataset(self, tmp_path: Path, extension: str) -> None:
         """Streamed images, boxes and labels equal the loose-file dataset's for the same split."""

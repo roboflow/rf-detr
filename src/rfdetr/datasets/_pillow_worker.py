@@ -39,7 +39,7 @@ def image_mode(num_channels: int) -> str:
 
 
 def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
-    """Convert an opened image to *mode* without inventing a fourth channel.
+    """Convert an opened image to *mode* without inventing a fourth channel or clipping deep grayscale.
 
     Args:
         image: Opened image.
@@ -50,17 +50,72 @@ def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
         The converted image, with its pixels loaded.
 
     Raises:
-        ValueError: If *mode* is ``RGBA`` and the image stores no fourth channel.
+        ValueError: If *mode* is ``RGBA`` and the image stores no fourth channel, or *mode* is ``L`` and the image
+            holds pixels deeper than 8 bits (``I;16``, ``I``, ``F``), which ``convert`` would saturate at 255.
 
     Examples:
         >>> convert_image(Image.new("LA", (2, 2)), "RGBA", "image").mode
         'RGBA'
     """
-    if mode == "RGBA" and not (image.mode.endswith(("A", "a")) or "transparency" in image.info):
+    if mode == "L" and _is_deep_gray(image.mode):
         raise ValueError(
-            f"{name} has no fourth channel (mode {image.mode!r}). A model with num_channels=4 needs RGBA images."
+            f"{name} stores {image.mode!r} pixels deeper than 8 bits, which a model with num_channels=1 cannot read "
+            "without saturating them at 255. Convert the file to 8-bit grayscale first."
         )
+    if mode == "RGBA" and not _has_fourth_channel(image):
+        raise ValueError(_no_fourth_channel_message(image, name))
     return image.convert(mode)
+
+
+def _is_deep_gray(mode: str) -> bool:
+    """Return whether *mode* holds single-band pixels deeper than 8 bits (``I;16``, ``I``, ``F``).
+
+    ``Image.convert("L")`` clips these to 255 without an error.
+
+    Examples:
+        >>> [_is_deep_gray(mode) for mode in ("I;16", "I", "F", "L", "LA", "RGB")]
+        [True, True, True, False, False, False]
+    """
+    return mode.startswith("I") or mode == "F"
+
+
+def _has_fourth_channel(image: Image.Image) -> bool:
+    """Return whether *image* stores a real fourth channel that ``convert("RGBA")`` carries over.
+
+    A mode ending in ``A`` or ``a`` (``RGBA``, ``LA``, ``PA``, ``RGBa``) always qualifies. The ``transparency`` info
+    key counts only for mode ``P``, where it is a palette alpha. On ``RGB`` and ``L`` images it is a tRNS colour key, so
+    the alpha ``convert("RGBA")`` derives from it is a function of the stored colour and no fourth channel.
+
+    Associated-alpha (premultiplied) TIFF files, ``ExtraSamples=1``, are admitted too: Pillow reads their ``RGBa``
+    raw mode as ``RGBA`` and un-premultiplies the colour bands by the alpha plane, so stored ``(100, 50, 25, 128)``
+    decodes to ``(199, 99, 49, 128)``. That is the TIFF-defined meaning of real alpha. A fourth plane that carries data
+    rather than transparency must be saved with ``ExtraSamples=2`` (unassociated) to keep its colour bands unchanged.
+
+    Examples:
+        >>> _has_fourth_channel(Image.new("RGBA", (1, 1))), _has_fourth_channel(Image.new("RGB", (1, 1)))
+        (True, False)
+    """
+    return image.mode.endswith(("A", "a")) or (image.mode == "P" and "transparency" in image.info)
+
+
+def _no_fourth_channel_message(image: Image.Image, name: str) -> str:
+    """Return the error for an image without a fourth channel, explaining an unspecified TIFF extra sample.
+
+    Pillow opens a TIFF whose fourth sample has ``ExtraSamples=0`` (unspecified) as ``RGB`` and drops that sample,
+    so the file does store four samples although the mode shows three.
+
+    Examples:
+        >>> "no fourth channel" in _no_fourth_channel_message(Image.new("RGB", (1, 1)), "image")
+        True
+    """
+    samples = getattr(image, "tag_v2", {}).get(277, 0)  # SamplesPerPixel, TIFF only
+    if image.mode == "RGB" and samples >= 4:
+        return (
+            f"{name} stores {samples} samples per pixel, but the extra sample is tagged unspecified "
+            "(ExtraSamples=0), so Pillow drops it and reads mode 'RGB'. Re-save the file with ExtraSamples=2 "
+            "(unassociated alpha) so the fourth channel is read; a model with num_channels=4 needs RGBA images."
+        )
+    return f"{name} has no fourth channel (mode {image.mode!r}). A model with num_channels=4 needs RGBA images."
 
 
 def main() -> None:

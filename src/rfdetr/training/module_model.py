@@ -41,6 +41,8 @@ from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import (
+    _STEM_KEY_SUFFIX,
+    _patch_embeddings,
     adapt_input_channels,
     apply_lora,
     interpolate_position_embeddings,
@@ -482,6 +484,7 @@ class RFDETRModelModule(LightningModule):
             apply_lora(self.model)
         # Same stem adaptation as the prediction build, so training takes ``num_channels`` inputs too.
         adapt_input_channels(self.model, model_config.num_channels, model_config.encoder)
+        self._warn_if_stem_frozen()
 
         # Build criterion/postprocessors after potential num_classes alignment so
         # they are constructed with a config that matches the current model head.
@@ -2010,6 +2013,48 @@ class RFDETRModelModule(LightningModule):
         )
         checkpoint.update(BestModelCallback._model_description(args_dict, model_name, model_config_dict))
 
+    def _warn_if_stem_frozen(self) -> None:
+        """Warn when the patch embedding of a multi-channel model is frozen, so its stem filters are not trained.
+
+        Runs after the stem has its final width, so it reports the state training starts from, whether the filters were
+        adapted from a 3-channel stem or loaded from a checkpoint of an already widened model.  Does nothing for a
+        3-channel model.
+        """
+        num_channels = self.model_config.num_channels
+        if num_channels == 3:
+            return
+        if not _patch_embeddings(self.model).projection.weight.requires_grad:
+            logger.warning(
+                "The patch embedding is frozen (freeze_encoder or backbone_lora), so its filters for "
+                "num_channels=%d are not trained.",
+                num_channels,
+            )
+
+    def _refuse_narrow_stem_checkpoint(self, state_dict: dict[str, Any]) -> None:
+        """Refuse a checkpoint whose stem is 3 channels wide when this module's stem is not.
+
+        A Lightning checkpoint written by a ``num_channels != 3`` run before the stem was widened for training holds a
+        3-channel stem, which cannot load into the widened one.
+
+        Args:
+            state_dict: Checkpoint weights.
+
+        Raises:
+            ValueError: If the checkpoint's stem is 3 channels wide and ``model_config.num_channels`` is not 3.
+        """
+        num_channels = self.model_config.num_channels
+        if num_channels == 3:
+            return
+        stem = next((value for key, value in state_dict.items() if key.endswith(_STEM_KEY_SUFFIX)), None)
+        if stem is not None and stem.shape[1] == 3:
+            raise ValueError(
+                f"Cannot resume this checkpoint: its input stem has 3 channels but this model is configured with "
+                f"num_channels={num_channels}. Checkpoints written by a num_channels={num_channels} run before the "
+                f"stem was widened for training are in this state. Start a fresh run with "
+                f"pretrain_weights=<this checkpoint> instead, which adapts the 3-channel stem to "
+                f"num_channels={num_channels} after loading."
+            )
+
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.
 
@@ -2047,6 +2092,9 @@ class RFDETRModelModule(LightningModule):
         A checkpoint carrying optimizer state also orders the run's learning-rate and weight-decay settings as defaults,
         then the checkpoint, then ``train_config``'s explicit values; see :meth:`_adopt_resumed_param_group_settings`.
 
+        A checkpoint with a 3-channel stem is refused with a ``ValueError`` when ``num_channels`` is not 3, before
+        PTL would fail on the size mismatch.
+
         Note:
             This hook only fires on ``Trainer(ckpt_path=...)`` resume paths. Fresh-train bootstrap from a
             ``pretrain_weights`` checkpoint runs through :func:`~rfdetr.models.weights.load_pretrain_weights` during
@@ -2055,10 +2103,17 @@ class RFDETRModelModule(LightningModule):
 
         Args:
             checkpoint: Checkpoint dict passed in by PTL (mutated in-place).
+
+        Raises:
+            ValueError: If the checkpoint's stem is 3 channels wide and ``num_channels`` is not 3.
         """
         # Raw legacy .pth: no "state_dict" key — build it from "model".
         if "model" in checkpoint and "state_dict" not in checkpoint:
             checkpoint["state_dict"] = {"model." + k: v for k, v in checkpoint["model"].items()}
+
+        # A 3-channel stem cannot load into a widened one; fail with the way out instead of a size mismatch.
+        if "state_dict" in checkpoint:
+            self._refuse_narrow_stem_checkpoint(checkpoint["state_dict"])
 
         # Interpolate DINOv2 positional embeddings when the checkpoint was saved
         # at a different resolution than the current model.  PTL applies

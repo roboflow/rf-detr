@@ -414,6 +414,24 @@ def _normalize_albu_params(name: str, params: dict[str, Any], aug_cls: type) -> 
     return normalized_params
 
 
+def _image_channels(image: NDArray[Any]) -> int:
+    """Return the channel count of an image array, counting a 2-D grayscale array as one channel.
+
+    Args:
+        image: ``(H, W)`` grayscale or ``(H, W, C)`` image array.
+
+    Returns:
+        Number of channels of *image*.
+
+    Examples:
+        >>> _image_channels(np.zeros((8, 10), dtype=np.uint8))
+        1
+        >>> _image_channels(np.zeros((8, 10, 4), dtype=np.uint8))
+        4
+    """
+    return 1 if image.ndim == 2 else int(image.shape[-1])
+
+
 class AlbumentationsWrapper:
     """Wrapper to apply Albumentations transforms to (image, target) tuples.
 
@@ -469,6 +487,8 @@ class AlbumentationsWrapper:
                 "Install with: pip install 'rfdetr[augment]'"
             )
 
+        # Named in the error raised when the transform changes the channel count of the image.
+        self._transform_name = type(transform).__name__
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
         self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
@@ -536,6 +556,45 @@ class AlbumentationsWrapper:
 
         transform_type = "geometric" if self._is_geometric else "pixel-level"
         return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
+
+    def _image_from_output(self, image_in: NDArray[Any], augmented: dict[str, Any]) -> Image.Image:
+        """Convert the transformed image back to PIL, refusing a transform that changed its channel count.
+
+        The loaders decode every image to the model's channel count and ``Normalize`` reuses its statistics for any
+        width, so a channel dropped or added here would otherwise reach the model without an error.
+
+        Args:
+            image_in: ``(H, W)`` grayscale or ``(H, W, C)`` array passed to the transform.
+            augmented: Albumentations output holding the transformed ``"image"``.
+
+        Returns:
+            Transformed image as a PIL Image.
+
+        Raises:
+            ValueError: If the transformed image has another channel count than *image_in*, for example ``ToGray``
+                turning a four-channel image into three channels.
+
+        Examples:
+            >>> from albumentations import HorizontalFlip
+            >>> wrapper = AlbumentationsWrapper(HorizontalFlip(p=1.0))
+            >>> pixels = np.zeros((8, 10, 4), dtype=np.uint8)
+            >>> wrapper._image_from_output(pixels, {"image": pixels}).mode
+            'RGBA'
+            >>> wrapper._image_from_output(pixels, {"image": pixels[..., :3]})  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            ValueError: Albumentations transform HorizontalFlip changed the image from 4 to 3 channels...
+        """
+        image_out = augmented["image"]
+        channels_in = _image_channels(image_in)
+        channels_out = _image_channels(image_out)
+        if channels_out != channels_in:
+            raise ValueError(
+                f"Albumentations transform {self._transform_name} changed the image from {channels_in} to "
+                f"{channels_out} channels, but the model takes the channel count the images were loaded with. "
+                f"Remove it from aug_config or use a transform that keeps {channels_in}-channel images."
+            )
+        return Image.fromarray(image_out)
 
     @staticmethod
     def _boxes_to_numpy(boxes: Tensor | NDArray[Any]) -> NDArray[Any]:
@@ -1046,7 +1105,7 @@ class AlbumentationsWrapper:
                 target_out["keypoints"] = self._resolve_keypoint_swap(augmented, kept_idxs, keypoints_np)
             if masks_list is not None and "masks" in augmented:
                 target_out["masks"] = torch.as_tensor(masks_stack, dtype=torch.bool)
-        image_out = Image.fromarray(augmented["image"])
+        image_out = self._image_from_output(image_np, augmented)
         return image_out, target_out
 
     def __call__(
@@ -1085,7 +1144,7 @@ class AlbumentationsWrapper:
         Raises:
             TypeError: If target is not a dictionary (and not None).
             KeyError: If target doesn't contain 'labels' key.
-            ValueError: If boxes don't have shape (N, 4).
+            ValueError: If boxes don't have shape (N, 4), or the transform changed the number of image channels.
 
         Examples:
             >>> from albumentations import HorizontalFlip
@@ -1111,7 +1170,7 @@ class AlbumentationsWrapper:
                 )
             else:
                 augmented = self.transform(image=image_np)
-            return Image.fromarray(augmented["image"]), None
+            return self._image_from_output(image_np, augmented), None
 
         # === Input Validation ===
         if not isinstance(target, dict):
@@ -1138,7 +1197,7 @@ class AlbumentationsWrapper:
         else:
             # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
-            image_out = Image.fromarray(augmented["image"])
+            image_out = self._image_from_output(image_np, augmented)
             target_out = target.copy()
 
         # Ensure 'size' (if present) matches the transformed image size (h, w)

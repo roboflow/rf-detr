@@ -797,6 +797,20 @@ def _adapt_input_conv(num_channels: int, conv_weight: Tensor) -> Tensor:
     return weight_out
 
 
+def _patch_embeddings(nn_model: LWDETR) -> Any:
+    """Return the DINOv2 patch-embedding module of *nn_model* (the model's input stem).
+
+    Args:
+        nn_model: Model with a DINOv2 backbone, possibly wrapped by PEFT.
+
+    Returns:
+        The patch-embedding module, whose ``projection`` is the stem convolution.
+    """
+    backbone = cast(Backbone, nn_model.backbone[0])
+    # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
+    return cast(DinoV2, backbone.encoder).encoder.embeddings.patch_embeddings
+
+
 def adapt_input_channels(nn_model: LWDETR, num_channels: int, encoder: str) -> None:
     """Rebuild the DINOv2 patch embedding of *nn_model* for *num_channels* input channels, in-place.
 
@@ -817,9 +831,7 @@ def adapt_input_channels(nn_model: LWDETR, num_channels: int, encoder: str) -> N
     # wrapper, not a DinoV2 instance.
     if encoder.split("_")[0] != "dinov2":
         raise ValueError(f"num_channels={num_channels} is supported for DINOv2 encoders only, not encoder={encoder!r}.")
-    backbone = cast(Backbone, nn_model.backbone[0])
-    # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
-    patch_embeddings = cast(DinoV2, backbone.encoder).encoder.embeddings.patch_embeddings
+    patch_embeddings = _patch_embeddings(nn_model)
     proj = patch_embeddings.projection
     if proj.in_channels == num_channels:
         return
@@ -827,12 +839,6 @@ def adapt_input_channels(nn_model: LWDETR, num_channels: int, encoder: str) -> N
     new_proj.in_channels = num_channels
     new_proj.weight = torch.nn.Parameter(_adapt_input_conv(num_channels, proj.weight))
     new_proj.weight.requires_grad = proj.weight.requires_grad
-    if not proj.weight.requires_grad:
-        logger.warning(
-            "The patch embedding is frozen (freeze_encoder or backbone_lora), so the filters adapted for "
-            "num_channels=%d keep their RGB initialization and are not trained.",
-            num_channels,
-        )
     patch_embeddings.projection = new_proj
     patch_embeddings.num_channels = num_channels
 

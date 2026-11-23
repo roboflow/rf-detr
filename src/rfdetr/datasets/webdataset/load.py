@@ -326,6 +326,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
 
         Raises:
             KeyError: If the sample carries no recognised image member or no ``json`` sidecar.
+            ValueError: If the image member cannot supply ``num_channels`` channels; the message names the sample's
+                ``__key__`` and shard ``__url__`` and chains the decoder's error.
         """
         extension = next((candidate for candidate in IMAGE_EXTENSIONS if candidate in sample), None)
         if extension is None:
@@ -337,9 +339,14 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         if "json" not in sample:
             raise KeyError(f"WebDataset sample {sample.get('__key__', '?')} has no 'json' annotation sidecar.")
 
-        image, (x_scale, y_scale) = decode_pil_image_bytes(
-            sample[extension], self._draft_size, num_channels=self._num_channels
-        )
+        try:
+            image, (x_scale, y_scale) = decode_pil_image_bytes(
+                sample[extension], self._draft_size, num_channels=self._num_channels
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"WebDataset sample {sample.get('__key__', '?')} from shard {sample.get('__url__', '?')}: {exc}"
+            ) from exc
         metadata = json.loads(sample["json"])
         annotations = metadata["annotations"]
         if (x_scale, y_scale) != (1.0, 1.0):
