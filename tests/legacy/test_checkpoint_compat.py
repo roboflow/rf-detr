@@ -203,7 +203,7 @@ def test_prediction_visualization_path_includes_legacy_version() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module", params=_LEGACY_VERSIONS, ids=[f"v{version}" for version in _LEGACY_VERSIONS])
+@pytest.fixture(scope="module", params=[pytest.param(version, id=f"v{version}") for version in _LEGACY_VERSIONS])
 def loaded_checkpoint(request: pytest.FixtureRequest) -> tuple[str, Path, dict]:
     """Load one legacy checkpoint file, shared across all compat assertions in this module.
 
@@ -236,8 +236,10 @@ def test_torch_load_on_corrupt_checkpoint_raises_clear_error(tmp_path: Path) -> 
     corrupt_path = tmp_path / "checkpoint_vcorrupt.pth"
     corrupt_path.write_bytes(b"not a valid torch checkpoint - truncated garbage")
 
-    with pytest.raises(pickle.UnpicklingError, match=r".+"):
+    with pytest.raises(pickle.UnpicklingError) as exc_info:
         torch.load(corrupt_path, map_location="cpu", weights_only=False)
+
+    assert str(exc_info.value)
 
 
 class TestCheckpointBackwardCompat:
@@ -251,7 +253,7 @@ class TestCheckpointBackwardCompat:
     returned model has the expected number of classes to confirm head alignment.
     """
 
-    def test_load_checkpoint_with_current_code(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
+    def test_loads_with_current_code(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
         """Loading a past-version checkpoint must not raise any exception.
 
         The test uses ``RFDETRSmall`` (the lightest non-nano detection model)
@@ -265,11 +267,8 @@ class TestCheckpointBackwardCompat:
 
         version, ckpt_path, raw = loaded_checkpoint
 
-        # Read the stored class count so we can pass an explicit num_classes and avoid the
-        # constructor's 90-class COCO default triggering a head mismatch with the checkpoint's
-        # actual class count — 2 for a locally-generated (non-pretrained) checkpoint, or 90 for
-        # the CI --use-pretrained path (see generate_checkpoint.py); either way, RFDETRSmall's
-        # implicit default must not silently diverge from what this checkpoint was saved with.
+        # Pass the stored class count explicitly (2 locally, 90 for CI --use-pretrained; see generate_checkpoint.py)
+        # so RFDETRSmall's 90-class default cannot silently diverge from the checkpoint's head.
         stored_num_classes: int | None = None
         if "model" in raw and "class_embed.bias" in raw["model"]:
             stored_num_classes = int(raw["model"]["class_embed.bias"].shape[0]) - 1
@@ -287,7 +286,7 @@ class TestCheckpointBackwardCompat:
         first_device = next(iter(params)).device
         assert str(first_device) == "cpu", f"Expected model on CPU, got {first_device}."
 
-    def test_checkpoint_contains_expected_keys(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
+    def test_contains_expected_keys(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
         """Checkpoint file must contain 'model' and 'args' keys.
 
         Validates that ``generate_checkpoint.py`` produced a structurally
@@ -306,7 +305,7 @@ class TestCheckpointBackwardCompat:
 
         assert "args" in ckpt, f"v{version} checkpoint missing 'args' key; keys present: {list(ckpt.keys())}"
 
-    def test_checkpoint_class_embed_shape_is_valid(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
+    def test_class_embed_shape_is_valid(self, loaded_checkpoint: tuple[str, Path, dict]) -> None:
         """'class_embed.bias' must be present and have shape [N] with N >= 2.
 
         ``load_pretrain_weights`` reads this tensor to determine the checkpoint
@@ -361,9 +360,8 @@ class TestCheckpointBackwardCompat:
         assert visualization_path.is_file(), f"v{version}: prediction visualization was not saved: {visualization_path}"
         actual = _top_detection(detections)
 
-        # class_id (not class_name) is the identity check: class-name mapping
-        # logic has changed across rfdetr releases, while the raw category id
-        # is what a load-path regression would actually corrupt.
+        # class_id, not class_name, is the identity check: name mapping changed across releases, the raw id is what
+        # a load-path regression would corrupt.
         assert actual["class_id"] == reference["class_id"], (
             f"v{version}: top detection class_id changed after reload (expected "
             f"{reference['class_id']} {reference['class_name']!r}, got {actual['class_id']} {actual['class_name']!r})"
@@ -378,7 +376,7 @@ class TestCheckpointBackwardCompat:
         iou = float(sv.box_iou_batch(np.array([reference["xyxy"]]), np.array([actual["xyxy"]]))[0, 0])
         assert iou > 0.9, f"v{version}: top detection box IoU dropped to {iou:.4f} after reload (expected > 0.9)"
 
-    def test_load_checkpoint_with_custom_resolution_interpolates_position_embeddings(
+    def test_custom_resolution_interpolates_position_embeddings(
         self, loaded_checkpoint: tuple[str, Path, dict]
     ) -> None:
         """Loading with an explicit non-default resolution must not raise and must keep predictions stable.
@@ -404,8 +402,7 @@ class TestCheckpointBackwardCompat:
         # This must not raise — interpolate_position_embeddings must handle n_source != n_target cleanly.
         loaded = RFDETRSmall(pretrain_weights=str(ckpt_path), resolution=1280, device="cpu")
 
-        # Confirm the resolution override actually drove a PE-grid mismatch (32x32 -> 80x80),
-        # i.e. that the interpolation code path was genuinely exercised, not skipped as a no-op.
+        # The override must drive a PE-grid mismatch (32x32 -> 80x80) so the interpolation path really runs.
         assert loaded.model_config.positional_encoding_size == 80, (
             f"v{version}: expected positional_encoding_size=80 (1280 // patch_size=16) after "
             f"resolution=1280 override, got {loaded.model_config.positional_encoding_size}"
@@ -418,9 +415,8 @@ class TestCheckpointBackwardCompat:
         detections = loaded.predict(str(reference_image_path), threshold=0.5)
         actual = _top_detection(detections)
 
-        # Interpolating positional embeddings to a much larger grid shifts confidence/box precision
-        # more than a native-resolution reload, so this checks identity stability of the top
-        # detection (the load path did not corrupt or permute weights), not exact reproduction.
+        # Interpolation to a much larger grid shifts confidence/box precision more than a native reload, so check only
+        # the top detection's identity (weights not corrupted or permuted), not exact reproduction.
         assert actual["class_id"] == reference["class_id"], (
             f"v{version}: top detection class_id changed after reload at resolution=1280 (expected "
             f"{reference['class_id']} {reference['class_name']!r}, got {actual['class_id']} {actual['class_name']!r})"

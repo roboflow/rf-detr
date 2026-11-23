@@ -12,13 +12,10 @@ and GPU tensors, so no ``@pytest.mark.gpu`` is needed.
 import pytest
 import torch
 
-from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
-
-#: Skip tests that construct ``PixelTranslatedAffine``, which subclasses Kornia (optional extra).
-kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed; skip Kornia transform tests")
+from tests._markers import _requires_kornia
 
 
-@kornia_only
+@_requires_kornia
 class TestPixelTranslatedAffineInverse:
     """``inverse()`` must undo the integer shift on images, masks, and boxes alike."""
 
@@ -82,7 +79,7 @@ class TestPixelTranslatedAffineInverse:
         torch.testing.assert_close(restored_boxes, boxes, rtol=0, atol=1e-5)
 
 
-@kornia_only
+@_requires_kornia
 class TestPixelTranslatedAffineSameOnBatch:
     """``same_on_batch=True`` must give every image in a batch one shared shift."""
 
@@ -121,7 +118,7 @@ class TestPixelTranslatedAffineSameOnBatch:
         assert translations.shape == (0, 2)
 
 
-@kornia_only
+@_requires_kornia
 class TestPixelTranslatedAffineMaskDtype:
     """``apply_transform`` must return masks in the dtype they arrived in."""
 

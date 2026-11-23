@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-from rfdetr.utilities.class_names import PredictionLabels, prediction_labels
+from rfdetr.utilities.class_names import PredictionLabels, class_id_to_name, prediction_labels
 
 
 class TestPredictionLabels:
@@ -60,3 +62,23 @@ class TestPredictionLabels:
         labels = prediction_labels(model)
 
         assert labels == PredictionLabels(["person"], 1, [0, 17], {1: "person"})
+
+
+class TestClassIdToNameOrder:
+    """Verify the order that a per-class ``predict`` threshold relies on to find a class from its raw ID."""
+
+    @pytest.mark.parametrize(
+        ("names", "num_classes", "num_keypoints_per_class"),
+        [
+            pytest.param(["cat", "dog", "cat"], 3, [], id="plain-with-a-repeated-name"),
+            pytest.param(list(COCO_CLASS_NAMES), 90, [], id="sparse-coco"),
+            pytest.param(["person", "car"], 3, [0, 17, 4], id="background-first-keypoints"),
+        ],
+    )
+    def test_ascending_class_ids_follow_the_order_of_class_names(
+        self, names: list[str], num_classes: int, num_keypoints_per_class: list[int]
+    ) -> None:
+        """The *i*-th smallest class ID belongs to ``class_names[i]``, even when two classes share a name."""
+        mapping = class_id_to_name(names, num_classes, num_keypoints_per_class)
+
+        assert [mapping[class_id] for class_id in sorted(mapping)] == names

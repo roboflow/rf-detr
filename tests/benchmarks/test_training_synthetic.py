@@ -33,6 +33,21 @@ from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 # ---------------------------------------------------------------------------
 
 
+def _read_num_classes(dataset_dir: Path) -> int:
+    """Count the categories in a dataset's ``train/_annotations.coco.json``.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> (root / "train").mkdir()
+        >>> _ = (root / "train" / "_annotations.coco.json").write_text('{"categories": [{"id": 1}, {"id": 2}]}')
+        >>> _read_num_classes(root)
+        2
+    """
+    with open(dataset_dir / "train" / "_annotations.coco.json") as f:
+        return len(json.load(f)["categories"])
+
+
 def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Path) -> RFDETRModelModule:
     """Build an :class:`~rfdetr.training.RFDETRModelModule` from an RFDETR instance.
 
@@ -71,23 +86,35 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("num_queries", "num_select"),
+    [
+        pytest.param(300, 300, id="default_queries"),
+        pytest.param(500, 800, id="larger_queries_and_select"),
+    ],
+)
 def test_train_fast_dev_run(
-    tmp_path: Path,
-    synthetic_shape_dataset_dir: Path,
+    tmp_path: Path, synthetic_shape_dataset_dir: Path, num_queries: int, num_select: int
 ) -> None:
     """Smoke-test the full PTL stack on a real synthetic dataset with fast_dev_run.
 
     Uses ``build_trainer(tc, mc, fast_dev_run=2)`` and ``trainer.fit(module, datamodule=datamodule)`` with a real model
     and real data (no mocking).  Only asserts the pipeline runs without error; convergence is tested by the GPU-only
     tests below.
+
+    The larger case grows ``num_queries`` above the default 300 and sets ``num_select`` above ``num_queries``,
+    exercising the validation-time top-k over more query/class pairs than there are queries. It trains from scratch, so
+    it needs no weight download; padding pretrained weights to more queries is unit-tested in
+    ``tests/models/test_weights.py``.
     """
     output_dir = tmp_path / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(synthetic_shape_dataset_dir / "train" / "_annotations.coco.json") as f:
-        num_classes = len(json.load(f)["categories"])
+    num_classes = _read_num_classes(synthetic_shape_dataset_dir)
 
-    mc = RFDETRNanoConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
+    mc = RFDETRNanoConfig(
+        num_classes=num_classes, pretrain_weights=None, amp=False, num_queries=num_queries, num_select=num_select
+    )
     tc = TrainConfig(
         dataset_dir=str(synthetic_shape_dataset_dir),
         output_dir=str(output_dir),
@@ -116,10 +143,7 @@ def test_train_fast_dev_run(
 
 @pytest.mark.gpu
 @pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
-def test_train_convergence_native_ptl(
-    tmp_path: Path,
-    synthetic_shape_dataset_dir: Path,
-) -> None:
+def test_train_convergence_native_ptl(tmp_path: Path, synthetic_shape_dataset_dir: Path) -> None:
     """Native PTL stack converges: ``RFDETRModelModule`` + ``RFDETRDataModule`` + ``Trainer.fit``.
 
     Uses ``Trainer.validate`` before and after ``Trainer.fit`` so only Lightning elements are exercised — no
@@ -134,8 +158,7 @@ def test_train_convergence_native_ptl(
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_dir = synthetic_shape_dataset_dir
 
-    with open(dataset_dir / "train" / "_annotations.coco.json") as f:
-        num_classes = len(json.load(f)["categories"])
+    num_classes = _read_num_classes(dataset_dir)
 
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
 
@@ -177,10 +200,7 @@ def test_train_convergence_native_ptl(
 
 @pytest.mark.gpu
 @pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
-def test_train_convergence_rfdetr_api(
-    tmp_path: Path,
-    synthetic_shape_dataset_dir: Path,
-) -> None:
+def test_train_convergence_rfdetr_api(tmp_path: Path, synthetic_shape_dataset_dir: Path) -> None:
     """``RFDETR.train()`` entry-point converges on synthetic data.
 
     Exercises the public ``model.train()`` API end-to-end.  Pre- and post-training mAP are measured via
@@ -194,17 +214,14 @@ def test_train_convergence_rfdetr_api(
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_dir = synthetic_shape_dataset_dir
 
-    with open(dataset_dir / "train" / "_annotations.coco.json") as f:
-        num_classes = len(json.load(f)["categories"])
+    num_classes = _read_num_classes(dataset_dir)
 
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
     device = None if torch.cuda.is_available() else "cpu"
 
     model = RFDETRNano(num_classes=num_classes, pretrain_weights=None, amp=False)
-    # Use the model's own config so RFDETRDataModule uses the correct resolution.
-    # RFDETRNano (patch_size=16, num_windows=2) requires block_size=32 divisibility,
-    # which its resolution=384 satisfies. Matches the RFDETRNanoConfig used by
-    # test_train_convergence_native_ptl, so the two tests differ only by entry point.
+    # Model's own config keeps the datamodule resolution valid: RFDETRNano needs block_size=32 divisibility (384 ok).
+    # Matches RFDETRNanoConfig in test_train_convergence_native_ptl, so the tests differ only by entry point.
     mc = model.model_config
     tc = TrainConfig(
         dataset_file="roboflow",
@@ -284,8 +301,7 @@ def test_train_convergence_segmentation(
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_dir = synthetic_shape_segmentation_dataset_dir
 
-    with open(dataset_dir / "train" / "_annotations.coco.json") as f:
-        num_classes = len(json.load(f)["categories"])
+    num_classes = _read_num_classes(dataset_dir)
 
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
 

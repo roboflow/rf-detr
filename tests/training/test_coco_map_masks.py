@@ -18,6 +18,7 @@ import torch
 from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
+from tests._markers import _cuda_marks, _requires_cuda
 
 #: COCO RLE edge-case names exercised by the mask-state parity test.
 _MASK_CASES = [
@@ -43,7 +44,7 @@ _DEVICES = [
     "cpu",
     pytest.param(
         "cuda",
-        marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")],
+        marks=_cuda_marks,
     ),
 ]
 #: Arguments for the adapter and its reference, stock TorchMetrics, which encodes masks with faster-coco-eval.
@@ -175,7 +176,7 @@ def test_stored_masks_do_not_depend_on_the_encoding_chunk(monkeypatch: pytest.Mo
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_dense_mask_chunks_bound_extra_cuda_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     """Completed dense chunks must not accumulate on CUDA as the mask stack grows.
 
@@ -212,8 +213,10 @@ def test_update_rejects_a_mask_stack_with_a_channel_dimension() -> None:
     """A ``(K, 1, H, W)`` stack, the layout ``PostProcess`` returns before the callback squeezes it, must raise."""
     metric = OnePassCocoMeanAveragePrecision(**_KWARGS)
 
-    with pytest.raises(ValueError, match=r"masks must have shape \(K, H, W\), got \(2, 1, 8, 8\)"):
+    with pytest.raises(ValueError) as exc_info:
         metric.update(*_segmentation_batch(torch.ones((2, 1, 8, 8), dtype=torch.bool)))
+
+    assert "masks must have shape (K, H, W), got (2, 1, 8, 8)" in str(exc_info.value)
 
 
 def _state_case(case: str, device: str = "cpu") -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:

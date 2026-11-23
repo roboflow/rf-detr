@@ -14,25 +14,71 @@ You can apply all changes in one go; working through sections one release at a t
 
 ---
 
-## Unreleased: native inference returns a predictor
+## Unreleased: `transformers` is no longer a core dependency
 
-`RFDETR.inference()` now returns an independent `RFDETRInference` snapshot instead of changing the source model's inference state. Capture the returned predictor and call `predict()` on it. The predictor snapshots the current base weights, labels, normalization and postprocessing settings; later training or source mutations do not change its predictions or class names. The source model remains unchanged.
+`pip install rfdetr` no longer installs `transformers`, `tokenizers`, `huggingface_hub` or `safetensors`. Importing `rfdetr`, building released models, predicting, training from RF-DETR weights and loading non-LoRA checkpoints do not need them. Loading a LoRA checkpoint requires `peft`, available through `rfdetr[lora]`. `rfdetr[train]` and `rfdetr[lora]` still install all four through `peft`.
+
+Install the packages yourself if any of these applies:
+
+- Your own code imports `transformers` and relied on `rfdetr` to install it: `pip install transformers`.
+- You build a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, which download DINOv2 weights from the Hugging Face Hub: `pip install huggingface_hub safetensors`.
+- You build a non-windowed DINOv2 backbone (`DinoV2(use_windowed_attn=False)`): `pip install transformers`.
+
+Without the required packages, the two backbone cases raise an `ImportError` with the install command.
+
+The DINOv2 backbone classes in `rfdetr.models.backbone.dinov2_with_windowed_attn` are now plain `torch.nn.Module` subclasses. `from_pretrained`, `save_pretrained`, `push_to_hub` and `isinstance` checks against `transformers` classes no longer apply to them, and their outputs are dataclasses read by attribute, not by index.
+
+---
+
+## Unreleased: importing `rfdetr` no longer raises Pillow's pixel limit
+
+Importing `rfdetr` used to set `PIL.Image.MAX_IMAGE_PIXELS` to 2,000,000,000 for the whole process. It now leaves the limit alone, so Pillow's default applies again: a `DecompressionBombWarning` above about 89 million pixels and a `DecompressionBombError` above about 179 million. Only the Objects365 dataset builder keeps the higher limit, and only for the images it decodes itself.
+
+This affects training on COCO, YOLO and WebDataset datasets, and prediction or export from image files, when an image is larger than Pillow's default limit. If you trust your images and need the old behavior, set the limit in your own code:
 
 ```python
-from rfdetr import RFDETRSmall
+import PIL.Image
 
-model = RFDETRSmall()
-predictor = model.inference(compile=False)
-detections = predictor.predict("image.jpg")
+PIL.Image.MAX_IMAGE_PIXELS = 2_000_000_000
 ```
 
-The defaults remain TorchScript compilation, batch size 1 and float32. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
+Put the assignment at module level, not inside an `if __name__ == "__main__":` block. DataLoader workers that are spawned, not forked (the default on macOS and Windows, and on Linux from Python 3.14), import your script again without running that block, so a limit set there does not reach them.
 
 ---
 
 ## Upgrade 1.11 → 1.12
 
 For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.
+
+### Breaking changes
+
+!!! warning "Breaking: native inference returns a predictor"
+
+    `RFDETR.inference()` now returns an independent `RFDETRInference` snapshot instead of changing the source model's inference state. Capture the returned predictor and call `predict()` on it. The predictor snapshots the current base weights, labels, normalization and postprocessing settings; later training or source mutations do not change its predictions or class names. The source model remains unchanged.
+
+    ```python
+    from rfdetr import RFDETRSmall
+
+    model = RFDETRSmall()
+    predictor = model.inference(compile=False)
+    detections = predictor.predict("image.jpg")
+    ```
+
+    The defaults are batch size 1 and float32, compiled with TorchScript, captured as a CUDA graph on CUDA, or compiled with inductor on Apple Silicon (MPS) when the installed PyTorch has its MPS code generator; pass `compile_backend="torchscript"` on either to keep TorchScript alone. Pass `compile=False` for eager CPU inference. The removed `inplace` keyword is rejected. Each predictor owns one copy of the current base weights; deleting it releases its runtime when no other references remain. The legacy `remove_optimized_model()` and `is_optimized_inplace` APIs remain for legacy model state and do not manage predictor lifetime. Direct `RFDETRInference(live_model)` construction still borrows the live model; checkpoint and export paths keep their existing owned loading behavior.
+
+### Removed in v1.12
+
+!!! warning "Removed: `rfdetr.datasets.aug_config`"
+
+    The `rfdetr.datasets.aug_config` compatibility module, deprecated since v1.9.0, is gone. Importing it raises `ModuleNotFoundError`. The preset constants are unchanged; only the module path moves.
+
+    ```python
+    # Before (removed)
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
+    ```
 
 ### Deprecated in v1.12 → Remove in v1.15
 
@@ -182,7 +228,7 @@ For new image-prediction integrations, use the shared [`RFDETRInference`](../lea
 
 !!! warning "Removed: `RFDETR.optimize_for_inference()`"
 
-    The alias deprecated in v1.9.0 is gone. `RFDETR.inference()` kept the same signature when that alias was removed; it now returns an independent predictor. Capture the result and call `predict()` on it. See [native inference snapshots](#unreleased-native-inference-returns-a-predictor) for the current behavior.
+    The alias deprecated in v1.9.0 is gone. `RFDETR.inference()` kept the same signature when that alias was removed; it now returns an independent predictor. Capture the result and call `predict()` on it. See [native inference snapshots](#breaking-changes) for the current behavior.
 
     ```python
     # Before (removed)
@@ -412,7 +458,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature at the time of deprecation. The current factory returns an independent predictor; see [native inference snapshots](#unreleased-native-inference-returns-a-predictor).
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature at the time of deprecation. The current factory returns an independent predictor; see [native inference snapshots](#breaking-changes).
 
     ```python
     # Before (deprecated)
@@ -433,22 +479,6 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
     # After
     TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
-    ```
-
-### Deprecated in v1.9 → Remove in v1.12
-
-!!! note "`rfdetr.datasets.aug_config` is deprecated"
-
-    The module was renamed to `rfdetr.datasets.aug_configs` (plural) in v1.8.0 — see the "Upgrade 1.7 → 1.8" section below, where it is listed as a breaking change because that rename shipped with no compatibility shim. A shim was added in v1.9.0, so the singular path imports again and emits a `FutureWarning`. It is scheduled for removal in **v1.12.0**; migrate before then.
-
-    The preset constants are unchanged — only the module path moves.
-
-    ```python
-    # Before (deprecated, warns since v1.9.0)
-    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
-
-    # After
-    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
     ```
 
 ---

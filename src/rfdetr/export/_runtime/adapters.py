@@ -11,7 +11,7 @@ import platform
 import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import numpy as np
 import torch
@@ -148,8 +148,8 @@ def _validate_batch(batch: torch.Tensor, metadata: ExportMetadata) -> None:
             raise ValueError(f"Input axis {axis} must be {size}, got {actual}. Export a model for this batch or size.")
 
 
-def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[Any, Any]:
-    """Convert a normalized NCHW batch to the artifact's NumPy input interface."""
+def _input_tensor(batch: torch.Tensor, metadata: ExportMetadata) -> torch.Tensor:
+    """Lay out and cast a normalized NCHW batch as the artifact's input, on the batch's own device."""
     if metadata.input_layout == "NHWC":
         batch = batch.permute(0, 2, 3, 1)
     try:
@@ -158,8 +158,12 @@ def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[An
         raise ValueError(f"Unsupported export input dtype: {metadata.input_dtype!r}.") from exc
     if not np.issubdtype(dtype, np.floating):
         raise ValueError(f"Export input dtype {dtype} needs quantization parameters, which this adapter cannot infer.")
-    torch_dtype = torch.from_numpy(np.empty(0, dtype=dtype)).dtype
-    return np.ascontiguousarray(batch.detach().to("cpu", torch_dtype).numpy())
+    return batch.detach().to(torch.from_numpy(np.empty(0, dtype=dtype)).dtype).contiguous()
+
+
+def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[Any, Any]:
+    """Convert a normalized NCHW batch to the artifact's NumPy input interface."""
+    return np.ascontiguousarray(_input_tensor(batch, metadata).cpu().numpy())
 
 
 def _select_outputs(
@@ -330,6 +334,40 @@ def _runtime_options(format_name: str, options: Mapping[str, Any], accepted: Col
             f"{format_name} runtime_options does not accept {', '.join(unknown)}. Accepted keys: {allowed}."
         )
     return dict(options)
+
+
+def _thread_count_option(format_name: str, settings: Mapping[str, Any]) -> int | None:
+    """Return the validated ``num_threads`` runtime option, or ``None`` when the caller left it unset.
+
+    ONNX, OpenVINO, TFLite and LiteRT share this spelling so one thread count pins every CPU runtime of a benchmark.
+    A loader calls it right after :func:`_runtime_options`, before its body imports its runtime package.
+
+    Args:
+        format_name: Format name as users read it, for the error message.
+        settings: The options returned by :func:`_runtime_options`.
+
+    Returns:
+        The thread count, or ``None`` when ``num_threads`` is absent.
+
+    Raises:
+        ValueError: If ``num_threads`` is not a positive ``int`` (a ``bool`` is refused too).
+
+    Examples:
+        >>> _thread_count_option("ONNX", {"num_threads": 8})
+        8
+        >>> _thread_count_option("ONNX", {}) is None
+        True
+        >>> _thread_count_option("ONNX", {"num_threads": 0})
+        Traceback (most recent call last):
+        ...
+        ValueError: ONNX runtime_options num_threads must be a positive integer, got 0.
+    """
+    num_threads = settings.get("num_threads")
+    if num_threads is not None and (
+        isinstance(num_threads, bool) or not isinstance(num_threads, int) or num_threads < 1
+    ):
+        raise ValueError(f"{format_name} runtime_options num_threads must be a positive integer, got {num_threads!r}.")
+    return cast(int | None, num_threads)
 
 
 def load_runtime(

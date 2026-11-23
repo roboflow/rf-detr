@@ -28,6 +28,7 @@ from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.fused_adamw_ema import FusedAdamWEMA
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
+from tests._markers import _requires_cuda
 
 
 class _CompiledModelHolder(nn.Module):
@@ -100,6 +101,34 @@ class _TwoBatches(Dataset[tuple[NestedTensor, list[dict[str, torch.Tensor]]]]):
         )
         targets = [{"boxes": torch.tensor([[0.5, 0.5, 0.2 + 0.05 * index, 0.2]]), "labels": torch.tensor([1])}]
         return samples, targets
+
+
+def _nano_config() -> RFDETRNanoConfig:
+    """Build the compiled Nano config of the production-module tests: no pretrained weights, no CUDA graphs.
+
+    Examples:
+        >>> _nano_config().compile, _nano_config().cuda_graphs
+        (True, False)
+    """
+    return RFDETRNanoConfig(num_classes=3, pretrain_weights=None, compile=True, cuda_graphs=False)
+
+
+def _gpu_train_config(tmp_path: Path) -> TrainConfig:
+    """Build the single-GPU train config with EMA every step used by the production-module tests.
+
+    Examples:
+        >>> _gpu_train_config(Path(".")).ema_update_interval
+        1
+    """
+    return TrainConfig(
+        dataset_dir=tmp_path,
+        output_dir=tmp_path / "output",
+        multi_scale=False,
+        expanded_scales=False,
+        use_ema=True,
+        ema_update_interval=1,
+        accelerator="gpu",
+    )
 
 
 def _optimizer(model: nn.Module, average_model: AveragedModel) -> FusedAdamWEMA:
@@ -357,7 +386,7 @@ def test_rejects_adamw_modes_not_implemented_by_combined_kernel() -> None:
     """Opt-in AdamW variants must fail instead of silently changing their arithmetic."""
     model = nn.Linear(2, 1)
 
-    with pytest.raises(ValueError, match="amsgrad"):
+    with pytest.raises(ValueError) as exc_info:
         FusedAdamWEMA(
             model.parameters(),
             named_parameters=dict(model.named_parameters()),
@@ -368,6 +397,8 @@ def test_rejects_adamw_modes_not_implemented_by_combined_kernel() -> None:
             amsgrad=True,
         )
 
+    assert "amsgrad" in str(exc_info.value)
+
 
 def test_rejects_a_second_ema_owner() -> None:
     """Two EMA callbacks cannot silently redirect one optimizer's fused writes."""
@@ -376,8 +407,10 @@ def test_rejects_a_second_ema_owner() -> None:
     second = AveragedModel(model)
     optimizer = _optimizer(model, first)
 
-    with pytest.raises(RuntimeError, match="exactly one RFDETREMACallback"):
+    with pytest.raises(RuntimeError) as exc_info:
         optimizer.attach_ema_model(second)
+
+    assert "exactly one RFDETREMACallback" in str(exc_info.value)
 
 
 def test_cpu_step_falls_back_to_standard_adamw() -> None:
@@ -421,7 +454,7 @@ def test_resumed_groups_stay_unfused_whichever_route_wrote_the_checkpoint(saved_
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_combined_checkpoint_resumes_on_the_standard_route_with_fused_adamw() -> None:
     """A checkpoint written by the combined route keeps the standard route's fused AdamW on when resumed there."""
     model = nn.Linear(4, 2).cuda()
@@ -489,7 +522,7 @@ def test_fallback_step_keeps_gradient_clipping(attach_ema: bool) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_fallback_step_matches_the_standard_clip_then_fused_adamw_route() -> None:
     """A fallback step gives the update of the route it replaces, ``clip_grad_norm_`` then ``AdamW(fused=True)``.
 
@@ -534,7 +567,7 @@ def test_fallback_step_matches_the_standard_clip_then_fused_adamw_route() -> Non
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_first_step_fallback_leaves_state_usable_by_combined_step() -> None:
     """A fallback before any combined step must not leave host ``step`` tensors for the GPU kernel to read."""
     model = nn.Linear(6, 4).cuda()
@@ -559,7 +592,7 @@ def test_first_step_fallback_leaves_state_usable_by_combined_step() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_matches_baseline_when_parameters_have_no_gradient_on_some_steps() -> None:
     """Parameters without a gradient keep their AdamW state but still advance their EMA copy."""
     torch.manual_seed(11)
@@ -609,7 +642,7 @@ def test_matches_baseline_when_parameters_have_no_gradient_on_some_steps() -> No
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_matches_clipped_fused_adamw_and_ema_across_steps() -> None:
     """The combined kernel stays close to the current three-operation CUDA path."""
     torch.manual_seed(7642)
@@ -652,7 +685,7 @@ def test_matches_clipped_fused_adamw_and_ema_across_steps() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_matches_baseline_with_distinct_hyperparameters_per_group() -> None:
     """Each parameter group keeps its own learning rate, weight decay, betas, and epsilon, as production groups do."""
     torch.manual_seed(5)
@@ -662,7 +695,7 @@ def test_matches_baseline_with_distinct_hyperparameters_per_group() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 @pytest.mark.parametrize(
     "options",
     [pytest.param(_GROUP_OPTIONS[:1], id="one-group"), pytest.param(_GROUP_OPTIONS, id="three-groups")],
@@ -681,7 +714,7 @@ def test_matches_baseline_for_tensors_spanning_several_blocks(options: list[dict
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_updates_floating_and_integer_ema_buffers() -> None:
     """EMA buffer semantics are retained alongside fused parameter updates."""
     baseline = nn.BatchNorm1d(4).cuda()
@@ -723,7 +756,7 @@ def test_updates_floating_and_integer_ema_buffers() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_maps_parameters_through_compiled_model_wrapper() -> None:
     """EMA parameter lookup unwraps the ``OptimizedModule`` shape used by compiled training."""
     inner = nn.Linear(4, 2).cuda()
@@ -741,7 +774,7 @@ def test_maps_parameters_through_compiled_model_wrapper() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_optimizer_and_ema_resume_continue_counters() -> None:
     """Restored Adam moments, step tensors, and EMA count remain usable by the fused pointer cache.
 
@@ -779,24 +812,11 @@ def test_optimizer_and_ema_resume_continue_counters() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_production_compiled_module_runs_combined_update(tmp_path: Path) -> None:
     """The production constructor routes a real compiled detection step through the combined optimizer."""
-    model_config = RFDETRNanoConfig(
-        num_classes=3,
-        pretrain_weights=None,
-        compile=True,
-        cuda_graphs=False,
-    )
-    train_config = TrainConfig(
-        dataset_dir=tmp_path,
-        output_dir=tmp_path / "output",
-        multi_scale=False,
-        expanded_scales=False,
-        use_ema=True,
-        ema_update_interval=1,
-        accelerator="gpu",
-    )
+    model_config = _nano_config()
+    train_config = _gpu_train_config(tmp_path)
     module = RFDETRModelModule(model_config, train_config).cuda().train()
     trainer = SimpleNamespace(
         estimated_stepping_batches=10,
@@ -842,7 +862,7 @@ def test_production_compiled_module_runs_combined_update(tmp_path: Path) -> None
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_production_parameter_groups_match_torch_update_on_identical_gradients(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -853,16 +873,8 @@ def test_production_parameter_groups_match_torch_update_on_identical_gradients(
     training runs.
     """
     monkeypatch.setattr(FusedAdamWEMA, "_standard_step", _fail_on_fallback)
-    model_config = RFDETRNanoConfig(num_classes=3, pretrain_weights=None, compile=True, cuda_graphs=False)
-    train_config = TrainConfig(
-        dataset_dir=tmp_path,
-        output_dir=tmp_path / "output",
-        multi_scale=False,
-        expanded_scales=False,
-        use_ema=True,
-        ema_update_interval=1,
-        accelerator="gpu",
-    )
+    model_config = _nano_config()
+    train_config = _gpu_train_config(tmp_path)
 
     torch.manual_seed(0)
     candidate = _build_arm(model_config, train_config, True, None)
@@ -899,22 +911,14 @@ def test_production_parameter_groups_match_torch_update_on_identical_gradients(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@_requires_cuda
 def test_trainer_resume_with_accumulation_continues_combined_update(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A real fit with gradient accumulation, then a checkpoint resume, keeps the kernels, counters, and EMA in step."""
     monkeypatch.setattr(FusedAdamWEMA, "_standard_step", _fail_on_fallback)
-    model_config = RFDETRNanoConfig(num_classes=3, pretrain_weights=None, compile=True, cuda_graphs=False)
-    train_config = TrainConfig(
-        dataset_dir=tmp_path,
-        output_dir=tmp_path / "output",
-        multi_scale=False,
-        expanded_scales=False,
-        use_ema=True,
-        ema_update_interval=1,
-        accelerator="gpu",
-    )
+    model_config = _nano_config()
+    train_config = _gpu_train_config(tmp_path)
     checkpoint_path = tmp_path / "resume.ckpt"
 
     trainer, _ = _fit(model_config, train_config, max_epochs=1, resume_from=None)

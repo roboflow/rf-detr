@@ -23,9 +23,9 @@ from typing import cast
 
 import torch
 from torch import Tensor, nn
-from transformers.modeling_outputs import BaseModelOutput
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    BaseModelOutput,
     WindowedDinov2WithRegistersEncoder,
     WindowedDinov2WithRegistersLayer,
 )

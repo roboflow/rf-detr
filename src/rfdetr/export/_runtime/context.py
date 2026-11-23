@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from rfdetr._prediction import PredictionContext
+from rfdetr._prediction.core import PredictionContext
 from rfdetr.export._runtime.adapters import load_runtime
 from rfdetr.export._runtime.metadata import read_metadata
 from rfdetr.models.postprocess import PostProcess

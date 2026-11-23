@@ -41,7 +41,7 @@ _Target: TypeAlias = Optional[Dict[str, Any]]
 _TransformResult: TypeAlias = Tuple[_ImageInput, _Target]
 
 
-def _image_size(image: Image.Image | torch.Tensor) -> tuple[int, int]:
+def _image_size(image: _ImageInput) -> tuple[int, int]:
     """Return image size as ``(height, width)``.
 
     Args:
@@ -194,9 +194,7 @@ class RandomSelect:
         self.transform2 = transform2
         self.p = p
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Apply one of the configured transforms.
 
         Args:
@@ -235,9 +233,7 @@ class RandomChoice:
             raise ValueError("transforms must contain at least one transform")
         self.transforms = list(transforms)
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Apply one randomly selected transform.
 
         Args:
@@ -272,9 +268,7 @@ class Compose:
     def __init__(self, transforms: Sequence[Any]) -> None:
         self.transforms = list(transforms)
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Apply transforms in order.
 
         Args:
@@ -314,9 +308,7 @@ class RandomResize:
         self.sizes = [int(size) for size in sizes]
         self.max_size = max_size
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Resize the image and spatial target fields.
 
         Args:
@@ -385,9 +377,7 @@ class Resize:
     def __init__(self, size: tuple[int, int]) -> None:
         self.size = (int(size[0]), int(size[1]))
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Resize the image and spatial target fields.
 
         Args:
@@ -463,9 +453,7 @@ class RandomSizedCrop:
         self.min_max_height = (int(min_max_height[0]), int(min_max_height[1]))
         self.size = (int(size[0]), int(size[1]))
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Crop and resize the image and spatial target fields.
 
         Args:
@@ -521,9 +509,7 @@ class RandomHorizontalFlip:
                 f"keypoint_flip_pairs must have an even number of elements, got {len(self.keypoint_flip_pairs)}"
             )
 
-    def __call__(
-        self, image: Image.Image | torch.Tensor, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+    def __call__(self, image: _ImageInput, target: _Target = None) -> _TransformResult:
         """Randomly flip the image and target.
 
         Args:
@@ -560,13 +546,13 @@ class RandomHorizontalFlip:
 
 
 def crop(
-    image: Image.Image | torch.Tensor,
+    image: _ImageInput,
     target: Optional[Dict[str, Any]],
     top: int,
     left: int,
     height: int,
     width: int,
-) -> Tuple[Image.Image | torch.Tensor, Optional[Dict[str, Any]]]:
+) -> _TransformResult:
     """Crop an image and associated spatial target fields.
 
     Note:
@@ -609,9 +595,20 @@ def crop(
             lambda boxes: functional.crop(boxes, top=top, left=left, height=height, width=width),
         )
         keep = (cropped[:, 2] > cropped[:, 0]) & (cropped[:, 3] > cropped[:, 1])
+        masks_cropped = False
+        if "masks" in target_out and target_out["masks"].shape[0] == keep.shape[0]:
+            # Drop ghost instances: a box clipped to a partly visible area whose mask lies fully outside the crop.
+            # Box-only instances (empty input mask) are kept.
+            in_masks = target_out["masks"]
+            out_masks = functional.crop(in_masks, top=top, left=left, height=height, width=width)
+            keep = keep & (~in_masks.flatten(1).any(dim=1) | out_masks.flatten(1).any(dim=1))
+            target_out["masks"] = out_masks
+            masks_cropped = True
         boxes = cropped[keep]
         target_out = _filter_per_instance_fields(target_out, keep, boxes)
-    if "masks" in target_out:
+    else:
+        masks_cropped = False
+    if "masks" in target_out and not masks_cropped:
         target_out["masks"] = functional.crop(target_out["masks"], top=top, left=left, height=height, width=width)
     if "keypoints" in target_out:
         keypoints = target_out["keypoints"].clone()

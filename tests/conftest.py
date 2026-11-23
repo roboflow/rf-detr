@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Generator
 
 import pytest
+import torch
 from fuse_augmentations.data import SplitRatios, generate_dataset
 
 from rfdetr.export._backend import preload_tensorflow_before_onnx
@@ -26,33 +27,6 @@ preload_tensorflow_before_onnx()
 #: Seed handed to ``generate_dataset``; it draws from fresh entropy when left unset, which would make
 #: the session-scoped dataset fixtures differ between runs.
 SYNTHETIC_DATASET_SEED = 42
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _prewarm_dinov2_cache() -> None:
-    """Download DINOv2 backbone weights once per test session.
-
-    HuggingFace hub uses file-level locking internally, so concurrent xdist
-    workers block on each other rather than issuing duplicate network requests.
-    After the first worker finishes, all others read from the local disk cache.
-
-    Examples:
-        This fixture is autouse — no explicit reference needed in tests.
-    """
-    import os
-
-    if os.environ.get("RFDETR_SKIP_DINOV2_PREWARM") == "1":
-        return
-
-    from huggingface_hub import snapshot_download
-
-    try:
-        snapshot_download(
-            "facebook/dinov2-with-registers-base",
-            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
-        )
-    except Exception as exc:
-        pytest.skip(f"Skipping DINOv2 cache prewarm (snapshot_download failed): {exc}")
 
 
 @pytest.fixture(autouse=True)
@@ -83,6 +57,33 @@ def process_umask(request: pytest.FixtureRequest) -> Generator[int, None, None]:
         yield umask
     finally:
         os.umask(previous_umask)
+
+
+@pytest.fixture
+def tf32_disabled() -> Generator[None, None, None]:
+    """Turn TF32 off for the cuBLAS matmul and cuDNN for one test and put the previous settings back afterwards.
+
+    Torch serves ``allow_tf32`` on ``torch.backends.cuda.matmul`` from ``__getattr__``, so the flag is not an
+    instance attribute. ``monkeypatch`` (pytest 9.2+) then records it as absent and undoes the patch with ``delattr``,
+    which torch rejects. Restoring by assignment works on every pytest version.
+
+    Examples:
+        A fixture, so this is documentation rather than a doctest:
+
+        ```python
+        def test_strict_fp32_parity(tf32_disabled: None) -> None:
+            assert not torch.backends.cuda.matmul.allow_tf32
+        ```
+    """
+    backends = (torch.backends.cuda.matmul, torch.backends.cudnn)
+    previous_flags = [backend.allow_tf32 for backend in backends]
+    for backend in backends:
+        backend.allow_tf32 = False
+    try:
+        yield
+    finally:
+        for backend, flag in zip(backends, previous_flags):
+            backend.allow_tf32 = flag
 
 
 def sparsify_category_ids(annotations_path: Path) -> None:

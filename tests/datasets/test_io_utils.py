@@ -5,12 +5,14 @@
 # ------------------------------------------------------------------------
 """Tests for the shared image decoder in ``rfdetr.datasets.io_utils``."""
 
+import io
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from rfdetr.datasets import io_utils
 from rfdetr.datasets.coco import CocoDetection
@@ -78,7 +80,7 @@ def _write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
     image.save(path, format="JPEG", quality=90)
 
 
-requires_simplejpeg = pytest.mark.skipif(io_utils.simplejpeg is None, reason="simplejpeg is not installed")
+_requires_simplejpeg = pytest.mark.skipif(io_utils.simplejpeg is None, reason="simplejpeg is not installed")
 
 
 class TestDecodeImage:
@@ -96,7 +98,7 @@ class TestDecodeImage:
     on the fixture below) instead of exact equality.
     """
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_jpeg_pixels_match_pillow(self, tmp_path: Path) -> None:
         """Full-resolution simplejpeg output equals Pillow's."""
         jpeg_path = tmp_path / "img.jpg"
@@ -109,7 +111,7 @@ class TestDecodeImage:
         assert scales == (1.0, 1.0)
         np.testing.assert_array_equal(pixels, expected)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     @pytest.mark.parametrize(
         ("width", "height", "draft_size"),
         [
@@ -132,7 +134,7 @@ class TestDecodeImage:
         assert scales == expected_scales
         np.testing.assert_array_equal(pixels, expected)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_grayscale_jpeg_decodes_to_rgb(self, tmp_path: Path) -> None:
         """Single-channel JPEG sources come back as three-channel RGB like Pillow's ``convert``."""
         jpeg_path = tmp_path / "gray.jpg"
@@ -144,7 +146,7 @@ class TestDecodeImage:
         assert pixels.shape == (30, 40, 3)
         np.testing.assert_array_equal(pixels, expected)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_cmyk_jpeg_matches_pillow_within_rounding_tolerance(self, tmp_path: Path) -> None:
         """CMYK JPEG sources decode to RGB pixels within a small rounding tolerance of Pillow's conversion.
 
@@ -162,7 +164,7 @@ class TestDecodeImage:
         assert pixels.shape == expected.shape
         np.testing.assert_allclose(pixels.astype(int), expected.astype(int), atol=2)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path) -> None:
         """A JPEG simplejpeg rejects falls through to Pillow, so callers see the same ``OSError`` as before."""
         jpeg_path = tmp_path / "img.jpg"
@@ -172,7 +174,7 @@ class TestDecodeImage:
         with pytest.raises(OSError, match="truncated"):
             decode_image(jpeg_path)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -184,7 +186,7 @@ class TestDecodeImage:
         with pytest.raises(Image.DecompressionBombError):
             decode_image(jpeg_path)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_jpeg_between_pixel_limit_tiers_warns_and_decodes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -267,7 +269,7 @@ class TestDecodeImage:
         assert scales == expected_scales
         np.testing.assert_array_equal(pixels, expected)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_bytes_garbage_after_soi_raises_pillow_error(self) -> None:
         """Bytes with a valid JPEG SOI marker but a garbage payload raise the same error Pillow would.
 
@@ -363,7 +365,7 @@ class TestDecodePilImage:
         # `io.BytesIO(data)` shares `data`'s buffer instead of copying it.
         assert peak_traced_bytes(decode_pil, source) < 800 * 600 * 3 // 2
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
     def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
@@ -378,7 +380,7 @@ class TestDecodePilImage:
         with pytest.raises(Image.DecompressionBombError):
             decode_pil(source)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
     def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
         """A truncated JPEG falls through to Pillow, raising the same ``OSError`` for the PIL entry points."""
@@ -391,7 +393,7 @@ class TestDecodePilImage:
         with pytest.raises(OSError, match="truncated"):
             decode_pil(source)
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     @pytest.mark.parametrize("source_kind", ["path", "bytes"])
     def test_garbage_after_soi_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
         """A JPEG SOI marker followed by a garbage payload raises Pillow's error through the PIL entry points.
@@ -409,10 +411,192 @@ class TestDecodePilImage:
             decode_pil(source)
 
 
+class TestDecodePilImagePixelLimit:
+    """``max_image_pixels`` raises the decompression-bomb limit for one decode, never for the process (#1716).
+
+    Each case runs on JPEG, PNG and TIFF inputs.
+    """
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_decodes_image_above_process_limit_without_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, extension: str
+    ) -> None:
+        """An image the process limit rejects decodes silently when the per-call limit admits it."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)  # 2048 pixels, above the process limit's raise tier
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image, _ = decode_pil(source, max_image_pixels=5000)
+
+        assert image.size == (64, 32)
+
+    def test_gif_disposal_uses_per_image_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A GIF disposal buffer admitted by the per-image limit decodes under a lower process limit."""
+        encoded = io.BytesIO()
+        Image.new("RGB", (64, 32), "red").save(encoded, format="GIF", disposal=2)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, _ = decode_pil_image_bytes(encoded.getvalue(), max_image_pixels=5000)
+
+        assert image.size == (64, 32)
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    def test_rejected_header_does_not_read_entire_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reject an oversized image before reading its trailing encoded payload."""
+        path = tmp_path / "image.png"
+        _write_test_image(path, 64, 32)
+        data = path.read_bytes() + bytes(100_000)
+
+        class _BoundedStream(io.BytesIO):
+            def read(self, size: int = -1) -> bytes:
+                assert 0 <= size <= 4096, "read beyond the header before rejecting the image"
+                return super().read(size)
+
+        monkeypatch.setattr(Path, "open", lambda self, *args, **kwargs: _BoundedStream(data))
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+        with pytest.raises(Image.DecompressionBombError):
+            io_utils._open_image(path, max_image_pixels=500)
+
+    @pytest.mark.parametrize("compression", ["raw", "tiff_deflate"])
+    def test_tiff_pixels_match_with_a_raised_limit(self, monkeypatch: pytest.MonkeyPatch, compression: str) -> None:
+        """Raw and compressed TIFF pixels survive decoding under the per-image limit."""
+        pixels = np.random.default_rng(1).integers(0, 256, size=(32, 64, 3), dtype=np.uint8)
+        encoded = io.BytesIO()
+        Image.fromarray(pixels).save(encoded, format="TIFF", compression=compression)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image_bytes(encoded.getvalue(), max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.asarray(image), pixels)
+        assert scales == (1.0, 1.0)
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_process_limit_is_unchanged_after_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """The process-wide limit is the application's once the decode returns."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        decode_pil_image(image_path, max_image_pixels=5000)
+
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    def test_bomb_warning_as_error_precedes_pixel_decode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A warning promoted to an error stops before a damaged image is decoded."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        encoded = io.BytesIO()
+        Image.new("RGB", (64, 32)).save(encoded, format="PNG")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with pytest.raises(Image.DecompressionBombWarning):
+                decode_pil_image_bytes(encoded.getvalue()[:45], max_image_pixels=1500)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_image_above_twice_the_per_call_limit_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """The per-call limit is still a guard: more than twice it raises, as Pillow's own limit does."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)  # 2048 pixels
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil_image(image_path, max_image_pixels=1000)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_process_limit_is_restored_after_rejected_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """A decode that raises leaves the process-wide limit as it found it."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil_image(image_path, max_image_pixels=1000)
+
+        assert Image.MAX_IMAGE_PIXELS == 100
+
+    @pytest.mark.parametrize("process_limit", [None, 1_000_000])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_never_lowers_a_more_permissive_process_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, process_limit: int | None, extension: str
+    ) -> None:
+        """A process limit that is disabled or already higher wins over a smaller per-call limit."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", process_limit)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image, _ = decode_pil_image(image_path, max_image_pixels=10)
+
+        assert image.size == (64, 32)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_process_limit_is_never_changed_while_pillow_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """Pillow's own path never raises the process-wide limit, so another thread's ``Image.open`` keeps it."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+        limits_during_read: set[int | None] = set()
+
+        class _RecordingStream(io.BytesIO):
+            def read(self, size: int | None = -1) -> bytes:
+                limits_during_read.add(Image.MAX_IMAGE_PIXELS)
+                return super().read(size)
+
+        io_utils._decode_with_pillow(_RecordingStream(image_path.read_bytes()), None, max_image_pixels=5000)
+
+        assert limits_during_read == {1000}
+
+    def test_jpeg_without_simplejpeg_still_drafts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pillow's JPEG reduction still applies when the per-call limit routes the open around ``Image.open``."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
+
+        image, scales = decode_pil_image(jpeg_path, 256, max_image_pixels=10**9)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    def test_unidentified_image_raises_pillow_error(self) -> None:
+        """Bytes no Pillow plugin recognises raise the error ``Image.open`` raises for them."""
+        with pytest.raises(UnidentifiedImageError):
+            decode_pil_image_bytes(b"not an image", max_image_pixels=5000)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_coco_detection_applies_its_limit_to_the_images_it_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """``CocoDetection(max_image_pixels=...)`` reads an image the process limit rejects."""
+        root = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 64, 32).root
+        dataset = CocoDetection(root, tmp_path / "annotations.json", transforms=None, max_image_pixels=5000)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, _ = dataset[0]
+
+        assert image.size == (64, 32)
+
+
 class TestReadSimplejpegCandidate:
     """``_read_simplejpeg_candidate`` decides, by marker, whether a file is ``simplejpeg``'s to decode."""
 
-    @requires_simplejpeg
+    @_requires_simplejpeg
     def test_jpeg_file_returns_its_bytes(self, tmp_path: Path) -> None:
         """A JPEG file's raw bytes come back unchanged, the positive branch the module doctest does not cover."""
         jpeg_path = tmp_path / "img.jpg"

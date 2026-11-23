@@ -108,7 +108,7 @@ Filenames are built from the model's variant name (e.g. `rfdetr-medium`, falling
 | `onnx`        | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`)                                                                                                                                                       | none — `-backbone` is structural, not a precision detail                                                                                         |
 | `coreml`      | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage` (`{variant}_fp16-ane.mlpackage` if `coreml_neural_engine=True`; `{variant}_fp32-backbone.mlpackage` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_fp32.mlpackage` if `backbone_only=True`                                                            | `coreml_precision`, plus `-ane` and `-backbone` when set                                                                                         |
 | `coreai`      | `{variant}_fp32.aimodel` / `{variant}_fp16.aimodel`; without a variant or `output_name`, `inference_model_fp32.aimodel`                                                                                                                                                                                                                      | `coreai_precision`                                                                                                                               |
-| `executorch`  | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte` (or `{variant}_xnnpack-backbone.pte` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_xnnpack.pte` if `backbone_only=True`                                                                                                         | `backend` (+ `soc` for `qnn`), plus `-backbone` when named                                                                                       |
+| `executorch`  | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_tensorrt.pte` / `{variant}_qnn_{soc}.pte` (or `{variant}_xnnpack-backbone.pte` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_xnnpack.pte` if `backbone_only=True`                                                                              | `backend` (+ `soc` for `qnn`), plus `-backbone` when named                                                                                       |
 | `tensorrt`    | `{variant}_fp16.trt` / `{variant}_fp32.trt` / `{variant}_int8.trt` (or `{variant}-backbone_fp16.trt` / `{variant}-backbone_fp32.trt` if `backbone_only=True`)                                                                                                                                                                                | `fp16` or `quantization="int8"`, plus `_ampere_plus` / `_same_compute_capability` and `_version_compatible` when set, and `-backbone` when named |
 | `tflite`      | `{variant}_fp32.tflite` + `{variant}_fp16.tflite` (+ `{variant}_dynamic_range_quant.tflite` for `quantization="int8"`)                                                                                                                                                                                                                       | precision / quantization mode                                                                                                                    |
 | `onnx` (int8) | `{variant}_int8.onnx` beside the FP32 `{variant}.onnx` the quantization was derived from                                                                                                                                                                                                                                                     | `_int8`                                                                                                                                          |
@@ -146,17 +146,37 @@ This wraps the live model without copying its weights. Each prediction reads the
 
 The public constructor supports ONNX, TensorRT (`.trt` and `.engine`), TFLite, LiteRT, ExecuTorch, OpenVINO, native CoreML, Core AI, and native `.pth`/`.pt`/`.ckpt` checkpoints. Install the runtime package for the format on the target system. For ONNX, install `rfdetr[onnx]`: the loader reads the metadata embedded in the model with the `onnx` package and runs it with ONNX Runtime, and the extra installs both. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions and are not supported by this prediction API.
 
-Pass a list to `predict()` to return one result per image. Each call runs the list as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
+Pass an image-only list to `predict()` to return one result per image. With `stream=False`, the list runs as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
+
+`RFDETRInference.predict()` also accepts video paths, HTTP video URLs, webcams, RTSP, YouTube, directories, globs, and manifests. `RFDETR.predict()` takes images only; wrap a loaded model with `RFDETRInference(model)` for these sources. Install `rfdetr[stream]` for the optional source dependencies.
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx", device="cpu")
+results = model.predict("video.mp4", stream=True, batch=1, vid_stride=2)
+try:
+    for detections in results:
+        frame = detections.metadata["source_image"]  # RGB pixels for Supervision annotations.
+finally:
+    results.close()
+```
+
+`stream=True` yields one result per frame and keeps memory bounded unless the caller retains results. `stream_buffer=False` keeps the latest live frame; `True` queues frames in a bounded buffer. Close the generator on early exit to release capture.
+
+Every inference batch must satisfy the export's shape and batch limits. Use a batch-one export for arbitrary-length video, or a dynamic-batch export to accept a short final batch. A fixed-batch export rejects a short final batch. A `.streams` manifest sends one frame per source as one batch, which must also fit the export.
 
 `runtime_info` reports the selected runtime and device policy. Some vendor runtimes choose a physical device after model load, so the policy might not identify one chip. An explicit device request must match the runtime and available hardware. For example, TensorRT requires CUDA. Core AI accepts `auto` or `cpu`; its GPU and Neural Engine options express a preference and cannot pin execution to that device.
 
 Pass `runtime_options` to configure the runtime of an exported artifact. Each format reads only its own keys and raises `ValueError` for any other key, so a misspelled key, or one meant for another format, fails when the artifact is loaded instead of being ignored. Native models and checkpoints take no runtime options.
 
-| Format        | Keys                                                                                                                                                                       |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TensorRT      | `cuda_graph`, `engine_host_code_allowed`, `verbose`, each a `bool` that defaults to `False`. See [Predict with RFDETRInference](tensorrt.md#predict-with-rfdetrinference). |
-| OpenVINO      | `cache_dir`, `inference_precision`, `config`, with the meaning they have on the [OpenVINO session](openvino.md#advanced-use-the-openvino-session-directly).                |
-| Other formats | None.                                                                                                                                                                      |
+| Format         | Keys                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TensorRT       | `cuda_graph`, `engine_host_code_allowed`, `verbose`, each a `bool` that defaults to `False`. See [Predict with RFDETRInference](tensorrt.md#predict-with-rfdetrinference). |
+| OpenVINO       | `cache_dir`, `inference_precision`, `config`, `num_threads`, with the meaning they have on the [OpenVINO page](openvino.md#runtime-options).                               |
+| ONNX           | `num_threads`, a positive `int`: CPU thread pool size, by default every logical core the process may use. CUDA keeps ONNX Runtime's default.                               |
+| TFLite, LiteRT | `num_threads`, a positive `int`: CPU threads for the interpreter, which otherwise runs on one thread.                                                                      |
+| Other formats  | None.                                                                                                                                                                      |
 
 ```python
 from rfdetr import RFDETRInference
@@ -269,70 +289,6 @@ detections = model.predict("image.jpg", threshold=0.5)
 The JSON file or mapping may instead hold an envelope of the form `{"artifact_sha256": "<artifact digest>", "metadata": { ... }}`, with the complete metadata object under `metadata`. Both keys must be present for an explicit override to be treated as an envelope. For a single-file ONNX artifact, the digest is the SHA-256 hex digest of its bytes. Automatically loaded `<artifact-name>.rfdetr.json` sidecars require this envelope. A digest mismatch is rejected, including when you also pass `metadata=`.
 
 Supplied metadata can fill missing stored fields but cannot replace a stored value with a different value. Embedded ONNX metadata and a sidecar must agree if both exist. Omitting `schema_version` selects version 1; an unsupported version is rejected with an instruction to upgrade `rfdetr`. Do not relabel newer metadata as version 1 to bypass this check. Schema validation is followed by runtime interface checks; a schema-valid object alone does not establish that it matches an artifact.
-
-## Run Inference with `inference-models`
-
-[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is a separate deployment option. It supports PyTorch, ONNX, and TensorRT with automatic backend selection and its own API.
-
-### Installation
-
-```bash
-# CPU / PyTorch only
-pip install inference-models
-
-# With TensorRT support (NVIDIA GPU required)
-pip install "inference-models[trt10]"  # TensorRT 10
-```
-
-See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/) for all installation options including Jetson and CUDA 11.x.
-
-### Load a Pre-trained RF-DETR Model
-
-```python
-import cv2
-from inference_models import AutoModel
-
-# Automatically selects the best available backend for your environment
-model = AutoModel.from_pretrained("rfdetr-small")
-
-image = cv2.imread("image.jpg")
-predictions = model(image)
-
-# Convert to supervision Detections
-detections = predictions[0].to_supervision()
-print(detections)
-```
-
-### Load a Local RF-DETR Checkpoint
-
-```python
-import cv2
-from inference_models import AutoModel
-
-# Load from a local .pth checkpoint (same file used by rfdetr for training)
-model = AutoModel.from_pretrained(
-    "/path/to/checkpoint.pth",
-    model_type="rfdetr-small",  # specify the architecture variant
-)
-
-image = cv2.imread("image.jpg")
-predictions = model(image)
-```
-
-### Force TensorRT Backend
-
-```python
-import cv2
-from inference_models import AutoModel, BackendType
-
-# Explicitly request TensorRT — requires TRT to be installed
-model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT)
-
-image = cv2.imread("image.jpg")
-predictions = model(image)
-```
-
-`AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or `backend="trt"` to override automatic backend selection.
 
 ## Using the Exported Model
 

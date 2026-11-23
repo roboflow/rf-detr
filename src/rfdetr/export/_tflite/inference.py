@@ -31,6 +31,7 @@ from rfdetr.export._runtime.adapters import (
     _input_array,
     _runtime_options,
     _single_input,
+    _thread_count_option,
 )
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
@@ -47,7 +48,7 @@ _IMAGENET_STD: list[float] = [0.229, 0.224, 0.225]
 _RANK4_OUTPUT_KINDS: tuple[str, ...] = ("masks", "keypoints")
 
 
-def _create_interpreter(model_path: str | Path) -> Any:
+def _create_interpreter(model_path: str | Path, num_threads: int | None = None) -> Any:
     """Load a TFLite model, allocate tensors, and log I/O shapes.
 
     Tries ``tflite_runtime`` first (lightweight; preferred on edge devices), then falls back to ``tensorflow.lite``
@@ -55,6 +56,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
 
     Args:
         model_path: Path to the ``.tflite`` model file.
+        num_threads: CPU threads for the interpreter, or ``None`` for the interpreter's own default (one thread).
 
     Returns:
         An allocated TFLite interpreter ready for inference.
@@ -78,7 +80,8 @@ def _create_interpreter(model_path: str | Path) -> Any:
             "Install one: `pip install ai_edge_litert`  OR  `pip install tflite-runtime`"
         )
 
-    interp = _Interpreter(model_path=str(model_path))
+    interpreter_options = {} if num_threads is None else {"num_threads": num_threads}
+    interp = _Interpreter(model_path=str(model_path), **interpreter_options)
     interp.allocate_tensors()
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
@@ -106,12 +109,13 @@ def _run_interpreter_raw(
 
 
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
-    """Load a TFLite or LiteRT artifact through the shared interpreter; it reads no runtime options."""
-    _runtime_options("TFLite" if metadata.format.lower() == "tflite" else "LiteRT", options, ())
+    """Load a TFLite or LiteRT artifact through the shared interpreter; it reads the ``num_threads`` runtime option."""
+    format_name = "TFLite" if metadata.format.lower() == "tflite" else "LiteRT"
+    num_threads = _thread_count_option(format_name, _runtime_options(format_name, options, ("num_threads",)))
     if device not in {"auto", "cpu"}:
         raise ValueError("TFLite inference supports cpu or auto only.")
 
-    session = _create_interpreter(path)
+    session = _create_interpreter(path, **({} if num_threads is None else {"num_threads": num_threads}))
     input_info = _single_input("TFLite", session.get_input_details())
     # The signature, not the current allocation, says which axes the graph can resize; -1 marks a dynamic axis.
     signature = input_info.get("shape_signature", input_info["shape"])

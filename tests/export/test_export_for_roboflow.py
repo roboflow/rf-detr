@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from rfdetr.detr import RFDETR
@@ -39,6 +40,19 @@ def _make_stub_model(class_names: list[str]) -> RFDETR:
     return instance
 
 
+def _load_bundle(directory: Path) -> dict:
+    """Load the ``weights.pt`` bundle written by ``export_for_roboflow`` from ``directory``.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     torch.save({"model": {}, "args": None}, Path(directory) / "weights.pt")
+        ...     sorted(_load_bundle(Path(directory)))
+        ['args', 'model']
+    """
+    return torch.load(directory / "weights.pt", map_location="cpu", weights_only=False)
+
+
 class TestExportForRoboflow:
     """export_for_roboflow writes a deploy-ready bundle into a directory."""
 
@@ -48,18 +62,25 @@ class TestExportForRoboflow:
 
         model.export_for_roboflow(str(tmp_path))
 
-        bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
+        bundle = _load_bundle(tmp_path)
         assert set(bundle) == {"model", "args"}
         assert "weight" in bundle["model"]
         assert bundle["args"].resolution == 560
 
-    def test_writes_class_names_txt(self, tmp_path: Path) -> None:
-        """class_names.txt lists one class name per line."""
-        model = _make_stub_model(["cat", "dog"])
+    @pytest.mark.parametrize(
+        ("class_names", "expected_text"),
+        [
+            (["cat", "dog"], "cat\ndog"),
+            ([], ""),
+        ],
+    )
+    def test_writes_class_names_txt(self, tmp_path: Path, class_names: list[str], expected_text: str) -> None:
+        """class_names.txt lists one class name per line, with no trailing newline, and is empty for no classes."""
+        model = _make_stub_model(class_names)
 
         model.export_for_roboflow(str(tmp_path))
 
-        assert (tmp_path / "class_names.txt").read_text(encoding="utf-8") == "cat\ndog"
+        assert (tmp_path / "class_names.txt").read_text(encoding="utf-8") == expected_text
 
     def test_embeds_class_names_in_args(self, tmp_path: Path) -> None:
         """class_names are embedded in the saved args namespace when absent."""
@@ -67,8 +88,7 @@ class TestExportForRoboflow:
 
         model.export_for_roboflow(str(tmp_path))
 
-        bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
-        assert bundle["args"].class_names == ["cat", "dog"]
+        assert _load_bundle(tmp_path)["args"].class_names == ["cat", "dog"]
 
     def test_does_not_overwrite_existing_args_class_names(self, tmp_path: Path) -> None:
         """args.class_names already set on the model is preserved in the saved bundle."""
@@ -77,8 +97,7 @@ class TestExportForRoboflow:
 
         model.export_for_roboflow(str(tmp_path))
 
-        bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
-        assert bundle["args"].class_names == ["pre_existing"]
+        assert _load_bundle(tmp_path)["args"].class_names == ["pre_existing"]
 
     def test_sanitizes_training_paths_without_mutating_runtime_args(self, tmp_path: Path) -> None:
         """Exported args hide local training paths while runtime args retain them."""
@@ -89,21 +108,13 @@ class TestExportForRoboflow:
 
         model.export_for_roboflow(str(tmp_path))
 
-        bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
+        bundle = _load_bundle(tmp_path)
         assert bundle["args"].dataset_dir is None
         assert bundle["args"].output_dir == "output"
         assert bundle["args"].resume == ""
         assert model.model.args.dataset_dir == "/private/training-dataset"
         assert model.model.args.output_dir == "/private/training-output"
         assert model.model.args.resume == "/private/checkpoints/last.ckpt"
-
-    def test_empty_class_names_writes_empty_file(self, tmp_path: Path) -> None:
-        """Empty class_names list produces an empty class_names.txt (no trailing newline)."""
-        model = _make_stub_model([])
-
-        model.export_for_roboflow(str(tmp_path))
-
-        assert (tmp_path / "class_names.txt").read_text(encoding="utf-8") == ""
 
     def test_creates_output_dir_when_missing(self, tmp_path: Path) -> None:
         """output_dir is created if it does not already exist."""

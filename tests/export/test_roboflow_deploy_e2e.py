@@ -9,7 +9,7 @@
 upload ``requests.put`` failure in a bare ``try/except`` that only prints — it never raises. That means a failed server-
 side upload looks identical to a successful one from ``deploy_to_roboflow``'s return value alone (see issue #1116:
 notebook reports success, Roboflow UI shows "Model Upload Failed"). Every other ``deploy_to_roboflow`` test in this repo
-(``tests/export/test_export_for_roboflow.py``, ``tests/inference/test_predict.py``,
+(``tests/export/test_export_for_roboflow.py``, ``tests/inference/prediction/test_core.py``,
 ``tests/training/test_detr_shim.py``) mocks ``roboflow.Roboflow`` entirely, so none of them can catch a real server-side
 rejection.
 
@@ -120,7 +120,13 @@ def _poll_until_trained(workspace: str, project: str, version: str, api_key: str
     return response
 
 
-@pytest.mark.skipif(not all([_API_KEY, _WORKSPACE, _PROJECT]), reason=_MISSING_ENV_REASON)
+#: Skip a test node that deploys to Roboflow when its credentials are not set in the environment.
+_requires_roboflow_credentials = pytest.mark.skipif(
+    not all([_API_KEY, _WORKSPACE, _PROJECT]), reason=_MISSING_ENV_REASON
+)
+
+
+@_requires_roboflow_credentials
 @pytest.mark.integration
 @pytest.mark.e2e_roboflow
 class TestDeployToRoboflowEndToEnd:

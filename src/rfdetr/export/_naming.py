@@ -19,6 +19,12 @@ from __future__ import annotations
 import os
 import re
 
+# Extensions of the artifacts the export backends write, plus the conventional TensorRT engine names. ``_sanitize``
+# strips only these, so a dot that is part of the name itself (``"detector-v1.2"``) is kept.
+_ARTIFACT_EXTENSIONS = frozenset(
+    {".aimodel", ".bin", ".engine", ".mlmodel", ".mlpackage", ".onnx", ".plan", ".pte", ".tflite", ".trt", ".xml"}
+)
+
 
 def resolve_export_stem(
     variant_name: str | None,
@@ -30,8 +36,9 @@ def resolve_export_stem(
 
     Precedence: ``output_name`` (verbatim custom filename) wins over ``variant_name``
     (model identifier, e.g. ``"rfdetr-small"``) wins over *default*. Both inputs are
-    sanitized against path traversal by keeping only the basename and stripping any
-    extension the caller may have included (e.g. ``"rfdetr-small.onnx"`` -> ``"rfdetr-small"``).
+    sanitized against path traversal by keeping only the basename and stripping an export
+    artifact extension the caller may have included (e.g. ``"rfdetr-small.onnx"`` -> ``"rfdetr-small"``).
+    Any other dot belongs to the name and is kept (``"rfdetr-small-v1.2"`` stays as it is).
 
     Args:
         variant_name: Model variant identifier, or ``None``.
@@ -58,6 +65,8 @@ def resolve_export_stem(
         ('backbone_model', False)
         >>> resolve_export_stem("sub/dir/rfdetr-nano.onnx", None)
         ('rfdetr-nano', False)
+        >>> resolve_export_stem(None, "rfdetr-nano-v1.2")
+        ('rfdetr-nano-v1.2', True)
     """
     if output_name:
         stem = _sanitize(output_name)
@@ -97,5 +106,6 @@ def append_backbone_marker(export_name: str, *, backbone_only: bool, named: bool
 
 
 def _sanitize(name: str) -> str:
-    """Strip directory components and extension from a caller-supplied name."""
-    return os.path.splitext(re.split(r"[\\/]", name)[-1])[0]
+    """Strip directory components and an export artifact extension from a caller-supplied name."""
+    stem, extension = os.path.splitext(re.split(r"[\\/]", name)[-1])
+    return stem if extension.lower() in _ARTIFACT_EXTENSIONS else stem + extension

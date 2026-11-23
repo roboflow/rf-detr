@@ -23,7 +23,17 @@ Raising `num_queries` above a variant's default adds new rows to the query embed
 
 ## Which model size should I use?
 
-Pick by the accuracy/latency trade-off in the [pre-trained checkpoints table](learn/run/detection.md#pre-trained-checkpoints): `RFDETRNano` through `RFDETR2XLarge`. `RFDETRSmall` is a good default. The older `RFDETRBase` is legacy — use `RFDETRSmall` instead.
+Pick by the accuracy/latency trade-off in the [pre-trained checkpoints table](learn/run/detection.md#pre-trained-checkpoints): `RFDETRAtto` through `RFDETR2XLarge`. `RFDETRSmall` is a good default. The older `RFDETRBase` is legacy — use `RFDETRSmall` instead. Nano to Large are Apache 2.0 and commercially usable out of the box; Atto, Femto, Pico, XLarge and 2XLarge need `rfdetr[plus]` (Atto, Femto and Pico need `rfdetr_plus>=1.2.0`) and use PML 1.0 (commercial use included on Roboflow; commercial self-hosting requires the Enterprise add-on). See [licensing](#can-i-use-rf-detr-in-a-commercial-product).
+
+## Can I use RF-DETR in a commercial product?
+
+Yes.
+
+--8<-- "docs/snippets/license-rfdetr.md"
+
+Coming from YOLO? The license terms differ:
+
+--8<-- "docs/snippets/license-yolo-note.md"
 
 ## Do I need to set `num_classes` when fine-tuning or loading a checkpoint?
 
@@ -93,7 +103,21 @@ See [Advanced FP8 setup](learn/train/advanced.md#fp8-training-on-nvidia-cuda) fo
 
 ## What export formats are supported?
 
-ONNX, TFLite (FP32/FP16/INT8), LiteRT (`.tflite` straight from PyTorch via litert-torch), TensorRT (`.trt`), ExecuTorch (XNNPACK, CoreML, QNN), native CoreML (`.mlpackage`), and OpenVINO IR. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, `rfdetr[litert]`, `rfdetr[tensorrt]`, `rfdetr[executorch]`, `rfdetr[coreml]`, or `rfdetr[openvino]` — then call `model.export(format=...)`. `format="tensorrt"` (alias `"trt"`) exports ONNX and builds the engine in-process, so it is one call rather than a separate conversion step. Native CoreML (`format="coreml"`) is distinct from the ExecuTorch CoreML backend (`format="executorch", backend="coreml"`) — the former produces a `.mlpackage` directly, the latter a `.pte`. See [Export Model](exports/index.md).
+ONNX, TFLite (FP32/FP16/INT8), LiteRT (`.tflite` straight from PyTorch via litert-torch), TensorRT (`.trt`), ExecuTorch (XNNPACK, CoreML, QNN, TensorRT), native CoreML (`.mlpackage`), and OpenVINO IR. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, `rfdetr[litert]`, `rfdetr[tensorrt]`, `rfdetr[executorch]` (`rfdetr[executorch-tensorrt]` for the ExecuTorch TensorRT backend), `rfdetr[coreml]`, or `rfdetr[openvino]` — then call `model.export(format=...)`. `format="tensorrt"` (alias `"trt"`) exports ONNX and builds the engine in-process, so it is one call rather than a separate conversion step. Native CoreML (`format="coreml"`) is distinct from the ExecuTorch CoreML backend (`format="executorch", backend="coreml"`) — the former produces a `.mlpackage` directly, the latter a `.pte`. See [Export Model](exports/index.md).
+
+## Why is an inductor predictor slower after I built several models in one process?
+
+`model.inference(compile_backend="inductor")` (the default on Apple Silicon) compiles through `torch.compile`, and PyTorch Dynamo stops compiling a function after `torch._dynamo.config.recompile_limit` compiled variants (also named `cache_size_limit`, default 8). Every RF-DETR size runs the same `forward`, so each inductor predictor built in one process, per size, dtype and resolution, uses one variant. After the eighth, Dynamo logs `torch._dynamo hit config.recompile_limit (8)` and later predictors run several times slower, with no exception.
+
+`RFDETR.inference()` now holds the limit at 64 (or your higher value) while it compiles and restores it afterwards, so building predictors through it is not affected. It also compiles with `dynamic=False`: with the limit lifted but dynamic shapes left on, Femto in fp16 failed to compile on Apple Silicon (`no 'buffer' resource location available`) after several other sizes had been built in the same process, and with `dynamic=False` the same sequence compiled. You can still hit the limit when you call `torch.compile` on RF-DETR modules yourself, or on an installed version without that change. If timings depend on the order in which you build predictors, look for the warning in the log, then raise the limit before building them, or build each predictor in its own process:
+
+```python
+import torch._dynamo
+
+torch._dynamo.config.cache_size_limit = 64
+```
+
+On an Apple M4 Max, Atto with inductor in fp16 took 12.20 ms when built after Nano, Small, Medium and Large in fp32 and fp16 (eight variants), against 4.61 ms in the same process with the limit raised. With the limit set to 1, the second model took 10.6 to 12.8 ms instead of about 4.6 to 6.5 ms. Whether Dynamo runs the function eagerly once the limit is hit was not checked directly.
 
 ## How do I evaluate a trained model and get mAP?
 

@@ -107,6 +107,10 @@ Each TFLite artifact also has an inference metadata sidecar named `<artifact>.rf
 
 This private NumPy helper is kept for dependency-light numerical reference checks and shares raw interpreter execution with the common runtime adapter. Use `RFDETRInference` for normal image prediction.
 
+## Measured Latency on a Laptop CPU
+
+No latency table is published for this format yet. The earlier rows were measured before the cookbook pinned one thread count for every runtime, so they were not comparable across runtimes and have been removed pending a rerun of the [mobile cookbook](../../cookbooks/export-mobile/).
+
 ## Predict with RFDETRInference
 
 ```python

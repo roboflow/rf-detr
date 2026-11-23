@@ -15,8 +15,7 @@ the all-empty-batch branch neither of those matcher-level suites reaches.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
+import pytest
 import torch
 from scipy.optimize import linear_sum_assignment
 
@@ -53,6 +52,23 @@ def _reference_indices(cost_matrix: torch.Tensor, sizes: list[int]) -> list[tupl
     return results
 
 
+def _index_pairs(rows: torch.Tensor, cols: torch.Tensor) -> set[tuple[int, int]]:
+    """Return the matched ``(row, col)`` pairs of one assignment as an order-independent set.
+
+    Args:
+        rows: Matched row indices.
+        cols: Matched column indices, aligned with ``rows``.
+
+    Returns:
+        The set of ``(row, col)`` integer pairs.
+
+    Examples:
+        >>> sorted(_index_pairs(torch.tensor([1, 0]), torch.tensor([0, 1])))
+        [(0, 1), (1, 0)]
+    """
+    return set(zip(rows.tolist(), cols.tolist()))
+
+
 class TestSolveToIndices:
     """``_solve_to_indices`` must recover the same assignment SciPy would, as static-shaped indices."""
 
@@ -68,7 +84,9 @@ class TestSolveToIndices:
         rows, cols = _assignment._solve_to_indices(stacked, num_matches=2)
 
         expected_rows, expected_cols = linear_sum_assignment(cost.numpy())
-        assert set(zip(rows[0].tolist(), cols[0].tolist())) == set(zip(expected_rows.tolist(), expected_cols.tolist()))
+        assert _index_pairs(rows[0], cols[0]) == _index_pairs(
+            torch.as_tensor(expected_rows), torch.as_tensor(expected_cols)
+        )
 
     def test_batches_independent_problems_without_cross_contamination(self) -> None:
         """Two stacked problems with opposite optimal assignments are solved independently.
@@ -82,8 +100,8 @@ class TestSolveToIndices:
 
         rows, cols = _assignment._solve_to_indices(stacked, num_matches=2)
 
-        assert set(zip(rows[0].tolist(), cols[0].tolist())) == {(0, 0), (1, 1)}
-        assert set(zip(rows[1].tolist(), cols[1].tolist())) == {(0, 1), (1, 0)}
+        assert _index_pairs(rows[0], cols[0]) == {(0, 0), (1, 1)}
+        assert _index_pairs(rows[1], cols[1]) == {(0, 1), (1, 0)}
 
 
 class TestStackPadded:
@@ -128,7 +146,7 @@ class TestAssignPadded:
 
         expected = _reference_indices(cost_matrix, sizes)
         for (rows, cols), (exp_rows, exp_cols) in zip(result, expected):
-            assert set(zip(rows.tolist(), cols.tolist())) == set(zip(exp_rows.tolist(), exp_cols.tolist()))
+            assert _index_pairs(rows, cols) == _index_pairs(exp_rows, exp_cols)
 
     def test_offsets_row_indices_per_group_and_concatenates_them(self) -> None:
         """Multiple query groups: each group's rows are offset by ``group_index * group_width``.
@@ -144,7 +162,7 @@ class TestAssignPadded:
 
         expected = HungarianMatcher._assign_compact_cost_matrix(cost_matrix, sizes, group_detr=2)
         for (rows, cols), (exp_rows, exp_cols) in zip(result, expected):
-            assert set(zip(rows.tolist(), cols.tolist())) == set(zip(exp_rows.tolist(), exp_cols.tolist()))
+            assert _index_pairs(rows, cols) == _index_pairs(exp_rows, exp_cols)
 
 
 class TestAssignBucketedBySize:
@@ -160,7 +178,7 @@ class TestAssignBucketedBySize:
 
         expected = _reference_indices(cost_matrix, sizes)
         for (rows, cols), (exp_rows, exp_cols) in zip(result, expected):
-            assert set(zip(rows.tolist(), cols.tolist())) == set(zip(exp_rows.tolist(), exp_cols.tolist()))
+            assert _index_pairs(rows, cols) == _index_pairs(exp_rows, exp_cols)
 
     def test_layers_with_different_group_widths_each_use_their_own(self) -> None:
         """Per-layer group widths route each layer's problems into their own shape bucket."""
@@ -173,45 +191,34 @@ class TestAssignBucketedBySize:
         expected = [_reference_indices(cost_matrix, sizes) for cost_matrix in cost_matrices]
         for actual_layer, expected_layer in zip(actual, expected):
             for (rows, cols), (exp_rows, exp_cols) in zip(actual_layer, expected_layer):
-                assert set(zip(rows.tolist(), cols.tolist())) == set(zip(exp_rows.tolist(), exp_cols.tolist()))
+                assert _index_pairs(rows, cols) == _index_pairs(exp_rows, exp_cols)
 
 
 class TestAssignManyBucketedRouting:
     """``assign_many_bucketed`` must route to the padding fast path only when padding is safe."""
 
-    def test_uses_padded_path_when_group_width_is_uniform_and_covers_targets(self) -> None:
-        """A single shared group width with ``max(sizes) <= group_width`` takes the padding fast path."""
-        cost_matrices = [torch.rand(6, 5)]
+    @pytest.mark.parametrize(
+        ("shape", "sizes", "uses_padded"),
+        [
+            pytest.param((6, 5), [2, 3], True, id="uniform-width-covers-targets"),
+            pytest.param((4, 10), [3, 7], False, id="targets-exceed-group-width"),
+        ],
+    )
+    def test_routes_to_padded_only_when_group_width_covers_targets(self, mocker, shape, sizes, uses_padded) -> None:
+        """A single shared group width covering ``max(sizes)`` takes the padding path; otherwise per-shape bucketing.
 
-        with (
-            patch.object(_assignment, "_assign_padded", wraps=_assignment._assign_padded) as padded_spy,
-            patch.object(
-                _assignment, "_assign_bucketed_by_size", wraps=_assignment._assign_bucketed_by_size
-            ) as bucketed_spy,
-        ):
-            _assignment.assign_many_bucketed(cost_matrices, [2, 3], group_detr=1)
-
-        padded_spy.assert_called_once()
-        bucketed_spy.assert_not_called()
-
-    def test_uses_bucketed_path_when_targets_exceed_the_shared_group_width(self) -> None:
-        """A single group width but ``max(sizes) > group_width`` falls back to per-shape bucketing.
-
-        Padding cannot serve this case: ``min(group_width, targets)`` would stop equaling the real
+        Padding cannot serve ``max(sizes) > group_width``: ``min(group_width, targets)`` would stop equaling the real
         target count, so padded columns could no longer be told apart from real ones.
         """
-        cost_matrices = [torch.rand(4, 10)]
+        padded_spy = mocker.patch.object(_assignment, "_assign_padded", wraps=_assignment._assign_padded)
+        bucketed_spy = mocker.patch.object(
+            _assignment, "_assign_bucketed_by_size", wraps=_assignment._assign_bucketed_by_size
+        )
 
-        with (
-            patch.object(_assignment, "_assign_padded", wraps=_assignment._assign_padded) as padded_spy,
-            patch.object(
-                _assignment, "_assign_bucketed_by_size", wraps=_assignment._assign_bucketed_by_size
-            ) as bucketed_spy,
-        ):
-            _assignment.assign_many_bucketed(cost_matrices, [3, 7], group_detr=1)
+        _assignment.assign_many_bucketed([torch.rand(*shape)], sizes, group_detr=1)
 
-        bucketed_spy.assert_called_once()
-        padded_spy.assert_not_called()
+        assert padded_spy.call_count == int(uses_padded)
+        assert bucketed_spy.call_count == int(not uses_padded)
 
 
 class TestAssignManyBucketedEmptyBatch:

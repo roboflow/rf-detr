@@ -44,6 +44,21 @@ def fake_nncf(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     return nncf
 
 
+@pytest.fixture
+def logged_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Collect the messages the calibration module logs as warnings.
+
+    Examples:
+        A pytest fixture -- it needs ``monkeypatch`` to install the collector, so the example is not run:
+
+        >>> logged_warnings(monkeypatch)  # doctest: +SKIP
+        []
+    """
+    warnings: list[str] = []
+    monkeypatch.setattr(calibration.logger, "warning", warnings.append)
+    return warnings
+
+
 class TestSmallCalibrationSetWarning:
     """The shared floor below which both INT8 paths warn about too little calibration data."""
 
@@ -55,27 +70,25 @@ class TestSmallCalibrationSetWarning:
             pytest.param(MIN_CALIBRATION_SAMPLES, False, id="at-floor"),
         ],
     )
-    def test_warns_only_below_the_floor(self, count: int, warned: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_warns_only_below_the_floor(self, count: int, warned: bool, logged_warnings: list[str]) -> None:
         """A warning is logged for fewer than ``MIN_CALIBRATION_SAMPLES`` samples and not at or above it.
 
         Too few samples gives a model that loads, runs and is quietly less accurate, so the user must hear about it; at
         the floor the log must stay clean so the warning keeps meaning something.
         """
-        warnings: list[str] = []
-        monkeypatch.setattr(calibration.logger, "warning", warnings.append)
         warn_if_too_few_samples(count)
-        assert bool(warnings) is warned
+
+        assert bool(logged_warnings) is warned
 
     @pytest.mark.usefixtures("fake_nncf")
-    def test_openvino_path_warns_below_the_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_openvino_path_warns_below_the_floor(self, logged_warnings: list[str]) -> None:
         """Two calibration samples trigger the warning on the OpenVINO path too.
 
         The floor applies to both formats; this pins that the NNCF quantizer consults it.
         """
-        warnings: list[str] = []
-        monkeypatch.setattr(calibration.logger, "warning", warnings.append)
         openvino_quantize_int8("model", np.zeros((2, 3, 8, 8), dtype=np.float32), height=8, width=8)
-        assert len(warnings) == 1
+
+        assert len(logged_warnings) == 1
 
 
 class TestDirectoryEdgeForms:
@@ -104,8 +117,10 @@ class TestDirectoryEdgeForms:
         ``ValueError`` is the documented contract for bad calibration data; the file name tells the user what to remove.
         """
         (tmp_path / "broken.jpg").write_bytes(b"not an image")
-        with pytest.raises(ValueError, match="broken.jpg"):
+        with pytest.raises(ValueError) as exc_info:
             list(calibration_batches(tmp_path, height=8, width=8))
+
+        assert "broken.jpg" in str(exc_info.value)
 
     def test_reads_first_images_in_name_order(self, tmp_path: Path) -> None:
         """``max_images`` keeps the alphabetically first files, whatever order the filesystem lists them in.
@@ -135,16 +150,20 @@ class TestArraySources:
 
         Only the spatial size used to be checked, so the mismatch surfaced later as an opaque runtime shape error.
         """
-        with pytest.raises(ValueError, match=r"\(N, 3, 8, 8\)"):
+        with pytest.raises(ValueError) as exc_info:
             list(calibration_batches(np.zeros((2, 1, 8, 8), dtype=np.float32), height=8, width=8, channels=3))
+
+        assert "(N, 3, 8, 8)" in str(exc_info.value)
 
     def test_rejects_integer_array(self) -> None:
         """Raw ``uint8`` pixels are refused: arrays must already be normalized like inference input.
 
         An un-normalized array calibrates ranges ~100x too wide; the model loads and runs and is quietly wrong.
         """
-        with pytest.raises(ValueError, match="floating point"):
+        with pytest.raises(ValueError) as exc_info:
             list(calibration_batches(np.zeros((2, 3, 8, 8), dtype=np.uint8), height=8, width=8))
+
+        assert "floating point" in str(exc_info.value)
 
     def test_accepts_half_precision_array_as_float32(self) -> None:
         """A float16 array passes the dtype check and is handed to the quantizer as float32.
@@ -160,8 +179,10 @@ class TestArraySources:
 
         The exporter reads the channel count from the traced input; this pins that it reaches the validation.
         """
-        with pytest.raises(ValueError, match=r"\(N, 1, 8, 8\)"):
+        with pytest.raises(ValueError) as exc_info:
             openvino_quantize_int8("model", np.zeros((2, 3, 8, 8), dtype=np.float32), height=8, width=8, channels=1)
+
+        assert "(N, 1, 8, 8)" in str(exc_info.value)
 
     def test_rejects_pickled_object_npy(self, tmp_path: Path) -> None:
         """A ``.npy`` file holding pickled objects is refused with ``ValueError`` instead of being unpickled.
@@ -170,8 +191,10 @@ class TestArraySources:
         """
         array_path = tmp_path / "objects.npy"
         np.save(array_path, np.array([{"payload": 1}], dtype=object), allow_pickle=True)
-        with pytest.raises(ValueError, match="objects.npy"):
+        with pytest.raises(ValueError) as exc_info:
             list(calibration_batches(array_path, height=8, width=8))
+
+        assert "objects.npy" in str(exc_info.value)
 
     def test_npy_file_is_memory_mapped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A ``.npy`` calibration file is opened read-only memory-mapped instead of being read up front.

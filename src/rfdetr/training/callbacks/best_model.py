@@ -15,11 +15,13 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from typing import Any
 
+    from rfdetr.config import TrainConfig
     from rfdetr.training.module_model import RFDETRModelModule
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.trainer.states import TrainerFn
 from torch import Tensor
 
 # _MultiProcessingLauncher is a private PTL API (leading underscore) that may change in minor PTL releases within the
@@ -598,20 +600,17 @@ class BestModelCallback(ModelCheckpoint):
 
         Delegates regular-model checkpoint management to the :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         parent (handles improvement detection, fast_dev_run/sanity guards, ``best_model_path`` and ``best_model_score``
-        bookkeeping).  EMA is tracked independently, so the pre-training sanity-check guard below applies to both:
-        neither should treat the sanity-check validation pass as a real epoch's result.
+        bookkeeping). EMA tracking and metric smoothing also skip fast-dev runs, standalone evaluation and the
+        pre-training sanity check, so those passes cannot overwrite checkpoints or seed training state.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        # PTL's pre-training sanity check runs this hook before any real epoch. The
-        # regular-checkpoint path below already no-ops during it via ModelCheckpoint's own
-        # trainer.sanity_checking guard (_should_skip_saving_checkpoint), but the EMA
-        # tracking and the smoothing accumulator are custom bookkeeping that don't inherit
-        # that guard, so a positive sanity-check score would otherwise get treated as a real
-        # improvement — see #1348.
-        if trainer.sanity_checking:
+        # Custom EMA/smoothing paths must honor the same lifecycle exclusions as ModelCheckpoint.
+        # Keep its duplicate-step guard local to the regular track: EMA tracking is independent,
+        # and _last_global_step_saved is only updated by regular saves on the main process.
+        if getattr(trainer, "fast_dev_run") or trainer.state.fn != TrainerFn.FITTING or trainer.sanity_checking:
             return
         # Stash before the skip guard — eligible epochs still need this reference
         # inside _save_checkpoint (which receives no pl_module param).
@@ -687,6 +686,10 @@ class BestModelCallback(ModelCheckpoint):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
+        # A dry run must not backfill/promote checkpoints or reload/test an earlier run's files.
+        # Return on every rank before any of the collective test-evaluation operations below.
+        if getattr(trainer, "fast_dev_run"):
+            return
         total_path = self._output_dir / "checkpoint_best_total.pth"
         chose_ema = self._promote_best_total(trainer, pl_module, total_path) if trainer.is_global_zero else False
 
@@ -961,3 +964,43 @@ class RFDETREarlyStopping(EarlyStopping):
 
         trainer.callback_metrics[self._SYNTHETIC_MONITOR] = torch.tensor(effective)
         super().on_validation_end(trainer, pl_module)
+
+
+def _save_final_checkpoint(
+    module: RFDETRModelModule,
+    trainer: Trainer,
+    train_config: TrainConfig,
+    model_config: Any,
+    output_path: Path,
+    model_name: str,
+) -> Path:
+    """Save a final RF-DETR ``.pth`` checkpoint that ``from_checkpoint`` can load.
+
+    The fine-tuning cookbooks drive the Lightning trainer directly, so no :class:`BestModelCallback` writes the
+    self-contained checkpoint for them. This writes the same payload from the weights of the live model, unwrapping
+    a ``torch.compile`` wrapper first.
+
+    Args:
+        module: Trained module whose ``model`` holds the weights to save.
+        trainer: Trainer that ran the fit, providing the epoch and step counters.
+        train_config: Training configuration stored in the checkpoint.
+        model_config: Architecture configuration stored in the checkpoint.
+        output_path: File to write; missing parent directories are created.
+        model_name: Name of the model class, e.g. ``"RFDETRSmall"``.
+
+    Returns:
+        *output_path*.
+    """
+    raw_model: Any = getattr(module.model, "_orig_mod", module.model)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        BestModelCallback._build_checkpoint_payload(
+            raw_model.state_dict(),
+            train_config.model_dump(),
+            trainer,
+            model_name=model_name,
+            model_config_dict=model_config.model_dump(),
+        ),
+        output_path,
+    )
+    return output_path

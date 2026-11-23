@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple, Union
 
@@ -28,6 +27,7 @@ from rfdetr.models.heads.segmentation import (
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
 from rfdetr.utilities import box_ops
+from rfdetr.utilities.compiler import script_or_eager
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
 
 _LossFunction = Callable[..., dict[str, Tensor]]
@@ -448,7 +448,8 @@ def dice_loss(
                  caller never has to sync it to the host (a host read cuts XLA's lazy
                  graph every step). This eager function accepts Python and NumPy scalars.
                  On Python 3.10–3.13, the scripted ``dice_loss_jit`` wrapper accepts only
-                 Tensor, float, or int; on Python 3.14+, it is this eager function.
+                 Tensor, float, or int; on Python 3.14+, or where TorchScript compilation
+                 fails, it is this eager function.
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
@@ -469,9 +470,9 @@ def dice_loss(
     return result
 
 
-#: Preserve the historical scripted alias until Python 3.14 makes TorchScript
-#: unsupported during import, where the eager function is the safe fallback.
-dice_loss_jit = dice_loss if sys.version_info >= (3, 14) else torch.jit.script(dice_loss)
+#: Preserve the historical scripted alias; ``script_or_eager`` returns the eager function
+#: where TorchScript is unsupported (Python 3.14+) or fails to compile on the host.
+dice_loss_jit = script_or_eager(dice_loss)
 
 
 def sigmoid_ce_loss(
@@ -490,7 +491,8 @@ def sigmoid_ce_loss(
                  caller never has to sync it to the host (a host read cuts XLA's lazy
                  graph every step). This eager function accepts Python and NumPy scalars.
                  On Python 3.10–3.13, the scripted ``sigmoid_ce_loss_jit`` wrapper accepts
-                 only Tensor, float, or int; on Python 3.14+, it is this eager function.
+                 only Tensor, float, or int; on Python 3.14+, or where TorchScript
+                 compilation fails, it is this eager function.
 
     Returns:
         Loss tensor
@@ -509,7 +511,7 @@ def sigmoid_ce_loss(
 
 
 #: Backward-compatible alias; see ``dice_loss_jit``.
-sigmoid_ce_loss_jit = sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(sigmoid_ce_loss)
+sigmoid_ce_loss_jit = script_or_eager(sigmoid_ce_loss)
 
 
 class SetCriterion(nn.Module):

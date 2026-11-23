@@ -7,8 +7,8 @@
 
 Covers:
 - Supported aliases ``"sine"`` / ``"v2"`` return a ``PositionEmbeddingSine`` instance.
-- Unsupported but previously accepted aliases ``"learned"`` / ``"v3"`` now raise
-  ``ValueError`` with a message that names supported alternatives.
+- Unsupported but previously accepted aliases ``"learned"`` / ``"v3"`` now raise ``ValueError`` naming supported
+  alternatives.
 - Fully unsupported values raise ``ValueError`` with the same pattern.
 - ``PositionEmbeddingSine`` caching for batches flagged ``no_padding``.
 """
@@ -28,26 +28,14 @@ from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_lis
 class TestBuildPositionEncodingSupportedValues:
     """build_position_encoding returns valid modules for supported aliases."""
 
-    @pytest.mark.parametrize(
-        "alias",
-        [
-            pytest.param("sine", id="sine"),
-            pytest.param("v2", id="v2"),
-        ],
-    )
+    @pytest.mark.parametrize("alias", ["sine", "v2"])
     def test_returns_sine_embedding(self, alias: str) -> None:
         """Supported aliases produce a PositionEmbeddingSine with normalized=True."""
         enc = build_position_encoding(hidden_dim=256, position_embedding=alias)
         assert isinstance(enc, PositionEmbeddingSine)
         assert enc.normalize is True
 
-    @pytest.mark.parametrize(
-        "hidden_dim, expected_num_pos_feats",
-        [
-            pytest.param(256, 128, id="dim256"),
-            pytest.param(512, 256, id="dim512"),
-        ],
-    )
+    @pytest.mark.parametrize(("hidden_dim", "expected_num_pos_feats"), [(256, 128), (512, 256)])
     def test_num_pos_feats_is_half_hidden_dim(self, hidden_dim: int, expected_num_pos_feats: int) -> None:
         """The sine encoding uses hidden_dim // 2 positional feature dimensions."""
         enc = build_position_encoding(hidden_dim=hidden_dim, position_embedding="sine")
@@ -57,13 +45,7 @@ class TestBuildPositionEncodingSupportedValues:
 class TestBuildPositionEncodingUnsupportedValues:
     """build_position_encoding raises ValueError for broken or unknown aliases."""
 
-    @pytest.mark.parametrize(
-        "alias",
-        [
-            pytest.param("learned", id="learned"),
-            pytest.param("v3", id="v3"),
-        ],
-    )
+    @pytest.mark.parametrize("alias", ["learned", "v3"])
     def test_learned_raises_value_error(self, alias: str) -> None:
         """'learned' and 'v3' are doubly broken and must raise ValueError immediately.
 
@@ -72,25 +54,22 @@ class TestBuildPositionEncodingUnsupportedValues:
         2. h, w = x.shape[:2] unpacks batch and channels instead of height and width.
         Rejecting them at build time is preferable to a silent or confusing runtime failure.
         """
-        with pytest.raises(ValueError, match="not supported"):
+        with pytest.raises(ValueError) as exc_info:
             build_position_encoding(hidden_dim=256, position_embedding=alias)
+        assert "not supported" in str(exc_info.value)
 
     def test_unknown_value_raises_value_error(self) -> None:
-        """A fully unknown alias raises ValueError naming the supported alternatives."""
-        with pytest.raises(ValueError, match="not supported"):
+        """A fully unknown alias raises ValueError stating that it is not supported."""
+        with pytest.raises(ValueError) as exc_info:
             build_position_encoding(hidden_dim=256, position_embedding="unknown_variant")
+        assert "not supported" in str(exc_info.value)
 
-    @pytest.mark.parametrize(
-        "alias",
-        [
-            pytest.param("learned", id="learned"),
-            pytest.param("v3", id="v3"),
-        ],
-    )
+    @pytest.mark.parametrize("alias", ["learned", "v3"])
     def test_error_message_mentions_supported_alternatives(self, alias: str) -> None:
         """Error message for 'learned'/'v3' mentions at least one supported alternative."""
-        with pytest.raises(ValueError, match="sine"):
+        with pytest.raises(ValueError) as exc_info:
             build_position_encoding(hidden_dim=256, position_embedding=alias)
+        assert "sine" in str(exc_info.value)
 
 
 class TestPositionEmbeddingSineNoPaddingCache:
@@ -101,6 +80,17 @@ class TestPositionEmbeddingSineNoPaddingCache:
     recomputation bit for bit, stay empty during training and for padded batches, release entries on lifecycle/device
     transitions, and not grow without bound.
     """
+
+    @pytest.fixture
+    def eval_module(self) -> PositionEmbeddingSine:
+        """Return an evaluation-mode sine embedding with 16 positional features.
+
+        Examples:
+            Pytest fixtures cannot be called directly outside fixture injection.
+
+            >>> TestPositionEmbeddingSineNoPaddingCache.eval_module(None)  # doctest: +SKIP
+        """
+        return PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
 
     @staticmethod
     def _nested(height: int, width: int, batch: int = 1, no_padding: bool = True) -> NestedTensor:
@@ -116,6 +106,18 @@ class TestPositionEmbeddingSineNoPaddingCache:
             no_padding,
         )
 
+    @staticmethod
+    def _padded_nested() -> NestedTensor:
+        """Return a 12x20 ``NestedTensor`` whose rows from 8 on are padding and which is not flagged ``no_padding``.
+
+        Examples:
+            >>> TestPositionEmbeddingSineNoPaddingCache._padded_nested().mask[0, :, 0].int().tolist()
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1]
+        """
+        mask = torch.zeros(1, 12, 20, dtype=torch.bool)
+        mask[:, 8:, :] = True
+        return NestedTensor(torch.rand(1, 3, 12, 20), mask, False)
+
     def test_module_holds_no_parameters_or_buffers(self) -> None:
         """The cache is only sound because the embedding depends on no learnable state.
 
@@ -127,62 +129,51 @@ class TestPositionEmbeddingSineNoPaddingCache:
         assert list(module.buffers()) == []
         assert module.state_dict() == {}
 
-    def test_cache_is_not_in_the_state_dict(self) -> None:
+    def test_cache_is_not_in_the_state_dict(self, eval_module: PositionEmbeddingSine) -> None:
         """A populated cache must not leak into checkpoints."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
-        module(self._nested(12, 20))
-        assert module._pos_cache != {}
-        assert module.state_dict() == {}
+        eval_module(self._nested(12, 20))
+        assert eval_module._pos_cache != {}
+        assert eval_module.state_dict() == {}
 
-    def test_cached_value_matches_recomputation_bitwise(self) -> None:
+    def test_cached_value_matches_recomputation_bitwise(self, eval_module: PositionEmbeddingSine) -> None:
         """Flagging a batch must not change the embedding by a single bit."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
         flagged = self._nested(12, 20)
         unflagged = NestedTensor(flagged.tensors, flagged.mask, False)
-        assert torch.equal(module(flagged), module(unflagged))
+        assert torch.equal(eval_module(flagged), eval_module(unflagged))
 
-    def test_repeated_calls_return_identical_values(self) -> None:
+    def test_repeated_calls_return_identical_values(self, eval_module: PositionEmbeddingSine) -> None:
         """A cache hit must return the same embedding the first call produced."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
         nested = self._nested(12, 20)
-        first = module(nested).clone()
-        assert torch.equal(module(nested), first)
-        assert torch.equal(module(self._nested(12, 20)), first)
+        first = eval_module(nested).clone()
+        assert torch.equal(eval_module(nested), first)
+        assert torch.equal(eval_module(self._nested(12, 20)), first)
 
-    def test_align_dim_orders_is_part_of_the_key(self) -> None:
+    def test_align_dim_orders_is_part_of_the_key(self, eval_module: PositionEmbeddingSine) -> None:
         """The two layouts differ; one must not be served from the other's entry."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
         nested = self._nested(12, 20)
-        aligned = module(nested, align_dim_orders=True)
-        unaligned = module(nested, align_dim_orders=False)
+        aligned = eval_module(nested, align_dim_orders=True)
+        unaligned = eval_module(nested, align_dim_orders=False)
         assert aligned.shape != unaligned.shape
-        assert len(module._pos_cache) == 2
+        assert len(eval_module._pos_cache) == 2
 
-    def test_padded_batch_is_not_cached(self) -> None:
+    def test_padded_batch_is_not_cached(self, eval_module: PositionEmbeddingSine) -> None:
         """Without the flag the mask contents matter, so nothing may be reused."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
-        mask = torch.zeros(1, 12, 20, dtype=torch.bool)
-        mask[:, 8:, :] = True
-        padded = NestedTensor(torch.rand(1, 3, 12, 20), mask, False)
-        recomputed = module(padded)
-        assert module._pos_cache == {}
-        assert torch.equal(module(padded), recomputed)
+        padded = self._padded_nested()
+        recomputed = eval_module(padded)
+        assert eval_module._pos_cache == {}
+        assert torch.equal(eval_module(padded), recomputed)
 
-    def test_same_shape_different_padding_is_not_confused(self) -> None:
+    def test_same_shape_different_padding_is_not_confused(self, eval_module: PositionEmbeddingSine) -> None:
         """An unpadded batch's entry must not be served to a padded batch of equal shape."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
-        unpadded = module(self._nested(12, 20)).clone()
-        mask = torch.zeros(1, 12, 20, dtype=torch.bool)
-        mask[:, 8:, :] = True
-        padded = module(NestedTensor(torch.rand(1, 3, 12, 20), mask, False))
+        unpadded = eval_module(self._nested(12, 20)).clone()
+        padded = eval_module(self._padded_nested())
         assert not torch.equal(unpadded, padded)
 
-    def test_cache_is_bounded(self) -> None:
+    def test_cache_is_bounded(self, eval_module: PositionEmbeddingSine) -> None:
         """Variable-resolution inference cannot retain an unbounded number of embeddings."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
         for i in range(_POS_CACHE_MAX_ENTRIES + 4):
-            module(self._nested(8 + i, 8 + i))
-        assert len(module._pos_cache) <= _POS_CACHE_MAX_ENTRIES
+            eval_module(self._nested(8 + i, 8 + i))
+        assert len(eval_module._pos_cache) <= _POS_CACHE_MAX_ENTRIES
 
     def test_training_does_not_cache_after_default_config_batch_uniform_resize(self) -> None:
         """Training recomputes embeddings after the real default-training batch mutation.
@@ -208,34 +199,31 @@ class TestPositionEmbeddingSineNoPaddingCache:
         assert torch.equal(module(nested), module(unflagged_twin))
         assert module._pos_cache == {}
 
-    def test_entering_training_clears_evaluation_cache(self) -> None:
+    def test_entering_training_clears_evaluation_cache(self, eval_module: PositionEmbeddingSine) -> None:
         """Switching an evaluated model back to training releases retained embeddings."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
-        module(self._nested(12, 20))
-        assert module._pos_cache != {}
+        eval_module(self._nested(12, 20))
+        assert eval_module._pos_cache != {}
 
-        module.train()
+        eval_module.train()
 
-        assert module._pos_cache == {}
+        assert eval_module._pos_cache == {}
 
-    def test_device_transfer_clears_cache(self) -> None:
+    def test_device_transfer_clears_cache(self, eval_module: PositionEmbeddingSine) -> None:
         """The public module transfer path releases tensors owned by the previous device."""
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
-        module(self._nested(12, 20))
-        assert module._pos_cache != {}
+        eval_module(self._nested(12, 20))
+        assert eval_module._pos_cache != {}
 
-        module.to(torch.device("cpu"))
+        eval_module.to(torch.device("cpu"))
 
-        assert module._pos_cache == {}
+        assert eval_module._pos_cache == {}
 
-    def test_cache_key_tracks_encoding_configuration(self) -> None:
+    def test_cache_key_tracks_encoding_configuration(self, eval_module: PositionEmbeddingSine) -> None:
         """Changing a public encoding attribute cannot reuse an entry built from the old value."""
         nested = self._nested(12, 20)
-        module = PositionEmbeddingSine(num_pos_feats=16, normalize=True).eval()
-        initial = module(nested).clone()
+        initial = eval_module(nested).clone()
 
-        module.scale = 3.0
-        updated = module(nested)
+        eval_module.scale = 3.0
+        updated = eval_module(nested)
         expected = PositionEmbeddingSine(num_pos_feats=16, normalize=True, scale=3.0).eval()(nested)
 
         assert not torch.equal(initial, updated)

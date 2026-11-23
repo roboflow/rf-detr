@@ -9,7 +9,7 @@ import numpy as np
 import PIL.Image
 import supervision as sv
 
-from .helpers import _DummyModel, _DummyRFDETR
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 
 def test_predict_returns_supervision_keypoints() -> None:

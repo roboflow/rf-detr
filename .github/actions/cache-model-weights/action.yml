@@ -28,14 +28,6 @@ runs:
         echo "key=$key" >> "$GITHUB_OUTPUT"
       shell: bash
 
-    - name: Download the test backbone for the fresh master archive
-      if: inputs.save == 'true'
-      run: |
-        from huggingface_hub import snapshot_download
-
-        snapshot_download("facebook/dinov2-with-registers-base", ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"])
-      shell: python
-
     - name: Save fresh master archive
       if: inputs.save == 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

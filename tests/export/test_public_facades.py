@@ -88,8 +88,9 @@ class TestInferenceFacade:
 
     def test_unknown_attribute_raises_attribute_error(self) -> None:
         """A name outside ``__all__`` raises ``AttributeError`` rather than importing something unexpected."""
-        with pytest.raises(AttributeError, match="NotARuntime"):
+        with pytest.raises(AttributeError) as exc_info:
             _ = public_inference.NotARuntime
+        assert "NotARuntime" in str(exc_info.value)
 
     def test_import_attempts_no_optional_runtime_import(self) -> None:
         """Importing the facade and resolving its runtime-free names never even tries to import an optional runtime.
