@@ -51,6 +51,30 @@ def _save_oriented_photo(target: Path | io.BytesIO, image_format: str, orientati
     PIL.Image.fromarray(rgb).save(target, format=image_format, exif=exif.tobytes())
 
 
+def _predict_model_inputs(source: Any, include_source_image: bool = False) -> torch.Tensor:
+    """Return the one batch the model receives when a fresh dummy model predicts ``source``.
+
+    Args:
+        source: Anything ``predict()`` accepts that forms a single batch.
+        include_source_image: Whether ``predict()`` also keeps the source image in the detections.
+
+    Returns:
+        The model-input batch, ``(batch, 3, resolution, resolution)``.
+
+    Examples:
+        >>> _predict_model_inputs(np.zeros((17, 29, 3), dtype=np.uint8)).shape
+        torch.Size([1, 3, 28, 28])
+    """
+    model = _DummyRFDETR()
+    model_module = model.model.model
+    assert model_module is not None
+    model_inputs: list[torch.Tensor] = []
+    with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
+        model.predict(source, include_source_image=include_source_image)
+    assert len(model_inputs) == 1
+    return model_inputs[0]
+
+
 class TestPredictImagePinning:
     """``predict()`` should pin CPU-resident image tensors before an accelerator transfer.
 
@@ -353,7 +377,7 @@ class TestPredictUint8Conversion:
         np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
 
     @pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
-    @pytest.mark.parametrize("gpu_device", [None, torch.device("cuda", 0)])
+    @pytest.mark.parametrize("gpu_device", [None, pytest.param(torch.device("cuda", 0), id="cuda")])
     def test_local_image_decoder_leaves_an_oriented_photo_to_pillow(
         self, tmp_path: Path, image_format: str, gpu_device: torch.device | None
     ) -> None:
@@ -366,20 +390,71 @@ class TestPredictUint8Conversion:
 
         assert core._decode_local_image(str(image_path), gpu_device) is None
 
+    @pytest.mark.parametrize("include_source_image", [False, True])
     @pytest.mark.parametrize("orientation", [3, 6, 8])
     @pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
     def test_predict_turns_an_oriented_local_photo_upright(
-        self, tmp_path: Path, image_format: str, orientation: int
+        self, tmp_path: Path, image_format: str, orientation: int, include_source_image: bool
     ) -> None:
-        """A tagged file predicts on the upright photo, the frame the training readers and labels use."""
+        """A tagged file predicts on the upright photo, the frame the training readers and labels use.
+
+        The model must receive the batch of the upright pixels, with or without the source image kept; the source
+        image copy alone being turned would leave the prediction in the stored frame.
+        """
         image_path = tmp_path / f"rotated.{image_format.lower()}"
         _save_oriented_photo(image_path, image_format, orientation)
         with PIL.Image.open(image_path) as image:
             expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
+        expected_input = _predict_model_inputs(expected)
+        model = _DummyRFDETR()
+        model_module = model.model.model
+        assert model_module is not None
+        model_inputs: list[torch.Tensor] = []
 
-        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+        with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
+            detections = model.predict(str(image_path), include_source_image=include_source_image)
 
-        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+        assert len(model_inputs) == 1
+        torch.testing.assert_close(model_inputs[0], expected_input)
+        if include_source_image:
+            np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+        else:
+            assert "source_image" not in detections.metadata
+
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    def test_predict_turns_only_the_tagged_photos_of_a_mixed_list_upright(
+        self, tmp_path: Path, include_source_image: bool
+    ) -> None:
+        """A list mixing a tagged and an untagged photo turns the tagged one and leaves the other as stored."""
+        tagged_path = tmp_path / "tagged.jpg"
+        plain_path = tmp_path / "plain.jpg"
+        _save_oriented_photo(tagged_path, "JPEG", orientation=6)
+        plain_rgb = ((np.arange(17 * 29 * 3).reshape(17, 29, 3) * 11 + 5) % 256).astype(np.uint8)
+        PIL.Image.fromarray(plain_rgb).save(plain_path)
+        with PIL.Image.open(tagged_path) as tagged, PIL.Image.open(plain_path) as plain:
+            expected = [
+                np.array(PIL.ImageOps.exif_transpose(tagged).convert("RGB")),
+                np.array(PIL.ImageOps.exif_transpose(plain).convert("RGB")),
+            ]
+        expected_input = _predict_model_inputs(expected)
+        model = _DummyRFDETR()
+        model_module = model.model.model
+        assert model_module is not None
+        model_inputs: list[torch.Tensor] = []
+
+        with model_module.register_forward_pre_hook(_record_model_inputs(model_inputs)):
+            detections = model.predict([str(tagged_path), str(plain_path)], include_source_image=include_source_image)
+
+        assert expected[0].shape == (29, 17, 3)
+        assert expected[1].shape == (17, 29, 3)
+        assert len(model_inputs) == 1
+        torch.testing.assert_close(model_inputs[0], expected_input)
+        assert len(detections) == 2
+        for detection, expected_image in zip(detections, expected):
+            if include_source_image:
+                np.testing.assert_array_equal(detection.metadata["source_image"], expected_image)
+            else:
+                assert "source_image" not in detection.metadata
 
     def test_local_image_decoder_leaves_a_png_tagged_after_its_pixels_to_pillow(self, tmp_path: Path) -> None:
         """A PNG that stores its eXIf chunk after the pixel data is routed like one that stores it first."""
@@ -402,23 +477,13 @@ class TestPredictUint8Conversion:
         assert expected.shape == (29, 17, 3)
         np.testing.assert_array_equal(detections.metadata["source_image"], expected)
 
-    def test_predict_turns_an_oriented_url_photo_upright(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_predict_turns_an_oriented_url_photo_upright(self, mocker: MockerFixture) -> None:
         """A tagged image fetched from a URL is decoded by rf-detr too, so it is turned the same way."""
         encoded = io.BytesIO()
         _save_oriented_photo(encoded, "JPEG", orientation=6)
         with PIL.Image.open(io.BytesIO(encoded.getvalue())) as image:
             expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
-
-        def fake_get(url: str, **kwargs: object) -> _FakeResponse:
-            """Return the tagged JPEG for the URL conversion boundary.
-
-            Examples:
-                >>> fake_get("https://example.com/photo.jpg").status_code
-                200
-            """
-            return _FakeResponse(content=encoded.getvalue(), status_code=200)
-
-        monkeypatch.setattr(requests, "get", fake_get)
+        mocker.patch.object(requests, "get", return_value=_FakeResponse(content=encoded.getvalue(), status_code=200))
 
         detections = _DummyRFDETR().predict("https://example.com/photo.jpg", include_source_image=True)
 
