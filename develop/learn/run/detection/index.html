@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-21T21:14:52">
+  <meta property="article:modified_time" content="2026-11-23T11:26:28">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-21T21:14:52",
+    "dateModified": "2026-11-23T11:26:28",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3420,7 +3420,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td style="text-align: center;">Atto (A) △</td>
 <td style="text-align: center;">30.7</td>
-<td style="text-align: center;">30.6</td>
+<td style="text-align: center;">30.7</td>
 <td style="text-align: center;">30.4 ‡</td>
 <td style="text-align: center;">7.4</td>
 <td style="text-align: center;">380x380</td>
@@ -3502,12 +3502,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </table>
 <blockquote>
 <p>△ Requires the <code>rfdetr_plus</code> extension: <code>pip install rfdetr[plus]</code>.</p>
-<p>‡ TensorRT INT8 engine built with the placement that keeps the MLPs of the first six PE-Core-T backbone blocks in FP16. The first INT8 placement for these sizes quantized those MLPs and lost 7.0, 8.7 and 8.5 AP against PyTorch FP32 on Atto, Femto and Pico (measured on a development build by <code>coco-accuracy.ipynb</code>; it was never released), and this placement replaced it before release. The values here come from a separate one-off run on the same GPU (NVIDIA RTX PRO 6000 Blackwell Server Edition, rfdetr 1.13.0.dev0 at commit <code>167da321</code>, rfdetr_plus 1.3.0, TensorRT 11.4.0.106, all 5000 val2017 images, same scoring as above), not from <code>coco-accuracy.ipynb</code>; they are replaced by that notebook's next run. In that run INT8 was 0.3, 0.3 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.7 below TensorRT FP16 on the three sizes; on the T4, L4 and A100 the INT8 loss against TensorRT FP16 was between 0.2 and 0.7 AP as well. INT8 and FP16 engines of these three sizes run within 5% of each other end to end, so prefer FP16 unless you need INT8 for another reason.</p>
+<p>‡ Atto, Femto and Pico were scored in a second run of <code>coco-accuracy.ipynb</code> limited to these three models, on the same GPU as the rest of the column (NVIDIA RTX PRO 6000 Blackwell Server Edition) on 2026-11-21, with <code>rfdetr</code> at commit <code>e4cadc4f</code>, <code>rfdetr_plus</code> 1.3.0, torch 2.14.1+cu130 and TensorRT 11.4.0.106, because their TensorRT INT8 placement changed: the MLPs of the first six PE-Core-T backbone blocks now stay FP16. The first INT8 placement for these sizes quantized those MLPs and lost 7.0, 8.7 and 8.5 AP against PyTorch FP32 (a development build, never released). With the placement that ships, INT8 is 0.3, 0.2 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.6 AP below TensorRT FP16. It is at most 9% faster than FP16 end to end (<a href="#fastest-configuration-on-nvidia-gpus">latency below</a>), so prefer FP16 unless you need INT8 for another reason.</p>
 </blockquote>
 <div class="admonition info">
 <p class="admonition-title">How these numbers were obtained</p>
 <ul>
-<li><strong>AP columns</strong>: COCO AP<sub>50:95</sub> on all 5000 val2017 images, scored with the <a href="../../../cookbooks/coco-accuracy/">COCO accuracy cookbook</a> through <code>RFDETRInference.predict</code> at a 0.001 score threshold, batch 1 and default preprocessing. PyTorch FP32 runs the eager model; TensorRT FP16 and INT8 run static batch-1 engines exported with <code>model.export(format="tensorrt")</code>, the INT8 engine calibrated on 128 train2017 images. One run per page on an NVIDIA RTX PRO 6000 Blackwell Server Edition with rfdetr 1.13.0.dev0, rfdetr_plus 1.2.0, torch 2.14.1+cu130, TensorRT 11.4.0.106 and faster-coco-eval 1.8.0: detection scored on 2026-11-13, segmentation and keypoints on 2026-11-12.</li>
+<li><strong>AP columns</strong>: COCO AP<sub>50:95</sub> on all 5000 val2017 images, scored with the <a href="../../../cookbooks/coco-accuracy/">COCO accuracy cookbook</a> through <code>RFDETRInference.predict</code> at a 0.001 score threshold, batch 1 and default preprocessing. PyTorch FP32 runs the eager model; TensorRT FP16 and INT8 run static batch-1 engines exported with <code>model.export(format="tensorrt")</code>, the INT8 engine calibrated on 128 train2017 images. One run per page on an NVIDIA RTX PRO 6000 Blackwell Server Edition with rfdetr 1.13.0.dev0, rfdetr_plus 1.2.0, torch 2.14.1+cu130, TensorRT 11.4.0.106 and faster-coco-eval 1.8.0: detection scored on 2026-11-13, segmentation and keypoints on 2026-11-12. Atto, Femto and Pico were scored again on 2026-11-21 in a run of the same cookbook limited to those three models, on the same GPU with <code>rfdetr</code> at commit <code>e4cadc4f</code>, rfdetr_plus 1.3.0 and the other versions unchanged, because their TensorRT INT8 placement changed.</li>
 <li><strong>Params</strong>: the official values from the <a href="../../benchmarks/">Benchmarks</a> page. That page also lists the official COCO AP, measured with SAB on an NVIDIA T4 with a TensorRT 10.4 FP16 engine at batch 1; the PyTorch FP32 column here is within 0.7 AP of it.</li>
 </ul>
 </div>
@@ -3532,27 +3532,27 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td style="text-align: center;">Atto (A) △</td>
-<td style="text-align: center;">3.51 (5.56)</td>
-<td style="text-align: center;">3.52 (4.07)</td>
-<td style="text-align: center;"><strong>3.22 (3.64)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;">3.60 (4.24)</td>
+<td style="text-align: center;">3.76 (4.17)</td>
+<td style="text-align: center;">3.57 (4.22)</td>
+<td style="text-align: center;">3.41 (3.91)</td>
+<td style="text-align: center;"><strong>3.23 (3.58)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Femto (F) △</td>
-<td style="text-align: center;">4.44 (6.10)</td>
-<td style="text-align: center;"><strong>3.63 (4.15)</strong></td>
-<td style="text-align: center;"><strong>3.62 (4.06)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;">4.04 (4.56)</td>
+<td style="text-align: center;">3.84 (4.54)</td>
+<td style="text-align: center;"><strong>3.69 (4.04)</strong></td>
+<td style="text-align: center;"><strong>3.62 (3.99)</strong></td>
+<td style="text-align: center;"><strong>3.57 (3.90)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Pico (P) △</td>
-<td style="text-align: center;">4.82 (6.14)</td>
-<td style="text-align: center;"><strong>4.15 (4.54)</strong></td>
-<td style="text-align: center;"><strong>4.24 (4.64)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;">4.64 (4.98)</td>
+<td style="text-align: center;"><strong>4.12 (4.59)</strong></td>
+<td style="text-align: center;">4.19 (4.54)</td>
+<td style="text-align: center;"><strong>4.03 (4.34)</strong></td>
+<td style="text-align: center;"><strong>3.92 (4.21)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Nano (N)</td>
@@ -3620,27 +3620,27 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td style="text-align: center;">Atto (A) △</td>
-<td style="text-align: center;"><strong>2.60 (2.88)</strong></td>
-<td style="text-align: center;">3.68 (3.98)</td>
-<td style="text-align: center;">3.01 (3.52)</td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;"><strong>2.44 (2.78)</strong></td>
+<td style="text-align: center;">3.06 (3.40)</td>
+<td style="text-align: center;">2.90 (3.19)</td>
+<td style="text-align: center;">3.12 (3.47)</td>
+<td style="text-align: center;">2.85 (3.10)</td>
 </tr>
 <tr>
 <td style="text-align: center;">Femto (F) △</td>
-<td style="text-align: center;"><strong>2.95 (3.20)</strong></td>
-<td style="text-align: center;">3.53 (3.96)</td>
-<td style="text-align: center;">3.14 (3.50)</td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;"><strong>2.80 (3.10)</strong></td>
+<td style="text-align: center;">3.21 (3.51)</td>
+<td style="text-align: center;">2.98 (3.20)</td>
+<td style="text-align: center;">3.38 (4.32)</td>
+<td style="text-align: center;">3.02 (3.53)</td>
 </tr>
 <tr>
 <td style="text-align: center;">Pico (P) △</td>
-<td style="text-align: center;"><strong>3.13 (3.40)</strong></td>
-<td style="text-align: center;">3.65 (4.26)</td>
-<td style="text-align: center;">3.34 (3.65)</td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;"><strong>3.00 (3.20)</strong></td>
+<td style="text-align: center;">3.32 (3.59)</td>
+<td style="text-align: center;">3.16 (3.85)</td>
+<td style="text-align: center;">3.47 (3.81)</td>
+<td style="text-align: center;"><strong>3.11 (3.56)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Nano (N)</td>
@@ -3708,27 +3708,27 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td style="text-align: center;">Atto (A) △</td>
-<td style="text-align: center;"><strong>3.18 (3.69)</strong></td>
-<td style="text-align: center;">3.35 (3.64)</td>
-<td style="text-align: center;"><strong>3.10 (3.36)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;"><strong>3.08 (3.35)</strong></td>
+<td style="text-align: center;">3.40 (3.80)</td>
+<td style="text-align: center;"><strong>3.23 (3.72)</strong></td>
+<td style="text-align: center;">3.41 (4.14)</td>
+<td style="text-align: center;"><strong>3.08 (3.65)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Femto (F) △</td>
-<td style="text-align: center;"><strong>3.33 (3.88)</strong></td>
-<td style="text-align: center;">3.50 (3.78)</td>
-<td style="text-align: center;"><strong>3.22 (3.45)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;"><strong>3.25 (3.65)</strong></td>
+<td style="text-align: center;">3.38 (3.76)</td>
+<td style="text-align: center;"><strong>3.11 (3.39)</strong></td>
+<td style="text-align: center;">3.65 (4.59)</td>
+<td style="text-align: center;"><strong>3.12 (3.38)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Pico (P) △</td>
-<td style="text-align: center;">3.99 (4.39)</td>
-<td style="text-align: center;">3.70 (4.32)</td>
-<td style="text-align: center;"><strong>3.41 (4.04)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;">3.72 (4.00)</td>
+<td style="text-align: center;">3.67 (4.05)</td>
+<td style="text-align: center;"><strong>3.34 (3.59)</strong></td>
+<td style="text-align: center;">3.63 (4.15)</td>
+<td style="text-align: center;"><strong>3.27 (3.55)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Nano (N)</td>
@@ -3796,27 +3796,27 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td style="text-align: center;">Atto (A) △</td>
-<td style="text-align: center;">1.58 (1.66)</td>
-<td style="text-align: center;">1.42 (1.47)</td>
+<td style="text-align: center;">1.53 (1.60)</td>
+<td style="text-align: center;">1.46 (1.53)</td>
+<td style="text-align: center;"><strong>1.27 (1.35)</strong></td>
+<td style="text-align: center;">1.44 (1.51)</td>
 <td style="text-align: center;"><strong>1.25 (1.32)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: center;">Femto (F) △</td>
-<td style="text-align: center;">1.73 (1.77)</td>
-<td style="text-align: center;">1.56 (1.63)</td>
-<td style="text-align: center;"><strong>1.36 (1.43)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;">1.73 (1.78)</td>
+<td style="text-align: center;">1.54 (1.62)</td>
+<td style="text-align: center;"><strong>1.34 (1.41)</strong></td>
+<td style="text-align: center;">1.55 (1.62)</td>
+<td style="text-align: center;"><strong>1.29 (1.36)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Pico (P) △</td>
-<td style="text-align: center;">1.87 (1.93)</td>
-<td style="text-align: center;">1.69 (1.74)</td>
-<td style="text-align: center;"><strong>1.46 (1.52)</strong></td>
-<td style="text-align: center;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: center;">1.86 (1.90)</td>
+<td style="text-align: center;">1.71 (1.83)</td>
+<td style="text-align: center;">1.46 (1.53)</td>
+<td style="text-align: center;">1.68 (1.77)</td>
+<td style="text-align: center;"><strong>1.39 (1.46)</strong></td>
 </tr>
 <tr>
 <td style="text-align: center;">Nano (N)</td>
@@ -3873,9 +3873,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <p>Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. <a href="../latency/">How the numbers were measured</a>.</p>
 <ul>
-<li>Atto, Femto and Pico (no INT8 column in these runs) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.</li>
+<li>For Atto, Femto and Pico the best INT8 engine takes 0.91 to 1.01 times the time of the best FP16 engine, so INT8 and FP16 are tied on most GPUs. INT8 is clearly ahead only for Atto on the T4 (0.91) and Pico on the RTX PRO 6000 (0.95). On the L4, PyTorch CUDA graph FP16 is the fastest configuration for Atto and Femto.</li>
+<li>The Atto, Femto and Pico rows are from a second run on 2026-11-21, after the INT8 placement of these sizes changed; all five configurations were timed again in it. The A100 of that run is the 80 GB part, the other sizes were timed on the 40 GB part. See <a href="../latency/#nvidia-gpus">How the numbers were measured</a>.</li>
 <li>From Small up an INT8 engine is among the fastest on every GPU, except at Large on the A100, where FP16 graph alone is.</li>
-<li>The 95th percentile stays within 1.21 times the median, except for PyTorch CUDA graph FP16 on the T4 at Atto, Femto and Pico (1.27 to 1.58 times).</li>
+<li>The 95th percentile stays within 1.22 times the median, except for Femto on the L4 (1.28 times) and on the A100 (1.26 times).</li>
 </ul>
 <h2 id="fastest-configuration-on-apple-silicon">Fastest Configuration on Apple Silicon<a class="headerlink" href="#fastest-configuration-on-apple-silicon" title="Permanent link">&para;</a></h2>
 <p>The configuration with the lowest end-to-end latency for each size on an Apple M4 Max, batch 1. Run the <a href="../../../cookbooks/measure-latency/">latency cookbook</a> on your own device to find yours.</p>
@@ -4293,7 +4294,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:14:52 UTC">2026-11-21 21:14:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 23, 2026 11:26:28 UTC">2026-11-23 11:26:28</span>
   </span>
 
     

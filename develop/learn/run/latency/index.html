@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-21T21:14:52">
+  <meta property="article:modified_time" content="2026-11-23T11:26:28">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-21T21:14:52",
+    "dateModified": "2026-11-23T11:26:28",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3416,8 +3416,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h2 id="nvidia-gpus">NVIDIA GPUs<a class="headerlink" href="#nvidia-gpus" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Configurations:</strong> PyTorch CUDA graph FP16 is <code>model.inference()</code> with fp16 and a captured CUDA graph. TensorRT FP16 and INT8 are static engines from <code>RFDETR.export(format="tensorrt")</code>, loaded by <code>RFDETRInference</code>, and <em>graph</em> replays the same engine as a CUDA graph through the <code>cuda_graph</code> runtime option. The INT8 engines are calibrated on 128 train2017 images. Atto, Femto and Pico have no INT8 configuration in these runs, which predate the INT8 placement that keeps the MLPs of their first six backbone blocks in FP16. Before that placement they lost 7.0 to 8.7 AP in TensorRT INT8 and a faster artifact is not a usable answer when its accuracy is not acceptable; their TensorRT INT8 engines are timed in the next run of the cookbook.</li>
-<li><strong>Run:</strong> NVIDIA T4, NVIDIA L4, NVIDIA A100-SXM4-40GB and NVIDIA RTX PRO 6000 Blackwell Server Edition, one run of the cookbook per GPU on 2026-11-13, each with the versions in the <a href="#package-versions">table below</a>. Every engine was built on the GPU that timed it.</li>
+<li><strong>Configurations:</strong> PyTorch CUDA graph FP16 is <code>model.inference()</code> with fp16 and a captured CUDA graph. TensorRT FP16 and INT8 are static engines from <code>RFDETR.export(format="tensorrt")</code>, loaded by <code>RFDETRInference</code>, and <em>graph</em> replays the same engine as a CUDA graph through the <code>cuda_graph</code> runtime option. The INT8 engines are calibrated on 128 train2017 images. The TensorRT INT8 engines of Atto, Femto and Pico keep the MLPs of the first six backbone blocks in FP16, and their accuracy is scored on the <a href="../detection/#pre-trained-checkpoints">Detection page</a>.</li>
+<li><strong>Run:</strong> NVIDIA T4, NVIDIA L4, NVIDIA A100-SXM4-40GB and NVIDIA RTX PRO 6000 Blackwell Server Edition, one run of the cookbook per GPU on 2026-11-13, each with the versions in the <a href="#package-versions">table below</a>. Every engine was built on the GPU that timed it. Atto, Femto and Pico were timed again in a second run of the cookbook limited to those three models, on 2026-11-21 with <code>rfdetr</code> at commit <code>e4cadc4f</code>, because their INT8 placement changed after the first run; all five configurations were timed again in it, and its A100 is an NVIDIA A100-SXM4-80GB.</li>
 <li><strong>Host:</strong> the host CPU was not recorded, and a call includes host work, so a small model on a fast GPU can be limited by the host.</li>
 </ul>
 <h2 id="x86-cpu">x86 CPU<a class="headerlink" href="#x86-cpu" title="Permanent link">&para;</a></h2>
@@ -3452,6 +3452,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>TensorRT 11.4.0.106</td>
 </tr>
 <tr>
+<td>NVIDIA T4, L4, A100 (80 GB) and RTX PRO 6000, Atto, Femto and Pico only</td>
+<td>1.13.0.dev0 (commit <code>e4cadc4f</code>)</td>
+<td>1.3.0</td>
+<td>2.14.1 (CUDA 13.0)</td>
+<td>TensorRT 11.4.0.106</td>
+</tr>
+<tr>
 <td>x86 CPU (AMD EPYC 7B12)</td>
 <td>1.13.0.dev0</td>
 <td>1.2.0 (1.3.0 for Atto, Femto and Pico)</td>
@@ -3462,7 +3469,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </table>
 <p>The cookbook writes the installed versions of these packages into every result row, and installs the extras for its hardware: <code>plus,coreml</code>, <code>plus,tensorrt</code> or <code>plus,onnx,openvino</code> (CPU runs add <code>nncf</code> and <code>psutil</code>). The NVIDIA and CPU runs installed <code>rfdetr</code> 1.13.0.dev0 from the <code>docs/measure-latency-cookbook</code> branch archive, so no commit hash was recorded, and the Python version was recorded only for the CPU run (3.13). To reproduce a number, pin the packages above in a fresh environment and rerun the cookbook for your hardware.</p>
 <h2 id="fp16-and-int8-can-lower-accuracy">FP16 and INT8 Can Lower Accuracy<a class="headerlink" href="#fp16-and-int8-can-lower-accuracy" title="Permanent link">&para;</a></h2>
-<p>Most of the fastest configurations run in FP16 or INT8. The FP16 and INT8 AP in the Pre-trained Checkpoints tables of the <a href="../detection/#pre-trained-checkpoints">detection</a>, <a href="../segmentation/#pre-trained-checkpoints">segmentation</a> and <a href="../keypoints/#pre-trained-checkpoints">keypoints</a> pages was scored on TensorRT engines, where FP16 stays within 0.1 AP of FP32 for every size and INT8 costs 0.4 to 0.9 AP for the sizes timed in INT8, so read the INT8 column before you choose an INT8 engine. The AP was not scored for PyTorch CUDA graph FP16, or for PyTorch and CoreML FP16 on Apple Silicon, so check the accuracy on your own data before you rely on one of those configurations.</p>
+<p>Most of the fastest configurations run in FP16 or INT8. The FP16 and INT8 AP in the Pre-trained Checkpoints tables of the <a href="../detection/#pre-trained-checkpoints">detection</a>, <a href="../segmentation/#pre-trained-checkpoints">segmentation</a> and <a href="../keypoints/#pre-trained-checkpoints">keypoints</a> pages was scored on TensorRT engines, where FP16 stays within 0.1 AP of FP32 for every size and INT8 costs 0.2 to 0.9 AP for the sizes timed in INT8, so read the INT8 column before you choose an INT8 engine. The AP was not scored for PyTorch CUDA graph FP16, or for PyTorch and CoreML FP16 on Apple Silicon, so check the accuracy on your own data before you rely on one of those configurations.</p>
 <p>The same holds on the CPU: ONNX INT8 is among the fastest configurations for 13 of the 16 models, and no AP was scored for those CPU rows. The ONNX compact export of Atto, Femto and Pico was scored on all 5000 val2017 images: 30.35, 37.45 and 41.45 AP, 0.32, 0.16 and 0.21 below PyTorch FP32 on the same CPU. The <a href="../../../exports/onnx/">ONNX page</a> reports that ONNX INT8 cost 2.65 mAP on Nano and 2.67 on Small in a separate 500-image check, so measure it on your own data before you choose it.</p>
 
 
@@ -3484,7 +3491,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:14:52 UTC">2026-11-21 21:14:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 23, 2026 11:26:28 UTC">2026-11-23 11:26:28</span>
   </span>
 
     
