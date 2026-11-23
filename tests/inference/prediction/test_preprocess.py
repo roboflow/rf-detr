@@ -378,17 +378,23 @@ class TestPredictUint8Conversion:
 
     @pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
     @pytest.mark.parametrize("gpu_device", [None, pytest.param(torch.device("cuda", 0), id="cuda")])
-    def test_local_image_decoder_leaves_an_oriented_photo_to_pillow(
+    def test_local_image_decoder_turns_an_oriented_photo_upright_with_pillow(
         self, tmp_path: Path, image_format: str, gpu_device: torch.device | None
     ) -> None:
-        """Torchvision and nvjpeg cannot turn a tagged photo, so it goes to Pillow, which turns it upright.
+        """Torchvision and nvjpeg cannot turn a tagged photo, so Pillow decodes it upright on the worker.
 
-        Only the header is read, so this holds without a GPU.
+        Only the header is read before that, so this holds without a GPU.
         """
         image_path = tmp_path / f"rotated.{image_format.lower()}"
         _save_oriented_photo(image_path, image_format, orientation=6)
+        with PIL.Image.open(image_path) as image:
+            expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
 
-        assert core._decode_local_image(str(image_path), gpu_device) is None
+        decoded = core._decode_local_image(str(image_path), gpu_device)
+
+        assert isinstance(decoded, torch.Tensor)
+        assert decoded.dtype == torch.uint8
+        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
 
     @pytest.mark.parametrize("include_source_image", [False, True])
     @pytest.mark.parametrize("orientation", [3, 6, 8])
@@ -456,13 +462,18 @@ class TestPredictUint8Conversion:
             else:
                 assert "source_image" not in detection.metadata
 
-    def test_local_image_decoder_leaves_a_png_tagged_after_its_pixels_to_pillow(self, tmp_path: Path) -> None:
-        """A PNG that stores its eXIf chunk after the pixel data is routed like one that stores it first."""
+    def test_local_image_decoder_turns_a_png_tagged_after_its_pixels_upright(self, tmp_path: Path) -> None:
+        """A PNG that stores its eXIf chunk after the pixel data is decoded like one that stores it first."""
         image_path = tmp_path / "rotated.png"
         _save_oriented_photo(image_path, "PNG", orientation=6)
         image_path.write_bytes(move_exif_after_pixels(image_path.read_bytes()))
+        with PIL.Image.open(image_path) as image:
+            expected = np.array(PIL.ImageOps.exif_transpose(image).convert("RGB"))
 
-        assert core._decode_local_image(str(image_path)) is None
+        decoded = core._decode_local_image(str(image_path))
+
+        assert isinstance(decoded, torch.Tensor)
+        np.testing.assert_array_equal(decoded.permute(1, 2, 0).numpy(), expected)
 
     def test_predict_turns_a_png_tagged_after_its_pixels_upright(self, tmp_path: Path) -> None:
         """That PNG predicts on the photo as ``ImageOps.exif_transpose`` turns it."""
