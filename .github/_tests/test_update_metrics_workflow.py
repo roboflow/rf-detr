@@ -28,6 +28,8 @@ STEP_SUMMARY_NAME = "step_summary"
 requires_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="restore step is a bash run block")
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="the real-git tests drive an actual repository")
 COMMIT_STEP = "📤 Commit and push metrics update"
+SYNC_STEP = "🔀 Sync metrics branch with the default branch"
+PR_STEP = "📬 Open the metrics pull request"
 GENERATE_STEP = "📊 Generate weekly metrics SVG"
 METRICS_BRANCH = "automation/update-weekly-metrics"
 
@@ -313,8 +315,8 @@ class TestUpdateMetricsWorkflow:
         assert "workflow_dispatch" in triggers
 
     def test_workflow_has_only_required_write_permissions(self, metrics_workflow: dict[str, Any]) -> None:
-        """Automation must receive only permissions needed to update the metrics branch."""
-        assert metrics_workflow["permissions"] == {"contents": "write"}
+        """Automation must receive only permissions needed to update the metrics branch and open its pull request."""
+        assert metrics_workflow["permissions"] == {"contents": "write", "pull-requests": "write"}
 
     def test_runs_never_cancel_one_another(self, metrics_workflow: dict[str, Any]) -> None:
         """Overlapping runs must queue behind one another instead of cancelling.
@@ -354,6 +356,20 @@ class TestUpdateMetricsWorkflow:
         names = [step["name"] for step in metrics_workflow["jobs"]["update-metrics"]["steps"]]
 
         assert names.index(RESTORE_STEP) < names.index(GENERATE_STEP) < names.index(COMMIT_STEP)
+
+    def test_sync_precedes_pull_request_creation_after_the_commit(self, metrics_workflow: dict[str, Any]) -> None:
+        """The branch must be synced before the pull request step, and both must follow the commit.
+
+        The pull request step judges what a merge would publish from the branch as the sync step leaves it, and it must
+        run on runs that committed nothing, so it cannot live inside the commit step's early exit.
+        """
+        names = [step["name"] for step in metrics_workflow["jobs"]["update-metrics"]["steps"]]
+
+        assert names.index(COMMIT_STEP) < names.index(SYNC_STEP) < names.index(PR_STEP)
+
+    def test_pull_request_token_prefers_the_dedicated_secret(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
+        """A dedicated token must win over GITHUB_TOKEN, which cannot trigger the pull request's checks."""
+        assert metrics_steps[PR_STEP]["env"]["GH_TOKEN"] == "${{ secrets.METRICS_PR_TOKEN || secrets.GITHUB_TOKEN }}"
 
     def test_checkout_reads_the_default_branch(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
         """Checkout must read the default branch rather than the automation branch.
@@ -729,10 +745,10 @@ class TestCommitAndPushStep:
         metrics_steps: dict[str, dict[str, Any]],
         commit_sandbox: tuple[Path, Path],
     ) -> None:
-        """A successful push must hand a maintainer the compare URL that opens the publishing pull request.
+        """A successful push must hand a maintainer the compare URL of the publishing pull request.
 
-        Nothing in the workflow opens that pull request, so without the link the chart stays stale until someone notices
-        the branch is ahead of the default branch.
+        The pull request step can fail on a token that may not create one, so the link keeps a way to publish within one
+        click of the run summary.
         """
         workspace, stubs = commit_sandbox
         expected = "https://github.com/roboflow/rf-detr/compare/main...automation/update-weekly-metrics?expand=1"
@@ -745,7 +761,7 @@ class TestCommitAndPushStep:
         )
 
         assert result.returncode == 0, result.stderr
-        assert f"::notice title=Weekly metrics pushed::Open a PR to publish: {expected}" in result.stdout
+        assert f"::notice title=Weekly metrics pushed::Pull request: {expected}" in result.stdout
         assert expected in (workspace / STEP_SUMMARY_NAME).read_text(encoding="utf-8")
 
 
@@ -882,3 +898,233 @@ class TestRestoreStepAgainstRealGit:
         assert result.returncode != 0
         assert "::error::git fetch failed" in result.stdout
         assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+
+
+@requires_bash
+@requires_git
+class TestSyncStepAgainstRealGit:
+    """Tests that run the sync step's shell against a real repository and a bare origin."""
+
+    @staticmethod
+    def _sync(metrics_steps: dict[str, dict[str, Any]], workspace: Path) -> subprocess.CompletedProcess[str]:
+        """Run the sync step with real git."""
+        env = {**REAL_GIT_ENV, "METRICS_BRANCH": METRICS_BRANCH, "DEFAULT_BRANCH": "main"}
+        return _run_step(metrics_steps[SYNC_STEP]["run"], workspace, workspace, env)
+
+    @staticmethod
+    def _advance_default_branch(tmp_path: Path, origin: Path) -> None:
+        """Land a squash-merge-like commit on the origin's default branch.
+
+        It rewrites the SVG the way a squashed weekly pull request does, and adds a file only the default branch has.
+        """
+        other = tmp_path / "other"
+        _git(tmp_path, "clone", "--branch", "main", origin.as_uri(), str(other))
+        (other / TRACKED_SVG).write_text("<svg><!-- squashed history --></svg>\n", encoding="utf-8")
+        (other / "NOTES.md").write_text("default branch only\n", encoding="utf-8")
+        _git(other, "add", "--", TRACKED_SVG, "NOTES.md")
+        _git(other, "commit", "-m", "squashed weekly metrics")
+        _git(other, "push", origin.as_uri(), "main")
+
+    def test_default_branch_is_merged_in_keeping_the_branch_svg(
+        self,
+        tmp_path: Path,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """A branch behind the default branch must absorb it, keeping its own SVG and taking every other file."""
+        workspace, origin, tip = real_remote
+        self._advance_default_branch(tmp_path, origin)
+
+        result = self._sync(metrics_steps, workspace)
+
+        assert result.returncode == 0, result.stderr
+        assert _git(origin, "merge-base", "--is-ancestor", "main", METRICS_BRANCH) == ""
+        assert _git(origin, "show", f"{METRICS_BRANCH}:{TRACKED_SVG}") + "\n" == UNMERGED_SVG
+        assert _git(origin, "show", f"{METRICS_BRANCH}:NOTES.md") == "default branch only"
+        assert _git(origin, "rev-parse", f"{METRICS_BRANCH}^1") == tip
+
+    def test_branch_already_containing_the_default_branch_is_not_pushed(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """A branch that is not behind must keep its tip, so a quiet week adds no commit."""
+        workspace, origin, tip = real_remote
+
+        result = self._sync(metrics_steps, workspace)
+
+        assert result.returncode == 0, result.stderr
+        assert _git(origin, "rev-parse", METRICS_BRANCH) == tip
+
+    def test_absent_branch_is_left_alone(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        real_remote: tuple[Path, Path, str],
+    ) -> None:
+        """With no automation branch there is nothing to sync, and the step must say so without failing."""
+        workspace, origin, _ = real_remote
+        _git(origin, "branch", "-D", METRICS_BRANCH)
+
+        result = self._sync(metrics_steps, workspace)
+
+        assert result.returncode == 0, result.stderr
+        assert "nothing to sync" in result.stdout
+
+
+@pytest.fixture
+def pr_sandbox(tmp_path: Path) -> tuple[Path, Path]:
+    """Workspace plus `git` and `gh` stubs for exercising the pull request step.
+
+    `git ls-remote` exits with `STUB_LS_REMOTE_STATUS`. `gh pr list` prints `STUB_OPEN_COUNT`, `gh api` prints
+    `STUB_CHANGED_FILES`, and `gh pr create` fails when `STUB_CREATE_FAILS` is set. Every call lands in `STUB_LOG`.
+
+    Examples:
+        >>> pr_sandbox  # doctest: +SKIP
+        pytest fixture; builds a workspace and a stub directory under tmp_path.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _write_stub(
+        stubs,
+        "git",
+        'echo "git $*" >> "$STUB_LOG"\ncase $1 in\n  ls-remote)\n    exit "${STUB_LS_REMOTE_STATUS:-0}"\n    ;;\nesac',
+    )
+    _write_stub(
+        stubs,
+        "gh",
+        'echo "gh $*" >> "$STUB_LOG"\n'
+        'case "$1 $2" in\n'
+        '  "pr list")\n    echo "${STUB_OPEN_COUNT:-0}"\n    ;;\n'
+        '  "pr create")\n'
+        '    if [ -n "${STUB_CREATE_FAILS:-}" ]; then\n'
+        '      echo "GraphQL: GitHub Actions is not permitted to create pull requests" >&2\n'
+        "      exit 1\n"
+        "    fi\n"
+        '    echo "https://github.com/roboflow/rf-detr/pull/1"\n    ;;\n'
+        '  "api repos/roboflow/rf-detr/compare/main...automation/update-weekly-metrics")\n'
+        '    echo "${STUB_CHANGED_FILES:-1}"\n    ;;\n'
+        "esac",
+    )
+    return workspace, stubs
+
+
+def _pr_env(workspace: Path, **stub_controls: str) -> dict[str, str]:
+    """Build the environment a pull request step run sees, including the stub controls.
+
+    Examples:
+        >>> env = _pr_env(Path("workspace"), STUB_OPEN_COUNT="1")
+        >>> (env["DEFAULT_BRANCH"], env["STUB_OPEN_COUNT"])
+        ('main', '1')
+    """
+    return {
+        "METRICS_BRANCH": METRICS_BRANCH,
+        "DEFAULT_BRANCH": "main",
+        "GITHUB_REPOSITORY": "roboflow/rf-detr",
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_RUN_ID": "42",
+        "GITHUB_STEP_SUMMARY": str(workspace / STEP_SUMMARY_NAME),
+        "STUB_LOG": str(workspace / STUB_LOG_NAME),
+        **stub_controls,
+    }
+
+
+@requires_bash
+class TestOpenPullRequestStep:
+    """Tests that run the pull request step's own shell against stubbed `git` and `gh`."""
+
+    @staticmethod
+    def _logged(workspace: Path) -> str:
+        """Return every stubbed call the step made."""
+        return (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+
+    def test_branch_without_open_pull_request_gets_one(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A branch that differs from the default branch and has no open pull request must get one opened."""
+        workspace, stubs = pr_sandbox
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace))
+
+        assert result.returncode == 0, result.stderr
+        create = next(line for line in self._logged(workspace).splitlines() if line.startswith("gh pr create"))
+        assert f"--head {METRICS_BRANCH}" in create
+        assert "--base main" in create
+        assert "https://github.com/roboflow/rf-detr/pull/1" in (workspace / STEP_SUMMARY_NAME).read_text("utf-8")
+
+    def test_open_pull_request_is_left_alone(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A branch with a pull request already open must not get a second one."""
+        workspace, stubs = pr_sandbox
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, STUB_OPEN_COUNT="1"))
+
+        assert result.returncode == 0, result.stderr
+        assert "gh pr create" not in self._logged(workspace)
+
+    def test_branch_identical_to_the_default_branch_opens_nothing(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A branch with no file difference must not open an empty pull request."""
+        workspace, stubs = pr_sandbox
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, STUB_CHANGED_FILES="0"))
+
+        assert result.returncode == 0, result.stderr
+        assert "gh pr create" not in self._logged(workspace)
+
+    def test_absent_branch_makes_no_github_call(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """Without an automation branch the step must succeed without touching the GitHub API."""
+        workspace, stubs = pr_sandbox
+
+        result = _run_step(
+            metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, STUB_LS_REMOTE_STATUS="2")
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "gh " not in self._logged(workspace)
+
+    def test_refused_creation_fails_the_step_with_the_compare_link(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A token that may not open pull requests must turn the run red and point at the manual route.
+
+        A silent success here is the failure being fixed: the branch would sit unpublished while every run stays green.
+        """
+        workspace, stubs = pr_sandbox
+        expected = "https://github.com/roboflow/rf-detr/compare/main...automation/update-weekly-metrics?expand=1"
+
+        result = _run_step(metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, STUB_CREATE_FAILS="1"))
+
+        assert result.returncode != 0
+        assert expected in result.stdout
+        assert "METRICS_PR_TOKEN" in result.stdout
+
+    def test_lookup_failure_stops_instead_of_assuming_no_branch(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        pr_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A failed remote lookup must fail the step, not read as an absent branch."""
+        workspace, stubs = pr_sandbox
+
+        result = _run_step(
+            metrics_steps[PR_STEP]["run"], workspace, stubs, _pr_env(workspace, STUB_LS_REMOTE_STATUS="128")
+        )
+
+        assert result.returncode != 0
+        assert "::error::git ls-remote failed" in result.stdout

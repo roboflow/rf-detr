@@ -20,7 +20,13 @@ import pytest
 from scripts import update_weekly_metrics
 
 
-def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads: int) -> object:
+def _metric(
+    week_start: date,
+    stars_total: int,
+    new_stars: int | None,
+    downloads: int,
+    used_by: int | None = None,
+) -> object:
     """Build one checkpoint for a Monday-to-Sunday week starting at ``week_start``.
 
     ``week_end`` is the only derived field; every value a test asserts on stays explicit at the call site. A case that
@@ -29,6 +35,8 @@ def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads
     Examples:
         >>> _metric(date(2026, 8, 24), stars_total=12_000, new_stars=None, downloads=70_000).week_end
         datetime.date(2026, 8, 30)
+        >>> _metric(date(2026, 8, 24), 12_000, None, 70_000, used_by=209).used_by
+        209
     """
     return update_weekly_metrics.WeeklyMetric(
         week_start=week_start,
@@ -36,6 +44,7 @@ def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads
         stars_total=stars_total,
         new_stars=new_stars,
         downloads=downloads,
+        used_by=used_by,
     )
 
 
@@ -211,6 +220,43 @@ class TestRecordWeek:
             _metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=80_000),
         )
 
+    def test_records_used_by_reading_with_the_week(self) -> None:
+        """A new week must carry the dependent-repository count read during its run."""
+        updated = update_weekly_metrics.record_week(
+            _state(),
+            start=date(2026, 8, 24),
+            end=date(2026, 8, 30),
+            stars_total=12_125,
+            downloads=80_000,
+            history_limit=52,
+            used_by=209,
+        )
+
+        assert updated.history[-1].used_by == 209
+
+    @pytest.mark.parametrize(
+        ("reading", "expected"),
+        [
+            pytest.param(215, 215, id="newer-reading-replaces"),
+            pytest.param(None, 209, id="failed-reading-keeps-recorded"),
+        ],
+    )
+    def test_same_period_rerun_refreshes_used_by_only_when_read(self, reading: int | None, expected: int) -> None:
+        """A rerun must take a fresh used-by reading and keep the recorded one when the scrape fails."""
+        current = _metric(date(2026, 8, 24), stars_total=12_100, new_stars=None, downloads=79_000, used_by=209)
+
+        updated = update_weekly_metrics.record_week(
+            _state(current),
+            start=date(2026, 8, 24),
+            end=date(2026, 8, 30),
+            stars_total=12_125,
+            downloads=80_000,
+            history_limit=52,
+            used_by=reading,
+        )
+
+        assert updated.history[-1].used_by == expected
+
     def test_same_period_rerun_keeps_delta_at_minimum_history_limit(self) -> None:
         """A rerun under ``--history-limit 1`` must keep the delta its predecessor established.
 
@@ -318,6 +364,40 @@ class TestSvgState:
 
         assert parsed == state
 
+    def test_used_by_round_trips_and_is_omitted_while_unknown(self) -> None:
+        """Used-by must persist in metadata, and a checkpoint without it must stay free of the key.
+
+        Omitting the key keeps every checkpoint written before the count existed byte-identical.
+        """
+        known = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209))
+        unknown = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000))
+
+        known_svg = update_weekly_metrics.render_svg(known, window_weeks=12)
+        unknown_svg = update_weekly_metrics.render_svg(unknown, window_weeks=12)
+
+        assert update_weekly_metrics.parse_state(known_svg, "roboflow/rf-detr", "rfdetr") == known
+        assert '"used_by":209' in known_svg
+        assert "used_by" not in unknown_svg
+
+    def test_parser_rejects_negative_used_by(self) -> None:
+        """A corrupt used-by value in embedded state must fail validation."""
+        svg = """<svg><metadata id="weekly-metrics-state">{
+            "schema_version": 1,
+            "repository": "roboflow/rf-detr",
+            "package": "rfdetr",
+            "history": [{
+                "week_start": "2026-08-24",
+                "week_end": "2026-08-30",
+                "stars_total": 12125,
+                "new_stars": 125,
+                "downloads": 80000,
+                "used_by": -1
+            }]
+        }</metadata></svg>"""
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match="used_by must be a non-negative integer"):
+            update_weekly_metrics.parse_state(svg, "roboflow/rf-detr", "rfdetr")
+
     def test_parser_rejects_malformed_checkpoint_json(self) -> None:
         """Corrupt embedded state must fail closed before replacing SVG."""
         svg = '<svg><metadata id="weekly-metrics-state">{broken</metadata></svg>'
@@ -395,6 +475,22 @@ class TestSvgRendering:
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
 
         assert "0 weekly downloads" in svg
+
+    @pytest.mark.parametrize(
+        ("used_by", "shown"),
+        [
+            pytest.param(1_209, "1,209 repos", id="known"),
+            pytest.param(None, "—</text>", id="unknown"),
+        ],
+    )
+    def test_used_by_card_shows_latest_reading_or_dash(self, used_by: int | None, shown: str) -> None:
+        """The used-by card must show the latest count, and a dash while no reading was ever captured."""
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000, used_by=used_by))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert "USED BY" in svg
+        assert shown in svg
 
     def test_chart_uses_display_window_and_latest_summary(self) -> None:
         """Chart marks must show only configured recent periods plus latest totals."""
@@ -497,6 +593,21 @@ class TestMetricsApis:
         assert request.get_header("Authorization") == "Bearer secret-token"
         assert stars == 12_125
 
+    def test_fetch_used_by_reads_dependents_page_repository_count(self, mocker) -> None:
+        """The used-by count must come from the dependents page's repository tab, not its package tab."""
+        page = b"<a>\n <svg></svg>\n 1,209\n Repositories\n</a><a>\n 52\n Packages\n</a>"
+        urlopen = mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=io.BytesIO(page))
+
+        used_by = update_weekly_metrics.fetch_used_by("roboflow/rf-detr")
+
+        assert urlopen.call_args.args[0].full_url == "https://github.com/roboflow/rf-detr/network/dependents"
+        assert used_by == 1_209
+
+    def test_parse_used_by_rejects_page_without_repository_count(self) -> None:
+        """A changed page layout must raise instead of recording a wrong count."""
+        with pytest.raises(update_weekly_metrics.MetricsError, match="no repository count"):
+            update_weekly_metrics.parse_used_by("<html>Sign in to GitHub</html>")
+
     def test_fetch_daily_downloads_reads_without_mirrors_series(self, mocker) -> None:
         """PyPI Stats response must become validated UTC daily counts."""
         payload = {
@@ -593,6 +704,29 @@ class TestMetricsApis:
 
 class TestMetricsUpdate:
     """Tests for complete local SVG update behavior."""
+
+    @pytest.fixture(autouse=True)
+    def used_by_page(self, mocker) -> MagicMock:
+        """Stub the dependents-page scrape so no update test reaches the network."""
+        return mocker.patch("scripts.update_weekly_metrics.fetch_used_by", return_value=209)
+
+    def test_update_records_used_by_and_survives_scrape_failure(
+        self, mocker, tmp_path: Path, used_by_page, capsys
+    ) -> None:
+        """A used-by reading must land in the SVG, and a scrape failure must warn without blocking the update."""
+        output = tmp_path / "metrics.svg"
+        daily_downloads = {date(2026, 8, 24) + timedelta(days=offset): 100 for offset in range(7)}
+        mocker.patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125)
+        mocker.patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads)
+
+        update_weekly_metrics.update_metrics(output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None)
+        recorded = update_weekly_metrics.load_state(output, "roboflow/rf-detr", "rfdetr").history[-1].used_by
+        used_by_page.side_effect = update_weekly_metrics.MetricsError("HTTP 429")
+        update_weekly_metrics.update_metrics(output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None)
+        kept = update_weekly_metrics.load_state(output, "roboflow/rf-detr", "rfdetr").history[-1].used_by
+
+        assert (recorded, kept) == (209, 209)
+        assert "used-by count unavailable: HTTP 429" in capsys.readouterr().err
 
     def test_first_update_writes_fetch_results_as_embedded_baseline(self, mocker, tmp_path: Path) -> None:
         """Missing output must produce one self-contained baseline observation."""
@@ -739,9 +873,11 @@ class TestMetricsUpdate:
             ).encode()
         )
 
+        dependents_response = io.BytesIO(b"<a> 209 Repositories </a>")
+
         mock_datetime_cls = mocker.patch("datetime.datetime")
         mock_datetime_cls.now.return_value = frozen_now
-        mocker.patch("urllib.request.urlopen", side_effect=[github_response, pypi_response])
+        mocker.patch("urllib.request.urlopen", side_effect=[github_response, pypi_response, dependents_response])
         mocker.patch("sys.argv", ["update_weekly_metrics.py", "--output", str(output)])
 
         with pytest.raises(SystemExit) as exit_info:

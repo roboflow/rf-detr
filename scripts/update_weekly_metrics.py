@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 
 STATE_SCHEMA_VERSION = 1
 STATE_PATTERN = re.compile(r'<metadata id="weekly-metrics-state">(?P<payload>.*?)</metadata>', re.DOTALL)
+DEPENDENTS_PATTERN = re.compile(r"(?P<count>\d[\d,]*)\s+Repositories\b")
 MAX_API_RESPONSE_BYTES = 5_000_000
 MAX_SVG_BYTES = 1_000_000
 PLOT_LEFT = 100.0
@@ -45,6 +46,8 @@ class WeeklyMetric:
     stars_total: int
     new_stars: int | None
     downloads: int
+    # Dependent repositories GitHub lists for the package at the last run of this week; None when never captured.
+    used_by: int | None = None
 
 
 @dataclass(frozen=True)
@@ -75,18 +78,18 @@ def _require_nonnegative_int(value: object, name: str) -> int:
     return value
 
 
-def _fetch_json(url: str, headers: Mapping[str, str]) -> dict[str, object]:
-    """Fetch and decode one bounded JSON API response.
+def _fetch_bytes(url: str, headers: Mapping[str, str]) -> bytes:
+    """Fetch one bounded HTTP response body.
 
     Args:
-        url: Public API endpoint without credentials.
+        url: Public endpoint without credentials.
         headers: HTTP headers, including optional authentication.
 
     Returns:
-        Decoded JSON object.
+        Raw response body.
 
     Raises:
-        MetricsError: If request fails or response is invalid or too large.
+        MetricsError: If request fails or response is too large.
     """
     request = Request(url, headers=dict(headers))
     try:
@@ -107,6 +110,23 @@ def _fetch_json(url: str, headers: Mapping[str, str]) -> dict[str, object]:
     if len(body) > MAX_API_RESPONSE_BYTES:
         msg = f"API response exceeds {MAX_API_RESPONSE_BYTES:,} bytes: {url}"
         raise MetricsError(msg)
+    return cast(bytes, body)
+
+
+def _fetch_json(url: str, headers: Mapping[str, str]) -> dict[str, object]:
+    """Fetch and decode one bounded JSON API response.
+
+    Args:
+        url: Public API endpoint without credentials.
+        headers: HTTP headers, including optional authentication.
+
+    Returns:
+        Decoded JSON object.
+
+    Raises:
+        MetricsError: If request fails or response is invalid or too large.
+    """
+    body = _fetch_bytes(url, headers)
     try:
         payload = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -149,6 +169,57 @@ def fetch_star_count(repository: str, token: str | None = None) -> int:
     except KeyError as error:
         msg = "GitHub response is missing stargazers_count"
         raise MetricsError(msg) from error
+
+
+def parse_used_by(page: str) -> int:
+    """Extract the dependent-repository count from a GitHub dependents page.
+
+    GitHub exposes no API for the "Used by" figure, so the count is read from the visible
+    ``N Repositories`` tab label, the same number the repository sidebar shows.
+
+    Args:
+        page: HTML of ``/network/dependents``.
+
+    Returns:
+        Number of dependent repositories.
+
+    Raises:
+        MetricsError: If the page carries no ``N Repositories`` label.
+
+    Example:
+        >>> parse_used_by('<a>\\n  <svg></svg>\\n  1,209\\n  Repositories\\n</a><a> 52 Packages</a>')
+        1209
+    """
+    text = re.sub(r"<[^>]*>", " ", page)
+    match = DEPENDENTS_PATTERN.search(text)
+    if match is None:
+        msg = "GitHub dependents page has no repository count"
+        raise MetricsError(msg)
+    return int(match.group("count").replace(",", ""))
+
+
+def fetch_used_by(repository: str) -> int:
+    """Fetch how many repositories GitHub lists as depending on the package.
+
+    Args:
+        repository: GitHub repository in ``owner/name`` form.
+
+    Returns:
+        Dependent-repository count for the repository's default package.
+
+    Raises:
+        MetricsError: If the repository identifier or the page is invalid.
+    """
+    parts = repository.split("/")
+    if len(parts) != 2 or not all(parts):
+        msg = "repository must use owner/name format"
+        raise MetricsError(msg)
+    owner, name = (quote(part, safe="") for part in parts)
+    body = _fetch_bytes(
+        f"https://github.com/{owner}/{name}/network/dependents",
+        {"Accept": "text/html", "User-Agent": "rf-detr-weekly-metrics"},
+    )
+    return parse_used_by(body.decode("utf-8", errors="replace"))
 
 
 def fetch_daily_downloads(package: str) -> dict[date, int]:
@@ -295,7 +366,13 @@ def update_metrics(
     stars_total = fetch_star_count(repository, github_token)
     daily_downloads = fetch_daily_downloads(package)
     downloads = weekly_downloads(daily_downloads, start, end)
-    updated = record_week(state, start, end, stars_total, downloads, history_limit)
+    try:
+        used_by: int | None = fetch_used_by(repository)
+    except MetricsError as error:
+        # Scraped, unofficial source: a layout change or outage must not block the star and download update.
+        print(f"warning: used-by count unavailable: {error}", file=sys.stderr)
+        used_by = None
+    updated = record_week(state, start, end, stars_total, downloads, history_limit, used_by)
     write_svg(output, render_svg(updated, window_weeks))
     return updated
 
@@ -329,6 +406,8 @@ def _validate_state(state: MetricsState) -> None:
             raise MetricsError(msg)
         _require_nonnegative_int(metric.stars_total, "stars_total")
         _require_nonnegative_int(metric.downloads, "downloads")
+        if metric.used_by is not None:
+            _require_nonnegative_int(metric.used_by, "used_by")
         if metric.new_stars is not None and (
             isinstance(metric.new_stars, bool) or not isinstance(metric.new_stars, int)
         ):
@@ -360,6 +439,7 @@ def _serialize_state(state: MetricsState) -> str:
         "schema_version": STATE_SCHEMA_VERSION,
         "repository": state.repository,
         "package": state.package,
+        # ``used_by`` is omitted while unknown, so checkpoints written before it existed stay byte-identical.
         "history": [
             {
                 "week_start": metric.week_start.isoformat(),
@@ -367,6 +447,7 @@ def _serialize_state(state: MetricsState) -> str:
                 "stars_total": metric.stars_total,
                 "new_stars": metric.new_stars,
                 "downloads": metric.downloads,
+                **({} if metric.used_by is None else {"used_by": metric.used_by}),
             }
             for metric in state.history
         ],
@@ -404,6 +485,7 @@ def parse_state(svg: str, repository: str, package: str) -> MetricsState:
                     stars_total=metric["stars_total"],
                     new_stars=metric["new_stars"],
                     downloads=metric["downloads"],
+                    used_by=metric.get("used_by"),
                 )
                 for metric in payload["history"]
             ),
@@ -460,6 +542,10 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         new_stars = f"{latest.new_stars:+,} new stars"
         downloads = f"{latest.downloads:,} weekly downloads"
 
+    used_by_value = "—" if latest is None or latest.used_by is None else f"{latest.used_by:,} repos"
+    if latest is not None and latest.used_by is not None:
+        description += f" {latest.used_by:,} repositories depend on the package."
+
     return [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" '
@@ -473,15 +559,18 @@ def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[st
         f'  <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" '
         f'font-size="15">{escape(latest_period)}</text>',
         '  <g font-family="DejaVu Sans, Arial, sans-serif">',
-        '    <rect x="56" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>',
+        '    <rect x="56" y="112" width="190" height="82" rx="10" fill="#f5f1fa"/>',
         '    <text x="76" y="141" fill="#6b6a66" font-size="14">GITHUB STARS</text>',
         f'    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">{stars_total}</text>',
-        '    <rect x="410" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>',
-        '    <text x="430" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>',
-        f'    <text x="430" y="176" fill="#8315f9" font-size="28" font-weight="700">{new_stars}</text>',
-        '    <rect x="764" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>',
-        '    <text x="784" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>',
-        f'    <text x="784" y="176" fill="#2a78d6" font-size="28" font-weight="700">{downloads}</text>',
+        '    <rect x="264" y="112" width="270" height="82" rx="10" fill="#f5f1fa"/>',
+        '    <text x="284" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>',
+        f'    <text x="284" y="176" fill="#8315f9" font-size="28" font-weight="700">{new_stars}</text>',
+        '    <rect x="552" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>',
+        '    <text x="572" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>',
+        f'    <text x="572" y="176" fill="#2a78d6" font-size="28" font-weight="700">{downloads}</text>',
+        '    <rect x="950" y="112" width="194" height="82" rx="10" fill="#f5f1fa"/>',
+        '    <text x="970" y="141" fill="#6b6a66" font-size="14">USED BY</text>',
+        f'    <text x="970" y="176" fill="#0b0b0b" font-size="28" font-weight="700">{used_by_value}</text>',
         "  </g>",
     ]
 
@@ -702,12 +791,15 @@ def record_week(
     stars_total: int,
     downloads: int,
     history_limit: int,
+    used_by: int | None = None,
 ) -> MetricsState:
     """Append one completed week, resetting star baseline after any checkpoint gap.
 
-    Rerunning an already recorded week refreshes only its download total. ``stars_total`` is a cumulative
-    reading taken at run time, so a later reading for the same week already counts stars earned during the
-    in-progress week; keeping the first reading holds each week's growth attribution where it belongs.
+    Rerunning an already recorded week refreshes only its download total and used-by count. ``stars_total``
+    is a cumulative reading taken at run time, so a later reading for the same week already counts stars
+    earned during the in-progress week; keeping the first reading holds each week's growth attribution where
+    it belongs. ``used_by`` is a plain current reading with no delta, so the latest one wins, and a rerun
+    that could not read it keeps the value already recorded.
 
     Args:
         state: Existing embedded metrics state.
@@ -716,6 +808,7 @@ def record_week(
         stars_total: Current GitHub stargazer count. Ignored when this week is already recorded.
         downloads: PyPI downloads during completed week.
         history_limit: Maximum number of weekly records retained.
+        used_by: Dependent-repository count read at run time, or None when it could not be read.
 
     Returns:
         Updated state with bounded history.
@@ -738,6 +831,8 @@ def record_week(
     if replaced is not None:
         history = history[:-1]
         recorded_stars, new_stars = replaced.stars_total, replaced.new_stars
+        if used_by is None:
+            used_by = replaced.used_by
     elif history and start == history[-1].week_end + timedelta(days=1):
         recorded_stars, new_stars = stars_total, stars_total - history[-1].stars_total
     else:
@@ -748,6 +843,7 @@ def record_week(
         stars_total=recorded_stars,
         new_stars=new_stars,
         downloads=downloads,
+        used_by=used_by,
     )
     history = (*history, metric)[-history_limit:]
     updated = MetricsState(repository=state.repository, package=state.package, history=history)
