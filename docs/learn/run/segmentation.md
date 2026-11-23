@@ -103,19 +103,19 @@ The configuration with the lowest end-to-end latency for each size on a Colab x8
 
 <!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
 
-|     Size      | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    OpenVINO FP32    |    OpenVINO FP16    |    OpenVINO INT8    |
-| :-----------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :-----------------: | :-----------------: |
-|   Nano (N)    |   **209.57 (255.84)**    |  264.18 (315.07)  |  **208.46 (261.77)**  |   221.90 (316.07)   |   229.96 (334.50)   |   227.43 (373.97)   |
-|   Small (S)   |   **281.22 (362.42)**    |  380.18 (447.15)  |  **273.00 (344.01)**  | **277.25 (446.00)** |   304.57 (470.89)   |   322.31 (528.42)   |
-|  Medium (M)   |   **443.29 (702.49)**    |  535.52 (625.54)  |  **443.64 (501.25)**  |   588.96 (832.29)   | **463.97 (686.17)** | **458.56 (726.39)** |
-|   Large (L)   |     780.46 (1570.85)     | 934.20 (1052.00)  |  **606.79 (673.22)**  |  891.78 (1222.33)   |  914.18 (1217.94)   | **627.26 (967.18)** |
-|  XLarge (XL)  |    1083.43 (1980.53)     | 1522.24 (1679.69) | **987.18 (1070.10)**  |  1445.69 (1779.32)  |  1502.18 (1881.39)  |  1080.86 (1502.20)  |
-| 2XLarge (2XL) |    1590.50 (2435.77)     | 1756.35 (1886.75) | **1409.32 (1546.53)** |  1621.37 (1979.92)  |  1653.23 (1936.94)  |  1853.44 (2386.39)  |
+|     Size      | PyTorch TorchScript FP32 |     ONNX FP32     |       ONNX INT8       |    OpenVINO FP32    |    OpenVINO FP16    |     OpenVINO INT8     |
+| :-----------: | :----------------------: | :---------------: | :-------------------: | :-----------------: | :-----------------: | :-------------------: |
+|   Nano (N)    |   **228.99 (470.69)**    |  362.72 (412.89)  |    251.14 (304.69)    |   260.39 (374.66)   |   267.41 (378.40)   |    240.54 (404.24)    |
+|   Small (S)   |   **311.40 (734.21)**    |  475.15 (525.74)  |    324.28 (392.06)    | **307.42 (500.07)** | **313.91 (496.94)** |    335.01 (572.86)    |
+|  Medium (M)   |     446.07 (1124.72)     |  595.50 (640.02)  |  **428.08 (494.29)**  | **411.67 (650.09)** | **427.84 (672.18)** |    438.03 (772.86)    |
+|   Large (L)   |   **611.97 (1403.02)**   |  851.27 (949.15)  |  **584.26 (660.66)**  | **607.02 (910.19)** |   629.65 (936.26)   |    621.37 (974.41)    |
+|  XLarge (XL)  |  **1010.92 (2027.29)**   | 1257.18 (1350.61) | **1007.35 (1116.39)** |  1121.05 (1510.36)  |  1117.08 (1492.21)  | **1033.27 (1539.97)** |
+| 2XLarge (2XL) |    1685.04 (2764.99)     | 2046.94 (2189.02) | **1585.41 (1728.70)** |  1840.57 (2429.77)  |  1867.45 (2369.34)  |   1930.56 (2583.56)   |
 
-Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell. Run on an AMD EPYC 7B12 with 8 logical cores, `rfdetr` 1.13.0.dev0 (commit `add6c3e4`), `rfdetr_plus` 1.3.0, PyTorch 2.14.1 (CPU build), ONNX Runtime 1.32.0, OpenVINO 2026.4.1 and NNCF 3.4.0, from 2026-11-22 21:41 to 2026-11-23 03:47 UTC.
 
-- ONNX INT8 is fastest or level at every size, alone at XLarge and 2XLarge (9.5% and 12.9% ahead). PyTorch TorchScript FP32 is level at Nano to Medium.
-- OpenVINO INT8 against OpenVINO FP32 swings with size (0.70 to 1.16 times). The 95th percentile reaches 2.01 times the median (TorchScript FP32, Large).
+- ONNX INT8 is fastest or level from Medium up, and alone at 2XLarge (6.3% ahead of TorchScript FP32). PyTorch TorchScript FP32 is fastest or level at Nano, Small, Large and XLarge; at Nano ONNX INT8 is 9.7% behind it.
+- OpenVINO INT8 against OpenVINO FP32 swings with size (0.92 to 1.09 times). The 95th percentile reaches 2.52 times the median (TorchScript FP32, Medium).
 
 !!! warning "FP16 and INT8 can lower accuracy"
 

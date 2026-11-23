@@ -82,13 +82,13 @@ The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPY
 
 <!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
 
-|        Size        | PyTorch TorchScript FP32 |    ONNX FP32    |      ONNX INT8      |  OpenVINO FP32  |  OpenVINO FP16   |  OpenVINO INT8   |
-| :----------------: | :----------------------: | :-------------: | :-----------------: | :-------------: | :--------------: | :--------------: |
-| Keypoint (Preview) |     760.08 (1663.51)     | 853.85 (980.48) | **650.16 (765.01)** | 692.89 (996.57) | 733.37 (1062.62) | 751.76 (1309.10) |
+|        Size        | PyTorch TorchScript FP32 |    ONNX FP32     |      ONNX INT8      |  OpenVINO FP32   |  OpenVINO FP16   |  OpenVINO INT8   |
+| :----------------: | :----------------------: | :--------------: | :-----------------: | :--------------: | :--------------: | :--------------: |
+| Keypoint (Preview) |     811.00 (1655.81)     | 986.71 (1091.36) | **738.26 (848.24)** | 800.24 (1138.00) | 823.17 (1447.85) | 775.78 (1223.29) |
 
-Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell.
+Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell. Run on an AMD EPYC 7B12 with 8 logical cores, `rfdetr` 1.13.0.dev0 (commit `add6c3e4`), `rfdetr_plus` 1.3.0, PyTorch 2.14.1 (CPU build), ONNX Runtime 1.32.0, OpenVINO 2026.4.1 and NNCF 3.4.0, from 2026-11-22 21:41 to 2026-11-23 03:47 UTC.
 
-ONNX INT8 is fastest (650.16 ms, p95 765.01). OpenVINO FP32 (692.89 ms) is 6.6% behind and TorchScript FP32 (760.08 ms) is 16.9% behind. TorchScript FP32 has the widest tail: its p95 is 1663.51 ms, 2.19 times its median.
+ONNX INT8 is fastest (738.26 ms, p95 848.24). OpenVINO INT8 (775.78 ms) is 5.1% behind, OpenVINO FP32 (800.24 ms) is 8.4% behind and TorchScript FP32 (811.00 ms) is 9.9% behind. TorchScript FP32 has the widest tail: its p95 is 1655.81 ms, 2.04 times its median.
 
 !!! warning "FP16 and INT8 can lower accuracy"
 
