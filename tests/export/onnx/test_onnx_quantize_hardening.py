@@ -257,17 +257,23 @@ class TestScratchFiles:
         assert target.read_bytes() == b"previous"
 
 
-def _score_graph(key: str = "k", scaling: tuple[str, str] | None = None) -> object:
+def _score_graph(
+    key: str = "k", scaling: tuple[str, str] | None = None, value: str = "value", tail_hops: int = 3
+) -> object:
     """Build an attention block whose score ``MatMul`` reaches its ``Softmax`` through an optional scaling op.
 
-    The block's own output runs through three ``Relu`` hops after the value multiply, so the head sweep never reaches
-    ``scores`` and only the ``Softmax`` walk can exclude it.
+    The value multiply is never part of ``scores``' walk, and the block's output runs through ``tail_hops`` ``Relu``
+    hops after it. With the default three hops the head sweep reaches ``values`` but stops there, so it never reaches
+    ``scores`` and only the ``Softmax`` walk can exclude it; past the sweep's hop cap it reaches neither, so only the
+    ``Softmax`` walk can exclude ``values``.
 
     Args:
         key: Right-hand operand of ``scores``: ``"k"`` is a graph input (activation), ``"w"`` an initializer (weight).
         scaling: ``(op_type, operand)`` inserted between ``scores`` and the ``Softmax``; ``operand`` is ``"scale"``
             (initializer), ``"const"`` (``Constant`` node output) or ``"divisor"`` (graph input). ``None`` connects
             ``scores`` to the ``Softmax`` directly.
+        value: Right-hand operand of ``values``: ``"value"`` is a graph input (activation), ``"w"`` an initializer.
+        tail_hops: Number of ``Relu`` ops between ``values`` and the graph output.
 
     Returns:
         An ``onnx.GraphProto``.
@@ -276,6 +282,8 @@ def _score_graph(key: str = "k", scaling: tuple[str, str] | None = None) -> obje
         >>> graph = _score_graph(scaling=("Div", "scale"))
         >>> [node.op_type for node in graph.node][:4]
         ['Constant', 'MatMul', 'Div', 'Softmax']
+        >>> len(_score_graph(tail_hops=11).node) - len(_score_graph().node)
+        8
     """
     from onnx import TensorProto, helper, numpy_helper
 
@@ -291,10 +299,12 @@ def _score_graph(key: str = "k", scaling: tuple[str, str] | None = None) -> obje
         softmax_input = "scaled"
     nodes += [
         helper.make_node("Softmax", [softmax_input], ["weights"], name="softmax"),
-        helper.make_node("MatMul", ["weights", "value"], ["context"], name="values"),
-        helper.make_node("Relu", ["context"], ["r1"], name="relu1"),
-        helper.make_node("Relu", ["r1"], ["r2"], name="relu2"),
-        helper.make_node("Relu", ["r2"], ["out"], name="relu3"),
+        helper.make_node("MatMul", ["weights", value], ["context"], name="values"),
+    ]
+    tensors = ["context", *(f"r{index}" for index in range(1, tail_hops)), "out"]
+    nodes += [
+        helper.make_node("Relu", [source], [target], name=f"relu{index}")
+        for index, (source, target) in enumerate(zip(tensors, tensors[1:]), start=1)
     ]
     inputs = [helper.make_tensor_value_info(name, TensorProto.FLOAT, [4, 4]) for name in ("q", "k", "value", "divisor")]
     outputs = [helper.make_tensor_value_info("out", TensorProto.FLOAT, [4, 4])]
@@ -406,3 +416,15 @@ class TestAttentionScoreWalk:
         reason.
         """
         assert "scores" not in nodes_to_exclude(_score_graph(key="w"))
+
+    def test_excludes_value_matmul_beyond_the_head_walk(self) -> None:
+        """The multiply reading the ``Softmax`` output is held in float even when no output walk reaches it.
+
+        Attention weights lie in [0, 1]; a single 8-bit range over them rounds the small ones to zero, and the loss
+        grows with the tokens per window. The head walk covered this multiply only when it sat next to an output.
+        """
+        assert "values" in nodes_to_exclude(_score_graph(tail_hops=11))
+
+    def test_keeps_weight_matmul_reading_the_softmax_output_quantizable(self) -> None:
+        """A multiply of the ``Softmax`` output by an initializer is a linear layer, not an attention-value multiply."""
+        assert "values" not in nodes_to_exclude(_score_graph(value="w", tail_hops=11))
