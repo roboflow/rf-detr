@@ -118,6 +118,12 @@ model.export(format="onnx", quantization="int8", calibration_data="calibration_i
 
 `calibration_data` is **required** and must be representative of your deployment domain. Static quantization reads activation ranges from that data; out-of-domain or synthetic images produce a model that loads, runs, and is quietly wrong. Accepted forms are a directory of images (preprocessed exactly as `predict()` does, capped by `max_images`), a `.npy` file of shape `(N, C, H, W)` already normalized, or an equivalent array. A few dozen to a few hundred images from your validation split is the normal choice.
 
+Pass `int8_keep_mlp_float=True` to also keep GELU-fed weighted projections in float. This includes the second layer of backbone MLPs and can include projections in segmentation heads. GELU outputs can have outlier channels that determine the 8-bit step for the entire tensor. The option defaults to `False` and requires `quantization="int8"` for ONNX.
+
+```python
+model.export(format="onnx", quantization="int8", calibration_data="calibration_images/", int8_keep_mlp_float=True)
+```
+
 !!! warning "What gets quantized, and why it is not everything"
 
     Only `MatMul` and `Gemm` run in 8-bit. Attention-score multiplies, the detection heads, normalization, softmax and the surrounding elementwise math stay in float, and those ops' *outputs* are not quantized either.
