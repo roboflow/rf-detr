@@ -394,6 +394,36 @@ def _wrap_with_warmup(
     )
 
 
+def _refuse_narrow_stem_checkpoint(state_dict: dict[str, Any], num_channels: int) -> None:
+    """Refuse a checkpoint whose stem is 3 channels wide when the model's stem is not.
+
+    A Lightning checkpoint written by a ``num_channels != 3`` run before the stem was widened for training holds a
+    3-channel stem, which cannot load into the widened one.
+
+    Args:
+        state_dict: Checkpoint weights.
+        num_channels: Number of input channels the model is configured with.
+
+    Raises:
+        ValueError: If the checkpoint's stem is 3 channels wide and ``num_channels`` is not 3.
+
+    Examples:
+        >>> _refuse_narrow_stem_checkpoint({}, 4)
+        >>> _refuse_narrow_stem_checkpoint({}, 3)
+    """
+    if num_channels == 3:
+        return
+    stem = next((value for key, value in state_dict.items() if key.endswith(_STEM_KEY_SUFFIX)), None)
+    if stem is not None and stem.shape[1] == 3:
+        raise ValueError(
+            f"Cannot resume this checkpoint: its input stem has 3 channels but this model is configured with "
+            f"num_channels={num_channels}. Checkpoints written by a num_channels={num_channels} run before the "
+            f"stem was widened for training are in this state. Start a fresh run with "
+            f"pretrain_weights=<this checkpoint> instead, which adapts the 3-channel stem to "
+            f"num_channels={num_channels} after loading."
+        )
+
+
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
 
@@ -2030,31 +2060,6 @@ class RFDETRModelModule(LightningModule):
                 num_channels,
             )
 
-    def _refuse_narrow_stem_checkpoint(self, state_dict: dict[str, Any]) -> None:
-        """Refuse a checkpoint whose stem is 3 channels wide when this module's stem is not.
-
-        A Lightning checkpoint written by a ``num_channels != 3`` run before the stem was widened for training holds a
-        3-channel stem, which cannot load into the widened one.
-
-        Args:
-            state_dict: Checkpoint weights.
-
-        Raises:
-            ValueError: If the checkpoint's stem is 3 channels wide and ``model_config.num_channels`` is not 3.
-        """
-        num_channels = self.model_config.num_channels
-        if num_channels == 3:
-            return
-        stem = next((value for key, value in state_dict.items() if key.endswith(_STEM_KEY_SUFFIX)), None)
-        if stem is not None and stem.shape[1] == 3:
-            raise ValueError(
-                f"Cannot resume this checkpoint: its input stem has 3 channels but this model is configured with "
-                f"num_channels={num_channels}. Checkpoints written by a num_channels={num_channels} run before the "
-                f"stem was widened for training are in this state. Start a fresh run with "
-                f"pretrain_weights=<this checkpoint> instead, which adapts the 3-channel stem to "
-                f"num_channels={num_channels} after loading."
-            )
-
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.
 
@@ -2113,7 +2118,9 @@ class RFDETRModelModule(LightningModule):
 
         # A 3-channel stem cannot load into a widened one; fail with the way out instead of a size mismatch.
         if "state_dict" in checkpoint:
-            self._refuse_narrow_stem_checkpoint(checkpoint["state_dict"])
+            _refuse_narrow_stem_checkpoint(
+                checkpoint["state_dict"], getattr(self.model_config, "num_channels", 3)
+            )
 
         # Interpolate DINOv2 positional embeddings when the checkpoint was saved
         # at a different resolution than the current model.  PTL applies

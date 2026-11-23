@@ -745,7 +745,7 @@ class TestWebDatasetDetection:
         with pytest.raises(ValueError, match="no fourth channel") as excinfo:
             next(iter(dataset))
         message = str(excinfo.value)
-        assert "sample img_0000" in message
+        assert "sample 00000000" in message
         assert _shard_url(shard_dir / dataset.index.shards[0]) in message
         assert isinstance(excinfo.value.__cause__, ValueError)
 
