@@ -374,7 +374,13 @@ class TestResolveComputePrecision:
         self, tmp_path: Path, precision: object, expected: object
     ) -> None:
         """Each name reaches its own member, no precision means float32, and a member is passed through."""
-        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=mock.Mock(),
+            target=mock.Mock(),
+            float32="fp32-member",
+            float16="fp16-member",
+            fp16_transform=mock.Mock,
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=precision))
 
         assert exporter._resolve_compute_precision(api) is expected
@@ -396,7 +402,9 @@ class TestConvertDeploymentTarget:
         """
         target = mock.Mock()
         convert = mock.Mock(return_value="mlmodel")
-        api = _CoreMLApi(convert=convert, target=target, float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=convert, target=target, float32="fp32-member", float16="fp16-member", fp16_transform=mock.Mock
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
 
         export_program = mocker.patch.object(exporter, "_export_program")
@@ -424,7 +432,13 @@ class TestPassPipelineGuard:
         ``KeyError`` escaped ``_import_coreml_api`` unclassified, so a coremltools release that breaks the pass
         registration broke every export with an error that did not mention Core ML.
         """
-        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=mock.Mock(),
+            target=mock.Mock(),
+            float32="fp32-member",
+            float16="fp16-member",
+            fp16_transform=mock.Mock,
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
 
         mocker.patch.object(exporter, "_export_program")
@@ -548,6 +562,29 @@ class TestExportCoremlBareDefaultNaming:
         assert output_file.name == "inference_model_fp16.mlpackage"
         mock_mlmodel.save.assert_called_once_with(str(output_file))
 
+    @_requires_coremltools
+    def test_fp16_compute_precision_transform_gets_fp16_label(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``FP16ComputePrecision`` transform is fp16 (coremltools lowers ``FLOAT16`` to one), so it is named so.
+
+        A caller passes the transform to keep selected ops, e.g. ``resample``, in float32. The bundle is fp16 either
+        way, so the filename must not say ``fp32`` and the export must not warn about an unrecognized precision.
+        """
+        import coremltools as ct
+
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, variant_name="rfdetr-nano"))
+        transform = ct.transform.FP16ComputePrecision(op_selector=lambda op: op.op_type != "resample")
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            output_file = exporter._resolve_output_file(
+                tmp_path, transform, exporter._import_coreml_api(), backbone_only=False
+            )
+
+        assert output_file.name == "rfdetr-nano_fp16.mlpackage"
+        assert not any("Unrecognized CoreML compute precision" in record.getMessage() for record in caplog.records)
+
     @pytest.mark.parametrize(
         "variant_name, output_name, neural_engine, full_name, backbone_name",
         [
@@ -575,6 +612,7 @@ class TestExportCoremlBareDefaultNaming:
         marker, so it never overwrites the default export of the same model; an explicit ``output_name`` stays as given.
         """
         coremltools = mock.MagicMock()
+        coremltools.transform.FP16ComputePrecision = type("FP16ComputePrecision", (), {})
         full_model, backbone_model = mock.MagicMock(), mock.MagicMock()
         coremltools.convert.side_effect = [full_model, backbone_model]
         exported_program = mock.MagicMock()

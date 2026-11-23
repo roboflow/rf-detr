@@ -75,7 +75,7 @@ class _CoreMLApi:
 
     ``coremltools`` is an optional dependency imported inside the conversion rather than at module scope, and
     ``precision`` is an Enum class whose members are reached by attribute lookup rather than independently
-    ``from``-importable. Binding all four here keeps every phase reading the same names instead of repeating
+    ``from``-importable. Binding all five here keeps every phase reading the same names instead of repeating
     the import — and keeps the precision members identity-stable across the phases that compare against them.
 
     Attributes:
@@ -83,12 +83,15 @@ class _CoreMLApi:
         target: ``coremltools.target``, the deployment-target enum.
         float32: ``coremltools.precision.FLOAT32``.
         float16: ``coremltools.precision.FLOAT16``.
+        fp16_transform: ``coremltools.transform.FP16ComputePrecision``, the transform ``float16`` lowers to and the
+            form a caller passes to keep selected ops in float32.
     """
 
     convert: Callable[..., Any]
     target: Any
     float32: ct_precision
     float16: ct_precision
+    fp16_transform: type
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,12 +215,14 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         from coremltools import convert as ct_convert
         from coremltools import precision as ct_precision
         from coremltools import target as ct_target
+        from coremltools import transform as ct_transform
 
         return _CoreMLApi(
             convert=ct_convert,
             target=ct_target,
             float32=ct_precision.FLOAT32,
             float16=ct_precision.FLOAT16,
+            fp16_transform=ct_transform.FP16ComputePrecision,
         )
 
     def _prepare_output_dir(self) -> Path:
@@ -272,7 +277,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         )
         # Precision materially changes the artifact (fp16 has larger numeric drift, per the module
         # docstring) — always encode it, unless the caller asked for an exact custom filename.
-        if compute_precision == api.float16:
+        if compute_precision == api.float16 or isinstance(compute_precision, api.fp16_transform):
             precision_token = "fp16"
         elif compute_precision == api.float32:
             precision_token = "fp32"
