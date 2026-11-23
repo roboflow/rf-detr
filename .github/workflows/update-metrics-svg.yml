@@ -4,16 +4,14 @@ name: Update Weekly Metrics SVG
 # default branch is open whenever the branch carries an unpublished SVG, so the chart never goes stale
 # because nobody noticed the branch.
 #
-# Opening the pull request needs a token that may create one. The repository does not let GITHUB_TOKEN do
-# that (Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests"), so store a
-# token with pull-request write access as the METRICS_PR_TOKEN secret. A pull request opened with that token
-# also triggers the required checks; one opened with GITHUB_TOKEN does not. Without either, the final step
-# fails the run with the compare link, so the gap is visible instead of silent.
+# Set METRICS_PR_TOKEN to a repository-scoped credential with contents and pull-request write access.
+# Using it for both Git pushes and PR creation lets required checks run when a PR is opened or updated.
+# GITHUB_TOKEN falls back to the repository's PR creation policy and requires manual approval of PR workflows.
 #
 # The default branch is squash-merged, so a merged weekly pull request leaves its commits on the branch while
 # the default branch holds one unrelated squash commit that edits the same SVG. The sync step merges the
-# default branch back into the automation branch, keeping the branch's SVG, so the next pull request never
-# conflicts.
+# default branch back into the automation branch, preserving the latest automation SVG when the published
+# SVG is unchanged or matches a previously generated revision. Independent SVG edits need reconciliation.
 
 on:
   schedule:
@@ -44,6 +42,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.METRICS_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -52,7 +51,67 @@ jobs:
           python-version: "3.10"
           activate-environment: true
 
+      - name: 🔀 Sync metrics branch with the default branch
+        id: sync
+        env:
+          METRICS_BRANCH: automation/update-weekly-metrics
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ls_remote_status=0
+          git ls-remote --exit-code --heads origin "refs/heads/$METRICS_BRANCH" || ls_remote_status=$?
+          if [ "$ls_remote_status" -eq 2 ]; then
+            echo "No $METRICS_BRANCH branch, nothing to sync."
+            exit 0
+          elif [ "$ls_remote_status" -ne 0 ]; then
+            echo "::error::git ls-remote failed for $METRICS_BRANCH"
+            exit "$ls_remote_status"
+          fi
+          # A merge needs the common ancestor, which the shallow checkout lacks. Blobs stay on the server
+          # until the merge needs one.
+          fetch_args=(--no-tags --filter=blob:none)
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            fetch_args+=(--unshallow)
+          fi
+          git fetch "${fetch_args[@]}" origin \
+            "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" \
+            "+refs/heads/$METRICS_BRANCH:refs/remotes/origin/$METRICS_BRANCH"
+          default_ref="refs/remotes/origin/$DEFAULT_BRANCH"
+          metrics_ref="refs/remotes/origin/$METRICS_BRANCH"
+          if git merge-base --is-ancestor "$default_ref" "$metrics_ref"; then
+            echo "$METRICS_BRANCH already contains $DEFAULT_BRANCH."
+            exit 0
+          fi
+          svg_path=docs/assets/weekly-metrics.svg
+          common_base="$(git merge-base "$default_ref" "$metrics_ref")"
+          published_svg="$(git rev-parse "$default_ref:$svg_path")"
+          if [ "$published_svg" != "$(git rev-parse "$common_base:$svg_path")" ]; then
+            # A squash preserves the generated SVG blob even though it changes the commit ID.
+            metrics_commits="$(git log --first-parent --format=%H "$common_base..$metrics_ref" -- "$svg_path")"
+            published_by_automation=false
+            for commit in $metrics_commits; do
+              if [ "$published_svg" = "$(git rev-parse "$commit:$svg_path")" ]; then
+                published_by_automation=true
+                break
+              fi
+            done
+            if [ "$published_by_automation" = false ]; then
+              echo "::error::The default branch has an independent metrics SVG edit. Reconcile the checkpoints before publishing."
+              exit 1
+            fi
+          fi
+          git switch --detach --force "$metrics_ref"
+          git merge --no-commit --no-ff -X ours "$default_ref"
+          git checkout "$metrics_ref" -- "$svg_path"
+          git commit -m "Merge $DEFAULT_BRANCH into $METRICS_BRANCH"
+          # No force: a branch that moved since the fetch is rejected and fails the run.
+          git push origin HEAD:"$METRICS_BRANCH"
+          git switch --detach "$default_ref"
+
       - name: 📚 Restore unmerged metrics history
+        id: restore
         env:
           METRICS_BRANCH: automation/update-weekly-metrics
         run: |
@@ -88,11 +147,13 @@ jobs:
           fi
 
       - name: 📊 Generate weekly metrics SVG
+        id: generate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/update_weekly_metrics.py
 
       - name: 📤 Commit and push metrics update
+        id: push
         env:
           METRICS_BRANCH: automation/update-weekly-metrics
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -118,62 +179,23 @@ jobs:
           # No force: a branch that moved since the restore, or one created meanwhile, makes git reject this
           # push as non-fast-forward and fail the run instead of dropping a checkpoint.
           git push origin HEAD:"$METRICS_BRANCH"
-          # The later steps sync the branch and open the pull request; the link covers a run that stops before them.
+          # The next step opens the pull request. Keep the compare link if that step fails.
           compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${DEFAULT_BRANCH}...${METRICS_BRANCH}?expand=1"
           echo "::notice title=Weekly metrics pushed::Pull request: $compare_url"
           echo "Weekly metrics pushed to \`$METRICS_BRANCH\`. Pull request: $compare_url" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 🔀 Sync metrics branch with the default branch
-        env:
-          METRICS_BRANCH: automation/update-weekly-metrics
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          ls_remote_status=0
-          git ls-remote --exit-code --heads origin "refs/heads/$METRICS_BRANCH" || ls_remote_status=$?
-          if [ "$ls_remote_status" -eq 2 ]; then
-            echo "No $METRICS_BRANCH branch, nothing to sync."
-            exit 0
-          elif [ "$ls_remote_status" -ne 0 ]; then
-            echo "::error::git ls-remote failed for $METRICS_BRANCH"
-            exit "$ls_remote_status"
-          fi
-          # A merge needs the common ancestor, which the shallow checkout lacks. Blobs stay on the server
-          # until the merge needs one.
-          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
-            git fetch --no-tags --filter=blob:none --unshallow origin
-          fi
-          git fetch --no-tags --filter=blob:none origin \
-            "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" \
-            "+refs/heads/$METRICS_BRANCH:refs/remotes/origin/$METRICS_BRANCH"
-          git switch --detach --force "refs/remotes/origin/$METRICS_BRANCH"
-          if git merge-base --is-ancestor "refs/remotes/origin/$DEFAULT_BRANCH" HEAD; then
-            echo "$METRICS_BRANCH already contains $DEFAULT_BRANCH."
-            exit 0
-          fi
-          # The branch only ever edits the SVG and always holds the full history, so its SVG is the right one
-          # even where the squash commit on the default branch edited different lines of the same file;
-          # every other file merges as usual.
-          git merge --no-commit --no-ff -X ours "refs/remotes/origin/$DEFAULT_BRANCH"
-          git checkout "refs/remotes/origin/$METRICS_BRANCH" -- docs/assets/weekly-metrics.svg
-          git commit -m "Merge $DEFAULT_BRANCH into $METRICS_BRANCH"
-          # No force: a branch that moved since the fetch is rejected and fails the run.
-          git push origin HEAD:"$METRICS_BRANCH"
-
       - name: 📬 Open the metrics pull request
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' && steps.restore.outcome == 'success' && (steps.generate.outcome == 'failure' || steps.push.outcome == 'success') }}
         env:
-          # A pull request opened with GITHUB_TOKEN triggers no checks; METRICS_PR_TOKEN does (see the header).
           GH_TOKEN: ${{ secrets.METRICS_PR_TOKEN || secrets.GITHUB_TOKEN }}
           METRICS_BRANCH: automation/update-weekly-metrics
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GENERATION_FAILED: ${{ steps.generate.outcome == 'failure' }}
         run: |
           set -euo pipefail
-          # Runs on every scheduled and manual run, including those with no new data, so a branch whose pull
-          # request was closed or never opened is picked up the next time the workflow runs.
+          # A prior checkpoint can still publish when a failed refresh leaves the restored SVG intact.
           ls_remote_status=0
-          git ls-remote --exit-code --heads origin "refs/heads/$METRICS_BRANCH" || ls_remote_status=$?
+          remote_branch="$(git ls-remote --exit-code --heads origin "refs/heads/$METRICS_BRANCH")" || ls_remote_status=$?
           if [ "$ls_remote_status" -eq 2 ]; then
             echo "No $METRICS_BRANCH branch, nothing to publish."
             exit 0
@@ -181,12 +203,30 @@ jobs:
             echo "::error::git ls-remote failed for $METRICS_BRANCH"
             exit "$ls_remote_status"
           fi
-          open_count="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$METRICS_BRANCH" --base "$DEFAULT_BRANCH" --state open --json number --jq length)"
+          if [ "${GENERATION_FAILED:-false}" = true ]; then
+            if [ "${remote_branch%%[[:space:]]*}" != "${METRICS_BASE_SHA:?No restored metrics branch}" ]; then
+              echo "::error::The metrics branch moved after restore. Retry before publishing."
+              exit 1
+            fi
+            if ! git diff --quiet -- docs/assets/weekly-metrics.svg; then
+              echo "::error::The failed refresh changed the restored SVG. Retry before publishing."
+              exit 1
+            fi
+            python - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.update_weekly_metrics import load_state
+
+          load_state(Path("docs/assets/weekly-metrics.svg"), os.environ["GITHUB_REPOSITORY"], "rfdetr")
+          PY
+          fi
+          open_count="$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
+            -f state=open -f "head=$GITHUB_REPOSITORY_OWNER:$METRICS_BRANCH" -f "base=$DEFAULT_BRANCH" --jq length)"
           if [ "$open_count" -gt 0 ]; then
             echo "A pull request from $METRICS_BRANCH is already open."
             exit 0
           fi
-          # After the sync step the three-dot diff is what a merge would publish, so a branch whose SVG already
+          # After syncing the three-dot diff is what a merge would publish, so a branch whose SVG already
           # matches the default branch opens no empty pull request.
           changed_files="$(gh api "repos/$GITHUB_REPOSITORY/compare/${DEFAULT_BRANCH}...${METRICS_BRANCH}" --jq '.files | length')"
           if [ "$changed_files" -eq 0 ]; then

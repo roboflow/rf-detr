@@ -702,7 +702,16 @@ class TestMetricsApis:
 
     def test_fetch_used_by_reads_dependents_page_repository_count(self, mocker) -> None:
         """The used-by count must come from the dependents page's repository tab, not its package tab."""
-        page = b"<a>\n <svg></svg>\n 1,209\n Repositories\n</a><a>\n 52\n Packages\n</a>"
+        page = (
+            b"<script>const unrelated = '12 Repositories';</script>"
+            b'<a href="/somewhere-else">99 Repositories</a>'
+            b'<a href="/other/project/network/dependents?dependent_type=REPOSITORY">5 Repositories</a>'
+            b'<a href="https://example.com/roboflow/rf-detr/network/dependents?dependent_type=REPOSITORY">'
+            b"6 Repositories</a>"
+            b'<a href="/roboflow/rf-detr/network/dependents?dependent_type=REPOSITORY">'
+            b"<svg></svg>\n 1,209\n Repositories</a>"
+            b'<a href="/roboflow/rf-detr/network/dependents?dependent_type=PACKAGE">52 Packages</a>'
+        )
         urlopen = mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=io.BytesIO(page))
 
         used_by = update_weekly_metrics.fetch_used_by("roboflow/rf-detr")
@@ -713,7 +722,9 @@ class TestMetricsApis:
     def test_parse_used_by_rejects_page_without_repository_count(self) -> None:
         """A changed page layout must raise instead of recording a wrong count."""
         with pytest.raises(update_weekly_metrics.MetricsError, match="no repository count"):
-            update_weekly_metrics.parse_used_by("<html>Sign in to GitHub</html>")
+            update_weekly_metrics.parse_used_by(
+                "<html>Sign in to GitHub</html>", "/roboflow/rf-detr/network/dependents"
+            )
 
     def test_fetch_daily_downloads_reads_without_mirrors_series(self, mocker) -> None:
         """PyPI Stats response must become validated UTC daily counts."""
@@ -980,7 +991,9 @@ class TestMetricsUpdate:
             ).encode()
         )
 
-        dependents_response = io.BytesIO(b"<a> 209 Repositories </a>")
+        dependents_response = io.BytesIO(
+            b'<a href="/roboflow/rf-detr/network/dependents?dependent_type=REPOSITORY">209 Repositories</a>'
+        )
 
         mock_datetime_cls = mocker.patch("datetime.datetime")
         mock_datetime_cls.now.return_value = frozen_now
