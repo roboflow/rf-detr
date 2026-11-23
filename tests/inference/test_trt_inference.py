@@ -599,7 +599,7 @@ def fake_cuda_graphs(monkeypatch: pytest.MonkeyPatch) -> _FakeCudaGraphs:
     Every stand-in first binds its arguments to the installed torch's own signature (see :func:`_signature_checked`),
     so the code under test cannot pass torch an argument it would reject. What a replay computes, and the output
     shapes TensorRT resolves, are not modelled here: ``TestTensorRTEndToEnd`` in
-    ``tests/export/tensorrt/test_tensorrt_export.py`` checks those on a real engine
+    ``tests/export/tensorrt/test_tensorrt_end_to_end.py`` checks those on a real engine
     (``test_cuda_graph_matches_the_plain_call_on_new_inputs`` and
     ``test_cuda_graph_waits_for_an_input_still_in_flight_on_the_callers_stream``), and
     ``test_cuda_graph_is_refused_for_the_dynamic_batch_engine`` replaces the mixed-batch test now that a graph runtime
