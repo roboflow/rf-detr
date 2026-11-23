@@ -6,9 +6,12 @@
 """Tests that the dataset pipeline supplies the channel count the model is configured for (#1727)."""
 
 import json
+import random
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock, PropertyMock
 
 import numpy as np
 import pytest
@@ -16,6 +19,7 @@ import torch
 from PIL import Image
 from pytest_mock import MockerFixture
 
+from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.datasets import transforms
 from rfdetr.datasets._torchvision import Resize
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
@@ -25,7 +29,9 @@ from rfdetr.datasets.transforms import Normalize
 from rfdetr.datasets.webdataset.load import WebDatasetDetection
 from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.datasets.yolo import YoloDetection
+from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.imports import _IS_WEBDATASET_INSTALLED
+from rfdetr.utilities.tensors import NestedTensor
 
 _requires_webdataset = pytest.mark.skipif(not _IS_WEBDATASET_INSTALLED, reason="webdataset not installed")
 
@@ -49,7 +55,7 @@ def _pixels(mode: str) -> np.ndarray:
 
 
 def _write_image(folder: Path, mode: str, name: str = "sample.png") -> Path:
-    """Write :func:`_pixels` for *mode* as a PNG in *folder* and return its path.
+    """Write :func:`_pixels` for *mode* in *folder*, in the format *name* ends with, and return its path.
 
     Examples:
         >>> import tempfile
@@ -122,8 +128,10 @@ def _webdataset_sample(folder: Path, mode: str, num_channels: int) -> Image.Imag
     """Return the first image of a one-image WebDataset split packed from a COCO split in *mode*.
 
     Examples:
-        >>> import tempfile
-        >>> _webdataset_sample(Path(tempfile.mkdtemp()), "RGBA", 4).mode
+        >>> import contextlib, io, tempfile
+        >>> with contextlib.redirect_stdout(io.StringIO()):
+        ...     image = _webdataset_sample(Path(tempfile.mkdtemp()), "RGBA", 4)
+        >>> image.mode
         'RGBA'
     """
     image_dir, annotations = _write_coco(folder, mode)
@@ -158,17 +166,40 @@ class TestDecoders:
 
         np.testing.assert_array_equal(decode(path, 4), _pixels("RGBA"))
 
+    @pytest.mark.parametrize("mode", ["RGB", "RGBA", "LA"])
     @pytest.mark.parametrize("decode", _DECODERS)
-    def test_one_channel_is_grayscale(self, decode: _Decoder, tmp_path: Path) -> None:
-        """An RGB file is converted to one luminance plane, as prediction converts its input."""
-        path = _write_image(tmp_path, "RGB")
+    def test_one_channel_is_grayscale(self, decode: _Decoder, mode: str, tmp_path: Path) -> None:
+        """A colour or alpha-carrying file is converted to one luminance plane, as prediction converts its input."""
+        path = _write_image(tmp_path, mode)
 
         np.testing.assert_array_equal(decode(path, 1), np.asarray(Image.open(path).convert("L")))
 
     @pytest.mark.parametrize("decode", _DECODERS)
-    def test_rgb_file_is_refused_for_four_channels(self, decode: _Decoder, tmp_path: Path) -> None:
+    def test_cmyk_file_converts_to_rgb_and_grayscale(self, decode: _Decoder, tmp_path: Path) -> None:
+        """A CMYK file is a colour file, so the 3- and 1-channel models read it as Pillow converts it."""
+        path = _write_image(tmp_path, "CMYK", "sample.tiff")
+
+        np.testing.assert_array_equal(decode(path, 3), np.asarray(Image.open(path).convert("RGB")))
+        np.testing.assert_array_equal(decode(path, 1), np.asarray(Image.open(path).convert("L")))
+
+    @pytest.mark.parametrize("decode", _DECODERS)
+    def test_la_file_supplies_its_alpha_as_fourth_plane(self, decode: _Decoder, tmp_path: Path) -> None:
+        """A grayscale file with alpha stores a real fourth plane: luminance in RGB, alpha kept as stored."""
+        path = _write_image(tmp_path, "LA")
+        luminance, alpha = _pixels("LA")[..., 0], _pixels("LA")[..., 1]
+
+        np.testing.assert_array_equal(decode(path, 4), np.dstack([luminance, luminance, luminance, alpha]))
+
+    @pytest.mark.parametrize(
+        ("mode", "name"),
+        [("RGB", "sample.png"), ("L", "sample.png"), ("CMYK", "sample.tiff"), ("RGB", "sample.jpg")],
+    )
+    @pytest.mark.parametrize("decode", _DECODERS)
+    def test_file_without_fourth_channel_is_refused_for_four_channels(
+        self, decode: _Decoder, mode: str, name: str, tmp_path: Path
+    ) -> None:
         """A file without a fourth channel raises instead of training on three channels or a made-up fourth."""
-        path = _write_image(tmp_path, "RGB")
+        path = _write_image(tmp_path, mode, name)
 
         with pytest.raises(ValueError, match="has no fourth channel"):
             decode(path, 4)
@@ -225,21 +256,34 @@ class TestDatasetFormats:
         """The stored fourth plane reaches the transform pipeline."""
         np.testing.assert_array_equal(np.asarray(sample(tmp_path, "RGBA", 4)), _pixels("RGBA"))
 
+    @pytest.mark.parametrize("mode", ["RGB", "RGBA", "LA"])
     @pytest.mark.parametrize("sample", _SAMPLES)
-    def test_one_channel_dataset_returns_grayscale(self, sample: Callable[..., Image.Image], tmp_path: Path) -> None:
-        """A grayscale model gets one plane from RGB files."""
-        assert sample(tmp_path, "RGB", 1).mode == "L"
+    def test_one_channel_dataset_returns_grayscale(
+        self, sample: Callable[..., Image.Image], mode: str, tmp_path: Path
+    ) -> None:
+        """A grayscale model gets one plane from colour and alpha-carrying files."""
+        assert sample(tmp_path, mode, 1).mode == "L"
+
+    @pytest.mark.parametrize("sample", _SAMPLES)
+    def test_four_channel_dataset_keeps_la_alpha(self, sample: Callable[..., Image.Image], tmp_path: Path) -> None:
+        """A grayscale-with-alpha file reaches a 4-channel model with its alpha as the fourth plane."""
+        image = np.asarray(sample(tmp_path, "LA", 4))
+
+        np.testing.assert_array_equal(image[..., 3], _pixels("LA")[..., 1])
 
     @pytest.mark.parametrize("sample", _SAMPLES)
     def test_default_dataset_returns_rgb(self, sample: Callable[..., Image.Image], tmp_path: Path) -> None:
         """A 3-channel model keeps getting RGB from RGBA files."""
         assert sample(tmp_path, "RGBA", 3).mode == "RGB"
 
+    @pytest.mark.parametrize("mode", ["RGB", "L"])
     @pytest.mark.parametrize("sample", _SAMPLES)
-    def test_rgb_files_are_refused_for_four_channels(self, sample: Callable[..., Image.Image], tmp_path: Path) -> None:
-        """A 4-channel model on RGB files fails loudly at the first sample."""
+    def test_files_without_fourth_channel_are_refused_for_four_channels(
+        self, sample: Callable[..., Image.Image], mode: str, tmp_path: Path
+    ) -> None:
+        """A 4-channel model on RGB or grayscale files fails loudly at the first sample."""
         with pytest.raises(ValueError, match="has no fourth channel"):
-            sample(tmp_path, "RGB", 4)
+            sample(tmp_path, mode, 4)
 
     @pytest.mark.parametrize("sample", _SAMPLES)
     def test_unsupported_channel_count_is_refused_at_build(
@@ -303,19 +347,77 @@ class TestResize:
             pytest.param(make_coco_transforms_square_div_64, id="square"),
         ],
     )
-    @pytest.mark.parametrize("image_set", ["val", "test"])
+    @pytest.mark.parametrize("image_set", ["val", "test", "train"])
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
     def test_evaluation_pipeline_keeps_color_where_the_fourth_plane_is_zero(
-        self, build: Callable[..., Any], image_set: str
+        self, build: Callable[..., Any], image_set: str, seed: int
     ) -> None:
-        """A zero in the fourth plane, a natural "no data" value, leaves the RGB of a validation image intact."""
+        """A zero in the fourth plane, a natural "no data" value, leaves the RGB intact, augmented or not."""
+        random.seed(seed)
+        torch.manual_seed(seed)
         pixels = np.full((60, 80, 4), 200, dtype=np.uint8)
         pixels[20:40, 20:60, 3] = 0
         target = {"boxes": torch.tensor([[20.0, 20.0, 60.0, 40.0]]), "labels": torch.tensor([1])}
 
-        image, _ = build(image_set, 128)(Image.fromarray(pixels, "RGBA"), target)
+        image, _ = build(image_set, 128, aug_config=None)(Image.fromarray(pixels, "RGBA"), target)
 
         expected = image[:3, :1, :1].expand_as(image[:3])
+        assert image.shape[0] == 4
         torch.testing.assert_close(image[:3], expected)
+
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
+    def test_train_pipeline_keeps_one_channel_for_grayscale(self, seed: int) -> None:
+        """A grayscale image leaves the augmenting train pipeline as one normalized plane."""
+        random.seed(seed)
+        torch.manual_seed(seed)
+        pixels = np.full((60, 80), 200, dtype=np.uint8)
+        target = {"boxes": torch.tensor([[20.0, 20.0, 60.0, 40.0]]), "labels": torch.tensor([1])}
+
+        image, _ = make_coco_transforms("train", 128, aug_config=None)(Image.fromarray(pixels, "L"), target)
+
+        assert image.shape[0] == 1
+        assert torch.isfinite(image).all()
+
+
+class TestTrainingStep:
+    """A model configured for another channel count trains on batches that carry it."""
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_training_step_returns_finite_loss_with_gradient_in_the_stem(
+        self, num_channels: int, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """A Nano model fed a 1- or 4-channel batch produces a loss that reaches the widened stem."""
+        torch.manual_seed(0)
+        model_config = RFDETRNanoConfig(num_channels=num_channels, pretrain_weights=None, device="cpu")
+        train_config = TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        module = RFDETRModelModule(model_config, train_config).train()
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        mocker.patch.object(
+            type(module), "trainer", new_callable=PropertyMock, return_value=SimpleNamespace(accumulate_grad_batches=1)
+        )
+        resolution = model_config.resolution
+        samples = NestedTensor(
+            torch.randn(2, num_channels, resolution, resolution), torch.zeros(2, resolution, resolution, dtype=torch.bool)
+        )
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+                "labels": torch.tensor([1]),
+                "image_id": torch.tensor(index),
+                "orig_size": torch.tensor([resolution, resolution]),
+            }
+            for index in range(2)
+        ]
+
+        loss = module.training_step((samples, targets), batch_idx=0)
+        loss.backward()
+
+        stem = module.model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
+        assert torch.isfinite(loss)
+        assert stem.weight.shape[1] == num_channels
+        assert stem.weight.grad is not None
+        assert stem.weight.grad.abs().sum() > 0
 
 
 class TestDenormalizeForDisplay:

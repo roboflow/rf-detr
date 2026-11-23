@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests that ``num_channels`` reaches the stem of the prediction model, the training model and checkpoint loads."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -12,10 +13,13 @@ import torch
 from pytest_mock import MockerFixture
 
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
+from rfdetr.datasets._aug_utils import cycle_channel_stats
+from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD, build_normalize
 from rfdetr.inference import _build_model_context
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import adapt_input_channels
 from rfdetr.training.module_model import RFDETRModelModule
+from tests._markers import _requires_kornia
 
 
 def _stem(model: LWDETR) -> torch.nn.Conv2d:
@@ -66,18 +70,6 @@ class TestAdaptInputChannels:
         with pytest.raises(ValueError, match="DINOv2 encoders only"):
             adapt_input_channels(model, 4, "pe_core_tiny")
 
-    @pytest.mark.parametrize(("freeze_encoder", "warnings"), [(True, 1), (False, 0)])
-    def test_frozen_stem_is_reported(self, freeze_encoder: bool, warnings: int, mocker: MockerFixture) -> None:
-        """A frozen patch embedding cannot learn the new channels, so widening it warns."""
-        warning = mocker.patch("rfdetr.models.weights.logger.warning")
-
-        _build_model_context(
-            RFDETRNanoConfig(num_channels=4, freeze_encoder=freeze_encoder, pretrain_weights=None, device="cpu")
-        )
-
-        frozen = [call for call in warning.call_args_list if "patch embedding is frozen" in call.args[0]]
-        assert len(frozen) == warnings
-
 
 class TestTrainingModelChannels:
     """The model that ``train()`` optimizes takes ``num_channels`` inputs, like the prediction model."""
@@ -91,6 +83,63 @@ class TestTrainingModelChannels:
         module = RFDETRModelModule(model_config, train_config)
 
         assert _stem(module.model).in_channels == num_channels
+
+    @pytest.mark.parametrize(("freeze_encoder", "warnings"), [(True, 1), (False, 0)])
+    def test_training_module_reports_frozen_stem(
+        self, freeze_encoder: bool, warnings: int, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """A frozen stem of the training model warns, since its filters for the extra channels are not trained."""
+        warning = mocker.patch("rfdetr.training.module_model.logger.warning")
+        model_config = RFDETRNanoConfig(
+            num_channels=4, freeze_encoder=freeze_encoder, pretrain_weights=None, device="cpu"
+        )
+        train_config = TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+
+        RFDETRModelModule(model_config, train_config)
+
+        frozen = [call for call in warning.call_args_list if "patch embedding is frozen" in call.args[0]]
+        assert len(frozen) == warnings
+
+
+class TestPretrainedCheckpointAdaptation:
+    """A 3-channel pretrained checkpoint is loaded as it is, then its stem is adapted to ``num_channels``."""
+
+    @pytest.mark.parametrize(
+        ("num_channels", "expected_stem"),
+        [
+            pytest.param(1, lambda saved: saved.mean(dim=1, keepdim=True), id="mean-over-rgb"),
+            pytest.param(4, lambda saved: torch.cat([saved, saved[:, :1]], dim=1) * 3.0 / 4.0, id="tiled-and-scaled"),
+        ],
+    )
+    def test_three_channel_checkpoint_is_adapted_after_load(
+        self, num_channels: int, expected_stem: Callable[[torch.Tensor], torch.Tensor], tmp_path: Path
+    ) -> None:
+        """Fine-tuning from the released 3-channel weights derives the stem filters from the saved RGB ones."""
+        path, saved_stem = _save_checkpoint(tmp_path, 3)
+        config = RFDETRNanoConfig(num_channels=num_channels, pretrain_weights=path, device="cpu")
+
+        model = _build_model_context(config).model
+
+        torch.testing.assert_close(_stem(model).weight, expected_stem(saved_stem))
+
+
+@_requires_kornia
+class TestKorniaNormalizeChannels:
+    """The Kornia normalizer of the training pipeline accepts tensors with the model's channel count."""
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_normalizes_every_channel_with_cycled_imagenet_statistics(self, num_channels: int) -> None:
+        """A 4-channel batch normalizes its fourth channel like the first, and a 1-channel one uses the red statistics."""
+        normalize = build_normalize(
+            mean=cycle_channel_stats(IMAGENET_MEAN, num_channels), std=cycle_channel_stats(IMAGENET_STD, num_channels)
+        )
+        batch = torch.full((2, num_channels, 8, 8), 0.5)
+
+        normalized = normalize(batch)
+
+        mean = torch.tensor([IMAGENET_MEAN[index % 3] for index in range(num_channels)]).view(1, -1, 1, 1)
+        std = torch.tensor([IMAGENET_STD[index % 3] for index in range(num_channels)]).view(1, -1, 1, 1)
+        torch.testing.assert_close(normalized, ((batch - mean) / std))
 
 
 class TestCheckpointStemAlignment:
