@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-23T11:26:28">
+  <meta property="article:modified_time" content="2026-11-24T13:27:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-23T11:26:28",
+    "dateModified": "2026-11-24T13:27:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4330,7 +4330,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span></code></pre></div>
 <p><code>trt_hardware_compatibility</code> is <code>"ampere_plus"</code> or <code>"same_compute_capability"</code>. The first targets Ampere and every newer GPU, and has to be built on one of them; the second targets GPUs with the same compute capability as the one you build on. TensorRT records the level in the engine. We only had one GPU, so we haven't tested running such an engine on a second one. NVIDIA doesn't support hardware compatibility on Jetson (JetPack) or DriveOS (<a href="https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/engine-compatibility.html">engine compatibility</a>). If your TensorRT doesn't have the level, you get a <code>ValueError</code> before the export runs the model.</p>
 <p><code>trt_version_compatible=True</code> asks for an engine that other releases of the same TensorRT major version may load. It worked between TensorRT 11.2 and 11.3, in both directions. It didn't work across major versions (10 and 11), or between TensorRT 10.13 and 10.16, so test your pair of releases before you rely on it. The build needs TensorRT's lean runtime, which is a separate package: install the lean wheel that matches your <code>tensorrt</code> wheel, for example <a href="https://pypi.org/project/tensorrt-lean-cu13-libs/"><code>tensorrt-lean-cu13-libs</code></a> next to <a href="https://pypi.org/project/tensorrt-cu13-libs/"><code>tensorrt-cu13-libs</code></a> (the version may differ by a <code>.post</code> suffix), or use the library from the TensorRT archive or system package. Without it the export raises <code>ImportError</code> naming the library, before it runs the model.</p>
-<p>The options have a cost, so measure on your own model. In our FP16 tests, <code>ampere_plus</code> made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. <code>same_compute_capability</code> cost nothing we could measure. <code>trt_version_compatible</code> added about 105 MB to an <code>RFDETRNano</code> engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The <a href="https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md">changelog</a> has the numbers.</p>
+<p>The options have a cost, so measure on your own model. In our FP16 tests, <code>ampere_plus</code> made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. <code>same_compute_capability</code> cost nothing we could measure. <code>trt_version_compatible</code> added about 105 MB to an <code>RFDETRNano</code> engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The <a href="https://github.com/roboflow/rf-detr/blob/develop/CHANGELOG.md">changelog</a> has the numbers.</p>
 <p>An engine built by TensorRT 11 with <code>trt_version_compatible=True</code> contains host code, and TensorRT only loads it if you say you trust the file. <code>RFDETRInference</code> takes <code>engine_host_code_allowed</code> in <code>runtime_options</code> for that; it is off by default:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
@@ -4385,7 +4385,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 23, 2026 11:26:28 UTC">2026-11-23 11:26:28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 24, 2026 13:27:17 UTC">2026-11-24 13:27:17</span>
   </span>
 
     
