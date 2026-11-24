@@ -289,7 +289,7 @@ def _probe_step(
         micro_batch_size: Per-device batch size to attempt in this single step.
         resolution: Input spatial size (square) for the synthetic images.
         device: CUDA device the synthetic batch is allocated on.
-        num_classes: Number of classes, used to pick synthetic target labels.
+        num_classes: Number of classes; picks the synthetic label when the criterion has no keypoint schema.
         amp: Whether to run the forward under autocast.
         trainable_params: The model's ``requires_grad`` parameters, in the order ``shadow_params`` was built from --
             index i of one must correspond to index i of the other, which the aliasing loop asserts.
@@ -413,7 +413,7 @@ def probe_max_micro_batch(
         criterion: The loss criterion (must match model output and target format).
         resolution: Input spatial size (square).
         device: CUDA device to run on.
-        num_classes: Number of classes (for synthetic targets).
+        num_classes: Number of classes; picks the synthetic label when the criterion has no keypoint schema.
         amp: Whether to use autocast for the forward.
         segmentation_head: If True, synthetic targets include "masks" for loss_masks.
         max_targets_per_image: Number of synthetic targets per image (worst-case memory).
