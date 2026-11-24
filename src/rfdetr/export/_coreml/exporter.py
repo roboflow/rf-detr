@@ -276,7 +276,9 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             variant_name, output_name, default="backbone_model" if backbone_only else "inference_model"
         )
         # Precision materially changes the artifact (fp16 has larger numeric drift, per the module
-        # docstring) — always encode it, unless the caller asked for an exact custom filename.
+        # docstring) — always encode it, unless the caller asked for an exact custom filename. Any
+        # ``FP16ComputePrecision`` is labelled ``fp16`` whatever ops its ``op_selector`` keeps in float32, matching
+        # coremltools, which lowers ``FLOAT16`` to one.
         if compute_precision == api.float16 or isinstance(compute_precision, api.fp16_transform):
             precision_token = "fp16"
         elif compute_precision == api.float32:
