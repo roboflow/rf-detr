@@ -100,6 +100,38 @@ class PostProcess(nn.Module):
             return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
         return self._postprocess_boxes(scores, labels, boxes)
 
+    @torch.no_grad()
+    def select_queries(
+        self, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Select the top-scoring query/class pairs with the query each comes from, without decoding masks.
+
+        The rows, their order and their values are those :meth:`forward` returns with no ``score_threshold``. The
+        query indices let a caller pick a row's mask logits itself, once it knows which rows it keeps, instead of
+        resizing a mask for every row.
+
+        Args:
+            outputs: Model outputs holding ``pred_logits`` and ``pred_boxes``; other heads are ignored.
+            target_sizes: Per-image ``(height, width)`` tensor with shape ``(B, 2)``.
+
+        Returns:
+            ``(B, K)`` scores, ``(B, K)`` class labels, ``(B, K, 4)`` absolute ``xyxy`` boxes clamped to the image, and
+            ``(B, K)`` query indices, with ``K = min(num_select, Q * C)``.
+
+        Examples:
+            >>> outputs = {
+            ...     "pred_logits": torch.tensor([[[0.0, 2.0], [1.0, -1.0]]]),
+            ...     "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2], [0.25, 0.25, 0.5, 0.5]]]),
+            ... }
+            >>> postprocess = PostProcess(num_select=2)
+            >>> scores, labels, boxes, queries = postprocess.select_queries(outputs, torch.tensor([[10, 20]]))
+            >>> labels.tolist(), queries.tolist(), boxes[0, 1].tolist()
+            ([[1, 0]], [[0, 1]], [0.0, 0.0, 10.0, 5.0])
+        """
+        scores, labels, queries = self._select_topk(outputs["pred_logits"])
+        boxes = self._gather_and_scale_boxes(outputs["pred_boxes"], queries, target_sizes)
+        return scores, labels, boxes, queries
+
     @staticmethod
     def _validate_outputs(
         out_logits: torch.Tensor,
