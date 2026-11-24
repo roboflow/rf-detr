@@ -3228,13 +3228,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>rfdetr</code> no longer depends on <code>transformers</code>. A core install (<code>pip install rfdetr</code>) no longer installs <code>transformers</code>, <code>tokenizers</code>, <code>huggingface_hub</code>, <code>safetensors</code> and their dependencies: 19 fewer packages and 89 MB less in <code>site-packages</code> (CPU PyTorch, Python 3.12, macOS arm64). <code>rfdetr[train]</code> and <code>rfdetr[lora]</code> still install <code>transformers</code> through <code>peft</code>.<ul>
+<li>
+<p><code>rfdetr</code> no longer depends on <code>transformers</code>. A core install (<code>pip install rfdetr</code>) no longer installs <code>transformers</code>, <code>tokenizers</code>, <code>huggingface_hub</code>, <code>safetensors</code> and their dependencies: 19 fewer packages and 89 MB less in <code>site-packages</code> (CPU PyTorch, Python 3.12, macOS arm64). <code>rfdetr[train]</code> and <code>rfdetr[lora]</code> still install <code>transformers</code> through <code>peft</code>.</p>
+<ul>
 <li>Code that imports <code>transformers</code> and relied on <code>rfdetr</code> to install it must install it directly: <code>pip install transformers</code>.</li>
 <li>On a core install, building a patch-14 DINOv2 backbone with 37 positional encodings and <code>pretrain_weights=None</code>, such as the deprecated RF-DETR Base configs, raises an <code>ImportError</code> that asks for <code>huggingface_hub</code> and <code>safetensors</code>.</li>
 <li>On a core install, building a non-windowed <code>DinoV2(use_windowed_attn=False)</code> raises an <code>ImportError</code> that asks for <code>transformers</code>.</li>
 </ul>
 </li>
-<li>Photos with an orientation tag, as phones save them, are read upright, as viewers and annotation tools show them, in training, validation, <code>predict()</code> on a path or URL, INT8 calibration, the export sample image and the export benchmark and COCO scoring helpers. Before, labels drawn on the upright photo landed on the wrong pixels. A PIL image passed to <code>predict()</code> keeps the caller's pixel order. (<a href="https://github.com/roboflow/rf-detr/pull/1739">#1739</a>)<ul>
+<li>
+<p>Photos with an orientation tag, as phones save them, are read upright, as viewers and annotation tools show them, in training, validation, <code>predict()</code> on a path or URL, INT8 calibration, the export sample image and the export benchmark and COCO scoring helpers. Before, labels drawn on the upright photo landed on the wrong pixels. A PIL image passed to <code>predict()</code> keeps the caller's pixel order. (<a href="https://github.com/roboflow/rf-detr/pull/1739">#1739</a>)</p>
+<ul>
 <li>The tag is read as <code>PIL.ImageOps.exif_transpose</code> reads it (EXIF, a PNG <code>Raw profile type exif</code> chunk, or XMP <code>tiff:Orientation</code>); untagged files decode as before, and a file with corrupt EXIF can now raise Pillow's <code>Possibly corrupt EXIF data</code> <code>UserWarning</code>.</li>
 <li>Labels drawn on the stored pixels of tagged photos, such as pseudo-labels from an earlier <code>predict()</code>, no longer line up: regenerate them on the upright photos or strip the orientation metadata. The COCO and WebDataset readers warn once per dataset object when the boxes of a quarter-turned photo fit only its stored frame.</li>
 </ul>
@@ -3252,13 +3256,30 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>EXIF-tagged photos are read upright for training and <code>predict()</code>.</li>
-<li><code>CocoEvaluator</code> scores a ground-truth annotation with id 0 instead of counting its matched detection as a false positive, which understated keypoint AP on YOLO pose datasets and on COCO ground truth with an id-0 annotation. (<a href="https://github.com/roboflow/rf-detr/pull/1738">#1738</a>)</li>
-<li><code>TrainConfig</code> rejects a non-positive <code>lr_vit_layer_decay</code> and a negative <code>lr_component_decay</code>, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. (<a href="https://github.com/roboflow/rf-detr/pull/1718">#1718</a>)</li>
-<li><code>download_pretrain_weights(path, redownload=True)</code> keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.</li>
-<li>Static TensorRT INT8 engines of Atto, Femto and Pico keep <code>fc1</code> and <code>fc2</code> of the first six backbone MLP blocks in FP16. The PE-Core-T backbone has an input range 52 to 55 times its typical 99.9th percentile at block 3's <code>fc2</code>, which one INT8 step per tensor cannot represent: an earlier development build lost 7.0 to 8.7 AP against PyTorch FP32, and with this placement INT8 loses 0.3, 0.2 and 0.7 AP. INT8 is at most 9% faster than FP16 end to end on these sizes, so prefer FP16 unless you need INT8. (<a href="https://github.com/roboflow/rf-detr/pull/1732">#1732</a>)</li>
-<li>Static ONNX INT8 export keeps the attention-value multiply (the <code>MatMul</code> that reads a <code>Softmax</code> output) in float, next to the attention-score multiplies it already kept. 8-bit activations over the [0, 1] attention weights round small weights to zero, and larger sizes have more tokens per window, so the accuracy loss grew with model size. Validation covers six models on 200 val2017 images on arm64 with ONNX Runtime 1.24.3; x86 accuracy and latency have not been revalidated.</li>
-<li><code>RFDETR.export(format="onnx", quantization="int8", int8_keep_mlp_float=True)</code> also keeps GELU-fed weighted projections in float, including the second layer of backbone MLPs. It recognizes both decomposed and native ONNX GELU.</li>
+<li>
+<p>Fine-tuning <code>RFDETRKeypointPreview</code> with an explicit <code>num_keypoints_per_class</code>, such as <code>[17]</code>, or <code>[17, 0]</code> for a dataset with a box-only class, as the custom-dataset example in <code>docs/learn/train/index.md</code> builds it, starts the person class from the pretrained person weights, and box-only classes and the no-object row from the checkpoint's background row. The preview checkpoint keeps the person in class-head row 1 of its background-first schema <code>[0, 17]</code>, and loading it as <code>[17]</code> left the rows in place, so the person class started from the background row: before training the model found no one, and after a 2-epoch fine-tune on a COCO person subset <code>predict()</code> returned only <code>__background__</code> detections with zero keypoints, at validation keypoint mAP 0.027 instead of 0.672. <code>load_pretrain_weights</code> now moves the class-head rows with their classes when it restores the configured schema, once the head has grown for any added classes. (<a href="https://github.com/roboflow/rf-detr/pull/1744">#1744</a>)</p>
+</li>
+<li>
+<p>EXIF-tagged photos are read upright for training and <code>predict()</code>.</p>
+</li>
+<li>
+<p><code>CocoEvaluator</code> scores a ground-truth annotation with id 0 instead of counting its matched detection as a false positive, which understated keypoint AP on YOLO pose datasets and on COCO ground truth with an id-0 annotation. (<a href="https://github.com/roboflow/rf-detr/pull/1738">#1738</a>)</p>
+</li>
+<li>
+<p><code>TrainConfig</code> rejects a non-positive <code>lr_vit_layer_decay</code> and a negative <code>lr_component_decay</code>, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. (<a href="https://github.com/roboflow/rf-detr/pull/1718">#1718</a>)</p>
+</li>
+<li>
+<p><code>download_pretrain_weights(path, redownload=True)</code> keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.</p>
+</li>
+<li>
+<p>Static TensorRT INT8 engines of Atto, Femto and Pico keep <code>fc1</code> and <code>fc2</code> of the first six backbone MLP blocks in FP16. The PE-Core-T backbone has an input range 52 to 55 times its typical 99.9th percentile at block 3's <code>fc2</code>, which one INT8 step per tensor cannot represent: an earlier development build lost 7.0 to 8.7 AP against PyTorch FP32, and with this placement INT8 loses 0.3, 0.2 and 0.7 AP. INT8 is at most 9% faster than FP16 end to end on these sizes, so prefer FP16 unless you need INT8. (<a href="https://github.com/roboflow/rf-detr/pull/1732">#1732</a>)</p>
+</li>
+<li>
+<p>Static ONNX INT8 export keeps the attention-value multiply (the <code>MatMul</code> that reads a <code>Softmax</code> output) in float, next to the attention-score multiplies it already kept. 8-bit activations over the [0, 1] attention weights round small weights to zero, and larger sizes have more tokens per window, so the accuracy loss grew with model size. Validation covers six models on 200 val2017 images on arm64 with ONNX Runtime 1.24.3; x86 accuracy and latency have not been revalidated.</p>
+</li>
+<li>
+<p><code>RFDETR.export(format="onnx", quantization="int8", int8_keep_mlp_float=True)</code> also keeps GELU-fed weighted projections in float, including the second layer of backbone MLPs. It recognizes both decomposed and native ONNX GELU.</p>
+</li>
 </ul>
 <h2 id="1121-2026-11-12">[1.12.1] — 2026-11-12<a class="headerlink" href="#1121-2026-11-12" title="Permanent link">&para;</a></h2>
 <h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
