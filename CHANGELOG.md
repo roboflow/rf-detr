@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - Code that imports `transformers` and relied on `rfdetr` to install it must install it directly: `pip install transformers`.
     - On a core install, building a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, raises an `ImportError` that asks for `huggingface_hub` and `safetensors`.
     - On a core install, building a non-windowed `DinoV2(use_windowed_attn=False)` raises an `ImportError` that asks for `transformers`.
+- Photos with an orientation tag, as phones save them, are read upright, as viewers and annotation tools show them, in training, validation, `predict()` on a path or URL, INT8 calibration, the export sample image and the export benchmark and COCO scoring helpers. Before, labels drawn on the upright photo landed on the wrong pixels. A PIL image passed to `predict()` keeps the caller's pixel order. ([#1739](https://github.com/roboflow/rf-detr/pull/1739))
+    - The tag is read as `PIL.ImageOps.exif_transpose` reads it (EXIF, a PNG `Raw profile type exif` chunk, or XMP `tiff:Orientation`); untagged files decode as before, and a file with corrupt EXIF can now raise Pillow's `Possibly corrupt EXIF data` `UserWarning`.
+    - Labels drawn on the stored pixels of tagged photos, such as pseudo-labels from an earlier `predict()`, no longer line up: regenerate them on the upright photos or strip the orientation metadata. The COCO and WebDataset readers warn once per dataset object when the boxes of a quarter-turned photo fit only its stored frame.
 
 ### Changed
 
@@ -32,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- EXIF-tagged photos are read upright for training and `predict()`.
 - `CocoEvaluator` scores a ground-truth annotation with id 0 instead of counting its matched detection as a false positive, which understated keypoint AP on YOLO pose datasets and on COCO ground truth with an id-0 annotation. ([#1738](https://github.com/roboflow/rf-detr/pull/1738))
 - `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
 - `download_pretrain_weights(path, redownload=True)` keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.

@@ -24,8 +24,9 @@ import rfdetr.export.benchmark as benchmark
 from rfdetr.export._tensorrt import inference as trt_inference
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
-from rfdetr.export.benchmark import _static_dim, box_cxcywh_to_xyxy, infer_transforms, post_process
+from rfdetr.export.benchmark import _static_dim, box_cxcywh_to_xyxy, infer_transforms, load_image, post_process
 from tests._markers import _requires_faster_coco_eval
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 #: Minimal indexed COCO dataset used to verify evaluator construction.
 _MINIMAL_COCO = {
@@ -2020,6 +2021,19 @@ class TestTRTInferenceDevice:
         runtime(runtime.get_dummy_input(batch_size=1))
 
         runtime.context.execute_v2.assert_called_once()
+
+
+class TestBenchmarkLoadImage:
+    """``benchmark.load_image`` reads a tagged photo upright, as ``predict()`` reads a file."""
+
+    def test_tagged_photo_is_upright(self, tmp_path: Path) -> None:
+        """A photo stored 64 x 32 with EXIF orientation 6 loads as ``ImageOps.exif_transpose`` shows it."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        image = load_image(str(photo))
+
+        np.testing.assert_array_equal(np.asarray(image), upright_reference(photo))
 
 
 class TestBenchmarkMain:

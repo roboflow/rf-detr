@@ -30,6 +30,7 @@ from rfdetr.export._benchmark import (
     fetch_coco_val2017,
     select_coco_val_ids,
 )
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 #: Ground truth per image: one box in pixel ``xywh`` and its sparse COCO category ID.
 _GT_BOXES = {1: ([8.0, 8.0, 32.0, 24.0], 18), 2: ([20.0, 4.0, 16.0, 40.0], 90), 3: ([0.0, 0.0, 30.0, 30.0], 1)}
@@ -685,3 +686,31 @@ class TestEvaluateCocoMap:
 
         assert (result.map50_95, result.n_images) == (0.0, 0)
         logger.warning.assert_not_called()
+
+
+class TestCocoImagesAreUpright:
+    """The scoring helpers hand the runtime each photo upright, as ``predict(path)`` and the training readers read
+    it."""
+
+    @pytest.mark.parametrize(
+        "evaluate",
+        [
+            pytest.param(lambda run, subset: evaluate_coco_ap(run, subset, "detect", progress=False), id="ap"),
+            pytest.param(lambda run, subset: evaluate_coco_map(run, subset, progress=False), id="map"),
+        ],
+    )
+    def test_runtime_receives_a_tagged_photo_upright(
+        self, tmp_path: Path, mocker: MockerFixture, evaluate: Callable[[Mock, CocoValSubset], object]
+    ) -> None:
+        """A photo stored 80 x 64 with EXIF orientation 6 reaches the runtime as ``ImageOps.exif_transpose`` shows it.
+
+        The annotation file records it 64 x 80, the upright size its boxes are drawn on.
+        """
+        subset = _write_coco(tmp_path)
+        photo = subset.images_dir / "000000000002.jpg"
+        write_oriented_photo(photo, 6, width=80, height=64)
+        run = mocker.Mock(return_value=sv.Detections.empty())
+
+        evaluate(run, subset)
+
+        np.testing.assert_array_equal(np.asarray(run.call_args_list[1].args[0]), upright_reference(photo))
