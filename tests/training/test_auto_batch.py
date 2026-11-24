@@ -244,6 +244,34 @@ def _probe_step_kwargs(
     return kwargs | overrides
 
 
+def _keypoint_criterion_and_model(
+    tmp_path: Path, num_keypoints_per_class: list[int], num_classes: int
+) -> tuple[torch.nn.Module, torch.nn.Module]:
+    """Return the real keypoint criterion for a schema and a model whose outputs that criterion can score.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     criterion, model = _keypoint_criterion_and_model(Path(tmp), [0, 17], 1)
+        >>> list(criterion.num_keypoints_per_class), model.keypoints.shape[1]
+        ([0, 17], 34)
+    """
+    model_config = RFDETRKeypointPreviewConfig(
+        num_classes=num_classes,
+        num_keypoints_per_class=num_keypoints_per_class,
+        pretrain_weights=None,
+        device="cpu",
+    )
+    train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+    criterion, _ = build_criterion_from_config(model_config, train_config)
+    model = _KeypointOutputsModel(
+        num_logits=num_classes + 1,
+        num_queries=2 * criterion.group_detr,
+        total_keypoints=len(num_keypoints_per_class) * max(num_keypoints_per_class),
+    )
+    return criterion, model
+
+
 @pytest.fixture
 def mock_empty_cache(mocker: MockerFixture) -> MagicMock:
     """Patch ``torch.cuda.empty_cache`` so probe searches run on hosts without CUDA.
@@ -604,36 +632,28 @@ class TestProbeStepKeypointTargets:
             pytest.param([17], 1, id="person"),
             pytest.param([0, 17], 1, id="background_first_person"),
             pytest.param([17, 4], 2, id="two_keypoint_classes"),
+            pytest.param([4, 17], 2, id="largest_class_not_first"),
         ],
     )
     def test_keypoint_loss_scores_visible_keypoints(
         self, tmp_path: Path, num_keypoints_per_class: list[int], num_classes: int
     ) -> None:
-        """The probe step completes, and the keypoint loss sees visible keypoints of a class that has keypoints."""
-        model_config = RFDETRKeypointPreviewConfig(
-            num_classes=num_classes,
-            num_keypoints_per_class=num_keypoints_per_class,
-            pretrain_weights=None,
-            device="cpu",
-        )
-        train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
-        criterion, _ = build_criterion_from_config(model_config, train_config)
-        model = _KeypointOutputsModel(
-            num_logits=num_classes + 1,
-            num_queries=2 * criterion.group_detr,
-            total_keypoints=len(num_keypoints_per_class) * max(num_keypoints_per_class),
-        )
+        """The criterion receives padded, fully visible keypoints labelled with the first class of maximum size."""
+        criterion, model = _keypoint_criterion_and_model(tmp_path, num_keypoints_per_class, num_classes)
         loss_dicts: list[dict[str, torch.Tensor]] = []
+        criterion_targets: list[list[dict[str, torch.Tensor]]] = []
         criterion.register_forward_hook(lambda _module, _inputs, output: loss_dicts.append(output))
+        criterion.register_forward_hook(lambda _module, inputs, _output: criterion_targets.append(inputs[1]))
+        micro_batch_size, max_targets = 2, 3
 
         ok = auto_batch._probe_step(
             **_probe_step_kwargs(
                 model,
                 criterion,
-                micro_batch_size=2,
+                micro_batch_size=micro_batch_size,
                 resolution=32,
                 num_classes=num_classes,
-                max_targets_per_image=3,
+                max_targets_per_image=max_targets,
             )
         )
 
@@ -642,6 +662,36 @@ class TestProbeStepKeypointTargets:
         # Zero would mean every target was labelled with a class that has no keypoints, e.g. the background slot
         # of a ``[0, 17]`` schema, so the probe would not measure the keypoint loss a real person target costs.
         assert losses["loss_keypoints_l1"] > 0
+        # The loss alone cannot tell the first class of maximum size from any other class that has keypoints, nor
+        # visibility 2 from 1, so pin what the targets themselves carry.
+        (targets,) = criterion_targets
+        max_keypoints = max(num_keypoints_per_class)
+        expected_label = num_keypoints_per_class.index(max_keypoints)
+        assert len(targets) == micro_batch_size
+        for target in targets:
+            assert target["labels"].tolist() == [expected_label] * max_targets
+            assert tuple(target["keypoints"].shape) == (max_targets, max_keypoints, 3)
+            assert (target["keypoints"][..., 2] == 2).all()
+
+    @pytest.mark.usefixtures("mock_empty_cache")
+    def test_probe_max_micro_batch_searches_with_keypoint_criterion(self, tmp_path: Path) -> None:
+        """The entry point ``batch_size="auto"`` uses runs every candidate with a keypoint criterion, not just one step."""
+        criterion, model = _keypoint_criterion_and_model(tmp_path, [0, 17], 1)
+
+        safe = auto_batch.probe_max_micro_batch(
+            **_probe_max_kwargs(
+                model,
+                criterion,
+                resolution=32,
+                num_classes=1,
+                device=_CpuAsCuda("cpu"),
+                max_targets_per_image=3,
+                safety_margin=1.0,
+                max_micro_batch=2,
+            )
+        )
+
+        assert safe == 2
 
 
 class TestBuildShadowOptimizer:
