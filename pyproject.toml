@@ -43,6 +43,7 @@ dependencies = [
     "tqdm",                            # progress bars during weight download
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
     "supervision>=0.29.0",       # inference output (Detections, Masks)
+    "pillow>=11.0",                    # image decoding; 11.0 gives a tagged TIFF its upright size on open
     "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
 ]
 
@@ -96,13 +97,8 @@ train = [
     # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
     # falls back internally to the same SciPy solve the matcher would have called, so only speed
     # differs. Measurement evidence: .plans/active/plan-native-linear-assignment.md Phase M3 Item 2.
-    # TODO: pinned to the `0.1.0rc0` pre-release since the stable `0.1.0` (which will carry a
-    #   `>=0.1.0,<0.2.0` floor excluding the 0.0.x line, whose sdist compiled against nvcc) is not
-    #   on PyPI yet. A direct GitHub-archive-URL pin was used here previously — a public index
-    #   rejects that as a `Requires-Dist` entry, which would have failed at the PyPI upload step —
-    #   so this stays a normal PyPI version pin instead. Once 0.1.0 ships, replace this line with:
-    #   "torch-linear-assignment>=0.1.0,<0.2.0",
-    "torch-hungarian==0.1.0rc0",
+    # The `>=0.1.0` floor excludes the 0.0.x line, whose sdist compiled against nvcc.
+    "torch-linear-assignment>=0.1.0,<0.2.0",
     "roboflow",
 ]
 # Transformer Engine's PyTorch extension needs NVIDIA CUDA and a Linux x86-64 build environment.
@@ -133,7 +129,10 @@ onnx = [
 ]
 tensorrt = [
     "onnxruntime-gpu",
-    "tensorrt>=8.6.1",
+    # Capped below 11.5: 11.5.0.63 (2026-11-17) slowed the INT8 engine builds enough that the TensorRT parity job,
+    # 24.5 min on 11.4.0.106, no longer fit its time limit. The INT8 figures in the docs were measured on 11.4.
+    # Lift the cap after re-running the INT8 sections of docs/cookbooks/export-cuda.ipynb on 11.5.
+    "tensorrt>=8.6.1,<11.5",
     "polygraphy",
     # TensorRT >= 11 takes engine precision from the ONNX graph, so fp16=True must cast the graph
     # first. This is that caster: an 87 KiB pure-Python wheel adding no transitive package this
@@ -175,6 +174,16 @@ executorch = [
     # `python_version < '3.14'` marker once executorch ships cp314 wheels.
     "executorch>=1.3,<1.4; python_version < '3.14'",
 ]
+executorch-tensorrt = [
+    # format="executorch", backend="tensorrt": Torch-TensorRT builds the TensorRT engine that the .pte carries, and its
+    # [executorch] extra installs the ExecuTorch release it was built with plus the TensorRT delegate that ExecuTorch's
+    # runtime needs to load that .pte. Validated on 2.15.0 (ExecuTorch 1.6.0, TensorRT 11.4). It pins torch 2.15 and
+    # executorch 1.6, so this extra conflicts with [executorch] (see [tool.uv] conflicts). Linux only: Torch-TensorRT
+    # and its delegate need Python 3.11-3.14 and a CUDA 13 torch, which PyPI ships for Linux but not for Windows. The
+    # extra is empty elsewhere. Validated on Linux x86-64; aarch64 untested: the marker does not exclude aarch64, but no
+    # export or prediction has been run there.
+    "torch-tensorrt[executorch]>=2.15,<2.16; python_version >= '3.11' and python_version < '3.15' and sys_platform == 'linux'",
+]
 coreai = [
     # Apple Core AI (.aimodel) export. coreai-torch requires Python >= 3.11 and coreai-core ships cp311-cp314
     # wheels for macOS arm64 and Linux x86-64 only, so the extra is empty elsewhere and the exporter's own
@@ -184,6 +193,12 @@ coreai = [
     # AIProgram.optimize(), so _coreai/exporter.py no longer calls it; with 0.4.2 it would now save an
     # unoptimized program. Bump this pin only after re-running the e2e_coreai suite against the new version.
     "coreai-torch==0.4.3; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
+    # coreai-torch 0.4.3 pins coreai-core==1.0.0b3, a pre-release. Since coreai-core 1.0.0 was published (2026-11-18), uv 0.9.26
+    # no longer picks a transitive pre-release, and every extra's install-plan check failed with "no version of
+    # coreai-core==1.0.0b3". A direct requirement carrying a pre-release bound makes uv consider pre-releases for this
+    # package. The bound is "<1.0.0rc1", not "<1.0.0": PEP 440 excludes the pre-releases of 1.0.0 from "<1.0.0", which
+    # would exclude 1.0.0b3 itself. Drop this line together with the coreai-torch bump to a release that needs 1.0.0.
+    "coreai-core<1.0.0rc1; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
 ]
 coreml = [
     # torch.export (ExportedProgram) support added in coremltools 8.0 (see
@@ -204,6 +219,10 @@ litert = [
     # pre-1.0 and `convert(...).export(...)` is the only surface this package calls. litert-torch's own
     # metadata pins torch<2.14, which the [tool.uv] conflicts below declare against the typing group.
     "litert-torch>=0.9.4,<1.0",
+    # litert-torch lowers through JAX's StableHLO, and jax/jaxlib 0.12.1 emit a vhlo.fma op that the converter's
+    # StableHLO plugin (v1.19.0) cannot serialize, so every LiteRT export fails with "failed to legalize operation
+    # 'vhlo.fma_v1'". 0.12.0.1 exports fine. Drop this cap once litert-torch or its StableHLO plugin handles the op.
+    "jax<0.12.1",
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -395,6 +414,33 @@ conflicts = [
         { group = "typing" },
         { group = "ci-executorch-pin" },
     ],
+    # executorch-tensorrt pins torch 2.15 (Torch-TensorRT 2.15) and executorch 1.6, so it cannot share an environment
+    # with executorch (executorch<1.4), ci-executorch-pin (torch<2.13), xla (torch==2.9.*), litert (torch<2.14) or the
+    # typing group (torch==2.14.0). With tflite, onnx2tf's numpy==1.26.4 meets ExecuTorch 1.6's numpy>=2.
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "executorch" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { group = "ci-executorch-pin" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "xla" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "litert" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { group = "typing" },
+    ],
+    [
+        { extra = "executorch-tensorrt" },
+        { extra = "tflite" },
+    ],
 ]
 
 [tool.uv.sources]
@@ -481,6 +527,7 @@ markers = [
     "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
     "integration: tests that require optional dependencies or dedicated integration CI (opt-in)",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
+    "e2e_executorch_tensorrt: ExecuTorch backend='tensorrt' export + prediction parity, [executorch-tensorrt] extra (GPU, opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
     "e2e_coreai: Core AI end-to-end convert + numerical parity (needs the macOS 27 Core AI runtime; opt-in)",
     "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
@@ -556,6 +603,8 @@ overrides = [
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
+    "torch_tensorrt", "torch_tensorrt.*",
+    "torch_tensorrt_executorch_runtime", "torch_tensorrt_executorch_runtime.*",
     "coremltools", "coremltools.*",
     "coreai", "coreai.*",
     "coreai_torch", "coreai_torch.*",

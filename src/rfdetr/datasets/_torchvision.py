@@ -395,12 +395,18 @@ class Resize:
         # ~1.52 ms (identical); it only changes tensor input (~0.55 vs 0.45 ms). Kept True so tensor
         # inputs match PIL's always-on antialiasing rather than as a perf lever -- do not flip it to
         # speed up the CPU path; it would not (the cost is PIL.resize itself, not antialiasing).
-        image = functional.resize(
-            image,
-            [new_height, new_width],
-            interpolation=InterpolationMode.BILINEAR,
-            antialias=True,
-        )
+        if isinstance(image, Image.Image) and image.mode in ("LA", "RGBA"):
+            # Pillow weights the color planes of an alpha mode by the last plane when it resamples. That plane is
+            # a data channel here (``num_channels=4``), so each plane is resized on its own.
+            size = (new_width, new_height)
+            image = Image.merge(image.mode, [band.resize(size, Image.Resampling.BILINEAR) for band in image.split()])
+        else:
+            image = functional.resize(
+                image,
+                [new_height, new_width],
+                interpolation=InterpolationMode.BILINEAR,
+                antialias=True,
+            )
         if target is None:
             return image, None
 

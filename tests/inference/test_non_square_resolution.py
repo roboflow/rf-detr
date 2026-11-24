@@ -117,6 +117,23 @@ class TestNonSquareModel:
         with pytest.raises(ValueError, match="optimized for resolution 320x448, but got 448x320"):
             predictor.predict(_image(), threshold=0.0, shape=(448, 320))
 
+    def test_shift_tta_runs_each_pass_on_a_height_width_canvas(self, non_square_model: RFDETRNano) -> None:
+        """``shift_tta`` pads the 320x448 input by one 32-pixel block per side pair and keeps boxes in the image."""
+        network = non_square_model.model.model
+        shapes: list[tuple[int, int]] = []
+        hook = network.register_forward_pre_hook(lambda module, args: shapes.append(tuple(args[0].shape[-2:])))
+
+        try:
+            detections = non_square_model.predict(_image(), threshold=0.0, shift_tta=2)
+        finally:
+            hook.remove()
+
+        assert shapes == [(352, 480), (352, 480)]
+        assert len(detections) > 0
+        assert np.isfinite(detections.xyxy).all()
+        assert detections.xyxy[:, [0, 2]].max() <= 150 + 1e-3
+        assert detections.xyxy[:, [1, 3]].max() <= 90 + 1e-3
+
     def test_traced_predictor_runs_at_height_width(self) -> None:
         """A traced predictor is traced with a ``(height, width)`` example and runs at that shape."""
         model = _build(_RESOLUTION)

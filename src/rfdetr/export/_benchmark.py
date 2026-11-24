@@ -47,6 +47,7 @@ from tqdm.auto import tqdm
 
 from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -1160,7 +1161,8 @@ def evaluate_coco_ap(
     for image_id in tqdm(subset.image_ids, desc="COCO AP", disable=not progress):
         file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
         with Image.open(_coco_image_path(subset.images_dir, file_name)) as image:
-            rgb = image.convert("RGB")
+            # Upright, as predict(path) and the training readers decode it, so the scores match.
+            rgb = upright_image(image, exif_orientation(image)).convert("RGB")
         prediction = _coco_ap_prediction(run(rgb), task)
         if evaluator is None:
             if not prediction:
@@ -1201,9 +1203,10 @@ def evaluate_coco_map(
 ) -> CocoMapResult:
     """Score one runtime's box mAP on a COCO val2017 subset, one image at a time (batch 1).
 
-    *run* receives each image as an RGB PIL image and returns either the raw ``(dets, labels)`` arrays (normalized
-    ``cxcywh`` boxes and class logits, with or without a leading batch axis of one) or already-decoded
-    :class:`supervision.Detections` in pixel ``xyxy`` (the ``RFDETR.predict()`` path). Raw outputs are decoded with
+    *run* receives each image as an RGB PIL image, upright for its EXIF orientation, and returns either the raw
+    ``(dets, labels)`` arrays (normalized ``cxcywh`` boxes and class logits, with or without a leading batch axis of
+    one) or already-decoded :class:`supervision.Detections` in pixel ``xyxy``
+    (the ``RFDETR.predict()`` path). Raw outputs are decoded with
     :func:`~rfdetr.export._runtime.decode.decode_detections` at a 0.001 score floor.
 
     Args:
@@ -1238,7 +1241,8 @@ def evaluate_coco_map(
     for image_id in tqdm(subset.image_ids, desc="COCO mAP", disable=not progress):
         file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
         with Image.open(_coco_image_path(subset.images_dir, file_name)) as image:
-            rgb = image.convert("RGB")
+            # Upright, as predict(path) and the training readers decode it, so the scores match.
+            rgb = upright_image(image, exif_orientation(image)).convert("RGB")
         records += _coco_records(run(rgb), image_id, rgb.size, num_select, background_class_id)
     if not records:
         if subset.image_ids:

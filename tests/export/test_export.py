@@ -906,9 +906,9 @@ def test_rfdetr_export_tensorrt_dynamic_batch_rejects_invalid_bounds(
     """`RFDETR.export(format="tensorrt", dynamic_batch=True)` needs `max_batch_size`, and `batch_size` may not exceed
     it.
 
-    Covers the public facade users call (as opposed to `TestDynamicBatchConfig` in `test_tensorrt_export.py`, which only
-    exercises `TensorRTConfig`). The exporter is constructed and validated before any ONNX conversion starts, and
-    `batch_size > max_batch_size` cannot form a valid optimization profile, so no conversion stubbing is needed.
+    Covers the public facade users call (as opposed to `TestDynamicBatchConfig` in `test_tensorrt_build_engine.py`,
+    which only exercises `TensorRTConfig`). The exporter is constructed and validated before any ONNX conversion starts,
+    and `batch_size > max_batch_size` cannot form a valid optimization profile, so no conversion stubbing is needed.
     """
     model = _make_tensorrt_export_model()
 

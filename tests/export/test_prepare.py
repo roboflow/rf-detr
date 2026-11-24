@@ -12,12 +12,21 @@ format at once — which is exactly why the work was pulled out of ``RFDETR.expo
 from __future__ import annotations
 
 import types
+from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
+from PIL import Image
 
-from rfdetr.export.prepare import ExportGraph, prepare_export_graph, resolve_output_names, validate_export_shape
+from rfdetr.export.prepare import (
+    ExportGraph,
+    make_infer_image,
+    prepare_export_graph,
+    resolve_output_names,
+    validate_export_shape,
+)
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 
 class _DetectorStub(torch.nn.Module):
@@ -265,3 +274,18 @@ class TestValidateExportShapeDefault:
         """Either side of a ``(height, width)`` resolution can make the default shape invalid."""
         with pytest.raises(ValueError, match="default resolution"):
             self._default_shape(resolution)
+
+
+class TestMakeInferImageExifOrientation:
+    """``make_infer_image`` reads a tagged sample image upright, as ``predict()`` reads a file."""
+
+    def test_tagged_photo_traces_as_its_upright_copy(self, tmp_path: Path) -> None:
+        """A photo with EXIF orientation 6 gives the example input of its upright copy."""
+        tagged, upright = tmp_path / "tagged.png", tmp_path / "upright.png"
+        write_oriented_photo(tagged, 6, width=64, height=32)
+        Image.fromarray(upright_reference(tagged)).save(upright)
+        expected = make_infer_image(str(upright), (48, 24), 1, device="cpu")
+
+        inputs = make_infer_image(str(tagged), (48, 24), 1, device="cpu")
+
+        torch.testing.assert_close(inputs, expected, rtol=0, atol=0)

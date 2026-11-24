@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torchvision.transforms as T  # noqa: N812
+from numpy.typing import NDArray
 from supervision import BoxAnnotator, Color, Detections, LabelAnnotator, MaskAnnotator
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from rfdetr.datasets._aug_utils import cycle_channel_stats
+from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.logger import get_logger
 from rfdetr.visualize.training import _ensure_headless_backend
@@ -22,6 +24,31 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
 logger = get_logger()
+
+
+def denormalize_for_display(image: Tensor) -> NDArray[np.uint8]:
+    """Undo training normalization and return an RGB picture of an image with any channel count.
+
+    The statistics are cycled over the channels, as training normalizes them.  The first three channels are shown; a
+    single channel is shown as gray.
+
+    Args:
+        image: Normalized image tensor of shape ``(C, H, W)``.
+
+    Returns:
+        ``(H, W, 3)`` uint8 pixels.
+
+    Examples:
+        >>> import torch
+        >>> denormalize_for_display(torch.zeros(4, 2, 5)).shape
+        (2, 5, 3)
+    """
+    channels = image.shape[0]
+    mean = image.new_tensor(cycle_channel_stats(IMAGENET_MEAN, channels)).view(-1, 1, 1)
+    std = image.new_tensor(cycle_channel_stats(IMAGENET_STD, channels)).view(-1, 1, 1)
+    pixels = (image * std + mean).clamp(0.0, 1.0)
+    pixels = pixels[:3] if channels >= 3 else pixels[:1].expand(3, -1, -1)
+    return np.ascontiguousarray((pixels.detach().cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8))
 
 
 class DatasetGridSaver:
@@ -60,10 +87,6 @@ class DatasetGridSaver:
                 "matplotlib is required for dataset grids. Install it with: pip install matplotlib"
             ) from exc
 
-        inv_normalize = T.Normalize(
-            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
-            std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
-        )
         mask_annotator = MaskAnnotator(opacity=0.45)
         box_annotator = BoxAnnotator(thickness=2)
         label_annotator = LabelAnnotator(
@@ -88,7 +111,6 @@ class DatasetGridSaver:
                     single_image,
                     single_target,
                     axes[num_plotted],
-                    inv_normalize,
                     mask_annotator,
                     box_annotator,
                     label_annotator,
@@ -109,7 +131,6 @@ class DatasetGridSaver:
         single_image: Tensor,
         single_target: dict[str, Any],
         ax: Axes,
-        inv_normalize: T.Normalize,
         mask_annotator: MaskAnnotator,
         box_annotator: BoxAnnotator,
         label_annotator: LabelAnnotator,
@@ -121,7 +142,6 @@ class DatasetGridSaver:
             single_target: Target dict with keys ``'size'``, ``'boxes'`` (cx,cy,wh normalized), ``'labels'``, and
                 optionally ``'masks'``.
             ax: Matplotlib axis to plot the annotated image on.
-            inv_normalize: Inverse normalization transform to convert the tensor back to pixel values.
             mask_annotator: ``MaskAnnotator`` instance for drawing instance masks.
             box_annotator: ``BoxAnnotator`` instance for drawing bounding boxes.
             label_annotator: ``LabelAnnotator`` instance for drawing class labels.
@@ -133,12 +153,7 @@ class DatasetGridSaver:
             resized_size = resized_size.detach().cpu()
         h, w = int(resized_size[0]), int(resized_size[1])
 
-        de_normalized_img = inv_normalize(single_image[:, :h, :w])
-        if isinstance(de_normalized_img, Tensor):
-            de_normalized_img = de_normalized_img.detach().cpu().numpy()
-        scene = PILImage.fromarray(
-            np.ascontiguousarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
-        )
+        scene = PILImage.fromarray(denormalize_for_display(single_image[:, :h, :w]))
 
         if len(single_target["boxes"]) > 0:
             labels_tensor = single_target["labels"]

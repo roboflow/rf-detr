@@ -24,6 +24,7 @@ from torchvision.datasets import VisionDataset
 from rfdetr.config import MultiScale
 from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
 from rfdetr.datasets._keypoint_schema import YoloKeypointSchema, infer_yolo_keypoint_schema
+from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets._torchvision import Compose
 from rfdetr.datasets._yolo_yaml import _extract_yolo_class_names_from_data, _load_yaml_mapping
 from rfdetr.datasets.coco import (
@@ -32,6 +33,7 @@ from rfdetr.datasets.coco import (
 )
 from rfdetr.datasets.io_utils import decode_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
+from rfdetr.utilities.exif import exif_orientation, swaps_axes
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -161,6 +163,8 @@ class _LazyYoloDetectionDataset:
     def __init__(self, classes: list[str], samples: list[_LazyYoloSample]) -> None:
         self.classes = classes
         self._samples = samples
+        #: Input channel count images are decoded for; ``YoloDetection`` sets it from its own ``num_channels``.
+        self.num_channels = 3
 
     def __len__(self) -> int:
         return len(self._samples)
@@ -168,7 +172,7 @@ class _LazyYoloDetectionDataset:
     def __getitem__(self, idx: int) -> tuple[str, NDArray[np.uint8], Detections]:
         sample = self._samples[idx]
         try:
-            rgb_image, _ = decode_image(Path(sample.image_path))
+            rgb_image, _ = decode_image(Path(sample.image_path), num_channels=self.num_channels)
         except (FileNotFoundError, OSError, UnidentifiedImageError) as exc:
             raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
         return sample.image_path, rgb_image, sample.to_detections()
@@ -410,6 +414,9 @@ def _build_yolo_samples(
         label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
         with Image.open(image_path) as image:
             width, height = image.size
+            # YOLO coordinates are relative to the photo as shown upright, which is how decode_image returns it.
+            if swaps_axes(exif_orientation(image)):
+                width, height = height, width
 
         xyxy: list[NDArray[np.float32]] = []
         class_id: list[int] = []
@@ -1160,6 +1167,8 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             When True polygons are parsed and rasterized on demand; when False only bounding-box coordinates are stored.
         include_keypoints: Whether to load Ultralytics YOLO pose keypoints.
         num_keypoints_per_class: Optional keypoint schema used by RF-DETR.
+        num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  ``3`` (the
+            default) loads RGB, ``1`` grayscale and ``4`` RGBA, for which every image must store a fourth channel.
     """
 
     def __init__(
@@ -1171,9 +1180,11 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         include_masks: bool = False,
         include_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
+        num_channels: int = 3,
     ):
         if include_masks and include_keypoints:
             raise ValueError("YOLO segmentation masks and keypoints cannot be loaded at the same time.")
+        image_mode(num_channels)  # refuse a channel count image files cannot supply before reading labels
         super().__init__(img_folder)
         self._transforms = transforms
         self.include_masks = include_masks
@@ -1208,6 +1219,7 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
         else:
             self.sv_dataset = _build_lazy_yolo_detection_dataset(img_folder, lb_folder, data_file)
 
+        self.sv_dataset.num_channels = num_channels
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))
 
@@ -1323,6 +1335,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int | tuple[
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            num_channels=getattr(args, "num_channels", 3),
         )
     else:
         dataset = YoloDetection(
@@ -1345,5 +1358,6 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int | tuple[
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
+            num_channels=getattr(args, "num_channels", 3),
         )
     return dataset
