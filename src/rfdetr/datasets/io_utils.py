@@ -27,9 +27,9 @@ import subprocess
 import sys
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import IO, TypeVar
+from typing import IO, Any, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,8 +38,10 @@ try:
     import simplejpeg  # type: ignore[import-untyped,import-not-found,unused-ignore]
 except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to Pillow without it
     simplejpeg = None
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, JpegImagePlugin, UnidentifiedImageError
 
+from rfdetr.datasets._pillow_worker import convert_image, image_mode
+from rfdetr.utilities.exif import exif_orientation, swaps_axes, upright_image
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -54,6 +56,10 @@ _IMAGE_READ_ATTEMPTS = 3
 _IMAGE_READ_BACKOFF_SECONDS = 0.5
 # Following samples tried in place of an unreadable one; bounded so that a broken dataset or filesystem still raises.
 _MAX_SUBSTITUTIONS = 10
+
+#: Pixels a COCO box may run past the decoded image before it counts as drawn in another frame.  Annotation tools round
+#: box corners, and ``ConvertCoco`` clamps such small overruns without comment.
+_BOX_OVERRUN_TOLERANCE = 1.0
 
 
 def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> int:
@@ -193,14 +199,62 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
     raise UnidentifiedImageError(f"cannot identify image file {source!r}")
 
 
-def _decode_with_pillow(
-    source: Path | IO[bytes], draft_size: int | None, max_image_pixels: int | None = None
+def _upright_decode(
+    image: Image.Image, scales: tuple[float, float], orientation: int
 ) -> tuple[Image.Image, tuple[float, float]]:
-    """Decode a file or an in-memory stream through Pillow into an RGB image with its decode scales.
+    """Turn a decoded image upright for its EXIF orientation, keeping each decode scale with the axis it measures.
+
+    Args:
+        image: Decoded RGB image in the order the file stores its pixels.
+        scales: Horizontal and vertical decode scales of ``image``, measured on the stored axes.
+        orientation: The file's EXIF orientation.
+
+    Returns:
+        The upright image and its horizontal/vertical decode scales; a quarter turn swaps the two.
+
+    Examples:
+        >>> image, scales = _upright_decode(Image.new("RGB", (6, 2)), (0.5, 0.25), orientation=6)
+        >>> image.size, scales
+        ((2, 6), (0.25, 0.5))
+    """
+    if swaps_axes(orientation):
+        scales = (scales[1], scales[0])
+    return upright_image(image, orientation), scales
+
+
+def _jpeg_orientation(data: bytes) -> int:
+    """Read the EXIF orientation of encoded JPEG bytes from their header, without decoding any pixels.
+
+    Args:
+        data: Encoded JPEG bytes.
+
+    Returns:
+        The orientation, or ``1`` when the header is one Pillow cannot parse.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="JPEG")
+        >>> _jpeg_orientation(encoded.getvalue())
+        1
+    """
+    try:
+        # Constructing the plugin directly parses the markers without ``Image.open``'s decompression-bomb check, which
+        # the caller applies itself.
+        with JpegImagePlugin.JpegImageFile(io.BytesIO(data)) as header:
+            return exif_orientation(header)
+    except (SyntaxError, IndexError, TypeError, struct.error, OSError):
+        return 1  # simplejpeg then decodes the bytes, or rejects them for Pillow to report
+
+
+def _decode_with_pillow(
+    source: Path | IO[bytes], draft_size: int | None, max_image_pixels: int | None = None, num_channels: int = 3
+) -> tuple[Image.Image, tuple[float, float]]:
+    """Decode a file or an in-memory stream through Pillow into an upright image (RGB by default) and its decode scales.
 
     The Pillow half of the decoder policy every entry point shares: ``PIL.Image.draft`` applies the JPEG reduction when
-    ``draft_size`` is set (a no-op for other formats) and ``convert("RGB")`` loads the pixels into an image that
-    outlives the closed source.
+    ``draft_size`` is set (a no-op for other formats), ``convert("RGB")`` loads the pixels into an image that outlives
+    the closed source, and the image is turned upright for its EXIF orientation, as viewers and annotation tools show
+    it.
 
     Pillow reports some corrupt files with a ``SyntaxError`` while loading the pixels, for example a PNG whose chunk
     header between two image data chunks is cut short or damaged.  That error is raised here as an ``OSError``
@@ -210,11 +264,14 @@ def _decode_with_pillow(
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
         max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+        num_channels: Input channel count of the model: ``1`` decodes to ``L``, ``3`` to ``RGB`` and ``4`` to ``RGBA``.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
 
     Raises:
+        ValueError: If image files cannot supply *num_channels* channels, or ``num_channels=4`` and the image stores
+            no fourth channel.
         OSError: If the file is missing, truncated, unidentifiable or corrupt.
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
 
@@ -225,6 +282,7 @@ def _decode_with_pillow(
         >>> image.mode, image.size, scales
         ('RGB', (32, 16), (0.5, 0.5))
     """
+    mode = image_mode(num_channels)
     process_limit = Image.MAX_IMAGE_PIXELS
     if max_image_pixels is not None and process_limit is not None and max_image_pixels > process_limit:
         # Pillow plugins may check the global limit while opening or loading; isolate those checks per decode.
@@ -234,6 +292,7 @@ def _decode_with_pillow(
             str(Path(__file__).with_name("_pillow_worker.py")),
             str(max_image_pixels),
             str(draft_size or 0),
+            mode,
         ]
         command.append("strict")
         data = None
@@ -252,7 +311,7 @@ def _decode_with_pillow(
             if "warning" not in header:
                 break
             warnings.warn(header["warning"], Image.DecompressionBombWarning, stacklevel=2)
-            command[5] = "allow"
+            command[6] = "allow"
         if "error" in header:
             errors = {
                 "DecompressionBombError": Image.DecompressionBombError,
@@ -271,17 +330,19 @@ def _decode_with_pillow(
         }
         for message, category in header["warnings"]:
             warnings.warn(message, warning_categories.get(category, UserWarning), stacklevel=2)
-        return Image.frombytes("RGB", tuple(header["size"]), pixels), tuple(header["scales"])
+        image = Image.frombytes(mode, tuple(header["size"]), pixels)
+        return _upright_decode(image, tuple(header["scales"]), header["orientation"])
 
     with _open_image(source, max_image_pixels) as image:
         full_width, full_height = image.size
         if draft_size is not None:
             image.draft("RGB", (draft_size, draft_size))
+        orientation = exif_orientation(image)
         try:
-            rgb_image = image.convert("RGB")
+            rgb_image = convert_image(image, mode, str(source) if isinstance(source, Path) else "The image")
         except SyntaxError as exc:
             raise OSError(str(exc)) from exc
-    return rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height)
+    return _upright_decode(rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height), orientation)
 
 
 def _decode_with_simplejpeg(
@@ -289,8 +350,10 @@ def _decode_with_simplejpeg(
 ) -> tuple[NDArray[np.uint8], tuple[float, float]] | None:
     """Decode JPEG bytes with ``simplejpeg``, or return ``None`` to leave them to Pillow.
 
-    ``None`` when ``simplejpeg`` is not installed, when ``data`` does not start with a JPEG marker, or when
-    ``simplejpeg`` rejects it as corrupt or unsupported, so that Pillow decodes it or raises its usual error.
+    ``None`` when ``simplejpeg`` is not installed, when ``data`` does not start with a JPEG marker, when
+    ``simplejpeg`` rejects it as corrupt or unsupported, so that Pillow decodes it or raises its usual error, or when
+    the JPEG has an EXIF orientation other than 1: ``simplejpeg`` returns the pixels in stored order, and Pillow turns
+    them upright.
 
     Args:
         data: Encoded image bytes.
@@ -311,6 +374,8 @@ def _decode_with_simplejpeg(
         return None
     try:
         header = simplejpeg.decode_jpeg_header(data)
+        if _jpeg_orientation(data) != 1:
+            return None
         full_height, full_width = int(header[0]), int(header[1])
         # Pillow's guard on public names, so the limit and its warn/raise tiers stay those of ``Image.open``.
         _check_decompression_bomb(full_width, full_height, max_image_pixels)
@@ -355,7 +420,9 @@ def _read_simplejpeg_candidate(path: Path) -> bytes | None:
         return encoded.read()
 
 
-def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+def decode_image(
+    path: Path, draft_size: int | None = None, num_channels: int = 3
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
     """Decode an image file to RGB, optionally downscaling during the JPEG discrete cosine transform (DCT) decode.
 
     JPEG files go through ``simplejpeg`` (libjpeg-turbo straight into a NumPy buffer) when it is installed.  Its
@@ -373,6 +440,10 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
     keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
 
+    Pixels come back upright for the file's EXIF orientation, the way viewers and annotation tools show a photo and
+    therefore the frame its labels were drawn in. ``simplejpeg`` cannot turn a JPEG, so one whose orientation is not 1
+    goes to Pillow; the decode scales are reported for the upright axes.
+
     ``RFDETR.predict()`` does not use this function for local files: ``rfdetr.detr._decode_local_image`` decodes them
     with torchvision, a core dependency, straight into the CHW tensor inference consumes, because ``simplejpeg`` is
     only installed with the ``[train]`` extra and this function returns HWC NumPy arrays.
@@ -380,22 +451,28 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     Args:
         path: Image file to decode.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
-        decoder did not reduce.
+        decoder did not reduce.  ``(H, W)`` for ``num_channels=1`` and ``(H, W, 4)`` for ``num_channels=4``.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    data = _read_simplejpeg_candidate(path)
+    # ``simplejpeg`` is the RGB fast path; other channel counts are Pillow's.
+    data = _read_simplejpeg_candidate(path) if num_channels == 3 else None
     if data is not None:
         return decode_image_bytes(data, draft_size)
-    image, scales = _decode_with_pillow(path, draft_size)
+    image, scales = _decode_with_pillow(path, draft_size, num_channels=num_channels)
     return np.array(image), scales
 
 
-def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+def decode_image_bytes(
+    data: bytes, draft_size: int | None = None, num_channels: int = 3
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
     """Decode encoded image bytes to RGB, optionally downscaling during the JPEG DCT (discrete cosine transform) decode.
 
     Holds the decoder policy :func:`decode_image` applies to encoded bytes already in memory; :func:`decode_image`
@@ -404,23 +481,26 @@ def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDAr
     Args:
         data: Encoded image bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
-        decoder did not reduce.
+        decoder did not reduce.  ``(H, W)`` for ``num_channels=1`` and ``(H, W, 4)`` for ``num_channels=4``.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    decoded = _decode_with_simplejpeg(data, draft_size)
+    decoded = _decode_with_simplejpeg(data, draft_size) if num_channels == 3 else None
     if decoded is not None:
         return decoded
-    image, scales = _decode_with_pillow(io.BytesIO(data), draft_size)
+    image, scales = _decode_with_pillow(io.BytesIO(data), draft_size, num_channels=num_channels)
     return np.array(image), scales
 
 
 def decode_pil_image(
-    path: Path, draft_size: int | None = None, max_image_pixels: int | None = None
+    path: Path, draft_size: int | None = None, max_image_pixels: int | None = None, num_channels: int = 3
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Decode an image file to an RGB PIL image under the same decoder policy as :func:`decode_image`.
 
@@ -438,21 +518,25 @@ def decode_pil_image(
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
         max_image_pixels: Decompression-bomb limit for this image, used when it is higher than
             ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image (RGB by default) and its horizontal/vertical decode scales, both ``1.0`` when the decoder did
+        not reduce.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    data = _read_simplejpeg_candidate(path)
+    data = _read_simplejpeg_candidate(path) if num_channels == 3 else None
     if data is not None:
         return decode_pil_image_bytes(data, draft_size, max_image_pixels)
-    return _decode_with_pillow(path, draft_size, max_image_pixels)
+    return _decode_with_pillow(path, draft_size, max_image_pixels, num_channels)
 
 
 def decode_pil_image_bytes(
-    data: bytes, draft_size: int | None = None, max_image_pixels: int | None = None
+    data: bytes, draft_size: int | None = None, max_image_pixels: int | None = None, num_channels: int = 3
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Decode encoded image bytes to an RGB PIL image under the same decoder policy as :func:`decode_image_bytes`.
 
@@ -466,18 +550,22 @@ def decode_pil_image_bytes(
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
         max_image_pixels: Decompression-bomb limit for this image, used when it is higher than
             ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image (RGB by default) and its horizontal/vertical decode scales, both ``1.0`` when the decoder did
+        not reduce.
 
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    decoded = _decode_with_simplejpeg(data, draft_size, max_image_pixels)
+    decoded = _decode_with_simplejpeg(data, draft_size, max_image_pixels) if num_channels == 3 else None
     if decoded is not None:
         pixels, scales = decoded
         return Image.fromarray(pixels), scales
-    return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels)
+    return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels, num_channels)
 
 
 class _KnownUnreadableImageError(OSError):
@@ -656,3 +744,111 @@ def read_image_or_substitute(
         path_of(candidate),
     )
     return candidate, result
+
+
+def _boxes_fit_only_turned(annotations: Iterable[Mapping[str, Any]], size: tuple[float, float]) -> bool:
+    """Return whether COCO boxes run past an image of ``size`` but fit it with its width and height swapped.
+
+    Args:
+        annotations: COCO annotations whose ``bbox`` is ``[x, y, width, height]`` in the pixels of the image.
+        size: Width and height of the decoded image.
+
+    Returns:
+        ``True`` when some box runs more than ``_BOX_OVERRUN_TOLERANCE`` past the image and every box fits the image
+        turned a quarter; ``False`` otherwise, including when there are no boxes or a ``bbox`` is not four numbers.
+
+    Examples:
+        >>> _boxes_fit_only_turned([{"bbox": [90, 5, 50, 20]}], (100, 160))
+        True
+        >>> _boxes_fit_only_turned([{"bbox": [10, 5, 50, 20]}], (100, 160))
+        False
+        >>> _boxes_fit_only_turned([{"bbox": [90, 5, 50, 120]}], (100, 160))
+        False
+    """
+    width, height = size
+    right = bottom = 0.0
+    for annotation in annotations:
+        try:
+            x, y, box_width, box_height = (float(value) for value in annotation["bbox"])
+        except (KeyError, TypeError, ValueError):
+            return False  # a malformed box is ConvertCoco's to report
+        right = max(right, x + box_width)
+        bottom = max(bottom, y + box_height)
+    overruns = right > width + _BOX_OVERRUN_TOLERANCE or bottom > height + _BOX_OVERRUN_TOLERANCE
+    fits_turned = right <= height + _BOX_OVERRUN_TOLERANCE and bottom <= width + _BOX_OVERRUN_TOLERANCE
+    return overruns and fits_turned
+
+
+def _turned_a_quarter(source: Path | bytes, max_image_pixels: int | None) -> bool:
+    """Return whether the decoders turn this image a quarter for its EXIF orientation, reading only its header.
+
+    Args:
+        source: Image file path, or the encoded bytes.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+
+    Returns:
+        ``True`` for orientations 5 to 8; ``False`` otherwise, and when the header cannot be read.
+
+    Examples:
+        >>> exif = Image.Exif()
+        >>> exif[0x0112] = 6
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="JPEG", exif=exif.tobytes())
+        >>> _turned_a_quarter(encoded.getvalue(), max_image_pixels=None)
+        True
+        >>> _turned_a_quarter(b"not an image", max_image_pixels=None)
+        False
+    """
+    stream: Path | IO[bytes] = io.BytesIO(source) if isinstance(source, bytes) else source
+    try:
+        with _open_image(stream, max_image_pixels) as header:
+            return swaps_axes(exif_orientation(header))
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return False  # the decode already read this file; a header that fails now gives no evidence either way
+
+
+def _warn_if_labels_follow_stored_pixels(
+    source: Path | bytes,
+    annotations: Iterable[Mapping[str, Any]],
+    size: tuple[int, int],
+    *,
+    label: str,
+    max_image_pixels: int | None = None,
+) -> bool:
+    """Warn when COCO boxes fit a quarter-turned photo only as its file stores the pixels, not upright.
+
+    The decoders return a photo upright for its EXIF orientation, the frame viewers and annotation tools show.  Labels
+    drawn on the stored pixels instead, by a tool that ignores the tag or as pseudo-labels from ``predict()`` of an
+    rfdetr release that did not turn photos, miss their objects.  A box that runs past the upright image but fits it
+    with the axes swapped is the visible sign; the header is read only then, so a sample without that sign costs one
+    pass over its boxes.  A square photo, and boxes that fit both frames, give no sign and are not reported.
+
+    Readers call this once per sample until it returns ``True``, so it warns once per dataset object: once per
+    DataLoader worker process, whose copy of the dataset keeps its own record.
+
+    Args:
+        source: Image file path, or the encoded bytes.
+        annotations: The sample's COCO annotations, in the pixels of the decoded image.
+        size: Width and height of the decoded, upright image.
+        label: How the warning names the image.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+
+    Returns:
+        Whether it warned.
+
+    Examples:
+        >>> _warn_if_labels_follow_stored_pixels(b"", [{"bbox": [1, 2, 3, 4]}], (100, 160), label="photo.jpg")
+        False
+    """
+    if not _boxes_fit_only_turned(annotations, size) or not _turned_a_quarter(source, max_image_pixels):
+        return False
+    warnings.warn(
+        f"{label}: its EXIF orientation turns it a quarter, and its boxes fit the photo only as the file stores the "
+        "pixels, not upright. RF-DETR reads such photos upright, as viewers and annotation tools show them, so labels "
+        "drawn on the stored pixels (for example pseudo-labels from predict() of an earlier rfdetr release) miss "
+        "their objects. Regenerate or convert the labels on the upright photos, or remove the orientation metadata "
+        "from the image files so that they are read as stored.",
+        UserWarning,
+        stacklevel=2,
+    )
+    return True

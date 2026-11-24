@@ -858,9 +858,7 @@ class ModelConfig(BaseConfig):
         # variant default, prevent the published checkpoint from loading cleanly.
         # Includes major architecture knobs, "less obvious" knobs (bbox_reparam,
         # lite_refpoint_refine, layer_norm, two_stage), defense-in-depth for
-        # fields that currently raise hard errors (patch_size, segmentation_head),
-        # and num_channels (loads via heuristic but result isn't real pretrained
-        # weights for the new input domain).
+        # fields that currently raise hard errors (patch_size, segmentation_head).
         breaking_fields: tuple[str, ...] = (
             "encoder",
             "hidden_dim",
@@ -878,7 +876,6 @@ class ModelConfig(BaseConfig):
             "two_stage",
             "patch_size",
             "segmentation_head",
-            "num_channels",
         )
         # Fields where only an *increase* above the variant default is load-breaking:
         # group_detr adds groups whose shape differs — decrease is fine. num_queries is not listed: the loader pads

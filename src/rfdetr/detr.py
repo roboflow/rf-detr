@@ -39,6 +39,7 @@ from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets._keypoint_schema import (
     active_keypoint_counts,
     infer_coco_keypoint_schema,
@@ -765,12 +766,10 @@ class RFDETR:
         self.means = list(self.means)
         self.stds = list(self.stds)
 
-        # repeat means and stds for non-rgb images
+        # repeat means and stds for non-rgb images, the rule training normalization applies too
         if self.model_config.num_channels != 3:
-            from itertools import cycle
-
-            self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
-            self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
+            self.means = list(cycle_channel_stats(self.means, self.model_config.num_channels))
+            self.stds = list(cycle_channel_stats(self.stds, self.model_config.num_channels))
 
         self.model.inference_model = None
         self._is_optimized_for_inference = False
@@ -2146,10 +2145,11 @@ class RFDETR:
         coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
+        int8_keep_mlp_float: bool = False,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/exports/>`_ for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/latest/exports/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
@@ -2374,6 +2374,9 @@ class RFDETR:
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
                 Ignored for every other format.
+            int8_keep_mlp_float: For ONNX INT8, also keep GELU-fed weighted projections in float. This includes the
+                second layer of backbone MLPs and can include other projections, such as in segmentation heads.
+                Defaults to ``False``. Refused for ONNX without ``quantization="int8"`` and ignored for other formats.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -2533,6 +2536,7 @@ class RFDETR:
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
+            int8_keep_mlp_float=int8_keep_mlp_float,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
             trt_metadata=trt_metadata,
@@ -3038,7 +3042,8 @@ class RFDETR:
                         f"Loaded checkpoint uses a legacy background-first keypoint schema "
                         f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
                         f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
-                        f"to slot 0; checkpoint head weights are now misaligned. "
+                        f"to slot 0; the pretrained class-head rows move with it when the weights are reloaded for "
+                        f"training. "
                         f"Pass num_keypoints_per_class={current_schema!r} to the model constructor "
                         f"to keep the legacy schema.",
                         UserWarning,
@@ -3221,6 +3226,7 @@ class RFDETR:
         include_source_image: bool = True,
         *,
         antialias: bool = False,
+        shift_tta: int = 1,
         **kwargs: Any,
     ) -> _PredictionOutput:
         """Performs model inference on the input images.
@@ -3272,6 +3278,16 @@ class RFDETR:
                 models; callers can override it with an explicit ``antialias`` argument. The lower-level
                 ``rfdetr.export`` runtime preprocessing helpers always resize with ``antialias=False``.
                 Defaults to ``False`` to preserve the existing inference behavior.
+            shift_tta:
+                Number of passes of sub-patch shift test-time augmentation; ``1`` (the default) runs one plain pass.
+                The backbone reads the image in ``patch_size`` squares, and a class score can change when an object
+                moves by a fraction of a square while its box stays put, enough to cross the threshold. With
+                ``shift_tta=N`` the image is predicted ``N`` times, moved by ``0, patch_size/N, 2*patch_size/N, ...``
+                model pixels (diagonally, on a canvas one ``patch_size * num_windows`` block larger, so nothing is
+                cropped), and the matching detections are averaged: same class, box IoU above 0.6, a pass that
+                missed the object counting as 0. ``2`` or ``4`` is a good choice; it costs ``N`` forward passes.
+                Must be an integer from 1 to the patch size, and keypoint models accept only ``1``; both are checked
+                before any image is read.
             **kwargs:
                 Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since
                 v1.12.0 and will raise TypeError in v2.0.0. The source options of
@@ -3334,7 +3350,9 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is
-                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.
+                not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN. Also if
+                ``shift_tta`` is not an integer from 1 to the patch size (``True`` and ``1.0`` included) or is above 1
+                for a keypoint model; both are checked before any image is read.
 
         Examples:
             Skipped because this example requires pretrained weights and a local image file.
@@ -3342,6 +3360,10 @@ class RFDETR:
             >>> from rfdetr import RFDETRSmall  # doctest: +SKIP
             >>> model = RFDETRSmall()  # doctest: +SKIP
             >>> detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP
+
+            Average four sub-patch shifted passes for steadier scores:
+
+            >>> detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)  # doctest: +SKIP
         """
         source_options = sorted(_SOURCE_PREDICT_OPTIONS.intersection(kwargs))
         if source_options:
@@ -3359,7 +3381,7 @@ class RFDETR:
         if isinstance(images, torch.Tensor) and images.ndim == 4:
             images = list(images.unbind(0))
         return _predict_batch(
-            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias
+            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias, shift_tta
         )
 
     def deploy_to_roboflow(

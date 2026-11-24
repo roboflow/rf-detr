@@ -15,6 +15,7 @@ name extraction from ``detr.py:_load_pretrain_weights_into``.
 
 from __future__ import annotations
 
+import copy
 import math
 import os
 import re
@@ -39,9 +40,10 @@ from rfdetr.utilities.state_dict import (
 
 logger = get_logger()
 
-__all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddings"]
+__all__ = ["adapt_input_channels", "apply_lora", "interpolate_position_embeddings", "load_pretrain_weights"]
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
+_STEM_KEY_SUFFIX = "patch_embeddings.projection.weight"
 
 # Query-related parameters that LWDETR packs as nn.Embedding(num_queries * group_detr, ...).
 # Any new query parameter packed the same way must be added here.
@@ -363,6 +365,103 @@ def interpolate_position_embeddings(
         )
 
 
+def _class_rows_for_keypoint_schema(
+    checkpoint_schema: list[int], configured_schema: list[int], checkpoint_rows: int, head_rows: int
+) -> list[int] | None:
+    """Match each class-head row of the configured keypoint schema to the checkpoint row of the same class.
+
+    A keypoint schema gives the keypoint count of each class row; rows past it carry no-object logits. The preview
+    checkpoint's background-first ``[0, 17]`` keeps the person in row 1, while the active-first ``[17]`` puts it in row
+    0 and uses row 1 for no object, so loading one into the other has to move the rows. The classes with keypoints pair
+    up in order, and a pair keeps its row when the counts agree, or when each schema has a single class with keypoints,
+    whatever its count, since the keypoint rows are rebuilt for the configured schema anyway. Classes with keypoints
+    that the other schema lacks, and every keypoint-free row, the no-object rows included, take the checkpoint's
+    keypoint-free rows in order. When the head has more of them, as when the configured classes add box-only ones, the
+    extra rows repeat the checkpoint's last keypoint-free row, the no-object row of the preview checkpoint.
+
+    The order is taken over the checkpoint's own ``checkpoint_rows`` rows and gives the final ``head_rows`` rows, so a
+    head that grows or is cut afterwards needs no separate resize.
+
+    Args:
+        checkpoint_schema: ``num_keypoints_per_class`` of the checkpoint.
+        configured_schema: ``num_keypoints_per_class`` of the model.
+        checkpoint_rows: Rows in the checkpoint's class head, the no-object row included.
+        head_rows: Rows the model's class head is to have, the no-object row included.
+
+    Returns:
+        The checkpoint row each of the ``head_rows`` rows takes, the identity order when nothing moves, or ``None``
+        when no mapping exists: the paired classes with keypoints disagree on their counts, a schema is longer than its
+        head, or a row it needs is missing from the checkpoint.
+
+    Examples:
+        >>> _class_rows_for_keypoint_schema([0, 17], [17], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([17], [0, 17], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [17, 0], checkpoint_rows=2, head_rows=3)
+        [1, 0, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17, 4], [17, 4], checkpoint_rows=3, head_rows=3)
+        [1, 2, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [21], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [17, 4], checkpoint_rows=2, head_rows=3)
+        [1, 0, 0]
+        >>> _class_rows_for_keypoint_schema([0, 0, 17], [17], checkpoint_rows=3, head_rows=2)
+        [2, 0]
+        >>> _class_rows_for_keypoint_schema([17], [17], checkpoint_rows=2, head_rows=2)
+        [0, 1]
+        >>> _class_rows_for_keypoint_schema([17, 4], [4, 17], checkpoint_rows=3, head_rows=3) is None
+        True
+    """
+    checkpoint_kinds = [*checkpoint_schema, *[0] * (checkpoint_rows - len(checkpoint_schema))]
+    configured_kinds = [*configured_schema, *[0] * (head_rows - len(configured_schema))]
+    if len(checkpoint_kinds) != checkpoint_rows or len(configured_kinds) != head_rows:
+        return None
+    with_keypoints = [row for row, n in enumerate(checkpoint_kinds) if n]
+    without_keypoints = [row for row, n in enumerate(checkpoint_kinds) if not n]
+    checkpoint_counts = [checkpoint_kinds[row] for row in with_keypoints]
+    configured_counts = [n for n in configured_kinds if n]
+    only_one_each = len(checkpoint_counts) == len(configured_counts) == 1
+    if not only_one_each and any(a != b for a, b in zip(checkpoint_counts, configured_counts)):
+        return None
+    keypoint_rows = iter(with_keypoints)
+    spare = iter(without_keypoints)
+    order = []
+    for n in configured_kinds:
+        row = next(keypoint_rows, None) if n else None
+        if row is None:
+            row = next(spare, without_keypoints[-1] if without_keypoints else None)
+        if row is None:
+            return None
+        order.append(row)
+    return order
+
+
+def _reorder_class_names(class_names: list[str], order: list[int]) -> list[str]:
+    """Return *class_names* in the order of the class-head rows after they were reordered.
+
+    Args:
+        class_names: Class names of the checkpoint, the name of row ``i`` at index ``i``.
+        order: For each row of the new head, the checkpoint row it takes.
+
+    Returns:
+        The name of the checkpoint row each new row takes, for as many rows as there are names; an empty list when a
+        new row takes a row without a name, since the name of that class is unknown.
+
+    Examples:
+        >>> _reorder_class_names(["a", "b", "c"], [0, 2, 1, 3])
+        ['a', 'c', 'b']
+        >>> _reorder_class_names(["person"], [1, 0, 0])
+        []
+        >>> _reorder_class_names([], [1, 0])
+        []
+    """
+    taken = order[: len(class_names)]
+    if any(row >= len(class_names) for row in taken):
+        return []
+    return [class_names[row] for row in taken]
+
+
 def load_pretrain_weights(
     nn_model: LWDETR,
     model_config: ModelConfig,
@@ -666,12 +765,10 @@ def load_pretrain_weights(
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
 
-    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it.
-    # Without this, loading a bg-first checkpoint ([0, 17]) into a model configured with the
-    # active-first default ([17]) causes a semantic mismatch: the detection head is trimmed to 2
-    # rows but keeps background weights at row 0 — the slot active-first inference expects to be
-    # person — producing AP ≈ 0.0 on pretrained keypoint models.
-    # Mirrors the existing num_classes auto-align pattern (lines ~385-392).
+    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it, so the model keeps
+    # the checkpoint's own class layout, as the background-first [0, 17] of the preview checkpoint against the
+    # active-first default [17]. An explicitly set schema is restored after the load below, which moves the class-head
+    # rows to match it. Mirrors the num_classes auto-align above.
     _user_overrode_kp_schema = "num_keypoints_per_class" in getattr(mc, "model_fields_set", set())
     if (
         not _user_overrode_kp_schema
@@ -745,27 +842,150 @@ def load_pretrain_weights(
         )
         checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
+    _widen_stem_for_checkpoint(nn_model, checkpoint["model"], mc)
     incompatible = _load_model_state(nn_model, checkpoint["model"], backbone_lora=mc.backbone_lora)
     _warn_on_partial_load(incompatible, pretrain_weights)
 
-    if should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+    restore_keypoint_schema = should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head")
+    if restore_keypoint_schema:
         logger.warning(
             "load_pretrain_weights: restoring configured keypoint schema %s after checkpoint load.",
             configured_keypoint_schema,
         )
         nn_model.reinitialize_keypoint_head(configured_keypoint_schema)
 
-    # If the user explicitly set a class count larger than the checkpoint,
-    # expand/reinitialize the head back to the configured size after load.
+    # Rows the class head is to end with: grown back to the configured class count when the user set one larger than the
+    # checkpoint's, and trimmed when a larger checkpoint is loaded into a smaller task-specific class count.
+    head_rows = checkpoint_num_classes
     if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode:
-        nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
-
-    # Only trim back down when loading a larger pretrain checkpoint into a
-    # smaller configured task-specific class count.
+        head_rows = configured_num_classes_plus_bg
     if num_classes + 1 < checkpoint_num_classes:
-        nn_model.reinitialize_detection_head(num_classes + 1)
+        head_rows = num_classes + 1
+
+    # The schema decides which class-head row is which class, so each final row takes the checkpoint row of its class.
+    # Left alone, [0, 17] loaded as [17] would start the person class from the checkpoint's background row, and a head
+    # grown for box-only classes would hold tiled copies of the checkpoint's rows. The rows are taken from the loaded
+    # head in one step, which also sizes it, so a cut can never remove a row the order needs.
+    class_rows = None
+    if restore_keypoint_schema and checkpoint_keypoint_schema:
+        class_rows = _class_rows_for_keypoint_schema(
+            checkpoint_keypoint_schema, configured_keypoint_schema, checkpoint_num_classes, head_rows
+        )
+        if class_rows is None and checkpoint_keypoint_schema != configured_keypoint_schema:
+            logger.warning(
+                "load_pretrain_weights: no class-head row mapping from checkpoint keypoint schema %s to configured "
+                "schema %s, so the class head keeps the checkpoint's rows in their order and the classes with "
+                "keypoints may start from the wrong rows. Use the checkpoint's own schema, or keep its classes with "
+                "keypoints in the same order.",
+                checkpoint_keypoint_schema,
+                configured_keypoint_schema,
+            )
+    if class_rows is not None and class_rows != list(range(checkpoint_num_classes)):
+        nn_model.reorder_detection_head(class_rows)
+        class_names = _reorder_class_names(class_names, class_rows)
+    elif head_rows != checkpoint_num_classes:
+        nn_model.reinitialize_detection_head(head_rows)
 
     return class_names
+
+
+def _adapt_input_conv(num_channels: int, conv_weight: Tensor) -> Tensor:
+    """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
+
+    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
+    original 3 channels.
+    Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
+    pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
+
+    Args:
+        num_channels: Target number of input channels.
+        conv_weight: Original weight tensor of shape ``[out_ch, 3, H, W]``.
+
+    Returns:
+        Adapted weight tensor of shape ``[out_ch, num_channels, H, W]``.
+    """
+    if num_channels == 3:
+        return conv_weight
+    if num_channels == 1:
+        return conv_weight.mean(dim=1, keepdim=True)
+    # General case: tile and scale
+    repeats = (num_channels + 2) // 3
+    weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
+    weight_out = weight_out * (3.0 / num_channels)
+    return weight_out
+
+
+def _patch_embeddings(nn_model: LWDETR) -> Any:
+    """Return the DINOv2 patch-embedding module of *nn_model* (the model's input stem).
+
+    Args:
+        nn_model: Model with a DINOv2 backbone, possibly wrapped by PEFT.
+
+    Returns:
+        The patch-embedding module, whose ``projection`` is the stem convolution.
+    """
+    backbone = cast(Backbone, nn_model.backbone[0])
+    # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
+    return cast(DinoV2, backbone.encoder).encoder.embeddings.patch_embeddings
+
+
+def adapt_input_channels(nn_model: LWDETR, num_channels: int, encoder: str) -> None:
+    """Rebuild the DINOv2 patch embedding of *nn_model* for *num_channels* input channels, in-place.
+
+    Shared by the prediction build and the training module, so both models take the same input.  A stem that already
+    has *num_channels* inputs is left alone, which makes a second call a no-op.
+
+    Args:
+        nn_model: Model whose patch embedding is adapted.
+        num_channels: Input channel count the model is configured for.
+        encoder: Configured encoder name (``ModelConfig.encoder``).
+
+    Raises:
+        ValueError: If *num_channels* is not 3 and *encoder* is not a DINOv2 encoder.
+    """
+    if num_channels == 3:
+        return
+    # Dispatch on the encoder name, as Backbone._build_encoder does: with backbone_lora the encoder is a PEFT
+    # wrapper, not a DinoV2 instance.
+    if encoder.split("_")[0] != "dinov2":
+        raise ValueError(f"num_channels={num_channels} is supported for DINOv2 encoders only, not encoder={encoder!r}.")
+    patch_embeddings = _patch_embeddings(nn_model)
+    proj = patch_embeddings.projection
+    if proj.in_channels == num_channels:
+        return
+    new_proj = copy.deepcopy(proj)
+    new_proj.in_channels = num_channels
+    new_proj.weight = torch.nn.Parameter(_adapt_input_conv(num_channels, proj.weight))
+    new_proj.weight.requires_grad = proj.weight.requires_grad
+    patch_embeddings.projection = new_proj
+    patch_embeddings.num_channels = num_channels
+
+
+def _widen_stem_for_checkpoint(nn_model: LWDETR, model_state: dict[str, Tensor], model_config: ModelConfig) -> None:
+    """Widen the model's stem before loading a checkpoint that was saved from an already widened model.
+
+    A 3-channel checkpoint needs nothing here: it loads into the 3-channel stem and is adapted afterwards.  A checkpoint
+    whose stem already has ``model_config.num_channels`` inputs comes from an earlier multi-channel run, so the model
+    is widened first and the trained filters of the extra channels load with the rest.
+
+    Args:
+        nn_model: Model about to receive *model_state*.
+        model_state: Checkpoint weights.
+        model_config: Configuration of *nn_model*.
+
+    Raises:
+        ValueError: If the checkpoint's stem is neither 3 channels wide nor ``model_config.num_channels`` wide.
+    """
+    stem = next((value for key, value in model_state.items() if key.endswith(_STEM_KEY_SUFFIX)), None)
+    if stem is None or stem.shape[1] == 3:
+        return
+    if stem.shape[1] != model_config.num_channels:
+        raise ValueError(
+            f"The checkpoint was saved from a model with num_channels={stem.shape[1]}, but this model is configured "
+            f"with num_channels={model_config.num_channels}. Only a 3-channel checkpoint can be adapted to another "
+            f"channel count; pass num_channels={stem.shape[1]} to load this checkpoint."
+        )
+    adapt_input_channels(nn_model, model_config.num_channels, model_config.encoder)
 
 
 def _load_model_state(nn_model: LWDETR, model_state: dict[str, Tensor], *, backbone_lora: bool) -> Any:

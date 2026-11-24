@@ -24,8 +24,9 @@ import rfdetr.export.benchmark as benchmark
 from rfdetr.export._tensorrt import inference as trt_inference
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
-from rfdetr.export.benchmark import _static_dim, box_cxcywh_to_xyxy, infer_transforms, post_process
+from rfdetr.export.benchmark import _static_dim, box_cxcywh_to_xyxy, infer_transforms, load_image, post_process
 from tests._markers import _requires_faster_coco_eval
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 #: Minimal indexed COCO dataset used to verify evaluator construction.
 _MINIMAL_COCO = {
@@ -599,7 +600,7 @@ def fake_cuda_graphs(monkeypatch: pytest.MonkeyPatch) -> _FakeCudaGraphs:
     Every stand-in first binds its arguments to the installed torch's own signature (see :func:`_signature_checked`),
     so the code under test cannot pass torch an argument it would reject. What a replay computes, and the output
     shapes TensorRT resolves, are not modelled here: ``TestTensorRTEndToEnd`` in
-    ``tests/export/tensorrt/test_tensorrt_export.py`` checks those on a real engine
+    ``tests/export/tensorrt/test_tensorrt_end_to_end.py`` checks those on a real engine
     (``test_cuda_graph_matches_the_plain_call_on_new_inputs`` and
     ``test_cuda_graph_waits_for_an_input_still_in_flight_on_the_callers_stream``), and
     ``test_cuda_graph_is_refused_for_the_dynamic_batch_engine`` replaces the mixed-batch test now that a graph runtime
@@ -2020,6 +2021,19 @@ class TestTRTInferenceDevice:
         runtime(runtime.get_dummy_input(batch_size=1))
 
         runtime.context.execute_v2.assert_called_once()
+
+
+class TestBenchmarkLoadImage:
+    """``benchmark.load_image`` reads a tagged photo upright, as ``predict()`` reads a file."""
+
+    def test_tagged_photo_is_upright(self, tmp_path: Path) -> None:
+        """A photo stored 64 x 32 with EXIF orientation 6 loads as ``ImageOps.exif_transpose`` shows it."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        image = load_image(str(photo))
+
+        np.testing.assert_array_equal(np.asarray(image), upright_reference(photo))
 
 
 class TestBenchmarkMain:

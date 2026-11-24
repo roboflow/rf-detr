@@ -33,6 +33,7 @@ from torchvision.transforms.v2 import ToDtype, ToImage
 
 from rfdetr.config import AugmentationBackend, MultiScale
 from rfdetr.datasets._aug_utils import _warn_keypoint_hflip_disabled, resolve_keypoint_flip_pairs
+from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets._torchvision import (
     Compose,
     RandomChoice,
@@ -43,7 +44,11 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.io_utils import decode_pil_image, read_image_or_substitute
+from rfdetr.datasets.io_utils import (
+    _warn_if_labels_follow_stored_pixels,
+    decode_pil_image,
+    read_image_or_substitute,
+)
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
@@ -704,6 +709,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
         max_image_pixels: Decompression-bomb limit for the images this dataset reads, used when it is higher than
             ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  ``3`` (the
+            default) loads RGB, ``1`` grayscale and ``4`` RGBA, for which every image must store a fourth channel.
         skip_unreadable: If ``True``, a failed image read is retried, and an image that stays unreadable is replaced
             by the next readable sample, image and annotations together, with an error naming the file logged (see
             :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises the decoder's
@@ -723,12 +730,17 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         cat2label: dict[int, int] | None = None,
         draft_size: int | None = None,
         max_image_pixels: int | None = None,
+        num_channels: int = 3,
         skip_unreadable: bool = False,
     ) -> None:
+        image_mode(num_channels)  # refuse a channel count image files cannot supply before reading annotations
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self._draft_size = draft_size
         self._max_image_pixels = max_image_pixels
+        self._num_channels = num_channels
+        # Set once a sample's boxes fit its quarter-turned photo only as stored; later samples are then not checked.
+        self._warned_stored_frame_labels = False
         self._skip_unreadable = skip_unreadable
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
@@ -779,12 +791,22 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             image_id: COCO image id.
 
         Returns:
-            Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+            Decoded image (RGB unless ``num_channels`` says otherwise) and its horizontal/vertical decode scales, both
+            ``1.0`` when the decoder did not reduce.
         """
-        return decode_pil_image(self._image_path(image_id), self._draft_size, self._max_image_pixels)
+        return decode_pil_image(
+            self._image_path(image_id), self._draft_size, self._max_image_pixels, self._num_channels
+        )
 
     def _image_path(self, image_id: int) -> Path:
-        """Return the path of the image file of a COCO image id."""
+        """Return the file of a COCO image id, under the dataset's image folder.
+
+        Args:
+            image_id: COCO image id.
+
+        Returns:
+            Path of the image file.
+        """
         file_name: str = self.coco.loadImgs(image_id)[0]["file_name"]
         return Path(self.root) / file_name
 
@@ -804,6 +826,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         annotations = self._load_target(image_id)
         if (x_scale, y_scale) != (1.0, 1.0):
             annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
+        if not self._warned_stored_frame_labels:
+            path = self._image_path(image_id)
+            self._warned_stored_frame_labels = _warn_if_labels_follow_stored_pixels(
+                path, annotations, img.size, label=str(path), max_image_pixels=self._max_image_pixels
+            )
         target = {"image_id": image_id, "annotations": annotations}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
@@ -1598,6 +1625,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
             skip_unreadable=skip_unreadable,
         )
     else:
@@ -1626,6 +1654,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
             skip_unreadable=skip_unreadable,
         )
     return dataset
@@ -1728,6 +1757,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             remap_category_ids=True,
             cat2label=cat2label,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
             skip_unreadable=skip_unreadable,
         )
     else:
@@ -1754,6 +1784,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             remap_category_ids=True,
             cat2label=cat2label,
             draft_size=draft_size,
+            num_channels=getattr(args, "num_channels", 3),
             skip_unreadable=skip_unreadable,
         )
     return dataset

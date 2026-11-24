@@ -12,11 +12,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
+from pytest_mock import MockerFixture
 
 from rfdetr.datasets import io_utils
+from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.io_utils import decode_image, decode_image_bytes, decode_pil_image, decode_pil_image_bytes
+from tests._exif import move_exif_after_pixels
 from tests._markers import _requires_simplejpeg
 from tests.datasets._memory import peak_traced_bytes
 
@@ -461,6 +464,24 @@ class TestDecodePilImagePixelLimit:
         with pytest.raises(Image.DecompressionBombError):
             io_utils._open_image(path, max_image_pixels=500)
 
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_four_channel_decode_in_warning_tier_retries_and_keeps_alpha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+    ) -> None:
+        """An RGBA image between the per-call limit and twice that limit warns once, then decodes with its alpha."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        pixels = np.random.default_rng(2).integers(0, 256, size=(32, 64, 4), dtype=np.uint8)
+        image_path = tmp_path / "img.png"
+        Image.fromarray(pixels).save(image_path)
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # 2048 pixels fall in the warning tier of a 1500 limit
+
+        with pytest.warns(Image.DecompressionBombWarning):
+            image, scales = decode_pil(source, max_image_pixels=1500, num_channels=4)
+
+        np.testing.assert_array_equal(np.asarray(image), pixels)
+        assert (image.mode, scales) == ("RGBA", (1.0, 1.0))
+
     @pytest.mark.parametrize("compression", ["raw", "tiff_deflate"])
     def test_tiff_pixels_match_with_a_raised_limit(self, monkeypatch: pytest.MonkeyPatch, compression: str) -> None:
         """Raw and compressed TIFF pixels survive decoding under the per-image limit."""
@@ -659,3 +680,246 @@ class TestCocoDetectionRealPathParity:
         dataset = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 800, 600)
 
         assert peak_traced_bytes(dataset.__getitem__, 0) < 800 * 600 * 3 // 2
+
+
+def _write_oriented_photo(path: Path, orientation: int, width: int = 29, height: int = 17, mode: str = "RGB") -> None:
+    """Write noise in the format ``path``'s suffix names, tagged with ``orientation`` the way a camera tags a photo.
+
+    The pixels are stored ``width`` x ``height`` in Pillow ``mode``; a viewer shows them turned by the tag. JPEG files
+    use quality 90.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     photo = Path(tmp) / "photo.jpg"
+        ...     _write_oriented_photo(photo, 6)
+        ...     with Image.open(photo) as image:
+        ...         print(image.size, image.getexif()[0x0112])
+        (29, 17) 6
+    """
+    pixels = ((np.arange(height * width * 3).reshape(height, width, 3) * 37 + 13) % 256).astype(np.uint8)
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    options = {"quality": 90} if path.suffix.lower() in (".jpg", ".jpeg") else {}
+    Image.fromarray(pixels).convert(mode).save(path, exif=exif.tobytes(), **options)
+
+
+def _upright_reference(path: Path, mode: str = "RGB") -> np.ndarray:
+    """Decode ``path`` through Pillow alone into ``mode`` and turn it upright with ``ImageOps.exif_transpose``.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     photo = Path(tmp) / "photo.png"
+        ...     _write_oriented_photo(photo, 6)
+        ...     _upright_reference(photo).shape
+        (29, 17, 3)
+    """
+    with Image.open(path) as image:
+        return np.asarray(ImageOps.exif_transpose(image).convert(mode))
+
+
+class TestDecodeExifOrientation:
+    """Every entry point returns a photo upright for its EXIF orientation, as viewers and annotation tools show it."""
+
+    @pytest.mark.parametrize("orientation", [1, 2, 3, 4, 5, 6, 7, 8])
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_jpeg_pixels_are_upright(self, tmp_path: Path, source_kind: str, orientation: int) -> None:
+        """PIL and array entry points both return the photo as ``ImageOps.exif_transpose`` shows it."""
+        decode_pil, decode_array = _ENTRY_POINTS[source_kind]
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, orientation)
+        source = path.read_bytes() if source_kind == "bytes" else path
+        expected = _upright_reference(path)
+
+        image, pil_scales = decode_pil(source)
+        pixels, array_scales = decode_array(source)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        np.testing.assert_array_equal(pixels, expected)
+        assert pil_scales == array_scales == (1.0, 1.0)
+
+    @pytest.mark.parametrize("extension", ["png", "tif"])
+    def test_lossless_formats_are_upright(self, tmp_path: Path, extension: str) -> None:
+        """Formats Pillow always decodes are turned the same way."""
+        path = tmp_path / f"photo.{extension}"
+        _write_oriented_photo(path, 6)
+
+        image, _ = decode_pil_image(path)
+
+        np.testing.assert_array_equal(np.array(image), _upright_reference(path))
+
+    def test_without_simplejpeg_jpeg_is_upright(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The Pillow-only install turns the photo as the ``[train]`` install does."""
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 8)
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+
+        pixels, _ = decode_image(path)
+
+        np.testing.assert_array_equal(pixels, _upright_reference(path))
+
+    def test_draft_scales_follow_the_upright_axes(self, tmp_path: Path) -> None:
+        """A quarter turn swaps the decode scales with the axes, so annotations still scale correctly.
+
+        The stored 100 x 37 JPEG drafts by 2 to 50 x 19, stored-axis scales ``(0.5, 19 / 37)``; upright it is 19 x 50.
+        """
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 6, width=100, height=37)
+
+        image, scales = decode_pil_image(path, draft_size=16)
+
+        assert image.size == (19, 50)
+        assert scales == (19 / 37, 0.5)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_decode_under_a_raised_pixel_limit_is_upright(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture, extension: str
+    ) -> None:
+        """The subprocess decoder used for a raised per-image limit reports the tag, and the photo is turned."""
+        path = tmp_path / f"photo.{extension}"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        expected = _upright_reference(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        worker = mocker.spy(io_utils.subprocess, "run")
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert (worker.call_count, scales) == (1, (1.0, 1.0))
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("orientation", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    def test_raised_pixel_limit_decode_equals_the_in_process_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str, orientation: int
+    ) -> None:
+        """Whatever the tag holds, 0 to 9, the subprocess decoder returns the pixels and scales the in-process one
+        does."""
+        path = tmp_path / f"photo.{extension}"
+        _write_oriented_photo(path, orientation, width=64, height=32)
+        expected, expected_scales = decode_pil_image(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), np.array(expected))
+        assert scales == expected_scales
+
+    def test_png_tag_after_the_pixels_is_upright(self, tmp_path: Path) -> None:
+        """A PNG that stores its eXIf chunk after the pixel data is turned as ``ImageOps.exif_transpose`` turns it."""
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        path.write_bytes(move_exif_after_pixels(path.read_bytes()))
+        expected = _upright_reference(path)
+
+        image, _ = decode_pil_image(path)
+
+        assert expected.shape == (64, 32, 3)
+        np.testing.assert_array_equal(np.array(image), expected)
+
+    def test_png_tag_after_the_pixels_is_upright_under_a_raised_pixel_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The subprocess decoder finds that chunk too, so both decoders turn the file alike."""
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        path.write_bytes(move_exif_after_pixels(path.read_bytes()))
+        expected = _upright_reference(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+    def test_unusable_orientation_keeps_the_stored_pixels(self, tmp_path: Path) -> None:
+        """A tag outside 1 to 8 names no turn, so the photo decodes as stored, exactly as before."""
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 9)
+        expected, _ = _pillow_decode(path)
+
+        pixels, _ = decode_image(path)
+
+        np.testing.assert_array_equal(pixels, expected)
+
+    @_requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("entry_point", [0, 1], ids=["pil", "array"])
+    def test_tagged_jpeg_over_pixel_limit_raises_decompression_bomb_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, entry_point: int
+    ) -> None:
+        """A tagged JPEG is left to Pillow by the simplejpeg path, which must still refuse an oversized one."""
+        decode = _ENTRY_POINTS[source_kind][entry_point]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 6, width=64, height=32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+        source = path.read_bytes() if source_kind == "bytes" else path
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode(source)
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_one_and_four_channel_decodes_are_upright(self, tmp_path: Path, num_channels: int) -> None:
+        """A model with ``num_channels`` 1 or 4 gets the photo upright in its own mode, as the RGB decode does."""
+        mode = image_mode(num_channels)
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32, mode=mode)
+        expected = _upright_reference(path, mode)
+
+        image, scales = decode_pil_image(path, num_channels=num_channels)
+
+        assert image.mode == mode
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_one_and_four_channel_decodes_are_upright_under_a_raised_pixel_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, num_channels: int
+    ) -> None:
+        """The subprocess decoder reports the tag in those modes too, so both decoders turn the photo alike."""
+        mode = image_mode(num_channels)
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32, mode=mode)
+        expected = _upright_reference(path, mode)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000, num_channels=num_channels)
+
+        assert image.mode == mode
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+
+class TestCocoDetectionExifOrientation:
+    """A COCO box drawn on the upright photo covers the same object in the training sample."""
+
+    @pytest.mark.parametrize("orientation", [3, 6, 8])
+    def test_box_lands_on_the_labelled_object(self, tmp_path: Path, orientation: int) -> None:
+        """The labelled white rectangle is under its box in the decoded sample, whatever the stored orientation."""
+        upright = np.zeros((100, 160, 3), dtype=np.uint8)
+        upright[10:40, 20:60] = 255
+        stored = Image.fromarray(upright)
+        # The transpose exif_transpose undoes for each tag, so a viewer shows ``upright``.
+        undo = {3: Image.Transpose.ROTATE_180, 6: Image.Transpose.ROTATE_90, 8: Image.Transpose.ROTATE_270}
+        exif = Image.Exif()
+        exif[0x0112] = orientation
+        stored.transpose(undo[orientation]).save(tmp_path / "photo.jpg", quality=95, exif=exif.tobytes())
+        ann_file = tmp_path / "annotations.json"
+        ann_file.write_text(
+            json.dumps(
+                {
+                    "images": [{"id": 1, "file_name": "photo.jpg", "width": 160, "height": 100}],
+                    "annotations": [
+                        {"id": 1, "image_id": 1, "category_id": 1, "bbox": [20, 10, 40, 30], "area": 1200, "iscrowd": 0}
+                    ],
+                    "categories": [{"id": 1, "name": "carton"}],
+                }
+            )
+        )
+        dataset = CocoDetection(tmp_path, ann_file, transforms=None, remap_category_ids=True)
+
+        image, target = dataset[0]
+
+        x1, y1, x2, y2 = (int(value) for value in target["boxes"][0].tolist())
+        assert image.size == (160, 100)
+        assert np.asarray(image.convert("L"))[y1:y2, x1:x2].min() > 128
