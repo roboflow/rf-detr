@@ -3234,6 +3234,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>On a core install, building a non-windowed <code>DinoV2(use_windowed_attn=False)</code> raises an <code>ImportError</code> that asks for <code>transformers</code>.</li>
 </ul>
 </li>
+<li>Photos with an orientation tag, as phones save them, are read upright, as viewers and annotation tools show them, in training, validation, <code>predict()</code> on a path or URL, INT8 calibration, the export sample image and the export benchmark and COCO scoring helpers. Before, labels drawn on the upright photo landed on the wrong pixels. A PIL image passed to <code>predict()</code> keeps the caller's pixel order. (<a href="https://github.com/roboflow/rf-detr/pull/1739">#1739</a>)<ul>
+<li>The tag is read as <code>PIL.ImageOps.exif_transpose</code> reads it (EXIF, a PNG <code>Raw profile type exif</code> chunk, or XMP <code>tiff:Orientation</code>); untagged files decode as before, and a file with corrupt EXIF can now raise Pillow's <code>Possibly corrupt EXIF data</code> <code>UserWarning</code>.</li>
+<li>Labels drawn on the stored pixels of tagged photos, such as pseudo-labels from an earlier <code>predict()</code>, no longer line up: regenerate them on the upright photos or strip the orientation metadata. The COCO and WebDataset readers warn once per dataset object when the boxes of a quarter-turned photo fit only its stored frame.</li>
+</ul>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3247,6 +3252,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>EXIF-tagged photos are read upright for training and <code>predict()</code>.</li>
 <li><code>CocoEvaluator</code> scores a ground-truth annotation with id 0 instead of counting its matched detection as a false positive, which understated keypoint AP on YOLO pose datasets and on COCO ground truth with an id-0 annotation. (<a href="https://github.com/roboflow/rf-detr/pull/1738">#1738</a>)</li>
 <li><code>TrainConfig</code> rejects a non-positive <code>lr_vit_layer_decay</code> and a negative <code>lr_component_decay</code>, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. (<a href="https://github.com/roboflow/rf-detr/pull/1718">#1718</a>)</li>
 <li><code>download_pretrain_weights(path, redownload=True)</code> keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.</li>

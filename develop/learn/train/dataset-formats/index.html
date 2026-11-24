@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-23T21:57:23">
+  <meta property="article:modified_time" content="2026-11-24T09:51:28">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-23T21:57:23",
+    "dateModified": "2026-11-24T09:51:28",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4043,6 +4043,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Roboflow Export</p>
 <p><a href="https://roboflow.com/annotate">Roboflow</a> can export datasets in both COCO and YOLO formats. When downloading from Roboflow, select the appropriate format based on your preference.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Photo orientation</p>
+<p>Phones and many cameras store a photo's pixels in sensor order and record how the camera was held in an EXIF orientation tag. Image viewers and labeling tools show the photo turned by that tag, so that is where labels are drawn. RF-DETR reads every image upright the same way, for training, validation and <code>predict()</code>, so labels line up with the pixels. Like <code>PIL.ImageOps.exif_transpose</code>, it also reads the orientation from two other places: <code>tiff:Orientation</code> in the file's XMP metadata, when the EXIF block records none, and a PNG's <code>Raw profile type exif</code> text chunk, when the file has no EXIF block. OpenCV's <code>imread</code> reads only the EXIF block and shows such a file as stored, so check how your labeling tool shows one before training on it. Files with no orientation in any of these places are read as stored. If your labels were drawn on the stored (unturned) pixels instead, remove the orientation from those files before training: the EXIF tag, <code>tiff:Orientation</code> from their XMP metadata, or the <code>Raw profile type exif</code> chunk.</p>
+</div>
 <hr />
 <h2 id="coco-format">COCO Format<a class="headerlink" href="#coco-format" title="Permanent link">&para;</a></h2>
 <p>COCO (Common Objects in Context) format uses JSON files to store annotations in a structured format with images, categories, and annotations.</p>
@@ -4658,7 +4662,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 23, 2026 21:57:23 UTC">2026-11-23 21:57:23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 24, 2026 09:51:28 UTC">2026-11-24 09:51:28</span>
   </span>
 
     
