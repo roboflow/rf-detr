@@ -3265,6 +3265,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfdetr.platform.models.RFDETR2XLarge.predict(shift_tta)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;shift_tta
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfdetr.platform.models.RFDETR2XLarge.predict(**kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4972,6 +4983,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfdetr.platform.models.RFDETR2XLarge.predict(shift_tta)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;shift_tta
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfdetr.platform.models.RFDETR2XLarge.predict(**kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5463,24 +5485,7 @@ to write <code>weights.pt</code> and <code>class_names.txt</code> without a netw
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/detr.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-3370">3370</a></span>
-<span class="normal"><a href="#__codelineno-0-3371">3371</a></span>
-<span class="normal"><a href="#__codelineno-0-3372">3372</a></span>
-<span class="normal"><a href="#__codelineno-0-3373">3373</a></span>
-<span class="normal"><a href="#__codelineno-0-3374">3374</a></span>
-<span class="normal"><a href="#__codelineno-0-3375">3375</a></span>
-<span class="normal"><a href="#__codelineno-0-3376">3376</a></span>
-<span class="normal"><a href="#__codelineno-0-3377">3377</a></span>
-<span class="normal"><a href="#__codelineno-0-3378">3378</a></span>
-<span class="normal"><a href="#__codelineno-0-3379">3379</a></span>
-<span class="normal"><a href="#__codelineno-0-3380">3380</a></span>
-<span class="normal"><a href="#__codelineno-0-3381">3381</a></span>
-<span class="normal"><a href="#__codelineno-0-3382">3382</a></span>
-<span class="normal"><a href="#__codelineno-0-3383">3383</a></span>
-<span class="normal"><a href="#__codelineno-0-3384">3384</a></span>
-<span class="normal"><a href="#__codelineno-0-3385">3385</a></span>
-<span class="normal"><a href="#__codelineno-0-3386">3386</a></span>
-<span class="normal"><a href="#__codelineno-0-3387">3387</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-3387">3387</a></span>
 <span class="normal"><a href="#__codelineno-0-3388">3388</a></span>
 <span class="normal"><a href="#__codelineno-0-3389">3389</a></span>
 <span class="normal"><a href="#__codelineno-0-3390">3390</a></span>
@@ -5541,85 +5546,102 @@ to write <code>weights.pt</code> and <code>class_names.txt</code> without a netw
 <span class="normal"><a href="#__codelineno-0-3445">3445</a></span>
 <span class="normal"><a href="#__codelineno-0-3446">3446</a></span>
 <span class="normal"><a href="#__codelineno-0-3447">3447</a></span>
-<span class="normal"><a href="#__codelineno-0-3448">3448</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-3370"><a id="__codelineno-0-3370" name="__codelineno-0-3370"></a><span class="k">def</span><span class="w"> </span><span class="nf">deploy_to_roboflow</span><span class="p">(</span>
-</span><span id="__span-0-3371"><a id="__codelineno-0-3371" name="__codelineno-0-3371"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-3372"><a id="__codelineno-0-3372" name="__codelineno-0-3372"></a>    <span class="n">workspace</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-3373"><a id="__codelineno-0-3373" name="__codelineno-0-3373"></a>    <span class="n">project_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-3374"><a id="__codelineno-0-3374" name="__codelineno-0-3374"></a>    <span class="n">version</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-3375"><a id="__codelineno-0-3375" name="__codelineno-0-3375"></a>    <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-3376"><a id="__codelineno-0-3376" name="__codelineno-0-3376"></a>    <span class="n">size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-3377"><a id="__codelineno-0-3377" name="__codelineno-0-3377"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3378"><a id="__codelineno-0-3378" name="__codelineno-0-3378"></a><span class="w">    </span><span class="sd">"""Deploy the trained RF-DETR model to Roboflow.</span>
-</span><span id="__span-0-3379"><a id="__codelineno-0-3379" name="__codelineno-0-3379"></a>
-</span><span id="__span-0-3380"><a id="__codelineno-0-3380" name="__codelineno-0-3380"></a><span class="sd">    Deploying with Roboflow will create a Serverless API to which you can make requests.</span>
-</span><span id="__span-0-3381"><a id="__codelineno-0-3381" name="__codelineno-0-3381"></a>
-</span><span id="__span-0-3382"><a id="__codelineno-0-3382" name="__codelineno-0-3382"></a><span class="sd">    You can also download weights into a Roboflow Inference deployment for use in Roboflow Workflows and on-device</span>
-</span><span id="__span-0-3383"><a id="__codelineno-0-3383" name="__codelineno-0-3383"></a><span class="sd">    deployment.</span>
-</span><span id="__span-0-3384"><a id="__codelineno-0-3384" name="__codelineno-0-3384"></a>
-</span><span id="__span-0-3385"><a id="__codelineno-0-3385" name="__codelineno-0-3385"></a><span class="sd">    Args:</span>
-</span><span id="__span-0-3386"><a id="__codelineno-0-3386" name="__codelineno-0-3386"></a><span class="sd">        workspace: The name of the Roboflow workspace to deploy to.</span>
-</span><span id="__span-0-3387"><a id="__codelineno-0-3387" name="__codelineno-0-3387"></a><span class="sd">        project_id: The project ID to which the model will be deployed.</span>
-</span><span id="__span-0-3388"><a id="__codelineno-0-3388" name="__codelineno-0-3388"></a><span class="sd">        version: The project version to which the model will be deployed. If not provided, the highest</span>
-</span><span id="__span-0-3389"><a id="__codelineno-0-3389" name="__codelineno-0-3389"></a><span class="sd">            existing dataset version is resolved automatically via the Roboflow API; for a project with</span>
-</span><span id="__span-0-3390"><a id="__codelineno-0-3390" name="__codelineno-0-3390"></a><span class="sd">            no generated versions yet the lookup falls back to version ``1``, and the Roboflow SDK then</span>
-</span><span id="__span-0-3391"><a id="__codelineno-0-3391" name="__codelineno-0-3391"></a><span class="sd">            raises its own ``RuntimeError`` ("Version number 1 is not found.").</span>
-</span><span id="__span-0-3392"><a id="__codelineno-0-3392" name="__codelineno-0-3392"></a><span class="sd">        api_key: Your Roboflow API key. If not provided,</span>
-</span><span id="__span-0-3393"><a id="__codelineno-0-3393" name="__codelineno-0-3393"></a><span class="sd">            it will be read from the environment variable `ROBOFLOW_API_KEY`.</span>
-</span><span id="__span-0-3394"><a id="__codelineno-0-3394" name="__codelineno-0-3394"></a><span class="sd">        size: The size of the model to deploy. If not provided,</span>
-</span><span id="__span-0-3395"><a id="__codelineno-0-3395" name="__codelineno-0-3395"></a><span class="sd">            it will default to the size of the model being trained (e.g., "rfdetr-base", "rfdetr-large", etc.).</span>
+<span class="normal"><a href="#__codelineno-0-3448">3448</a></span>
+<span class="normal"><a href="#__codelineno-0-3449">3449</a></span>
+<span class="normal"><a href="#__codelineno-0-3450">3450</a></span>
+<span class="normal"><a href="#__codelineno-0-3451">3451</a></span>
+<span class="normal"><a href="#__codelineno-0-3452">3452</a></span>
+<span class="normal"><a href="#__codelineno-0-3453">3453</a></span>
+<span class="normal"><a href="#__codelineno-0-3454">3454</a></span>
+<span class="normal"><a href="#__codelineno-0-3455">3455</a></span>
+<span class="normal"><a href="#__codelineno-0-3456">3456</a></span>
+<span class="normal"><a href="#__codelineno-0-3457">3457</a></span>
+<span class="normal"><a href="#__codelineno-0-3458">3458</a></span>
+<span class="normal"><a href="#__codelineno-0-3459">3459</a></span>
+<span class="normal"><a href="#__codelineno-0-3460">3460</a></span>
+<span class="normal"><a href="#__codelineno-0-3461">3461</a></span>
+<span class="normal"><a href="#__codelineno-0-3462">3462</a></span>
+<span class="normal"><a href="#__codelineno-0-3463">3463</a></span>
+<span class="normal"><a href="#__codelineno-0-3464">3464</a></span>
+<span class="normal"><a href="#__codelineno-0-3465">3465</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-3387"><a id="__codelineno-0-3387" name="__codelineno-0-3387"></a><span class="k">def</span><span class="w"> </span><span class="nf">deploy_to_roboflow</span><span class="p">(</span>
+</span><span id="__span-0-3388"><a id="__codelineno-0-3388" name="__codelineno-0-3388"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-3389"><a id="__codelineno-0-3389" name="__codelineno-0-3389"></a>    <span class="n">workspace</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-3390"><a id="__codelineno-0-3390" name="__codelineno-0-3390"></a>    <span class="n">project_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-0-3391"><a id="__codelineno-0-3391" name="__codelineno-0-3391"></a>    <span class="n">version</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-3392"><a id="__codelineno-0-3392" name="__codelineno-0-3392"></a>    <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-3393"><a id="__codelineno-0-3393" name="__codelineno-0-3393"></a>    <span class="n">size</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-3394"><a id="__codelineno-0-3394" name="__codelineno-0-3394"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3395"><a id="__codelineno-0-3395" name="__codelineno-0-3395"></a><span class="w">    </span><span class="sd">"""Deploy the trained RF-DETR model to Roboflow.</span>
 </span><span id="__span-0-3396"><a id="__codelineno-0-3396" name="__codelineno-0-3396"></a>
-</span><span id="__span-0-3397"><a id="__codelineno-0-3397" name="__codelineno-0-3397"></a><span class="sd">    Raises:</span>
-</span><span id="__span-0-3398"><a id="__codelineno-0-3398" name="__codelineno-0-3398"></a><span class="sd">        ValueError: If the `api_key` is not provided and not found in the</span>
-</span><span id="__span-0-3399"><a id="__codelineno-0-3399" name="__codelineno-0-3399"></a><span class="sd">            environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.</span>
-</span><span id="__span-0-3400"><a id="__codelineno-0-3400" name="__codelineno-0-3400"></a><span class="sd">        RuntimeError: If a legacy in-place optimization cleared the base weights.</span>
+</span><span id="__span-0-3397"><a id="__codelineno-0-3397" name="__codelineno-0-3397"></a><span class="sd">    Deploying with Roboflow will create a Serverless API to which you can make requests.</span>
+</span><span id="__span-0-3398"><a id="__codelineno-0-3398" name="__codelineno-0-3398"></a>
+</span><span id="__span-0-3399"><a id="__codelineno-0-3399" name="__codelineno-0-3399"></a><span class="sd">    You can also download weights into a Roboflow Inference deployment for use in Roboflow Workflows and on-device</span>
+</span><span id="__span-0-3400"><a id="__codelineno-0-3400" name="__codelineno-0-3400"></a><span class="sd">    deployment.</span>
 </span><span id="__span-0-3401"><a id="__codelineno-0-3401" name="__codelineno-0-3401"></a>
-</span><span id="__span-0-3402"><a id="__codelineno-0-3402" name="__codelineno-0-3402"></a><span class="sd">    Note:</span>
-</span><span id="__span-0-3403"><a id="__codelineno-0-3403" name="__codelineno-0-3403"></a><span class="sd">        Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently</span>
-</span><span id="__span-0-3404"><a id="__codelineno-0-3404" name="__codelineno-0-3404"></a><span class="sd">        to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.</span>
-</span><span id="__span-0-3405"><a id="__codelineno-0-3405" name="__codelineno-0-3405"></a><span class="sd">    """</span>
-</span><span id="__span-0-3406"><a id="__codelineno-0-3406" name="__codelineno-0-3406"></a>    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">"_optimized_inplace"</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3407"><a id="__codelineno-0-3407" name="__codelineno-0-3407"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-</span><span id="__span-0-3408"><a id="__codelineno-0-3408" name="__codelineno-0-3408"></a>            <span class="s2">"Cannot deploy after legacy inplace optimization — "</span>
-</span><span id="__span-0-3409"><a id="__codelineno-0-3409" name="__codelineno-0-3409"></a>            <span class="s2">"the model weights have been cleared from memory. "</span>
-</span><span id="__span-0-3410"><a id="__codelineno-0-3410" name="__codelineno-0-3410"></a>            <span class="s2">"Call export_for_roboflow() before optimizing, then deploy the exported bundle."</span>
-</span><span id="__span-0-3411"><a id="__codelineno-0-3411" name="__codelineno-0-3411"></a>        <span class="p">)</span>
-</span><span id="__span-0-3412"><a id="__codelineno-0-3412" name="__codelineno-0-3412"></a>
-</span><span id="__span-0-3413"><a id="__codelineno-0-3413" name="__codelineno-0-3413"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">roboflow</span><span class="w"> </span><span class="kn">import</span> <span class="n">Roboflow</span>
-</span><span id="__span-0-3414"><a id="__codelineno-0-3414" name="__codelineno-0-3414"></a>
-</span><span id="__span-0-3415"><a id="__codelineno-0-3415" name="__codelineno-0-3415"></a>    <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3416"><a id="__codelineno-0-3416" name="__codelineno-0-3416"></a>        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">)</span>
-</span><span id="__span-0-3417"><a id="__codelineno-0-3417" name="__codelineno-0-3417"></a>        <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3418"><a id="__codelineno-0-3418" name="__codelineno-0-3418"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Set api_key=&lt;KEY&gt; in deploy_to_roboflow or export ROBOFLOW_API_KEY=&lt;KEY&gt;"</span><span class="p">)</span>
-</span><span id="__span-0-3419"><a id="__codelineno-0-3419" name="__codelineno-0-3419"></a>
-</span><span id="__span-0-3420"><a id="__codelineno-0-3420" name="__codelineno-0-3420"></a>    <span class="n">rf</span> <span class="o">=</span> <span class="n">Roboflow</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
-</span><span id="__span-0-3421"><a id="__codelineno-0-3421" name="__codelineno-0-3421"></a>    <span class="n">rf_workspace</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>
-</span><span id="__span-0-3422"><a id="__codelineno-0-3422" name="__codelineno-0-3422"></a>
-</span><span id="__span-0-3423"><a id="__codelineno-0-3423" name="__codelineno-0-3423"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3424"><a id="__codelineno-0-3424" name="__codelineno-0-3424"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Must set size for custom architectures"</span><span class="p">)</span>
-</span><span id="__span-0-3425"><a id="__codelineno-0-3425" name="__codelineno-0-3425"></a>
-</span><span id="__span-0-3426"><a id="__codelineno-0-3426" name="__codelineno-0-3426"></a>    <span class="k">if</span> <span class="n">size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">size</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
-</span><span id="__span-0-3427"><a id="__codelineno-0-3427" name="__codelineno-0-3427"></a>        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
-</span><span id="__span-0-3428"><a id="__codelineno-0-3428" name="__codelineno-0-3428"></a>            <span class="sa">f</span><span class="s2">"deploy_to_roboflow(size=</span><span class="si">{</span><span class="n">size</span><span class="si">!r}</span><span class="s2">) overrides this model's own size </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">size</span><span class="si">!r}</span><span class="s2">; "</span>
-</span><span id="__span-0-3429"><a id="__codelineno-0-3429" name="__codelineno-0-3429"></a>            <span class="sa">f</span><span class="s2">"deploying as </span><span class="si">{</span><span class="n">size</span><span class="si">!r}</span><span class="s2">. Omit size to deploy with the model's own size."</span><span class="p">,</span>
-</span><span id="__span-0-3430"><a id="__codelineno-0-3430" name="__codelineno-0-3430"></a>            <span class="ne">UserWarning</span><span class="p">,</span>
-</span><span id="__span-0-3431"><a id="__codelineno-0-3431" name="__codelineno-0-3431"></a>            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-</span><span id="__span-0-3432"><a id="__codelineno-0-3432" name="__codelineno-0-3432"></a>        <span class="p">)</span>
-</span><span id="__span-0-3433"><a id="__codelineno-0-3433" name="__codelineno-0-3433"></a>    <span class="c1"># Explicit user argument wins; fall back to the trained model's size (documented behaviour).</span>
-</span><span id="__span-0-3434"><a id="__codelineno-0-3434" name="__codelineno-0-3434"></a>    <span class="n">size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="k">if</span> <span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">size</span>
-</span><span id="__span-0-3435"><a id="__codelineno-0-3435" name="__codelineno-0-3435"></a>    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"roboflow_upload_"</span><span class="p">)</span> <span class="k">as</span> <span class="n">tmp_out_dir</span><span class="p">:</span>
-</span><span id="__span-0-3436"><a id="__codelineno-0-3436" name="__codelineno-0-3436"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">export_for_roboflow</span><span class="p">(</span><span class="n">tmp_out_dir</span><span class="p">)</span>
-</span><span id="__span-0-3437"><a id="__codelineno-0-3437" name="__codelineno-0-3437"></a>        <span class="n">project</span> <span class="o">=</span> <span class="n">rf_workspace</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">project_id</span><span class="p">)</span>
-</span><span id="__span-0-3438"><a id="__codelineno-0-3438" name="__codelineno-0-3438"></a>        <span class="k">if</span> <span class="n">version</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3439"><a id="__codelineno-0-3439" name="__codelineno-0-3439"></a>            <span class="c1"># Version ids come back as "&lt;workspace&gt;/&lt;project&gt;/&lt;number&gt;"; the highest number is the</span>
-</span><span id="__span-0-3440"><a id="__codelineno-0-3440" name="__codelineno-0-3440"></a>            <span class="c1"># newest dataset version. default=1 keeps the SDK's own "Version number 1 is not found."</span>
-</span><span id="__span-0-3441"><a id="__codelineno-0-3441" name="__codelineno-0-3441"></a>            <span class="c1"># as the error surface for a project with no generated versions.</span>
-</span><span id="__span-0-3442"><a id="__codelineno-0-3442" name="__codelineno-0-3442"></a>            <span class="n">version</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
-</span><span id="__span-0-3443"><a id="__codelineno-0-3443" name="__codelineno-0-3443"></a>                <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">"id"</span><span class="p">]))</span> <span class="k">for</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">project</span><span class="o">.</span><span class="n">get_version_information</span><span class="p">()),</span>
-</span><span id="__span-0-3444"><a id="__codelineno-0-3444" name="__codelineno-0-3444"></a>                <span class="n">default</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-3445"><a id="__codelineno-0-3445" name="__codelineno-0-3445"></a>            <span class="p">)</span>
-</span><span id="__span-0-3446"><a id="__codelineno-0-3446" name="__codelineno-0-3446"></a>            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">"deploy_to_roboflow: no version given, resolved latest version </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</span><span id="__span-0-3447"><a id="__codelineno-0-3447" name="__codelineno-0-3447"></a>        <span class="n">project_version</span> <span class="o">=</span> <span class="n">project</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="n">version</span><span class="p">)</span>
-</span><span id="__span-0-3448"><a id="__codelineno-0-3448" name="__codelineno-0-3448"></a>        <span class="n">project_version</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="n">model_type</span><span class="o">=</span><span class="n">size</span><span class="p">,</span> <span class="n">model_path</span><span class="o">=</span><span class="n">tmp_out_dir</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">"weights.pt"</span><span class="p">)</span>
+</span><span id="__span-0-3402"><a id="__codelineno-0-3402" name="__codelineno-0-3402"></a><span class="sd">    Args:</span>
+</span><span id="__span-0-3403"><a id="__codelineno-0-3403" name="__codelineno-0-3403"></a><span class="sd">        workspace: The name of the Roboflow workspace to deploy to.</span>
+</span><span id="__span-0-3404"><a id="__codelineno-0-3404" name="__codelineno-0-3404"></a><span class="sd">        project_id: The project ID to which the model will be deployed.</span>
+</span><span id="__span-0-3405"><a id="__codelineno-0-3405" name="__codelineno-0-3405"></a><span class="sd">        version: The project version to which the model will be deployed. If not provided, the highest</span>
+</span><span id="__span-0-3406"><a id="__codelineno-0-3406" name="__codelineno-0-3406"></a><span class="sd">            existing dataset version is resolved automatically via the Roboflow API; for a project with</span>
+</span><span id="__span-0-3407"><a id="__codelineno-0-3407" name="__codelineno-0-3407"></a><span class="sd">            no generated versions yet the lookup falls back to version ``1``, and the Roboflow SDK then</span>
+</span><span id="__span-0-3408"><a id="__codelineno-0-3408" name="__codelineno-0-3408"></a><span class="sd">            raises its own ``RuntimeError`` ("Version number 1 is not found.").</span>
+</span><span id="__span-0-3409"><a id="__codelineno-0-3409" name="__codelineno-0-3409"></a><span class="sd">        api_key: Your Roboflow API key. If not provided,</span>
+</span><span id="__span-0-3410"><a id="__codelineno-0-3410" name="__codelineno-0-3410"></a><span class="sd">            it will be read from the environment variable `ROBOFLOW_API_KEY`.</span>
+</span><span id="__span-0-3411"><a id="__codelineno-0-3411" name="__codelineno-0-3411"></a><span class="sd">        size: The size of the model to deploy. If not provided,</span>
+</span><span id="__span-0-3412"><a id="__codelineno-0-3412" name="__codelineno-0-3412"></a><span class="sd">            it will default to the size of the model being trained (e.g., "rfdetr-base", "rfdetr-large", etc.).</span>
+</span><span id="__span-0-3413"><a id="__codelineno-0-3413" name="__codelineno-0-3413"></a>
+</span><span id="__span-0-3414"><a id="__codelineno-0-3414" name="__codelineno-0-3414"></a><span class="sd">    Raises:</span>
+</span><span id="__span-0-3415"><a id="__codelineno-0-3415" name="__codelineno-0-3415"></a><span class="sd">        ValueError: If the `api_key` is not provided and not found in the</span>
+</span><span id="__span-0-3416"><a id="__codelineno-0-3416" name="__codelineno-0-3416"></a><span class="sd">            environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.</span>
+</span><span id="__span-0-3417"><a id="__codelineno-0-3417" name="__codelineno-0-3417"></a><span class="sd">        RuntimeError: If a legacy in-place optimization cleared the base weights.</span>
+</span><span id="__span-0-3418"><a id="__codelineno-0-3418" name="__codelineno-0-3418"></a>
+</span><span id="__span-0-3419"><a id="__codelineno-0-3419" name="__codelineno-0-3419"></a><span class="sd">    Note:</span>
+</span><span id="__span-0-3420"><a id="__codelineno-0-3420" name="__codelineno-0-3420"></a><span class="sd">        Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently</span>
+</span><span id="__span-0-3421"><a id="__codelineno-0-3421" name="__codelineno-0-3421"></a><span class="sd">        to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.</span>
+</span><span id="__span-0-3422"><a id="__codelineno-0-3422" name="__codelineno-0-3422"></a><span class="sd">    """</span>
+</span><span id="__span-0-3423"><a id="__codelineno-0-3423" name="__codelineno-0-3423"></a>    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">"_optimized_inplace"</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3424"><a id="__codelineno-0-3424" name="__codelineno-0-3424"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+</span><span id="__span-0-3425"><a id="__codelineno-0-3425" name="__codelineno-0-3425"></a>            <span class="s2">"Cannot deploy after legacy inplace optimization — "</span>
+</span><span id="__span-0-3426"><a id="__codelineno-0-3426" name="__codelineno-0-3426"></a>            <span class="s2">"the model weights have been cleared from memory. "</span>
+</span><span id="__span-0-3427"><a id="__codelineno-0-3427" name="__codelineno-0-3427"></a>            <span class="s2">"Call export_for_roboflow() before optimizing, then deploy the exported bundle."</span>
+</span><span id="__span-0-3428"><a id="__codelineno-0-3428" name="__codelineno-0-3428"></a>        <span class="p">)</span>
+</span><span id="__span-0-3429"><a id="__codelineno-0-3429" name="__codelineno-0-3429"></a>
+</span><span id="__span-0-3430"><a id="__codelineno-0-3430" name="__codelineno-0-3430"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">roboflow</span><span class="w"> </span><span class="kn">import</span> <span class="n">Roboflow</span>
+</span><span id="__span-0-3431"><a id="__codelineno-0-3431" name="__codelineno-0-3431"></a>
+</span><span id="__span-0-3432"><a id="__codelineno-0-3432" name="__codelineno-0-3432"></a>    <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3433"><a id="__codelineno-0-3433" name="__codelineno-0-3433"></a>        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"ROBOFLOW_API_KEY"</span><span class="p">)</span>
+</span><span id="__span-0-3434"><a id="__codelineno-0-3434" name="__codelineno-0-3434"></a>        <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3435"><a id="__codelineno-0-3435" name="__codelineno-0-3435"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Set api_key=&lt;KEY&gt; in deploy_to_roboflow or export ROBOFLOW_API_KEY=&lt;KEY&gt;"</span><span class="p">)</span>
+</span><span id="__span-0-3436"><a id="__codelineno-0-3436" name="__codelineno-0-3436"></a>
+</span><span id="__span-0-3437"><a id="__codelineno-0-3437" name="__codelineno-0-3437"></a>    <span class="n">rf</span> <span class="o">=</span> <span class="n">Roboflow</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
+</span><span id="__span-0-3438"><a id="__codelineno-0-3438" name="__codelineno-0-3438"></a>    <span class="n">rf_workspace</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>
+</span><span id="__span-0-3439"><a id="__codelineno-0-3439" name="__codelineno-0-3439"></a>
+</span><span id="__span-0-3440"><a id="__codelineno-0-3440" name="__codelineno-0-3440"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3441"><a id="__codelineno-0-3441" name="__codelineno-0-3441"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Must set size for custom architectures"</span><span class="p">)</span>
+</span><span id="__span-0-3442"><a id="__codelineno-0-3442" name="__codelineno-0-3442"></a>
+</span><span id="__span-0-3443"><a id="__codelineno-0-3443" name="__codelineno-0-3443"></a>    <span class="k">if</span> <span class="n">size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">size</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
+</span><span id="__span-0-3444"><a id="__codelineno-0-3444" name="__codelineno-0-3444"></a>        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+</span><span id="__span-0-3445"><a id="__codelineno-0-3445" name="__codelineno-0-3445"></a>            <span class="sa">f</span><span class="s2">"deploy_to_roboflow(size=</span><span class="si">{</span><span class="n">size</span><span class="si">!r}</span><span class="s2">) overrides this model's own size </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">size</span><span class="si">!r}</span><span class="s2">; "</span>
+</span><span id="__span-0-3446"><a id="__codelineno-0-3446" name="__codelineno-0-3446"></a>            <span class="sa">f</span><span class="s2">"deploying as </span><span class="si">{</span><span class="n">size</span><span class="si">!r}</span><span class="s2">. Omit size to deploy with the model's own size."</span><span class="p">,</span>
+</span><span id="__span-0-3447"><a id="__codelineno-0-3447" name="__codelineno-0-3447"></a>            <span class="ne">UserWarning</span><span class="p">,</span>
+</span><span id="__span-0-3448"><a id="__codelineno-0-3448" name="__codelineno-0-3448"></a>            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-0-3449"><a id="__codelineno-0-3449" name="__codelineno-0-3449"></a>        <span class="p">)</span>
+</span><span id="__span-0-3450"><a id="__codelineno-0-3450" name="__codelineno-0-3450"></a>    <span class="c1"># Explicit user argument wins; fall back to the trained model's size (documented behaviour).</span>
+</span><span id="__span-0-3451"><a id="__codelineno-0-3451" name="__codelineno-0-3451"></a>    <span class="n">size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="k">if</span> <span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">size</span>
+</span><span id="__span-0-3452"><a id="__codelineno-0-3452" name="__codelineno-0-3452"></a>    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"roboflow_upload_"</span><span class="p">)</span> <span class="k">as</span> <span class="n">tmp_out_dir</span><span class="p">:</span>
+</span><span id="__span-0-3453"><a id="__codelineno-0-3453" name="__codelineno-0-3453"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">export_for_roboflow</span><span class="p">(</span><span class="n">tmp_out_dir</span><span class="p">)</span>
+</span><span id="__span-0-3454"><a id="__codelineno-0-3454" name="__codelineno-0-3454"></a>        <span class="n">project</span> <span class="o">=</span> <span class="n">rf_workspace</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">project_id</span><span class="p">)</span>
+</span><span id="__span-0-3455"><a id="__codelineno-0-3455" name="__codelineno-0-3455"></a>        <span class="k">if</span> <span class="n">version</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3456"><a id="__codelineno-0-3456" name="__codelineno-0-3456"></a>            <span class="c1"># Version ids come back as "&lt;workspace&gt;/&lt;project&gt;/&lt;number&gt;"; the highest number is the</span>
+</span><span id="__span-0-3457"><a id="__codelineno-0-3457" name="__codelineno-0-3457"></a>            <span class="c1"># newest dataset version. default=1 keeps the SDK's own "Version number 1 is not found."</span>
+</span><span id="__span-0-3458"><a id="__codelineno-0-3458" name="__codelineno-0-3458"></a>            <span class="c1"># as the error surface for a project with no generated versions.</span>
+</span><span id="__span-0-3459"><a id="__codelineno-0-3459" name="__codelineno-0-3459"></a>            <span class="n">version</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+</span><span id="__span-0-3460"><a id="__codelineno-0-3460" name="__codelineno-0-3460"></a>                <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">"id"</span><span class="p">]))</span> <span class="k">for</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">project</span><span class="o">.</span><span class="n">get_version_information</span><span class="p">()),</span>
+</span><span id="__span-0-3461"><a id="__codelineno-0-3461" name="__codelineno-0-3461"></a>                <span class="n">default</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-3462"><a id="__codelineno-0-3462" name="__codelineno-0-3462"></a>            <span class="p">)</span>
+</span><span id="__span-0-3463"><a id="__codelineno-0-3463" name="__codelineno-0-3463"></a>            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">"deploy_to_roboflow: no version given, resolved latest version </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-0-3464"><a id="__codelineno-0-3464" name="__codelineno-0-3464"></a>        <span class="n">project_version</span> <span class="o">=</span> <span class="n">project</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="n">version</span><span class="p">)</span>
+</span><span id="__span-0-3465"><a id="__codelineno-0-3465" name="__codelineno-0-3465"></a>        <span class="n">project_version</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="n">model_type</span><span class="o">=</span><span class="n">size</span><span class="p">,</span> <span class="n">model_path</span><span class="o">=</span><span class="n">tmp_out_dir</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">"weights.pt"</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -8111,24 +8133,7 @@ file write, or <code>torch.save</code>.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/detr.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-3450">3450</a></span>
-<span class="normal"><a href="#__codelineno-0-3451">3451</a></span>
-<span class="normal"><a href="#__codelineno-0-3452">3452</a></span>
-<span class="normal"><a href="#__codelineno-0-3453">3453</a></span>
-<span class="normal"><a href="#__codelineno-0-3454">3454</a></span>
-<span class="normal"><a href="#__codelineno-0-3455">3455</a></span>
-<span class="normal"><a href="#__codelineno-0-3456">3456</a></span>
-<span class="normal"><a href="#__codelineno-0-3457">3457</a></span>
-<span class="normal"><a href="#__codelineno-0-3458">3458</a></span>
-<span class="normal"><a href="#__codelineno-0-3459">3459</a></span>
-<span class="normal"><a href="#__codelineno-0-3460">3460</a></span>
-<span class="normal"><a href="#__codelineno-0-3461">3461</a></span>
-<span class="normal"><a href="#__codelineno-0-3462">3462</a></span>
-<span class="normal"><a href="#__codelineno-0-3463">3463</a></span>
-<span class="normal"><a href="#__codelineno-0-3464">3464</a></span>
-<span class="normal"><a href="#__codelineno-0-3465">3465</a></span>
-<span class="normal"><a href="#__codelineno-0-3466">3466</a></span>
-<span class="normal"><a href="#__codelineno-0-3467">3467</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-3467">3467</a></span>
 <span class="normal"><a href="#__codelineno-0-3468">3468</a></span>
 <span class="normal"><a href="#__codelineno-0-3469">3469</a></span>
 <span class="normal"><a href="#__codelineno-0-3470">3470</a></span>
@@ -8152,48 +8157,65 @@ file write, or <code>torch.save</code>.</p>
 <span class="normal"><a href="#__codelineno-0-3488">3488</a></span>
 <span class="normal"><a href="#__codelineno-0-3489">3489</a></span>
 <span class="normal"><a href="#__codelineno-0-3490">3490</a></span>
-<span class="normal"><a href="#__codelineno-0-3491">3491</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-3450"><a id="__codelineno-0-3450" name="__codelineno-0-3450"></a><span class="k">def</span><span class="w"> </span><span class="nf">export_for_roboflow</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3451"><a id="__codelineno-0-3451" name="__codelineno-0-3451"></a><span class="w">    </span><span class="sd">"""Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.</span>
-</span><span id="__span-0-3452"><a id="__codelineno-0-3452" name="__codelineno-0-3452"></a>
-</span><span id="__span-0-3453"><a id="__codelineno-0-3453" name="__codelineno-0-3453"></a><span class="sd">    This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and</span>
-</span><span id="__span-0-3454"><a id="__codelineno-0-3454" name="__codelineno-0-3454"></a><span class="sd">    a sanitized copy of the training args into ``weights.pt``, always embedding ``class_names`` so</span>
-</span><span id="__span-0-3455"><a id="__codelineno-0-3455" name="__codelineno-0-3455"></a><span class="sd">    the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow</span>
-</span><span id="__span-0-3456"><a id="__codelineno-0-3456" name="__codelineno-0-3456"></a><span class="sd">    SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.</span>
-</span><span id="__span-0-3457"><a id="__codelineno-0-3457" name="__codelineno-0-3457"></a>
-</span><span id="__span-0-3458"><a id="__codelineno-0-3458" name="__codelineno-0-3458"></a><span class="sd">    Args:</span>
-</span><span id="__span-0-3459"><a id="__codelineno-0-3459" name="__codelineno-0-3459"></a><span class="sd">        output_dir: Directory into which ``weights.pt`` and ``class_names.txt`` are written.  Created</span>
-</span><span id="__span-0-3460"><a id="__codelineno-0-3460" name="__codelineno-0-3460"></a><span class="sd">            if it does not exist.  Existing files are silently overwritten.</span>
-</span><span id="__span-0-3461"><a id="__codelineno-0-3461" name="__codelineno-0-3461"></a>
-</span><span id="__span-0-3462"><a id="__codelineno-0-3462" name="__codelineno-0-3462"></a><span class="sd">    Raises:</span>
-</span><span id="__span-0-3463"><a id="__codelineno-0-3463" name="__codelineno-0-3463"></a><span class="sd">        PermissionError: If the process lacks write access to *output_dir* or its parent directory.</span>
-</span><span id="__span-0-3464"><a id="__codelineno-0-3464" name="__codelineno-0-3464"></a><span class="sd">        OSError: On disk-full, invalid path, or other filesystem failure during directory creation,</span>
-</span><span id="__span-0-3465"><a id="__codelineno-0-3465" name="__codelineno-0-3465"></a><span class="sd">            file write, or ``torch.save``.</span>
-</span><span id="__span-0-3466"><a id="__codelineno-0-3466" name="__codelineno-0-3466"></a><span class="sd">        RuntimeError: If a legacy in-place optimization cleared the base weights.</span>
-</span><span id="__span-0-3467"><a id="__codelineno-0-3467" name="__codelineno-0-3467"></a><span class="sd">    """</span>
-</span><span id="__span-0-3468"><a id="__codelineno-0-3468" name="__codelineno-0-3468"></a>    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">"_optimized_inplace"</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3469"><a id="__codelineno-0-3469" name="__codelineno-0-3469"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-</span><span id="__span-0-3470"><a id="__codelineno-0-3470" name="__codelineno-0-3470"></a>            <span class="s2">"Cannot export after legacy inplace optimization — "</span>
-</span><span id="__span-0-3471"><a id="__codelineno-0-3471" name="__codelineno-0-3471"></a>            <span class="s2">"the model has been cleared from memory. "</span>
-</span><span id="__span-0-3472"><a id="__codelineno-0-3472" name="__codelineno-0-3472"></a>            <span class="s2">"Call export_for_roboflow() before optimizing."</span>
-</span><span id="__span-0-3473"><a id="__codelineno-0-3473" name="__codelineno-0-3473"></a>        <span class="p">)</span>
-</span><span id="__span-0-3474"><a id="__codelineno-0-3474" name="__codelineno-0-3474"></a>    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-0-3475"><a id="__codelineno-0-3475" name="__codelineno-0-3475"></a>    <span class="c1"># Write class_names.txt so the Roboflow upload pipeline can discover</span>
-</span><span id="__span-0-3476"><a id="__codelineno-0-3476" name="__codelineno-0-3476"></a>    <span class="c1"># the class labels without relying on args.class_names in the checkpoint.</span>
-</span><span id="__span-0-3477"><a id="__codelineno-0-3477" name="__codelineno-0-3477"></a>    <span class="n">class_names_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="s2">"class_names.txt"</span><span class="p">)</span>
-</span><span id="__span-0-3478"><a id="__codelineno-0-3478" name="__codelineno-0-3478"></a>    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">class_names_path</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">,</span> <span class="n">newline</span><span class="o">=</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span id="__span-0-3479"><a id="__codelineno-0-3479" name="__codelineno-0-3479"></a>        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">class_names</span><span class="p">))</span>
-</span><span id="__span-0-3480"><a id="__codelineno-0-3480" name="__codelineno-0-3480"></a>
-</span><span id="__span-0-3481"><a id="__codelineno-0-3481" name="__codelineno-0-3481"></a>    <span class="c1"># Serialize a sanitized copy so trained bundles do not expose the caller's</span>
-</span><span id="__span-0-3482"><a id="__codelineno-0-3482" name="__codelineno-0-3482"></a>    <span class="c1"># filesystem layout.  Keep self.model.args unchanged for runtime consumers.</span>
-</span><span id="__span-0-3483"><a id="__codelineno-0-3483" name="__codelineno-0-3483"></a>    <span class="n">args</span> <span class="o">=</span> <span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">args</span><span class="p">)</span>
-</span><span id="__span-0-3484"><a id="__codelineno-0-3484" name="__codelineno-0-3484"></a>    <span class="n">args</span><span class="o">.</span><span class="n">dataset_dir</span> <span class="o">=</span> <span class="kc">None</span>
-</span><span id="__span-0-3485"><a id="__codelineno-0-3485" name="__codelineno-0-3485"></a>    <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">=</span> <span class="s2">"output"</span>
-</span><span id="__span-0-3486"><a id="__codelineno-0-3486" name="__codelineno-0-3486"></a>    <span class="n">args</span><span class="o">.</span><span class="n">resume</span> <span class="o">=</span> <span class="s2">""</span>
-</span><span id="__span-0-3487"><a id="__codelineno-0-3487" name="__codelineno-0-3487"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">"class_names"</span><span class="p">)</span> <span class="ow">or</span> <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-3488"><a id="__codelineno-0-3488" name="__codelineno-0-3488"></a>        <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">class_names</span>
-</span><span id="__span-0-3489"><a id="__codelineno-0-3489" name="__codelineno-0-3489"></a>
-</span><span id="__span-0-3490"><a id="__codelineno-0-3490" name="__codelineno-0-3490"></a>    <span class="n">outpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="s2">"weights.pt"</span><span class="p">)</span>
-</span><span id="__span-0-3491"><a id="__codelineno-0-3491" name="__codelineno-0-3491"></a>    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">({</span><span class="s2">"model"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s2">"args"</span><span class="p">:</span> <span class="n">args</span><span class="p">},</span> <span class="n">outpath</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-3491">3491</a></span>
+<span class="normal"><a href="#__codelineno-0-3492">3492</a></span>
+<span class="normal"><a href="#__codelineno-0-3493">3493</a></span>
+<span class="normal"><a href="#__codelineno-0-3494">3494</a></span>
+<span class="normal"><a href="#__codelineno-0-3495">3495</a></span>
+<span class="normal"><a href="#__codelineno-0-3496">3496</a></span>
+<span class="normal"><a href="#__codelineno-0-3497">3497</a></span>
+<span class="normal"><a href="#__codelineno-0-3498">3498</a></span>
+<span class="normal"><a href="#__codelineno-0-3499">3499</a></span>
+<span class="normal"><a href="#__codelineno-0-3500">3500</a></span>
+<span class="normal"><a href="#__codelineno-0-3501">3501</a></span>
+<span class="normal"><a href="#__codelineno-0-3502">3502</a></span>
+<span class="normal"><a href="#__codelineno-0-3503">3503</a></span>
+<span class="normal"><a href="#__codelineno-0-3504">3504</a></span>
+<span class="normal"><a href="#__codelineno-0-3505">3505</a></span>
+<span class="normal"><a href="#__codelineno-0-3506">3506</a></span>
+<span class="normal"><a href="#__codelineno-0-3507">3507</a></span>
+<span class="normal"><a href="#__codelineno-0-3508">3508</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-3467"><a id="__codelineno-0-3467" name="__codelineno-0-3467"></a><span class="k">def</span><span class="w"> </span><span class="nf">export_for_roboflow</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3468"><a id="__codelineno-0-3468" name="__codelineno-0-3468"></a><span class="w">    </span><span class="sd">"""Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.</span>
+</span><span id="__span-0-3469"><a id="__codelineno-0-3469" name="__codelineno-0-3469"></a>
+</span><span id="__span-0-3470"><a id="__codelineno-0-3470" name="__codelineno-0-3470"></a><span class="sd">    This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and</span>
+</span><span id="__span-0-3471"><a id="__codelineno-0-3471" name="__codelineno-0-3471"></a><span class="sd">    a sanitized copy of the training args into ``weights.pt``, always embedding ``class_names`` so</span>
+</span><span id="__span-0-3472"><a id="__codelineno-0-3472" name="__codelineno-0-3472"></a><span class="sd">    the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow</span>
+</span><span id="__span-0-3473"><a id="__codelineno-0-3473" name="__codelineno-0-3473"></a><span class="sd">    SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.</span>
+</span><span id="__span-0-3474"><a id="__codelineno-0-3474" name="__codelineno-0-3474"></a>
+</span><span id="__span-0-3475"><a id="__codelineno-0-3475" name="__codelineno-0-3475"></a><span class="sd">    Args:</span>
+</span><span id="__span-0-3476"><a id="__codelineno-0-3476" name="__codelineno-0-3476"></a><span class="sd">        output_dir: Directory into which ``weights.pt`` and ``class_names.txt`` are written.  Created</span>
+</span><span id="__span-0-3477"><a id="__codelineno-0-3477" name="__codelineno-0-3477"></a><span class="sd">            if it does not exist.  Existing files are silently overwritten.</span>
+</span><span id="__span-0-3478"><a id="__codelineno-0-3478" name="__codelineno-0-3478"></a>
+</span><span id="__span-0-3479"><a id="__codelineno-0-3479" name="__codelineno-0-3479"></a><span class="sd">    Raises:</span>
+</span><span id="__span-0-3480"><a id="__codelineno-0-3480" name="__codelineno-0-3480"></a><span class="sd">        PermissionError: If the process lacks write access to *output_dir* or its parent directory.</span>
+</span><span id="__span-0-3481"><a id="__codelineno-0-3481" name="__codelineno-0-3481"></a><span class="sd">        OSError: On disk-full, invalid path, or other filesystem failure during directory creation,</span>
+</span><span id="__span-0-3482"><a id="__codelineno-0-3482" name="__codelineno-0-3482"></a><span class="sd">            file write, or ``torch.save``.</span>
+</span><span id="__span-0-3483"><a id="__codelineno-0-3483" name="__codelineno-0-3483"></a><span class="sd">        RuntimeError: If a legacy in-place optimization cleared the base weights.</span>
+</span><span id="__span-0-3484"><a id="__codelineno-0-3484" name="__codelineno-0-3484"></a><span class="sd">    """</span>
+</span><span id="__span-0-3485"><a id="__codelineno-0-3485" name="__codelineno-0-3485"></a>    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">"_optimized_inplace"</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3486"><a id="__codelineno-0-3486" name="__codelineno-0-3486"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+</span><span id="__span-0-3487"><a id="__codelineno-0-3487" name="__codelineno-0-3487"></a>            <span class="s2">"Cannot export after legacy inplace optimization — "</span>
+</span><span id="__span-0-3488"><a id="__codelineno-0-3488" name="__codelineno-0-3488"></a>            <span class="s2">"the model has been cleared from memory. "</span>
+</span><span id="__span-0-3489"><a id="__codelineno-0-3489" name="__codelineno-0-3489"></a>            <span class="s2">"Call export_for_roboflow() before optimizing."</span>
+</span><span id="__span-0-3490"><a id="__codelineno-0-3490" name="__codelineno-0-3490"></a>        <span class="p">)</span>
+</span><span id="__span-0-3491"><a id="__codelineno-0-3491" name="__codelineno-0-3491"></a>    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-3492"><a id="__codelineno-0-3492" name="__codelineno-0-3492"></a>    <span class="c1"># Write class_names.txt so the Roboflow upload pipeline can discover</span>
+</span><span id="__span-0-3493"><a id="__codelineno-0-3493" name="__codelineno-0-3493"></a>    <span class="c1"># the class labels without relying on args.class_names in the checkpoint.</span>
+</span><span id="__span-0-3494"><a id="__codelineno-0-3494" name="__codelineno-0-3494"></a>    <span class="n">class_names_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="s2">"class_names.txt"</span><span class="p">)</span>
+</span><span id="__span-0-3495"><a id="__codelineno-0-3495" name="__codelineno-0-3495"></a>    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">class_names_path</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">,</span> <span class="n">newline</span><span class="o">=</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-0-3496"><a id="__codelineno-0-3496" name="__codelineno-0-3496"></a>        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">class_names</span><span class="p">))</span>
+</span><span id="__span-0-3497"><a id="__codelineno-0-3497" name="__codelineno-0-3497"></a>
+</span><span id="__span-0-3498"><a id="__codelineno-0-3498" name="__codelineno-0-3498"></a>    <span class="c1"># Serialize a sanitized copy so trained bundles do not expose the caller's</span>
+</span><span id="__span-0-3499"><a id="__codelineno-0-3499" name="__codelineno-0-3499"></a>    <span class="c1"># filesystem layout.  Keep self.model.args unchanged for runtime consumers.</span>
+</span><span id="__span-0-3500"><a id="__codelineno-0-3500" name="__codelineno-0-3500"></a>    <span class="n">args</span> <span class="o">=</span> <span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">args</span><span class="p">)</span>
+</span><span id="__span-0-3501"><a id="__codelineno-0-3501" name="__codelineno-0-3501"></a>    <span class="n">args</span><span class="o">.</span><span class="n">dataset_dir</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-3502"><a id="__codelineno-0-3502" name="__codelineno-0-3502"></a>    <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">=</span> <span class="s2">"output"</span>
+</span><span id="__span-0-3503"><a id="__codelineno-0-3503" name="__codelineno-0-3503"></a>    <span class="n">args</span><span class="o">.</span><span class="n">resume</span> <span class="o">=</span> <span class="s2">""</span>
+</span><span id="__span-0-3504"><a id="__codelineno-0-3504" name="__codelineno-0-3504"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">"class_names"</span><span class="p">)</span> <span class="ow">or</span> <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-3505"><a id="__codelineno-0-3505" name="__codelineno-0-3505"></a>        <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">class_names</span>
+</span><span id="__span-0-3506"><a id="__codelineno-0-3506" name="__codelineno-0-3506"></a>
+</span><span id="__span-0-3507"><a id="__codelineno-0-3507" name="__codelineno-0-3507"></a>    <span class="n">outpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="s2">"weights.pt"</span><span class="p">)</span>
+</span><span id="__span-0-3508"><a id="__codelineno-0-3508" name="__codelineno-0-3508"></a>    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">({</span><span class="s2">"model"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s2">"args"</span><span class="p">:</span> <span class="n">args</span><span class="p">},</span> <span class="n">outpath</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -10143,7 +10165,7 @@ yet exist.</p>
 
 
 <h3 id="rfdetr.platform.models.RFDETR2XLarge.predict" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">shift_tta</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
 
 <a href="#rfdetr.platform.models.RFDETR2XLarge.predict" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -10291,6 +10313,30 @@ Defaults to <code>False</code> to preserve the existing inference behavior.</p>
             </td>
             <td>
                   <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.platform.models.RFDETR2XLarge.predict(shift_tta)" class="doc doc-heading doc-heading-parameter">                  <code>shift_tta</code>
+<a href="#rfdetr.platform.models.RFDETR2XLarge.predict(shift_tta)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of passes of sub-patch shift test-time augmentation; <code>1</code> (the default) runs one plain pass.
+The backbone reads the image in <code>patch_size</code> squares, and a class score can change when an object
+moves by a fraction of a square while its box stays put, enough to cross the threshold. With
+<code>shift_tta=N</code> the image is predicted <code>N</code> times, moved by <code>0, patch_size/N, 2*patch_size/N, ...</code>
+model pixels (diagonally, on a canvas one <code>patch_size * num_windows</code> block larger, so nothing is
+cropped), and the matching detections are averaged: same class, box IoU above 0.6, a pass that
+missed the object counting as 0. <code>2</code> or <code>4</code> is a good choice; it costs <code>N</code> forward passes.
+Must be an integer from 1 to the patch size, and keypoint models accept only <code>1</code>; both are checked
+before any image is read.</p>
+              </div>
+            </td>
+            <td>
+                  <code>1</code>
             </td>
           </tr>
           <tr class="doc-section-item">
@@ -10546,7 +10592,9 @@ number nor a sequence of numbers, such as a <code>dict</code> keyed by class nam
 if either dimension does not support the <code>__index__</code> protocol (e.g. <code>float</code>) or is a <code>bool</code>, if
 either dimension is zero or negative, if either dimension is not divisible by <code>patch_size *
 num_windows</code>, if <code>patch_size</code> is not a positive integer, or if <code>threshold</code> is a sequence that is
-not one-dimensional, whose length differs from <code>len(class_names)</code>, or that holds a NaN.</p>
+not one-dimensional, whose length differs from <code>len(class_names)</code>, or that holds a NaN. Also if
+<code>shift_tta</code> is not an integer from 1 to the patch size (<code>True</code> and <code>1.0</code> included) or is above 1
+for a keypoint model; both are checked before any image is read.</p>
               </div>
             </td>
           </tr>
@@ -10559,6 +10607,9 @@ not one-dimensional, whose length differs from <code>len(class_names)</code>, or
     <div class="language-pycon highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+</span></code></pre></div>
+    <p>Average four sub-patch shifted passes for steadier scores:</p>
+    <div class="language-pycon highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shift_tta</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 </span></code></pre></div>
 
 
@@ -10712,7 +10763,24 @@ not one-dimensional, whose length differs from <code>len(class_names)</code>, or
 <span class="normal"><a href="#__codelineno-0-3365">3365</a></span>
 <span class="normal"><a href="#__codelineno-0-3366">3366</a></span>
 <span class="normal"><a href="#__codelineno-0-3367">3367</a></span>
-<span class="normal"><a href="#__codelineno-0-3368">3368</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-3220"><a id="__codelineno-0-3220" name="__codelineno-0-3220"></a><span class="k">def</span><span class="w"> </span><span class="nf">predict</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-3368">3368</a></span>
+<span class="normal"><a href="#__codelineno-0-3369">3369</a></span>
+<span class="normal"><a href="#__codelineno-0-3370">3370</a></span>
+<span class="normal"><a href="#__codelineno-0-3371">3371</a></span>
+<span class="normal"><a href="#__codelineno-0-3372">3372</a></span>
+<span class="normal"><a href="#__codelineno-0-3373">3373</a></span>
+<span class="normal"><a href="#__codelineno-0-3374">3374</a></span>
+<span class="normal"><a href="#__codelineno-0-3375">3375</a></span>
+<span class="normal"><a href="#__codelineno-0-3376">3376</a></span>
+<span class="normal"><a href="#__codelineno-0-3377">3377</a></span>
+<span class="normal"><a href="#__codelineno-0-3378">3378</a></span>
+<span class="normal"><a href="#__codelineno-0-3379">3379</a></span>
+<span class="normal"><a href="#__codelineno-0-3380">3380</a></span>
+<span class="normal"><a href="#__codelineno-0-3381">3381</a></span>
+<span class="normal"><a href="#__codelineno-0-3382">3382</a></span>
+<span class="normal"><a href="#__codelineno-0-3383">3383</a></span>
+<span class="normal"><a href="#__codelineno-0-3384">3384</a></span>
+<span class="normal"><a href="#__codelineno-0-3385">3385</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-3220"><a id="__codelineno-0-3220" name="__codelineno-0-3220"></a><span class="k">def</span><span class="w"> </span><span class="nf">predict</span><span class="p">(</span>
 </span><span id="__span-0-3221"><a id="__codelineno-0-3221" name="__codelineno-0-3221"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-3222"><a id="__codelineno-0-3222" name="__codelineno-0-3222"></a>    <span class="n">images</span><span class="p">:</span> <span class="n">_ImageInput</span> <span class="o">|</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">_ImageInput</span><span class="p">],</span>
 </span><span id="__span-0-3223"><a id="__codelineno-0-3223" name="__codelineno-0-3223"></a>    <span class="n">threshold</span><span class="p">:</span> <span class="n">_ThresholdInput</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
@@ -10721,146 +10789,163 @@ not one-dimensional, whose length differs from <code>len(class_names)</code>, or
 </span><span id="__span-0-3226"><a id="__codelineno-0-3226" name="__codelineno-0-3226"></a>    <span class="n">include_source_image</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
 </span><span id="__span-0-3227"><a id="__codelineno-0-3227" name="__codelineno-0-3227"></a>    <span class="o">*</span><span class="p">,</span>
 </span><span id="__span-0-3228"><a id="__codelineno-0-3228" name="__codelineno-0-3228"></a>    <span class="n">antialias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-0-3229"><a id="__codelineno-0-3229" name="__codelineno-0-3229"></a>    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
-</span><span id="__span-0-3230"><a id="__codelineno-0-3230" name="__codelineno-0-3230"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_PredictionOutput</span><span class="p">:</span>
-</span><span id="__span-0-3231"><a id="__codelineno-0-3231" name="__codelineno-0-3231"></a><span class="w">    </span><span class="sd">"""Performs model inference on the input images.</span>
-</span><span id="__span-0-3232"><a id="__codelineno-0-3232" name="__codelineno-0-3232"></a>
-</span><span id="__span-0-3233"><a id="__codelineno-0-3233" name="__codelineno-0-3233"></a><span class="sd">    This method accepts a single image or an iterable of images (string or path-like file path, image URL string,</span>
-</span><span id="__span-0-3234"><a id="__codelineno-0-3234" name="__codelineno-0-3234"></a><span class="sd">    PIL Image, NumPy array, or torch.Tensor) and runs them as one batch. The images should be in RGB channel order.</span>
-</span><span id="__span-0-3235"><a id="__codelineno-0-3235" name="__codelineno-0-3235"></a><span class="sd">    A torch.Tensor must already be normalized to values in the [0, 1] range and have the shape (C, H, W); a</span>
-</span><span id="__span-0-3236"><a id="__codelineno-0-3236" name="__codelineno-0-3236"></a><span class="sd">    (B, C, H, W) tensor is split into B images of one batch. Videos, directories, globs, manifests, webcams and</span>
-</span><span id="__span-0-3237"><a id="__codelineno-0-3237" name="__codelineno-0-3237"></a><span class="sd">    streams are not images: predict them through ``RFDETRInference(model).predict(...)``.</span>
-</span><span id="__span-0-3238"><a id="__codelineno-0-3238" name="__codelineno-0-3238"></a>
-</span><span id="__span-0-3239"><a id="__codelineno-0-3239" name="__codelineno-0-3239"></a><span class="sd">    Args:</span>
-</span><span id="__span-0-3240"><a id="__codelineno-0-3240" name="__codelineno-0-3240"></a><span class="sd">        images:</span>
-</span><span id="__span-0-3241"><a id="__codelineno-0-3241" name="__codelineno-0-3241"></a><span class="sd">            A single image or an iterable of images to process. Images can be provided as string or path-like</span>
-</span><span id="__span-0-3242"><a id="__codelineno-0-3242" name="__codelineno-0-3242"></a><span class="sd">            file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. Iterables other than lists and</span>
-</span><span id="__span-0-3243"><a id="__codelineno-0-3243" name="__codelineno-0-3243"></a><span class="sd">            tuples are read into a list first. PIL and file inputs convert to grayscale for one-channel models and</span>
-</span><span id="__span-0-3244"><a id="__codelineno-0-3244" name="__codelineno-0-3244"></a><span class="sd">            RGB for three-channel models.</span>
-</span><span id="__span-0-3245"><a id="__codelineno-0-3245" name="__codelineno-0-3245"></a><span class="sd">            HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,</span>
-</span><span id="__span-0-3246"><a id="__codelineno-0-3246" name="__codelineno-0-3246"></a><span class="sd">            which does not bound the total download time. Redirects are followed, and the whole response body is</span>
-</span><span id="__span-0-3247"><a id="__codelineno-0-3247" name="__codelineno-0-3247"></a><span class="sd">            read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted</span>
-</span><span id="__span-0-3248"><a id="__codelineno-0-3248" name="__codelineno-0-3248"></a><span class="sd">            URLs, download and validate the image yourself and pass the decoded image instead.</span>
-</span><span id="__span-0-3249"><a id="__codelineno-0-3249" name="__codelineno-0-3249"></a><span class="sd">        threshold:</span>
-</span><span id="__span-0-3250"><a id="__codelineno-0-3250" name="__codelineno-0-3250"></a><span class="sd">            The confidence score a detection must exceed to be kept. A single float applies to every class. A</span>
-</span><span id="__span-0-3251"><a id="__codelineno-0-3251" name="__codelineno-0-3251"></a><span class="sd">            :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies</span>
-</span><span id="__span-0-3252"><a id="__codelineno-0-3252" name="__codelineno-0-3252"></a><span class="sd">            each class's own threshold to its detections, so that a class the model finds less reliably can be</span>
-</span><span id="__span-0-3253"><a id="__codelineno-0-3253" name="__codelineno-0-3253"></a><span class="sd">            held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:</span>
-</span><span id="__span-0-3254"><a id="__codelineno-0-3254" name="__codelineno-0-3254"></a><span class="sd">            the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the</span>
-</span><span id="__span-0-3255"><a id="__codelineno-0-3255" name="__codelineno-0-3255"></a><span class="sd">            unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection of</span>
-</span><span id="__span-0-3256"><a id="__codelineno-0-3256" name="__codelineno-0-3256"></a><span class="sd">            that class.</span>
-</span><span id="__span-0-3257"><a id="__codelineno-0-3257" name="__codelineno-0-3257"></a><span class="sd">        shape:</span>
-</span><span id="__span-0-3258"><a id="__codelineno-0-3258" name="__codelineno-0-3258"></a><span class="sd">            Resize to ``(height, width)``; defaults to the model resolution. Both dimensions must be positive</span>
-</span><span id="__span-0-3259"><a id="__codelineno-0-3259" name="__codelineno-0-3259"></a><span class="sd">            integers divisible by ``patch_size * num_windows``. Use the model's export resolution when applicable.</span>
-</span><span id="__span-0-3260"><a id="__codelineno-0-3260" name="__codelineno-0-3260"></a><span class="sd">        patch_size:</span>
-</span><span id="__span-0-3261"><a id="__codelineno-0-3261" name="__codelineno-0-3261"></a><span class="sd">            Backbone patch size for shape validation. Defaults to ``model_config.patch_size``.</span>
-</span><span id="__span-0-3262"><a id="__codelineno-0-3262" name="__codelineno-0-3262"></a><span class="sd">        include_source_image:</span>
-</span><span id="__span-0-3263"><a id="__codelineno-0-3263" name="__codelineno-0-3263"></a><span class="sd">            Whether to attach the original image to the returned prediction. Detection and segmentation outputs use</span>
-</span><span id="__span-0-3264"><a id="__codelineno-0-3264" name="__codelineno-0-3264"></a><span class="sd">            ``detections.metadata["source_image"]``. Keypoint outputs use per-object</span>
-</span><span id="__span-0-3265"><a id="__codelineno-0-3265" name="__codelineno-0-3265"></a><span class="sd">            ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level</span>
-</span><span id="__span-0-3266"><a id="__codelineno-0-3266" name="__codelineno-0-3266"></a><span class="sd">            metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not</span>
-</span><span id="__span-0-3267"><a id="__codelineno-0-3267" name="__codelineno-0-3267"></a><span class="sd">            needed.</span>
-</span><span id="__span-0-3268"><a id="__codelineno-0-3268" name="__codelineno-0-3268"></a><span class="sd">        antialias:</span>
-</span><span id="__span-0-3269"><a id="__codelineno-0-3269" name="__codelineno-0-3269"></a><span class="sd">            Whether to use antialiasing during the inference resize. Match it to the resize the checkpoint was</span>
-</span><span id="__span-0-3270"><a id="__codelineno-0-3270" name="__codelineno-0-3270"></a><span class="sd">            trained with. Keep this ``False`` for checkpoints trained with the antialias-free Albumentations</span>
-</span><span id="__span-0-3271"><a id="__codelineno-0-3271" name="__codelineno-0-3271"></a><span class="sd">            pipeline, which is what the default CPU augmentation backend uses when ``rfdetr[augment]`` is</span>
-</span><span id="__span-0-3272"><a id="__codelineno-0-3272" name="__codelineno-0-3272"></a><span class="sd">            installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU</span>
-</span><span id="__span-0-3273"><a id="__codelineno-0-3273" name="__codelineno-0-3273"></a><span class="sd">            augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or</span>
-</span><span id="__span-0-3274"><a id="__codelineno-0-3274" name="__codelineno-0-3274"></a><span class="sd">            antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time</span>
-</span><span id="__span-0-3275"><a id="__codelineno-0-3275" name="__codelineno-0-3275"></a><span class="sd">            therefore decides which setting a default-trained checkpoint expects.</span>
-</span><span id="__span-0-3276"><a id="__codelineno-0-3276" name="__codelineno-0-3276"></a><span class="sd">            ``RFDETRInference`` uses the artifact metadata's ``resize_antialias`` by default for exported</span>
-</span><span id="__span-0-3277"><a id="__codelineno-0-3277" name="__codelineno-0-3277"></a><span class="sd">            models; callers can override it with an explicit ``antialias`` argument. The lower-level</span>
-</span><span id="__span-0-3278"><a id="__codelineno-0-3278" name="__codelineno-0-3278"></a><span class="sd">            ``rfdetr.export`` runtime preprocessing helpers always resize with ``antialias=False``.</span>
-</span><span id="__span-0-3279"><a id="__codelineno-0-3279" name="__codelineno-0-3279"></a><span class="sd">            Defaults to ``False`` to preserve the existing inference behavior.</span>
-</span><span id="__span-0-3280"><a id="__codelineno-0-3280" name="__codelineno-0-3280"></a><span class="sd">        **kwargs:</span>
-</span><span id="__span-0-3281"><a id="__codelineno-0-3281" name="__codelineno-0-3281"></a><span class="sd">            Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since</span>
-</span><span id="__span-0-3282"><a id="__codelineno-0-3282" name="__codelineno-0-3282"></a><span class="sd">            v1.12.0 and will raise TypeError in v2.0.0. The source options of</span>
-</span><span id="__span-0-3283"><a id="__codelineno-0-3283" name="__codelineno-0-3283"></a><span class="sd">            :meth:`RFDETRInference.predict` (``stream``, ``batch``, ``vid_stride``, ``stream_buffer``) raise</span>
-</span><span id="__span-0-3284"><a id="__codelineno-0-3284" name="__codelineno-0-3284"></a><span class="sd">            ``TypeError`` now.</span>
-</span><span id="__span-0-3285"><a id="__codelineno-0-3285" name="__codelineno-0-3285"></a>
-</span><span id="__span-0-3286"><a id="__codelineno-0-3286" name="__codelineno-0-3286"></a><span class="sd">    Returns:</span>
-</span><span id="__span-0-3287"><a id="__codelineno-0-3287" name="__codelineno-0-3287"></a><span class="sd">        One result for a single image, or a list with one result per image for an iterable or a BCHW tensor.</span>
-</span><span id="__span-0-3288"><a id="__codelineno-0-3288" name="__codelineno-0-3288"></a><span class="sd">        Detection and segmentation return :class:`~supervision.Detections`; keypoints return</span>
-</span><span id="__span-0-3289"><a id="__codelineno-0-3289" name="__codelineno-0-3289"></a><span class="sd">        :class:`~supervision.KeyPoints` with ``xy`` coordinates.</span>
-</span><span id="__span-0-3290"><a id="__codelineno-0-3290" name="__codelineno-0-3290"></a><span class="sd">        ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this</span>
-</span><span id="__span-0-3291"><a id="__codelineno-0-3291" name="__codelineno-0-3291"></a><span class="sd">        is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion</span>
-</span><span id="__span-0-3292"><a id="__codelineno-0-3292" name="__codelineno-0-3292"></a><span class="sd">        controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it</span>
-</span><span id="__span-0-3293"><a id="__codelineno-0-3293" name="__codelineno-0-3293"></a><span class="sd">        is a ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint</span>
-</span><span id="__span-0-3294"><a id="__codelineno-0-3294" name="__codelineno-0-3294"></a><span class="sd">        head, not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,</span>
-</span><span id="__span-0-3295"><a id="__codelineno-0-3295" name="__codelineno-0-3295"></a><span class="sd">        ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape</span>
-</span><span id="__span-0-3296"><a id="__codelineno-0-3296" name="__codelineno-0-3296"></a><span class="sd">        ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection</span>
-</span><span id="__span-0-3297"><a id="__codelineno-0-3297" name="__codelineno-0-3297"></a><span class="sd">        boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision</span>
-</span><span id="__span-0-3298"><a id="__codelineno-0-3298" name="__codelineno-0-3298"></a><span class="sd">        ``KeyPoints`` does not have a native bounding-box field. The ``data`` dict also contains ``class_name`` and</span>
-</span><span id="__span-0-3299"><a id="__codelineno-0-3299" name="__codelineno-0-3299"></a><span class="sd">        ``source_shape`` as per-object arrays. When ``include_source_image=True`` for keypoint models,</span>
-</span><span id="__span-0-3300"><a id="__codelineno-0-3300" name="__codelineno-0-3300"></a><span class="sd">        ``source_image`` is stored as per-object data until Supervision exposes collection-level metadata for</span>
-</span><span id="__span-0-3301"><a id="__codelineno-0-3301" name="__codelineno-0-3301"></a><span class="sd">        ``KeyPoints``.</span>
-</span><span id="__span-0-3302"><a id="__codelineno-0-3302" name="__codelineno-0-3302"></a>
-</span><span id="__span-0-3303"><a id="__codelineno-0-3303" name="__codelineno-0-3303"></a><span class="sd">    Note:</span>
-</span><span id="__span-0-3304"><a id="__codelineno-0-3304" name="__codelineno-0-3304"></a><span class="sd">        For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.</span>
-</span><span id="__span-0-3305"><a id="__codelineno-0-3305" name="__codelineno-0-3305"></a><span class="sd">        Update detection callers reading ``detections.data["source_image"]`` to use</span>
-</span><span id="__span-0-3306"><a id="__codelineno-0-3306" name="__codelineno-0-3306"></a><span class="sd">        ``detections.metadata["source_image"]``.</span>
-</span><span id="__span-0-3307"><a id="__codelineno-0-3307" name="__codelineno-0-3307"></a>
-</span><span id="__span-0-3308"><a id="__codelineno-0-3308" name="__codelineno-0-3308"></a><span class="sd">    Note:</span>
-</span><span id="__span-0-3309"><a id="__codelineno-0-3309" name="__codelineno-0-3309"></a><span class="sd">        ``class_name`` mapping uses one of three modes depending on the checkpoint. For pretrained COCO checkpoints</span>
-</span><span id="__span-0-3310"><a id="__codelineno-0-3310" name="__codelineno-0-3310"></a><span class="sd">        (detected when ``model.args.num_classes &gt; len(class_names)`` and ``class_names`` matches</span>
-</span><span id="__span-0-3311"><a id="__codelineno-0-3311" name="__codelineno-0-3311"></a><span class="sd">        ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by</span>
-</span><span id="__span-0-3312"><a id="__codelineno-0-3312" name="__codelineno-0-3312"></a><span class="sd">        position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and</span>
-</span><span id="__span-0-3313"><a id="__codelineno-0-3313" name="__codelineno-0-3313"></a><span class="sd">        segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into</span>
-</span><span id="__span-0-3314"><a id="__codelineno-0-3314" name="__codelineno-0-3314"></a><span class="sd">        ``class_names``. In the one-class preview keypoint setup, that means ``class_id=0`` is the foreground</span>
-</span><span id="__span-0-3315"><a id="__codelineno-0-3315" name="__codelineno-0-3315"></a><span class="sd">        class and ``class_id=1`` is ``"__background__"``.</span>
-</span><span id="__span-0-3316"><a id="__codelineno-0-3316" name="__codelineno-0-3316"></a><span class="sd">        Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:</span>
-</span><span id="__span-0-3317"><a id="__codelineno-0-3317" name="__codelineno-0-3317"></a><span class="sd">        slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.</span>
+</span><span id="__span-0-3229"><a id="__codelineno-0-3229" name="__codelineno-0-3229"></a>    <span class="n">shift_tta</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-3230"><a id="__codelineno-0-3230" name="__codelineno-0-3230"></a>    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-3231"><a id="__codelineno-0-3231" name="__codelineno-0-3231"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_PredictionOutput</span><span class="p">:</span>
+</span><span id="__span-0-3232"><a id="__codelineno-0-3232" name="__codelineno-0-3232"></a><span class="w">    </span><span class="sd">"""Performs model inference on the input images.</span>
+</span><span id="__span-0-3233"><a id="__codelineno-0-3233" name="__codelineno-0-3233"></a>
+</span><span id="__span-0-3234"><a id="__codelineno-0-3234" name="__codelineno-0-3234"></a><span class="sd">    This method accepts a single image or an iterable of images (string or path-like file path, image URL string,</span>
+</span><span id="__span-0-3235"><a id="__codelineno-0-3235" name="__codelineno-0-3235"></a><span class="sd">    PIL Image, NumPy array, or torch.Tensor) and runs them as one batch. The images should be in RGB channel order.</span>
+</span><span id="__span-0-3236"><a id="__codelineno-0-3236" name="__codelineno-0-3236"></a><span class="sd">    A torch.Tensor must already be normalized to values in the [0, 1] range and have the shape (C, H, W); a</span>
+</span><span id="__span-0-3237"><a id="__codelineno-0-3237" name="__codelineno-0-3237"></a><span class="sd">    (B, C, H, W) tensor is split into B images of one batch. Videos, directories, globs, manifests, webcams and</span>
+</span><span id="__span-0-3238"><a id="__codelineno-0-3238" name="__codelineno-0-3238"></a><span class="sd">    streams are not images: predict them through ``RFDETRInference(model).predict(...)``.</span>
+</span><span id="__span-0-3239"><a id="__codelineno-0-3239" name="__codelineno-0-3239"></a>
+</span><span id="__span-0-3240"><a id="__codelineno-0-3240" name="__codelineno-0-3240"></a><span class="sd">    Args:</span>
+</span><span id="__span-0-3241"><a id="__codelineno-0-3241" name="__codelineno-0-3241"></a><span class="sd">        images:</span>
+</span><span id="__span-0-3242"><a id="__codelineno-0-3242" name="__codelineno-0-3242"></a><span class="sd">            A single image or an iterable of images to process. Images can be provided as string or path-like</span>
+</span><span id="__span-0-3243"><a id="__codelineno-0-3243" name="__codelineno-0-3243"></a><span class="sd">            file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. Iterables other than lists and</span>
+</span><span id="__span-0-3244"><a id="__codelineno-0-3244" name="__codelineno-0-3244"></a><span class="sd">            tuples are read into a list first. PIL and file inputs convert to grayscale for one-channel models and</span>
+</span><span id="__span-0-3245"><a id="__codelineno-0-3245" name="__codelineno-0-3245"></a><span class="sd">            RGB for three-channel models.</span>
+</span><span id="__span-0-3246"><a id="__codelineno-0-3246" name="__codelineno-0-3246"></a><span class="sd">            HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,</span>
+</span><span id="__span-0-3247"><a id="__codelineno-0-3247" name="__codelineno-0-3247"></a><span class="sd">            which does not bound the total download time. Redirects are followed, and the whole response body is</span>
+</span><span id="__span-0-3248"><a id="__codelineno-0-3248" name="__codelineno-0-3248"></a><span class="sd">            read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted</span>
+</span><span id="__span-0-3249"><a id="__codelineno-0-3249" name="__codelineno-0-3249"></a><span class="sd">            URLs, download and validate the image yourself and pass the decoded image instead.</span>
+</span><span id="__span-0-3250"><a id="__codelineno-0-3250" name="__codelineno-0-3250"></a><span class="sd">        threshold:</span>
+</span><span id="__span-0-3251"><a id="__codelineno-0-3251" name="__codelineno-0-3251"></a><span class="sd">            The confidence score a detection must exceed to be kept. A single float applies to every class. A</span>
+</span><span id="__span-0-3252"><a id="__codelineno-0-3252" name="__codelineno-0-3252"></a><span class="sd">            :class:`~rfdetr.ClassThresholds`, such as ``ClassThresholds({"person": 0.35}, default=0.5)``, applies</span>
+</span><span id="__span-0-3253"><a id="__codelineno-0-3253" name="__codelineno-0-3253"></a><span class="sd">            each class's own threshold to its detections, so that a class the model finds less reliably can be</span>
+</span><span id="__span-0-3254"><a id="__codelineno-0-3254" name="__codelineno-0-3254"></a><span class="sd">            held to a different bar. It leaves out every detection that belongs to no entry of ``class_names``:</span>
+</span><span id="__span-0-3255"><a id="__codelineno-0-3255" name="__codelineno-0-3255"></a><span class="sd">            the no-object slot of a fine-tuned model, the background slot of a legacy keypoint checkpoint, and the</span>
+</span><span id="__span-0-3256"><a id="__codelineno-0-3256" name="__codelineno-0-3256"></a><span class="sd">            unused category IDs of a pretrained COCO model. A threshold of ``float("inf")`` drops every detection of</span>
+</span><span id="__span-0-3257"><a id="__codelineno-0-3257" name="__codelineno-0-3257"></a><span class="sd">            that class.</span>
+</span><span id="__span-0-3258"><a id="__codelineno-0-3258" name="__codelineno-0-3258"></a><span class="sd">        shape:</span>
+</span><span id="__span-0-3259"><a id="__codelineno-0-3259" name="__codelineno-0-3259"></a><span class="sd">            Resize to ``(height, width)``; defaults to the model resolution. Both dimensions must be positive</span>
+</span><span id="__span-0-3260"><a id="__codelineno-0-3260" name="__codelineno-0-3260"></a><span class="sd">            integers divisible by ``patch_size * num_windows``. Use the model's export resolution when applicable.</span>
+</span><span id="__span-0-3261"><a id="__codelineno-0-3261" name="__codelineno-0-3261"></a><span class="sd">        patch_size:</span>
+</span><span id="__span-0-3262"><a id="__codelineno-0-3262" name="__codelineno-0-3262"></a><span class="sd">            Backbone patch size for shape validation. Defaults to ``model_config.patch_size``.</span>
+</span><span id="__span-0-3263"><a id="__codelineno-0-3263" name="__codelineno-0-3263"></a><span class="sd">        include_source_image:</span>
+</span><span id="__span-0-3264"><a id="__codelineno-0-3264" name="__codelineno-0-3264"></a><span class="sd">            Whether to attach the original image to the returned prediction. Detection and segmentation outputs use</span>
+</span><span id="__span-0-3265"><a id="__codelineno-0-3265" name="__codelineno-0-3265"></a><span class="sd">            ``detections.metadata["source_image"]``. Keypoint outputs use per-object</span>
+</span><span id="__span-0-3266"><a id="__codelineno-0-3266" name="__codelineno-0-3266"></a><span class="sd">            ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level</span>
+</span><span id="__span-0-3267"><a id="__codelineno-0-3267" name="__codelineno-0-3267"></a><span class="sd">            metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not</span>
+</span><span id="__span-0-3268"><a id="__codelineno-0-3268" name="__codelineno-0-3268"></a><span class="sd">            needed.</span>
+</span><span id="__span-0-3269"><a id="__codelineno-0-3269" name="__codelineno-0-3269"></a><span class="sd">        antialias:</span>
+</span><span id="__span-0-3270"><a id="__codelineno-0-3270" name="__codelineno-0-3270"></a><span class="sd">            Whether to use antialiasing during the inference resize. Match it to the resize the checkpoint was</span>
+</span><span id="__span-0-3271"><a id="__codelineno-0-3271" name="__codelineno-0-3271"></a><span class="sd">            trained with. Keep this ``False`` for checkpoints trained with the antialias-free Albumentations</span>
+</span><span id="__span-0-3272"><a id="__codelineno-0-3272" name="__codelineno-0-3272"></a><span class="sd">            pipeline, which is what the default CPU augmentation backend uses when ``rfdetr[augment]`` is</span>
+</span><span id="__span-0-3273"><a id="__codelineno-0-3273" name="__codelineno-0-3273"></a><span class="sd">            installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU</span>
+</span><span id="__span-0-3274"><a id="__codelineno-0-3274" name="__codelineno-0-3274"></a><span class="sd">            augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or</span>
+</span><span id="__span-0-3275"><a id="__codelineno-0-3275" name="__codelineno-0-3275"></a><span class="sd">            antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time</span>
+</span><span id="__span-0-3276"><a id="__codelineno-0-3276" name="__codelineno-0-3276"></a><span class="sd">            therefore decides which setting a default-trained checkpoint expects.</span>
+</span><span id="__span-0-3277"><a id="__codelineno-0-3277" name="__codelineno-0-3277"></a><span class="sd">            ``RFDETRInference`` uses the artifact metadata's ``resize_antialias`` by default for exported</span>
+</span><span id="__span-0-3278"><a id="__codelineno-0-3278" name="__codelineno-0-3278"></a><span class="sd">            models; callers can override it with an explicit ``antialias`` argument. The lower-level</span>
+</span><span id="__span-0-3279"><a id="__codelineno-0-3279" name="__codelineno-0-3279"></a><span class="sd">            ``rfdetr.export`` runtime preprocessing helpers always resize with ``antialias=False``.</span>
+</span><span id="__span-0-3280"><a id="__codelineno-0-3280" name="__codelineno-0-3280"></a><span class="sd">            Defaults to ``False`` to preserve the existing inference behavior.</span>
+</span><span id="__span-0-3281"><a id="__codelineno-0-3281" name="__codelineno-0-3281"></a><span class="sd">        shift_tta:</span>
+</span><span id="__span-0-3282"><a id="__codelineno-0-3282" name="__codelineno-0-3282"></a><span class="sd">            Number of passes of sub-patch shift test-time augmentation; ``1`` (the default) runs one plain pass.</span>
+</span><span id="__span-0-3283"><a id="__codelineno-0-3283" name="__codelineno-0-3283"></a><span class="sd">            The backbone reads the image in ``patch_size`` squares, and a class score can change when an object</span>
+</span><span id="__span-0-3284"><a id="__codelineno-0-3284" name="__codelineno-0-3284"></a><span class="sd">            moves by a fraction of a square while its box stays put, enough to cross the threshold. With</span>
+</span><span id="__span-0-3285"><a id="__codelineno-0-3285" name="__codelineno-0-3285"></a><span class="sd">            ``shift_tta=N`` the image is predicted ``N`` times, moved by ``0, patch_size/N, 2*patch_size/N, ...``</span>
+</span><span id="__span-0-3286"><a id="__codelineno-0-3286" name="__codelineno-0-3286"></a><span class="sd">            model pixels (diagonally, on a canvas one ``patch_size * num_windows`` block larger, so nothing is</span>
+</span><span id="__span-0-3287"><a id="__codelineno-0-3287" name="__codelineno-0-3287"></a><span class="sd">            cropped), and the matching detections are averaged: same class, box IoU above 0.6, a pass that</span>
+</span><span id="__span-0-3288"><a id="__codelineno-0-3288" name="__codelineno-0-3288"></a><span class="sd">            missed the object counting as 0. ``2`` or ``4`` is a good choice; it costs ``N`` forward passes.</span>
+</span><span id="__span-0-3289"><a id="__codelineno-0-3289" name="__codelineno-0-3289"></a><span class="sd">            Must be an integer from 1 to the patch size, and keypoint models accept only ``1``; both are checked</span>
+</span><span id="__span-0-3290"><a id="__codelineno-0-3290" name="__codelineno-0-3290"></a><span class="sd">            before any image is read.</span>
+</span><span id="__span-0-3291"><a id="__codelineno-0-3291" name="__codelineno-0-3291"></a><span class="sd">        **kwargs:</span>
+</span><span id="__span-0-3292"><a id="__codelineno-0-3292" name="__codelineno-0-3292"></a><span class="sd">            Unknown keyword arguments are ignored with a FutureWarning. Passing them is deprecated since</span>
+</span><span id="__span-0-3293"><a id="__codelineno-0-3293" name="__codelineno-0-3293"></a><span class="sd">            v1.12.0 and will raise TypeError in v2.0.0. The source options of</span>
+</span><span id="__span-0-3294"><a id="__codelineno-0-3294" name="__codelineno-0-3294"></a><span class="sd">            :meth:`RFDETRInference.predict` (``stream``, ``batch``, ``vid_stride``, ``stream_buffer``) raise</span>
+</span><span id="__span-0-3295"><a id="__codelineno-0-3295" name="__codelineno-0-3295"></a><span class="sd">            ``TypeError`` now.</span>
+</span><span id="__span-0-3296"><a id="__codelineno-0-3296" name="__codelineno-0-3296"></a>
+</span><span id="__span-0-3297"><a id="__codelineno-0-3297" name="__codelineno-0-3297"></a><span class="sd">    Returns:</span>
+</span><span id="__span-0-3298"><a id="__codelineno-0-3298" name="__codelineno-0-3298"></a><span class="sd">        One result for a single image, or a list with one result per image for an iterable or a BCHW tensor.</span>
+</span><span id="__span-0-3299"><a id="__codelineno-0-3299" name="__codelineno-0-3299"></a><span class="sd">        Detection and segmentation return :class:`~supervision.Detections`; keypoints return</span>
+</span><span id="__span-0-3300"><a id="__codelineno-0-3300" name="__codelineno-0-3300"></a><span class="sd">        :class:`~supervision.KeyPoints` with ``xy`` coordinates.</span>
+</span><span id="__span-0-3301"><a id="__codelineno-0-3301" name="__codelineno-0-3301"></a><span class="sd">        ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this</span>
+</span><span id="__span-0-3302"><a id="__codelineno-0-3302" name="__codelineno-0-3302"></a><span class="sd">        is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion</span>
+</span><span id="__span-0-3303"><a id="__codelineno-0-3303" name="__codelineno-0-3303"></a><span class="sd">        controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it</span>
+</span><span id="__span-0-3304"><a id="__codelineno-0-3304" name="__codelineno-0-3304"></a><span class="sd">        is a ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint</span>
+</span><span id="__span-0-3305"><a id="__codelineno-0-3305" name="__codelineno-0-3305"></a><span class="sd">        head, not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,</span>
+</span><span id="__span-0-3306"><a id="__codelineno-0-3306" name="__codelineno-0-3306"></a><span class="sd">        ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape</span>
+</span><span id="__span-0-3307"><a id="__codelineno-0-3307" name="__codelineno-0-3307"></a><span class="sd">        ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection</span>
+</span><span id="__span-0-3308"><a id="__codelineno-0-3308" name="__codelineno-0-3308"></a><span class="sd">        boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision</span>
+</span><span id="__span-0-3309"><a id="__codelineno-0-3309" name="__codelineno-0-3309"></a><span class="sd">        ``KeyPoints`` does not have a native bounding-box field. The ``data`` dict also contains ``class_name`` and</span>
+</span><span id="__span-0-3310"><a id="__codelineno-0-3310" name="__codelineno-0-3310"></a><span class="sd">        ``source_shape`` as per-object arrays. When ``include_source_image=True`` for keypoint models,</span>
+</span><span id="__span-0-3311"><a id="__codelineno-0-3311" name="__codelineno-0-3311"></a><span class="sd">        ``source_image`` is stored as per-object data until Supervision exposes collection-level metadata for</span>
+</span><span id="__span-0-3312"><a id="__codelineno-0-3312" name="__codelineno-0-3312"></a><span class="sd">        ``KeyPoints``.</span>
+</span><span id="__span-0-3313"><a id="__codelineno-0-3313" name="__codelineno-0-3313"></a>
+</span><span id="__span-0-3314"><a id="__codelineno-0-3314" name="__codelineno-0-3314"></a><span class="sd">    Note:</span>
+</span><span id="__span-0-3315"><a id="__codelineno-0-3315" name="__codelineno-0-3315"></a><span class="sd">        For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.</span>
+</span><span id="__span-0-3316"><a id="__codelineno-0-3316" name="__codelineno-0-3316"></a><span class="sd">        Update detection callers reading ``detections.data["source_image"]`` to use</span>
+</span><span id="__span-0-3317"><a id="__codelineno-0-3317" name="__codelineno-0-3317"></a><span class="sd">        ``detections.metadata["source_image"]``.</span>
 </span><span id="__span-0-3318"><a id="__codelineno-0-3318" name="__codelineno-0-3318"></a>
 </span><span id="__span-0-3319"><a id="__codelineno-0-3319" name="__codelineno-0-3319"></a><span class="sd">    Note:</span>
-</span><span id="__span-0-3320"><a id="__codelineno-0-3320" name="__codelineno-0-3320"></a><span class="sd">        A CPU tensor image is pinned before its transfer to a CUDA-device model, and that transfer is</span>
-</span><span id="__span-0-3321"><a id="__codelineno-0-3321" name="__codelineno-0-3321"></a><span class="sd">        non-blocking; passing a tensor already on the model's accelerator skips this image transfer entirely.</span>
-</span><span id="__span-0-3322"><a id="__codelineno-0-3322" name="__codelineno-0-3322"></a><span class="sd">        But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor</span>
-</span><span id="__span-0-3323"><a id="__codelineno-0-3323" name="__codelineno-0-3323"></a><span class="sd">        still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor</span>
-</span><span id="__span-0-3324"><a id="__codelineno-0-3324" name="__codelineno-0-3324"></a><span class="sd">        input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid</span>
-</span><span id="__span-0-3325"><a id="__codelineno-0-3325" name="__codelineno-0-3325"></a><span class="sd">        that copy as well. The exception is MPS with ``antialias=True`` on torch &lt; 2.7, which has no MPS kernel</span>
-</span><span id="__span-0-3326"><a id="__codelineno-0-3326" name="__codelineno-0-3326"></a><span class="sd">        for antialiased resize: there the whole preprocessing path, including an MPS-resident tensor input, runs</span>
-</span><span id="__span-0-3327"><a id="__codelineno-0-3327" name="__codelineno-0-3327"></a><span class="sd">        on the CPU and the resized batch is transferred to the device once.</span>
-</span><span id="__span-0-3328"><a id="__codelineno-0-3328" name="__codelineno-0-3328"></a>
-</span><span id="__span-0-3329"><a id="__codelineno-0-3329" name="__codelineno-0-3329"></a><span class="sd">        Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.</span>
-</span><span id="__span-0-3330"><a id="__codelineno-0-3330" name="__codelineno-0-3330"></a><span class="sd">        PIL images, natively decoded local files and uint8 NumPy images skip a redundant range scan because</span>
-</span><span id="__span-0-3331"><a id="__codelineno-0-3331" name="__codelineno-0-3331"></a><span class="sd">        their byte-to-float conversion guarantees values in ``[0, 1]``. Any resulting ``ValueError`` is raised</span>
-</span><span id="__span-0-3332"><a id="__codelineno-0-3332" name="__codelineno-0-3332"></a><span class="sd">        only after all inputs have been inspected, so valid-shaped images later in a multi-image call still</span>
-</span><span id="__span-0-3333"><a id="__codelineno-0-3333" name="__codelineno-0-3333"></a><span class="sd">        have their conversion and transfer queued before an earlier validation failure raises.</span>
-</span><span id="__span-0-3334"><a id="__codelineno-0-3334" name="__codelineno-0-3334"></a>
-</span><span id="__span-0-3335"><a id="__codelineno-0-3335" name="__codelineno-0-3335"></a><span class="sd">    Raises:</span>
-</span><span id="__span-0-3336"><a id="__codelineno-0-3336" name="__codelineno-0-3336"></a><span class="sd">        TypeError: If a source option of :meth:`RFDETRInference.predict` is passed, or if ``threshold`` is neither a</span>
-</span><span id="__span-0-3337"><a id="__codelineno-0-3337" name="__codelineno-0-3337"></a><span class="sd">            number nor a sequence of numbers, such as a ``dict`` keyed by class name.</span>
-</span><span id="__span-0-3338"><a id="__codelineno-0-3338" name="__codelineno-0-3338"></a><span class="sd">        ValueError: If ``shape`` cannot be unpacked as a two-element sequence,</span>
-</span><span id="__span-0-3339"><a id="__codelineno-0-3339" name="__codelineno-0-3339"></a><span class="sd">            if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if</span>
-</span><span id="__span-0-3340"><a id="__codelineno-0-3340" name="__codelineno-0-3340"></a><span class="sd">            either dimension is zero or negative, if either dimension is not divisible by ``patch_size *</span>
-</span><span id="__span-0-3341"><a id="__codelineno-0-3341" name="__codelineno-0-3341"></a><span class="sd">            num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is</span>
-</span><span id="__span-0-3342"><a id="__codelineno-0-3342" name="__codelineno-0-3342"></a><span class="sd">            not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN.</span>
-</span><span id="__span-0-3343"><a id="__codelineno-0-3343" name="__codelineno-0-3343"></a>
-</span><span id="__span-0-3344"><a id="__codelineno-0-3344" name="__codelineno-0-3344"></a><span class="sd">    Examples:</span>
-</span><span id="__span-0-3345"><a id="__codelineno-0-3345" name="__codelineno-0-3345"></a><span class="sd">        Skipped because this example requires pretrained weights and a local image file.</span>
-</span><span id="__span-0-3346"><a id="__codelineno-0-3346" name="__codelineno-0-3346"></a>
-</span><span id="__span-0-3347"><a id="__codelineno-0-3347" name="__codelineno-0-3347"></a><span class="sd">        &gt;&gt;&gt; from rfdetr import RFDETRSmall  # doctest: +SKIP</span>
-</span><span id="__span-0-3348"><a id="__codelineno-0-3348" name="__codelineno-0-3348"></a><span class="sd">        &gt;&gt;&gt; model = RFDETRSmall()  # doctest: +SKIP</span>
-</span><span id="__span-0-3349"><a id="__codelineno-0-3349" name="__codelineno-0-3349"></a><span class="sd">        &gt;&gt;&gt; detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP</span>
-</span><span id="__span-0-3350"><a id="__codelineno-0-3350" name="__codelineno-0-3350"></a><span class="sd">    """</span>
-</span><span id="__span-0-3351"><a id="__codelineno-0-3351" name="__codelineno-0-3351"></a>    <span class="n">source_options</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">_SOURCE_PREDICT_OPTIONS</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="n">kwargs</span><span class="p">))</span>
-</span><span id="__span-0-3352"><a id="__codelineno-0-3352" name="__codelineno-0-3352"></a>    <span class="k">if</span> <span class="n">source_options</span><span class="p">:</span>
-</span><span id="__span-0-3353"><a id="__codelineno-0-3353" name="__codelineno-0-3353"></a>        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
-</span><span id="__span-0-3354"><a id="__codelineno-0-3354" name="__codelineno-0-3354"></a>            <span class="sa">f</span><span class="s2">"RFDETR.predict does not accept </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">source_options</span><span class="p">)</span><span class="si">}</span><span class="s2">: it predicts images only. "</span>
-</span><span id="__span-0-3355"><a id="__codelineno-0-3355" name="__codelineno-0-3355"></a>            <span class="s2">"Use RFDETRInference(model).predict(...) for videos, directories, globs, manifests, webcams, "</span>
-</span><span id="__span-0-3356"><a id="__codelineno-0-3356" name="__codelineno-0-3356"></a>            <span class="s2">"streams and lazy results."</span>
-</span><span id="__span-0-3357"><a id="__codelineno-0-3357" name="__codelineno-0-3357"></a>        <span class="p">)</span>
-</span><span id="__span-0-3358"><a id="__codelineno-0-3358" name="__codelineno-0-3358"></a>    <span class="k">if</span> <span class="n">kwargs</span><span class="p">:</span>
-</span><span id="__span-0-3359"><a id="__codelineno-0-3359" name="__codelineno-0-3359"></a>        <span class="n">deprecation_warning</span><span class="p">(</span>
-</span><span id="__span-0-3360"><a id="__codelineno-0-3360" name="__codelineno-0-3360"></a>            <span class="s2">"Passing unknown keyword arguments to RFDETR.predict is deprecated since v1.12.0: "</span>
-</span><span id="__span-0-3361"><a id="__codelineno-0-3361" name="__codelineno-0-3361"></a>            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">kwargs</span><span class="p">))</span><span class="si">}</span><span class="s2">. They are ignored and will raise TypeError in v2.0.0."</span><span class="p">,</span>
-</span><span id="__span-0-3362"><a id="__codelineno-0-3362" name="__codelineno-0-3362"></a>            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-</span><span id="__span-0-3363"><a id="__codelineno-0-3363" name="__codelineno-0-3363"></a>        <span class="p">)</span>
-</span><span id="__span-0-3364"><a id="__codelineno-0-3364" name="__codelineno-0-3364"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">and</span> <span class="n">images</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
-</span><span id="__span-0-3365"><a id="__codelineno-0-3365" name="__codelineno-0-3365"></a>        <span class="n">images</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">images</span><span class="o">.</span><span class="n">unbind</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
-</span><span id="__span-0-3366"><a id="__codelineno-0-3366" name="__codelineno-0-3366"></a>    <span class="k">return</span> <span class="n">_predict_batch</span><span class="p">(</span>
-</span><span id="__span-0-3367"><a id="__codelineno-0-3367" name="__codelineno-0-3367"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_prediction_context</span><span class="p">,</span> <span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="p">,</span> <span class="n">shape</span><span class="p">,</span> <span class="n">patch_size</span><span class="p">,</span> <span class="n">include_source_image</span><span class="p">,</span> <span class="n">antialias</span>
-</span><span id="__span-0-3368"><a id="__codelineno-0-3368" name="__codelineno-0-3368"></a>    <span class="p">)</span>
+</span><span id="__span-0-3320"><a id="__codelineno-0-3320" name="__codelineno-0-3320"></a><span class="sd">        ``class_name`` mapping uses one of three modes depending on the checkpoint. For pretrained COCO checkpoints</span>
+</span><span id="__span-0-3321"><a id="__codelineno-0-3321" name="__codelineno-0-3321"></a><span class="sd">        (detected when ``model.args.num_classes &gt; len(class_names)`` and ``class_names`` matches</span>
+</span><span id="__span-0-3322"><a id="__codelineno-0-3322" name="__codelineno-0-3322"></a><span class="sd">        ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by</span>
+</span><span id="__span-0-3323"><a id="__codelineno-0-3323" name="__codelineno-0-3323"></a><span class="sd">        position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned detection and</span>
+</span><span id="__span-0-3324"><a id="__codelineno-0-3324" name="__codelineno-0-3324"></a><span class="sd">        segmentation models and active-first keypoint models, ``class_id`` is a 0-based index into</span>
+</span><span id="__span-0-3325"><a id="__codelineno-0-3325" name="__codelineno-0-3325"></a><span class="sd">        ``class_names``. In the one-class preview keypoint setup, that means ``class_id=0`` is the foreground</span>
+</span><span id="__span-0-3326"><a id="__codelineno-0-3326" name="__codelineno-0-3326"></a><span class="sd">        class and ``class_id=1`` is ``"__background__"``.</span>
+</span><span id="__span-0-3327"><a id="__codelineno-0-3327" name="__codelineno-0-3327"></a><span class="sd">        Legacy keypoint checkpoints with ``args.num_keypoints_per_class[0] == 0`` use a background-first layout:</span>
+</span><span id="__span-0-3328"><a id="__codelineno-0-3328" name="__codelineno-0-3328"></a><span class="sd">        slot 0 maps to ``"__background__"`` and foreground slots map to ``class_names`` in order.</span>
+</span><span id="__span-0-3329"><a id="__codelineno-0-3329" name="__codelineno-0-3329"></a>
+</span><span id="__span-0-3330"><a id="__codelineno-0-3330" name="__codelineno-0-3330"></a><span class="sd">    Note:</span>
+</span><span id="__span-0-3331"><a id="__codelineno-0-3331" name="__codelineno-0-3331"></a><span class="sd">        A CPU tensor image is pinned before its transfer to a CUDA-device model, and that transfer is</span>
+</span><span id="__span-0-3332"><a id="__codelineno-0-3332" name="__codelineno-0-3332"></a><span class="sd">        non-blocking; passing a tensor already on the model's accelerator skips this image transfer entirely.</span>
+</span><span id="__span-0-3333"><a id="__codelineno-0-3333" name="__codelineno-0-3333"></a><span class="sd">        But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor</span>
+</span><span id="__span-0-3334"><a id="__codelineno-0-3334" name="__codelineno-0-3334"></a><span class="sd">        still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor</span>
+</span><span id="__span-0-3335"><a id="__codelineno-0-3335" name="__codelineno-0-3335"></a><span class="sd">        input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid</span>
+</span><span id="__span-0-3336"><a id="__codelineno-0-3336" name="__codelineno-0-3336"></a><span class="sd">        that copy as well. The exception is MPS with ``antialias=True`` on torch &lt; 2.7, which has no MPS kernel</span>
+</span><span id="__span-0-3337"><a id="__codelineno-0-3337" name="__codelineno-0-3337"></a><span class="sd">        for antialiased resize: there the whole preprocessing path, including an MPS-resident tensor input, runs</span>
+</span><span id="__span-0-3338"><a id="__codelineno-0-3338" name="__codelineno-0-3338"></a><span class="sd">        on the CPU and the resized batch is transferred to the device once.</span>
+</span><span id="__span-0-3339"><a id="__codelineno-0-3339" name="__codelineno-0-3339"></a>
+</span><span id="__span-0-3340"><a id="__codelineno-0-3340" name="__codelineno-0-3340"></a><span class="sd">        Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.</span>
+</span><span id="__span-0-3341"><a id="__codelineno-0-3341" name="__codelineno-0-3341"></a><span class="sd">        PIL images, natively decoded local files and uint8 NumPy images skip a redundant range scan because</span>
+</span><span id="__span-0-3342"><a id="__codelineno-0-3342" name="__codelineno-0-3342"></a><span class="sd">        their byte-to-float conversion guarantees values in ``[0, 1]``. Any resulting ``ValueError`` is raised</span>
+</span><span id="__span-0-3343"><a id="__codelineno-0-3343" name="__codelineno-0-3343"></a><span class="sd">        only after all inputs have been inspected, so valid-shaped images later in a multi-image call still</span>
+</span><span id="__span-0-3344"><a id="__codelineno-0-3344" name="__codelineno-0-3344"></a><span class="sd">        have their conversion and transfer queued before an earlier validation failure raises.</span>
+</span><span id="__span-0-3345"><a id="__codelineno-0-3345" name="__codelineno-0-3345"></a>
+</span><span id="__span-0-3346"><a id="__codelineno-0-3346" name="__codelineno-0-3346"></a><span class="sd">    Raises:</span>
+</span><span id="__span-0-3347"><a id="__codelineno-0-3347" name="__codelineno-0-3347"></a><span class="sd">        TypeError: If a source option of :meth:`RFDETRInference.predict` is passed, or if ``threshold`` is neither a</span>
+</span><span id="__span-0-3348"><a id="__codelineno-0-3348" name="__codelineno-0-3348"></a><span class="sd">            number nor a sequence of numbers, such as a ``dict`` keyed by class name.</span>
+</span><span id="__span-0-3349"><a id="__codelineno-0-3349" name="__codelineno-0-3349"></a><span class="sd">        ValueError: If ``shape`` cannot be unpacked as a two-element sequence,</span>
+</span><span id="__span-0-3350"><a id="__codelineno-0-3350" name="__codelineno-0-3350"></a><span class="sd">            if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if</span>
+</span><span id="__span-0-3351"><a id="__codelineno-0-3351" name="__codelineno-0-3351"></a><span class="sd">            either dimension is zero or negative, if either dimension is not divisible by ``patch_size *</span>
+</span><span id="__span-0-3352"><a id="__codelineno-0-3352" name="__codelineno-0-3352"></a><span class="sd">            num_windows``, if ``patch_size`` is not a positive integer, or if ``threshold`` is a sequence that is</span>
+</span><span id="__span-0-3353"><a id="__codelineno-0-3353" name="__codelineno-0-3353"></a><span class="sd">            not one-dimensional, whose length differs from ``len(class_names)``, or that holds a NaN. Also if</span>
+</span><span id="__span-0-3354"><a id="__codelineno-0-3354" name="__codelineno-0-3354"></a><span class="sd">            ``shift_tta`` is not an integer from 1 to the patch size (``True`` and ``1.0`` included) or is above 1</span>
+</span><span id="__span-0-3355"><a id="__codelineno-0-3355" name="__codelineno-0-3355"></a><span class="sd">            for a keypoint model; both are checked before any image is read.</span>
+</span><span id="__span-0-3356"><a id="__codelineno-0-3356" name="__codelineno-0-3356"></a>
+</span><span id="__span-0-3357"><a id="__codelineno-0-3357" name="__codelineno-0-3357"></a><span class="sd">    Examples:</span>
+</span><span id="__span-0-3358"><a id="__codelineno-0-3358" name="__codelineno-0-3358"></a><span class="sd">        Skipped because this example requires pretrained weights and a local image file.</span>
+</span><span id="__span-0-3359"><a id="__codelineno-0-3359" name="__codelineno-0-3359"></a>
+</span><span id="__span-0-3360"><a id="__codelineno-0-3360" name="__codelineno-0-3360"></a><span class="sd">        &gt;&gt;&gt; from rfdetr import RFDETRSmall  # doctest: +SKIP</span>
+</span><span id="__span-0-3361"><a id="__codelineno-0-3361" name="__codelineno-0-3361"></a><span class="sd">        &gt;&gt;&gt; model = RFDETRSmall()  # doctest: +SKIP</span>
+</span><span id="__span-0-3362"><a id="__codelineno-0-3362" name="__codelineno-0-3362"></a><span class="sd">        &gt;&gt;&gt; detections = model.predict("image.jpg", threshold=0.5)  # doctest: +SKIP</span>
+</span><span id="__span-0-3363"><a id="__codelineno-0-3363" name="__codelineno-0-3363"></a>
+</span><span id="__span-0-3364"><a id="__codelineno-0-3364" name="__codelineno-0-3364"></a><span class="sd">        Average four sub-patch shifted passes for steadier scores:</span>
+</span><span id="__span-0-3365"><a id="__codelineno-0-3365" name="__codelineno-0-3365"></a>
+</span><span id="__span-0-3366"><a id="__codelineno-0-3366" name="__codelineno-0-3366"></a><span class="sd">        &gt;&gt;&gt; detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)  # doctest: +SKIP</span>
+</span><span id="__span-0-3367"><a id="__codelineno-0-3367" name="__codelineno-0-3367"></a><span class="sd">    """</span>
+</span><span id="__span-0-3368"><a id="__codelineno-0-3368" name="__codelineno-0-3368"></a>    <span class="n">source_options</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">_SOURCE_PREDICT_OPTIONS</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="n">kwargs</span><span class="p">))</span>
+</span><span id="__span-0-3369"><a id="__codelineno-0-3369" name="__codelineno-0-3369"></a>    <span class="k">if</span> <span class="n">source_options</span><span class="p">:</span>
+</span><span id="__span-0-3370"><a id="__codelineno-0-3370" name="__codelineno-0-3370"></a>        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+</span><span id="__span-0-3371"><a id="__codelineno-0-3371" name="__codelineno-0-3371"></a>            <span class="sa">f</span><span class="s2">"RFDETR.predict does not accept </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">source_options</span><span class="p">)</span><span class="si">}</span><span class="s2">: it predicts images only. "</span>
+</span><span id="__span-0-3372"><a id="__codelineno-0-3372" name="__codelineno-0-3372"></a>            <span class="s2">"Use RFDETRInference(model).predict(...) for videos, directories, globs, manifests, webcams, "</span>
+</span><span id="__span-0-3373"><a id="__codelineno-0-3373" name="__codelineno-0-3373"></a>            <span class="s2">"streams and lazy results."</span>
+</span><span id="__span-0-3374"><a id="__codelineno-0-3374" name="__codelineno-0-3374"></a>        <span class="p">)</span>
+</span><span id="__span-0-3375"><a id="__codelineno-0-3375" name="__codelineno-0-3375"></a>    <span class="k">if</span> <span class="n">kwargs</span><span class="p">:</span>
+</span><span id="__span-0-3376"><a id="__codelineno-0-3376" name="__codelineno-0-3376"></a>        <span class="n">deprecation_warning</span><span class="p">(</span>
+</span><span id="__span-0-3377"><a id="__codelineno-0-3377" name="__codelineno-0-3377"></a>            <span class="s2">"Passing unknown keyword arguments to RFDETR.predict is deprecated since v1.12.0: "</span>
+</span><span id="__span-0-3378"><a id="__codelineno-0-3378" name="__codelineno-0-3378"></a>            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">kwargs</span><span class="p">))</span><span class="si">}</span><span class="s2">. They are ignored and will raise TypeError in v2.0.0."</span><span class="p">,</span>
+</span><span id="__span-0-3379"><a id="__codelineno-0-3379" name="__codelineno-0-3379"></a>            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-0-3380"><a id="__codelineno-0-3380" name="__codelineno-0-3380"></a>        <span class="p">)</span>
+</span><span id="__span-0-3381"><a id="__codelineno-0-3381" name="__codelineno-0-3381"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">and</span> <span class="n">images</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
+</span><span id="__span-0-3382"><a id="__codelineno-0-3382" name="__codelineno-0-3382"></a>        <span class="n">images</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">images</span><span class="o">.</span><span class="n">unbind</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+</span><span id="__span-0-3383"><a id="__codelineno-0-3383" name="__codelineno-0-3383"></a>    <span class="k">return</span> <span class="n">_predict_batch</span><span class="p">(</span>
+</span><span id="__span-0-3384"><a id="__codelineno-0-3384" name="__codelineno-0-3384"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_prediction_context</span><span class="p">,</span> <span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="p">,</span> <span class="n">shape</span><span class="p">,</span> <span class="n">patch_size</span><span class="p">,</span> <span class="n">include_source_image</span><span class="p">,</span> <span class="n">antialias</span><span class="p">,</span> <span class="n">shift_tta</span>
+</span><span id="__span-0-3385"><a id="__codelineno-0-3385" name="__codelineno-0-3385"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
