@@ -3281,6 +3281,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Static ONNX INT8 export keeps the attention-value multiply (the <code>MatMul</code> that reads a <code>Softmax</code> output) in float, next to the attention-score multiplies it already kept. 8-bit activations over the [0, 1] attention weights round small weights to zero, and larger sizes have more tokens per window, so the accuracy loss grew with model size. Validation covers six models on 200 val2017 images on arm64 with ONNX Runtime 1.24.3; x86 accuracy and latency have not been revalidated.</p>
 </li>
 <li>
+<p>A CoreML export whose compute precision is a <code>coremltools.transform.FP16ComputePrecision</code> pass, such as one that keeps <code>resample</code> in float32 through <code>op_selector</code>, is named <code>_fp16.mlpackage</code>. <code>coreml_precision</code> hands such an object to <code>coremltools</code> unchanged but documents only <code>None</code>, <code>"float32"</code> and <code>"float16"</code>. It was named <code>_fp32.mlpackage</code> with an "Unrecognized CoreML compute precision" warning, although the bundle runs in float16 except for the ops the <code>op_selector</code> excludes. (<a href="https://github.com/roboflow/rf-detr/issues/1692">#1692</a>)</p>
+</li>
+<li>
 <p><code>RFDETR.export(format="onnx", quantization="int8", int8_keep_mlp_float=True)</code> also keeps GELU-fed weighted projections in float, including the second layer of backbone MLPs. It recognizes both decomposed and native ONNX GELU.</p>
 </li>
 </ul>
