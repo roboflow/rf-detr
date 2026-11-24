@@ -3042,7 +3042,8 @@ class RFDETR:
                         f"Loaded checkpoint uses a legacy background-first keypoint schema "
                         f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
                         f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
-                        f"to slot 0; checkpoint head weights are now misaligned. "
+                        f"to slot 0; the pretrained class-head rows move with it when the weights are reloaded for "
+                        f"training. "
                         f"Pass num_keypoints_per_class={current_schema!r} to the model constructor "
                         f"to keep the legacy schema.",
                         UserWarning,
