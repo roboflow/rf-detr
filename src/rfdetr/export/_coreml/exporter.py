@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from coremltools import precision as ct_precision
+    from coremltools.transform import FP16ComputePrecision
     from torch.export import ExportedProgram
 
 logger = get_logger()
@@ -75,7 +76,7 @@ class _CoreMLApi:
 
     ``coremltools`` is an optional dependency imported inside the conversion rather than at module scope, and
     ``precision`` is an Enum class whose members are reached by attribute lookup rather than independently
-    ``from``-importable. Binding all four here keeps every phase reading the same names instead of repeating
+    ``from``-importable. Binding all five here keeps every phase reading the same names instead of repeating
     the import — and keeps the precision members identity-stable across the phases that compare against them.
 
     Attributes:
@@ -83,12 +84,15 @@ class _CoreMLApi:
         target: ``coremltools.target``, the deployment-target enum.
         float32: ``coremltools.precision.FLOAT32``.
         float16: ``coremltools.precision.FLOAT16``.
+        fp16_transform: ``coremltools.transform.FP16ComputePrecision``, the transform ``float16`` lowers to and the
+            form a caller passes to keep selected ops in float32.
     """
 
     convert: Callable[..., Any]
     target: Any
     float32: ct_precision
     float16: ct_precision
+    fp16_transform: type[FP16ComputePrecision]
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,12 +216,14 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         from coremltools import convert as ct_convert
         from coremltools import precision as ct_precision
         from coremltools import target as ct_target
+        from coremltools import transform as ct_transform
 
         return _CoreMLApi(
             convert=ct_convert,
             target=ct_target,
             float32=ct_precision.FLOAT32,
             float16=ct_precision.FLOAT16,
+            fp16_transform=ct_transform.FP16ComputePrecision,
         )
 
     def _prepare_output_dir(self) -> Path:
@@ -230,15 +236,15 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
-    def _resolve_compute_precision(self, api: _CoreMLApi) -> ct_precision:
-        """Resolve the configured precision to a ``coremltools.precision`` member.
+    def _resolve_compute_precision(self, api: _CoreMLApi) -> ct_precision | FP16ComputePrecision:
+        """Resolve the configured precision to a ``coremltools.precision`` member or an ``FP16ComputePrecision``.
 
         Args:
             api: The bound ``coremltools`` entry points.
 
         Returns:
-            The configured ``coremltools.precision`` value, the member its string names, or
-            ``FLOAT32`` when unset (tight CPU parity with eager PyTorch).
+            The configured ``coremltools.precision`` value or ``FP16ComputePrecision`` transform, the member its
+            string names, or ``FLOAT32`` when unset (tight CPU parity with eager PyTorch).
         """
         compute_precision: Any = self.config.compute_precision
         if compute_precision is None:
@@ -250,7 +256,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     def _resolve_output_file(
         self,
         output_dir: Path,
-        compute_precision: ct_precision,
+        compute_precision: ct_precision | FP16ComputePrecision,
         api: _CoreMLApi,
         *,
         backbone_only: bool,
@@ -259,7 +265,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
 
         Args:
             output_dir: Directory the bundle is written into.
-            compute_precision: The already-resolved coremltools precision.
+            compute_precision: The already-resolved coremltools precision: a ``coremltools.precision`` member or an
+                ``FP16ComputePrecision`` transform.
             api: The bound ``coremltools`` entry points.
             backbone_only: Whether *graph* is a backbone-only export.
 
@@ -271,8 +278,10 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             variant_name, output_name, default="backbone_model" if backbone_only else "inference_model"
         )
         # Precision materially changes the artifact (fp16 has larger numeric drift, per the module
-        # docstring) — always encode it, unless the caller asked for an exact custom filename.
-        if compute_precision == api.float16:
+        # docstring) — always encode it, unless the caller asked for an exact custom filename. Any
+        # ``FP16ComputePrecision`` is labelled ``fp16`` whatever ops its ``op_selector`` keeps in float32, matching
+        # coremltools, which lowers ``FLOAT16`` to one.
+        if compute_precision == api.float16 or isinstance(compute_precision, api.fp16_transform):
             precision_token = "fp16"
         elif compute_precision == api.float32:
             precision_token = "fp32"
@@ -331,7 +340,9 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 f"{summary}. Fix these ops before convert (see tests/export/coreml/test_coreml_op_coverage.py)."
             )
 
-    def _build_mlmodel(self, graph: ExportGraph, compute_precision: ct_precision, api: _CoreMLApi) -> Any:
+    def _build_mlmodel(
+        self, graph: ExportGraph, compute_precision: ct_precision | FP16ComputePrecision, api: _CoreMLApi
+    ) -> Any:
         """Trace, screen for op-registry gaps, and lower the graph to a CoreML ``mlprogram``.
 
         The three steps share one guard: any of them can fail inside the converter stack, and every such

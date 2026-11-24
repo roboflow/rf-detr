@@ -18,7 +18,7 @@ repos:
       - id: check-case-conflict
       - id: check-added-large-files
         args: ["--maxkb=250", "--enforce-all"]
-        exclude: uv.lock
+        exclude: ^(uv\.lock|CHANGELOG\.md)$
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-sort-keys", "--indent=4"]
