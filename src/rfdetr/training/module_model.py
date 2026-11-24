@@ -41,6 +41,7 @@ from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import (
+    _PE_KEY_SUFFIX,
     _STEM_KEY_SUFFIX,
     _patch_embeddings,
     _recorded_pe_grid,
@@ -2076,7 +2077,9 @@ class RFDETRModelModule(LightningModule):
            will mismatch. :func:`~rfdetr.models.weights.interpolate_position_embeddings` is called to bicubic-resize the
            PE to ``model_config.positional_encoding_size`` before PTL applies the state dict.  Regression fix for
            :issue:`998`. The EMA weights the checkpoint carries (the EMA callback's state and
-           ``"legacy_ema_state_dict"``) are resized the same way.
+           ``"legacy_ema_state_dict"``) are resized the same way. The saved optimizer state of embeddings that were
+           resized is dropped, so they restart from fresh optimizer state; see
+           :meth:`_reset_resized_pe_optimizer_state`.
 
         3. **FP8 extra-state removal** — under Transformer Engine (``amp_dtype="fp8"``), the live module's
            ``state_dict()`` carries ``_extra_state`` entries recording FP8 scaling history. Since ``strict_loading``
@@ -2112,7 +2115,8 @@ class RFDETRModelModule(LightningModule):
             checkpoint: Checkpoint dict passed in by PTL (mutated in-place).
 
         Raises:
-            ValueError: If the checkpoint's stem is 3 channels wide and ``num_channels`` is not 3.
+            ValueError: If the checkpoint's stem is 3 channels wide and ``num_channels`` is not 3, or if the saved
+                optimizer state of resized positional embeddings cannot be identified.
         """
         # Raw legacy .pth: no "state_dict" key — build it from "model".
         if "model" in checkpoint and "state_dict" not in checkpoint:
@@ -2126,7 +2130,9 @@ class RFDETRModelModule(LightningModule):
         # at a different resolution than the current model.  PTL applies
         # checkpoint["state_dict"] immediately after this hook, so the shapes
         # must already match at this point.  Regression: #998.
+        resized_pe_shapes: dict[str, torch.Size] = {}
         if "state_dict" in checkpoint:
+            saved_pe = {key: value for key, value in checkpoint["state_dict"].items() if key.endswith(_PE_KEY_SUFFIX)}
             # The EMA weights lie on the checkpoint's grid like the live ones. A grid with the same token count
             # (a transposed one) keeps their shape, so left alone they would load without an error.
             ema_states = [
@@ -2142,6 +2148,10 @@ class RFDETRModelModule(LightningModule):
                         self.model_config.positional_encoding_size,
                         source_pe_size=_recorded_pe_grid(checkpoint, state),
                     )
+            # A resized tensor is a new object, also when a transposed grid keeps its shape.
+            resized_pe_shapes = {
+                key: value.shape for key, value in saved_pe.items() if checkpoint["state_dict"][key] is not value
+            }
 
         # Drop Transformer Engine's `_extra_state` entries before PTL applies the state dict.
         # `strict_loading=False` (set in __init__) only tolerates a missing or unexpected key
@@ -2159,6 +2169,9 @@ class RFDETRModelModule(LightningModule):
         regroup_unmerged_optimizer_state(checkpoint)
         if checkpoint.get("optimizer_states"):
             self._adopt_resumed_param_group_settings(checkpoint)
+            # After the settings are final: they decide the parameter-group layout the state is indexed by.
+            if resized_pe_shapes:
+                self._reset_resized_pe_optimizer_state(checkpoint, resized_pe_shapes)
 
         if _is_builtin_fused_adamw(self.train_config.optimizer):
             destination_fused = self._use_fused_optimizer
@@ -2177,6 +2190,59 @@ class RFDETRModelModule(LightningModule):
                 "without it the stashed weights will be ignored.",
                 UserWarning,
                 stacklevel=2,
+            )
+
+    def _reset_resized_pe_optimizer_state(self, checkpoint: dict[str, Any], resized: dict[str, torch.Size]) -> None:
+        """Drop the saved optimizer state of positional embeddings that were resized to another grid.
+
+        The per-parameter state (AdamW's ``exp_avg`` and ``exp_avg_sq``) lies on the checkpoint's grid: on a transposed
+        grid it would apply momentum from the old layout, and with another token count the next step fails on its
+        shape. Without an entry the optimizer starts that parameter afresh; every other entry is kept.
+
+        ``Optimizer.load_state_dict`` pairs saved and live parameters by position in the flattened parameter groups, so
+        the entry is found at the position :meth:`configure_optimizers` gives the embeddings, and is only dropped when
+        its buffers have the saved embeddings' shape.
+
+        Args:
+            checkpoint: Checkpoint dict carrying ``optimizer_states`` (mutated in-place).
+            resized: Saved shape of each resized positional-embedding tensor, by its ``state_dict`` key.
+
+        Raises:
+            ValueError: If the state found at the embeddings' position does not have their saved shape.
+        """
+        model = getattr(self.model, "_orig_mod", self.model)
+        named_parameters = dict(model.named_parameters())
+        param_dicts = get_param_dict(_namespace_from_configs(self.model_config, self.train_config), model)
+        positions = {
+            id(param): index for index, param in enumerate(p for group in param_dicts for p in group["params"])
+        }
+        dropped = 0
+        for key, saved_shape in resized.items():
+            name = key.removeprefix("model.").removeprefix("_orig_mod.")
+            position = positions.get(id(named_parameters.get(name)))
+            if position is None:
+                continue  # frozen or absent: the optimizer holds no state for it
+            for optimizer_state in checkpoint["optimizer_states"]:
+                saved_ids = [index for group in optimizer_state.get("param_groups", []) for index in group["params"]]
+                if len(saved_ids) != len(positions):
+                    continue  # another layout: Optimizer.load_state_dict refuses it
+                entry = optimizer_state.get("state", {}).get(saved_ids[position])
+                if entry is None:
+                    continue
+                buffers = [value for value in entry.values() if isinstance(value, Tensor) and value.numel() > 1]
+                if any(buffer.shape != saved_shape for buffer in buffers):
+                    raise ValueError(
+                        f"Cannot resume on another positional-embedding grid: the checkpoint's optimizer state for "
+                        f"{name} does not have the shape {tuple(saved_shape)} of its saved weights, so the state to "
+                        "reset cannot be identified. Resume at the checkpoint's resolution, or start a new run from "
+                        "its weights with pretrain_weights=<checkpoint> instead of resume."
+                    )
+                del optimizer_state["state"][saved_ids[position]]
+                dropped += 1
+        if dropped and self.global_rank == 0:
+            logger.info(
+                "Positional embeddings were resized to the model's grid on resume; their optimizer state "
+                "(momentum and second-moment estimates) was reset, and all other optimizer state is kept."
             )
 
     def _adopt_resumed_param_group_settings(self, checkpoint: dict[str, Any]) -> None:

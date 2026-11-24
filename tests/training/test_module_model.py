@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
+import copy
 import logging
 import math
 import pickle
@@ -4454,3 +4455,91 @@ class TestStemChannels:
         module = _real_module(tmp_path)
 
         module.on_load_checkpoint({"state_dict": {_STEM_KEY: module.state_dict()[_STEM_KEY]}})
+
+
+class TestOnLoadCheckpointResetsResizedPeOptimizerState:
+    """A full-checkpoint resume on another grid restarts the optimizer state of the position embeddings only.
+
+    AdamW's ``exp_avg`` and ``exp_avg_sq`` of the position embeddings lie on the checkpoint's grid: a transposed grid
+    would apply momentum from the old layout, and another token count leaves buffers the next step cannot use.
+    """
+
+    _PE_NAME = "backbone.0.encoder.encoder.embeddings.position_embeddings"
+
+    @staticmethod
+    def _real_module(tmp_path: Path, resolution: tuple[int, int]) -> Any:
+        """Return a real Nano module at ``resolution`` with a stub trainer for ``configure_optimizers``."""
+        from rfdetr.training.module_model import RFDETRModelModule
+
+        torch.manual_seed(0)
+        model_config = RFDETRNanoConfig(pretrain_weights=None, device="cpu", num_classes=2, resolution=resolution)
+        module = RFDETRModelModule(model_config, TrainConfig(dataset_dir=str(tmp_path), tensorboard=False))
+        _attach_trainer(module, estimated_stepping_batches=10)
+        return module
+
+    @staticmethod
+    def _step(optimizer: torch.optim.Optimizer) -> None:
+        """Take one optimizer step with a gradient of ones on every parameter."""
+        for group in optimizer.param_groups:
+            for parameter in group["params"]:
+                parameter.grad = torch.ones_like(parameter)
+        optimizer.step()
+
+    def _saved_checkpoint(self, tmp_path: Path, resolution: tuple[int, int]) -> dict[str, Any]:
+        """Return a full checkpoint of a module at ``resolution`` whose optimizer has taken one step."""
+        module = self._real_module(tmp_path, resolution)
+        optimizer = module.configure_optimizers()["optimizer"]
+        self._step(optimizer)
+        return {
+            "state_dict": {key: value.clone() for key, value in module.state_dict().items()},
+            "optimizer_states": [copy.deepcopy(optimizer.state_dict())],
+            "model_config": module.model_config.model_dump(),
+        }
+
+    @pytest.mark.parametrize(
+        "target",
+        [pytest.param((96, 64), id="transposed-grid"), pytest.param((64, 128), id="other-token-count")],
+    )
+    def test_resume_on_another_grid_steps_with_fresh_pe_state(self, target: tuple[int, int], tmp_path: Path) -> None:
+        """The resumed optimizer has no state for the resized embeddings, keeps the rest, and can step."""
+        checkpoint = self._saved_checkpoint(tmp_path, (64, 96))
+        module = self._real_module(tmp_path, target)
+
+        module.on_load_checkpoint(checkpoint)
+        module.load_state_dict(checkpoint["state_dict"], strict=False)
+        optimizer = module.configure_optimizers()["optimizer"]
+        optimizer.load_state_dict(checkpoint["optimizer_states"][0])
+
+        parameters = dict(module.model.named_parameters())
+        position_embeddings = parameters[self._PE_NAME]
+        other = parameters["backbone.0.encoder.encoder.embeddings.cls_token"]
+        assert position_embeddings.shape[1] == target[0] // 16 * (target[1] // 16) + 1
+        assert position_embeddings not in optimizer.state
+        assert float(optimizer.state[other]["step"]) == 1
+        assert len(optimizer.state) == sum(len(group["params"]) for group in optimizer.param_groups) - 1
+
+        self._step(optimizer)
+
+        assert optimizer.state[position_embeddings]["exp_avg"].shape == position_embeddings.shape
+        assert float(optimizer.state[position_embeddings]["step"]) == 1
+        assert float(optimizer.state[other]["step"]) == 2
+
+    def test_resume_on_the_same_grid_keeps_pe_state(self, tmp_path: Path) -> None:
+        """Embeddings that are not resized keep their optimizer state."""
+        checkpoint = self._saved_checkpoint(tmp_path, (64, 96))
+        saved_state = copy.deepcopy(checkpoint["optimizer_states"][0]["state"])
+
+        self._real_module(tmp_path, (64, 96)).on_load_checkpoint(checkpoint)
+
+        assert checkpoint["optimizer_states"][0]["state"].keys() == saved_state.keys()
+
+    def test_state_that_is_not_the_position_embeddings_is_refused(self, tmp_path: Path) -> None:
+        """Optimizer state whose layout does not put the embeddings where this run does is not reset by guesswork."""
+        checkpoint = self._saved_checkpoint(tmp_path, (64, 96))
+        for entry in checkpoint["optimizer_states"][0]["state"].values():
+            if entry["exp_avg"].shape[1:2] == (4 * 6 + 1,):
+                entry["exp_avg"] = torch.zeros(3, 3)
+        module = self._real_module(tmp_path, (96, 64))
+
+        with pytest.raises(ValueError, match="optimizer state"):
+            module.on_load_checkpoint(checkpoint)
