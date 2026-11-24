@@ -19,6 +19,10 @@ COCO takes precedence when both formats are present. If neither format is detect
 
     [Roboflow](https://roboflow.com/annotate) can export datasets in both COCO and YOLO formats. When downloading from Roboflow, select the appropriate format based on your preference.
 
+!!! note "Photo orientation"
+
+    Phones and many cameras store a photo's pixels in sensor order and record how the camera was held in an EXIF orientation tag. Image viewers and labeling tools show the photo turned by that tag, so that is where labels are drawn. RF-DETR reads every image upright the same way, for training, validation and `predict()`, so labels line up with the pixels. Like `PIL.ImageOps.exif_transpose`, it also reads the orientation from two other places: `tiff:Orientation` in the file's XMP metadata, when the EXIF block records none, and a PNG's `Raw profile type exif` text chunk, when the file has no EXIF block. OpenCV's `imread` reads only the EXIF block and shows such a file as stored, so check how your labeling tool shows one before training on it. Files with no orientation in any of these places are read as stored. If your labels were drawn on the stored (unturned) pixels instead, remove the orientation from those files before training: the EXIF tag, `tiff:Orientation` from their XMP metadata, or the `Raw profile type exif` chunk.
+
 ---
 
 ## COCO Format

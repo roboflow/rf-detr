@@ -19,9 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.
+
     - Code that imports `transformers` and relied on `rfdetr` to install it must install it directly: `pip install transformers`.
     - On a core install, building a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, raises an `ImportError` that asks for `huggingface_hub` and `safetensors`.
     - On a core install, building a non-windowed `DinoV2(use_windowed_attn=False)` raises an `ImportError` that asks for `transformers`.
+
+- Photos with an orientation tag, as phones save them, are read upright, as viewers and annotation tools show them, in training, validation, `predict()` on a path or URL, INT8 calibration, the export sample image and the export benchmark and COCO scoring helpers. Before, labels drawn on the upright photo landed on the wrong pixels. A PIL image passed to `predict()` keeps the caller's pixel order. ([#1739](https://github.com/roboflow/rf-detr/pull/1739))
+
+    - The tag is read as `PIL.ImageOps.exif_transpose` reads it (EXIF, a PNG `Raw profile type exif` chunk, or XMP `tiff:Orientation`); untagged files decode as before, and a file with corrupt EXIF can now raise Pillow's `Possibly corrupt EXIF data` `UserWarning`.
+    - Labels drawn on the stored pixels of tagged photos, such as pseudo-labels from an earlier `predict()`, no longer line up: regenerate them on the upright photos or strip the orientation metadata. The COCO and WebDataset readers warn once per dataset object when the boxes of a quarter-turned photo fit only its stored frame.
 
 ### Changed
 
@@ -32,11 +38,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Fine-tuning `RFDETRKeypointPreview` with an explicit `num_keypoints_per_class`, such as `[17]`, or `[17, 0]` for a dataset with a box-only class, as the custom-dataset example in `docs/learn/train/index.md` builds it, starts the person class from the pretrained person weights, and box-only classes and the no-object row from the checkpoint's background row. The preview checkpoint keeps the person in class-head row 1 of its background-first schema `[0, 17]`, and loading it as `[17]` left the rows in place, so the person class started from the background row: before training the model found no one, and after a 2-epoch fine-tune on a COCO person subset `predict()` returned only `__background__` detections with zero keypoints, at validation keypoint mAP 0.027 instead of 0.672. `load_pretrain_weights` now moves the class-head rows with their classes when it restores the configured schema, once the head has grown for any added classes. ([#1744](https://github.com/roboflow/rf-detr/pull/1744))
+
+- EXIF-tagged photos are read upright for training and `predict()`.
+
 - `CocoEvaluator` scores a ground-truth annotation with id 0 instead of counting its matched detection as a false positive, which understated keypoint AP on YOLO pose datasets and on COCO ground truth with an id-0 annotation. ([#1738](https://github.com/roboflow/rf-detr/pull/1738))
+
 - `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
+
 - `download_pretrain_weights(path, redownload=True)` keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.
+
 - Static TensorRT INT8 engines of Atto, Femto and Pico keep `fc1` and `fc2` of the first six backbone MLP blocks in FP16. The PE-Core-T backbone has an input range 52 to 55 times its typical 99.9th percentile at block 3's `fc2`, which one INT8 step per tensor cannot represent: an earlier development build lost 7.0 to 8.7 AP against PyTorch FP32, and with this placement INT8 loses 0.3, 0.2 and 0.7 AP. INT8 is at most 9% faster than FP16 end to end on these sizes, so prefer FP16 unless you need INT8. ([#1732](https://github.com/roboflow/rf-detr/pull/1732))
+
 - Static ONNX INT8 export keeps the attention-value multiply (the `MatMul` that reads a `Softmax` output) in float, next to the attention-score multiplies it already kept. 8-bit activations over the [0, 1] attention weights round small weights to zero, and larger sizes have more tokens per window, so the accuracy loss grew with model size. Validation covers six models on 200 val2017 images on arm64 with ONNX Runtime 1.24.3; x86 accuracy and latency have not been revalidated.
+
 - `RFDETR.export(format="onnx", quantization="int8", int8_keep_mlp_float=True)` also keeps GELU-fed weighted projections in float, including the second layer of backbone MLPs. It recognizes both decomposed and native ONNX GELU.
 
 ## [1.12.1] — 2026-11-12
