@@ -18,6 +18,16 @@ an earlier head rule (every node within three hops of an output), and this modul
 shape a published INT8 RF-DETR Base uses to hold roughly 53 mAP, so the remaining gap is a calibration and
 boundary-placement question rather than an architectural limit.
 
+A later measurement on 200 val2017 images found that the larger sizes still lost far more than Nano, up to 9.5 mask AP
+for Seg 2XLarge, because the multiply that applies the ``Softmax`` weights to the values was still quantized: 8 bits
+over [0, 1] round the small weights to zero, and a window with more tokens has more of them. That multiply stays in
+float now (:func:`nodes_to_exclude`); on the same images Large went from -2.83 to -0.50 box AP and Seg 2XLarge from
+-9.47 to -1.41 mask AP against FP32 (ONNX Runtime 1.24.3, arm64).
+
+GELU outputs can have outlier channels that set the 8-bit step for the entire tensor. The optional
+``keep_mlp_float=True`` setting leaves GELU-fed weighted projections in float, including the second layer of
+backbone MLPs and matching projections elsewhere in the graph.
+
 Three decisions follow from that and are deliberately not configurable:
 
 * **Only ``MatMul`` and ``Gemm``.** Everything else stays float. Quantizing more is both less accurate and *slower*
@@ -117,6 +127,74 @@ def _attention_score_matmuls(graph: Any, producer: dict[str, Any], constants: se
     return excluded
 
 
+def _attention_value_matmuls(graph: Any, constants: set[str]) -> set[str]:
+    """Return the activation-by-activation multiplies that read a ``Softmax`` output (attention weights times values).
+
+    The attention weights lie in [0, 1], so an 8-bit range over them has a step of about 1/255 whatever the data. A
+    window of several hundred tokens spreads its weight over as many entries, most of them near or below one step, so
+    quantizing the tensor rounds them to zero. The error grows with the tokens per window, which is why the larger
+    models lost the most (measured: Seg 2XLarge lost 9.5 mask AP with this multiply in INT8 and 1.4 with it in float).
+
+    Only a direct consumer counts, and only when its other operand is not a constant: a ``Softmax`` output multiplied by
+    a weight is an ordinary linear layer and stays quantizable.
+
+    Args:
+        graph: An ``onnx.GraphProto``.
+        constants: Names of constant tensors, from :func:`_constant_names`.
+
+    Returns:
+        Names of the attention-value multiplies.
+    """
+    probabilities = {output for node in graph.node if node.op_type == "Softmax" for output in node.output}
+    return {
+        node.name
+        for node in graph.node
+        if node.op_type in _QUANTIZED_OP_TYPES
+        and node.name
+        and probabilities.intersection(node.input[:2])
+        and not constants.intersection(node.input[:2])
+    }
+
+
+def _gelu_projection_matmuls(graph: Any, producer: dict[str, Any], constants: set[str]) -> set[str]:
+    """Return the weighted ``MatMul``/``Gemm`` nodes fed by GELU activations.
+
+    Older opsets decompose GELU into arithmetic around ``Erf``. Opset 20 can use the native ``Gelu`` operator.
+    The walk from the activation input finds either form within :data:`_MAX_WALK_HOPS` hops and stops at each
+    ``MatMul``, ``Gemm`` or ``Conv``, so it cannot follow GELU across a preceding projection.
+
+    Args:
+        graph: An ``onnx.GraphProto``.
+        producer: Tensor name -> node producing it.
+        constants: Names of constant tensors, from :func:`_constant_names`.
+
+    Returns:
+        Names of the multiplies that read a GELU output.
+    """
+    excluded: set[str] = set()
+    for node in graph.node:
+        if node.op_type not in _QUANTIZED_OP_TYPES or not node.name:
+            continue
+        dynamic = [name for name in node.input[:2] if name not in constants]
+        if len(dynamic) != 1:
+            continue
+        visited: set[str] = set()
+        frontier = dynamic
+        for _ in range(_MAX_WALK_HOPS):
+            next_frontier: list[str] = []
+            for tensor in frontier:
+                source = producer.get(tensor)
+                if source is None or tensor in visited:
+                    continue
+                visited.add(tensor)
+                if source.op_type in ("Erf", "Gelu"):
+                    excluded.add(node.name)
+                elif source.op_type not in _HEAD_STOP_OP_TYPES:
+                    next_frontier.extend(source.input)
+            frontier = next_frontier
+    return excluded
+
+
 def _head_matmuls(graph: Any, producer: dict[str, Any]) -> set[str]:
     """Return the last ``MatMul``/``Gemm`` on each path back from a graph output.
 
@@ -150,22 +228,27 @@ def _head_matmuls(graph: Any, producer: dict[str, Any]) -> set[str]:
     return excluded
 
 
-def nodes_to_exclude(graph: Any) -> list[str]:
+def nodes_to_exclude(graph: Any, keep_mlp_float: bool = False) -> list[str]:
     """Return the names of nodes that must stay in float even among ``MatMul``/``Gemm``.
 
-    Two groups, both found by walking the graph rather than matched by name, so a renamed or restructured export stays
-    covered:
+    Three groups by default and a fourth on request, all found by walking the graph rather than matched by name, so a
+    renamed or restructured export stays covered:
 
     * the attention-score multiplies -- an activation-by-activation ``MatMul`` reaching a ``Softmax`` directly or
       through constant scaling (``Q @ K^T / sqrt(d)``), where an 8-bit range quantizes the comparison the attention is
       about to make;
+    * the attention-value multiplies -- an activation-by-activation ``MatMul`` reading a ``Softmax`` output (weights
+      times values), where an 8-bit range over [0, 1] rounds the small weights to zero;
     * the last ``MatMul``/``Gemm`` on each path back from a graph output -- the detection heads' final layers, which
       emit box deltas and class logits directly, so quantizing them quantizes the answer. The walk passes through any
       number of elementwise ops (box refinement, sigmoid, reshapes) up to :data:`_MAX_WALK_HOPS` hops, and stops at a
-      ``Conv``.
+      ``Conv``;
+    * only with *keep_mlp_float*, weighted ``MatMul``/``Gemm`` nodes fed by GELU, including the second layer of
+      backbone MLPs and matching projections in other parts of the graph.
 
     Args:
         graph: An ``onnx.GraphProto``.
+        keep_mlp_float: Also keep GELU-fed weighted projections in float.
 
     Returns:
         Node names to pass to ``quantize_static(nodes_to_exclude=...)``, sorted and deduplicated.
@@ -184,7 +267,11 @@ def nodes_to_exclude(graph: Any) -> list[str]:
         ['head_matmul']
     """
     producer = {output: node for node in graph.node for output in node.output}
-    excluded = _attention_score_matmuls(graph, producer, _constant_names(graph))
+    constants = _constant_names(graph)
+    excluded = _attention_score_matmuls(graph, producer, constants)
+    excluded |= _attention_value_matmuls(graph, constants)
+    if keep_mlp_float:
+        excluded |= _gelu_projection_matmuls(graph, producer, constants)
     excluded |= _head_matmuls(graph, producer)
     return sorted(excluded)
 
@@ -296,6 +383,7 @@ def quantize_int8(
     calibration_data: str | Path | NDArray[Any],
     *,
     max_images: int = 100,
+    keep_mlp_float: bool = False,
 ) -> Path:
     """Write a static INT8 QDQ copy of the ONNX graph at *model_path* and return its path.
 
@@ -306,6 +394,7 @@ def quantize_int8(
         calibration_data: Directory of representative images, a ``.npy`` path, or a preprocessed array. Images are
             preprocessed exactly as inference does.
         max_images: Maximum images read from a *calibration_data* directory.
+        keep_mlp_float: Also keep GELU-fed weighted projections in float. Defaults to ``False``.
 
     Returns:
         Path of the written INT8 model.
@@ -337,13 +426,25 @@ def quantize_int8(
         prepared = Path(scratch) / f"{source.stem}_prep.onnx"
         staged = Path(scratch) / target.name
 
-        # Shape inference and constant folding first: quantize_static refuses many graphs without it.
-        quant_pre_process(str(source), str(prepared), skip_symbolic_shape=False)
+        # ORT's per-node symbolic inference loses the rank of ReduceMax when proposal selection passes its axes
+        # as a tensor (opset 18+). Whole-graph ONNX shape inference can read that constant and still runs after
+        # ORT's graph optimization.
+        source_model = onnx.load(str(source), load_external_data=False)
+        tensor_axes_reductions = {
+            node.output[0]
+            for node in source_model.graph.node
+            if node.op_type == "ReduceMax" and len(node.input) > 1 and node.input[1]
+        }
+        skip_symbolic_shape = any(
+            node.op_type == "TopK" and node.input[0] in tensor_axes_reductions for node in source_model.graph.node
+        )
+        del source_model
+        quant_pre_process(str(source), str(prepared), skip_symbolic_shape=skip_symbolic_shape)
 
         model = onnx.load(str(prepared))
         graph_input = model.graph.input[0]
         batch_size, channels, height, width = _static_input_dims(graph_input)
-        excluded = nodes_to_exclude(model.graph)
+        excluded = nodes_to_exclude(model.graph, keep_mlp_float=keep_mlp_float)
 
         batches = list(
             calibration_batches(
@@ -359,7 +460,7 @@ def quantize_int8(
         warn_if_too_few_samples(len(batches))
         logger.info(
             f"Quantizing {source.name} to INT8 from {len(batches)} calibration samples "
-            f"({len(excluded)} attention/head nodes kept in float)"
+            f"({len(excluded)} attention, MLP and head nodes kept in float)"
         )
 
         quantize_static(

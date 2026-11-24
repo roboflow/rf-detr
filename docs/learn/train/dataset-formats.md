@@ -494,6 +494,34 @@ Validation and test metrics on shards do not score crowd regions (`iscrowd: 1`):
 
 ---
 
+## Grayscale and Four-Channel Images
+
+Models take RGB images by default. Set `num_channels` on the model to train on grayscale or four-channel data. The dataset loaders of every format (COCO, YOLO and WebDataset) then decode each image for that channel count.
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall(num_channels=4)
+model.train(dataset_dir="<DATASET_PATH>", epochs=50)
+
+# Later: predict or fine-tune from that run.
+model = RFDETRSmall(num_channels=4, pretrain_weights="output/checkpoint_best_total.pth")
+```
+
+| `num_channels` | Images are loaded as | What the files must contain                                              |
+| -------------- | -------------------- | ------------------------------------------------------------------------ |
+| `1`            | Grayscale            | Any 8-bit image. Color images are converted to luminance.                |
+| `3` (default)  | RGB                  | Any image.                                                               |
+| `4`            | RGBA                 | A fourth channel in every file, for example a PNG with an alpha channel. |
+
+With `num_channels=4` the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (`ExtraSamples=1`) is un-premultiplied on read, so tag data planes `ExtraSamples=2`. 16-bit grayscale (`I;16`, `I`, `F`) is refused for the 1-channel target. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A `num_channels` other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a `ValueError`.
+
+The pretrained RGB filters are reused for the extra channel, and the fourth channel is normalized with the red mean and standard deviation, the same values `predict()` uses. A checkpoint saved from a four-channel model loads only into a model built with `num_channels=4`. With `freeze_encoder=True` or `backbone_lora=True` the patch embedding is frozen, so the filters of the extra channel keep that initialization and are not trained; a warning says so. Without either option the patch embedding still trains slowly: layer-wise decay puts it at the lowest rate, about 2% of `lr_encoder` with the default `lr_vit_layer_decay=0.8` and `lr_component_decay=0.7`.
+
+Color augmentations that need RGB input, such as `HueSaturationValue`, `ColorJitter` and `ToGray`, do not accept four-channel images. Geometric augmentations work. Pixel augmentations that accept any channel count, such as `RandomBrightnessContrast`, change the fourth channel as well. An Albumentations transform that changes the channel count now raises an error instead of silently continuing. `predict()` reads grayscale and RGB from files; pass four-channel input as an array or tensor.
+
+---
+
 ## Converting Between Formats
 
 ### YOLO to COCO
