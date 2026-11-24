@@ -13,17 +13,97 @@ that lets one query produce more than one detection, thresholding, and the empty
 
 from __future__ import annotations
 
+import dataclasses
+import logging
+
 import numpy as np
 import pytest
 import torch
 
+from rfdetr.export._runtime import decode as decode_module
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.models.postprocess import PostProcess
 from tests._markers import _cuda_marks
 
 
+class _CountingArray(np.ndarray):
+    """``ndarray`` that counts ``min``, ``max`` and ``mean`` reductions in the class-level ``reductions`` list.
+
+    Examples:
+        >>> _CountingArray.reductions.clear()
+        >>> float(np.arange(3.0).view(_CountingArray).max())
+        2.0
+        >>> _CountingArray.reductions
+        ['max']
+        >>> _CountingArray.reductions.clear()
+    """
+
+    reductions: list[str] = []
+
+    def min(self, *args: object, **kwargs: object) -> object:
+        """Record a ``min`` reduction, then compute it."""
+        type(self).reductions.append("min")
+        return super().min(*args, **kwargs)
+
+    def max(self, *args: object, **kwargs: object) -> object:
+        """Record a ``max`` reduction, then compute it."""
+        type(self).reductions.append("max")
+        return super().max(*args, **kwargs)
+
+    def mean(self, *args: object, **kwargs: object) -> object:
+        """Record a ``mean`` reduction, then compute it."""
+        type(self).reductions.append("mean")
+        return super().mean(*args, **kwargs)
+
+
 class TestDecodeDetections:
     """``decode_detections()`` — sigmoid, background exclusion, top-k selection, box conversion."""
+
+    def test_skips_debug_statistics_when_debug_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No logits or scores reduction runs while the logger is not at DEBUG.
+
+        The statistics are only log arguments; computing them on every call costs a pass over the score grid for output
+        nobody reads.
+        """
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: False)
+        _CountingArray.reductions.clear()
+        logits = np.array([[2.0, -5.0]], dtype=np.float32).view(_CountingArray)
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+
+        decode_detections(boxes, logits, (10, 10))
+
+        assert _CountingArray.reductions == []
+
+    def test_logs_debug_statistics_when_debug_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With DEBUG enabled, the logits and scores statistics are logged with their values."""
+        calls: list[tuple[object, ...]] = []
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: level == logging.DEBUG)
+        monkeypatch.setattr(decode_module.logger, "debug", lambda *args: calls.append(args))
+        logits = np.array([[2.0, -5.0]], dtype=np.float32)
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+
+        decode_detections(boxes, logits, (10, 10), threshold=0.3)
+
+        logits_call, scores_call = calls
+        assert logits_call[0].startswith("Logits stats")
+        assert logits_call[1] == (1, 2)
+        np.testing.assert_allclose(logits_call[2:], [-5.0, 2.0, -1.5])
+        assert scores_call[0].startswith("Scores stats")
+        np.testing.assert_allclose(scores_call[1:3], [1 / (1 + np.exp(5.0)), 1 / (1 + np.exp(-2.0))], rtol=1e-6)
+        assert scores_call[3:] == (0.3, 1)
+
+    def test_output_is_identical_with_debug_statistics_on_and_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Enabling DEBUG logs the statistics but changes no decoded field, dtype included."""
+        monkeypatch.setattr(decode_module.logger, "debug", lambda *args: None)
+        logits = np.array([[2.0, -5.0]], dtype=np.float32)
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: False)
+        off = decode_detections(boxes, logits, (10, 10), threshold=0.3)
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: level == logging.DEBUG)
+        on = decode_detections(boxes, logits, (10, 10), threshold=0.3)
+
+        assert [a.dtype for a in dataclasses.astuple(on)] == [a.dtype for a in dataclasses.astuple(off)]
+        np.testing.assert_equal(dataclasses.astuple(on), dataclasses.astuple(off))
 
     def test_converts_normalised_boxes_to_pixel_xyxy(self) -> None:
         """A full-frame normalised box decodes to the image's pixel corners.
