@@ -19,6 +19,10 @@ COCO takes precedence when both formats are present. If neither format is detect
 
     [Roboflow](https://roboflow.com/annotate) can export datasets in both COCO and YOLO formats. When downloading from Roboflow, select the appropriate format based on your preference.
 
+!!! note "Photo orientation"
+
+    Phones and many cameras store a photo's pixels in sensor order and record how the camera was held in an EXIF orientation tag. Image viewers and labeling tools show the photo turned by that tag, so that is where labels are drawn. RF-DETR reads every image upright the same way, for training, validation and `predict()`, so labels line up with the pixels. Like `PIL.ImageOps.exif_transpose`, it also reads the orientation from two other places: `tiff:Orientation` in the file's XMP metadata, when the EXIF block records none, and a PNG's `Raw profile type exif` text chunk, when the file has no EXIF block. OpenCV's `imread` reads only the EXIF block and shows such a file as stored, so check how your labeling tool shows one before training on it. Files with no orientation in any of these places are read as stored. If your labels were drawn on the stored (unturned) pixels instead, remove the orientation from those files before training: the EXIF tag, `tiff:Orientation` from their XMP metadata, or the `Raw profile type exif` chunk.
+
 ---
 
 ## COCO Format
@@ -196,25 +200,6 @@ The category should declare the keypoint schema:
 The `keypoints` array above is shortened for readability. In a valid COCO person-keypoint annotation it contains `17 * 3` values: `x`, `y`, and visibility for each keypoint.
 
 The keypoint preview model is pretrained on COCO person-style keypoints. Its default COCO schema is `[17]`, so keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. Legacy checkpoints may still report a background-first `[0, 17]` schema, which RF-DETR accepts for compatibility. Custom keypoint training can also use YOLO pose labels, described below.
-
-### Four-Channel Images
-
-A model built with `num_channels=4` trains on COCO-format datasets whose image files carry a fourth channel, for example RGB with a motion or optical-flow channel stored as the alpha channel of an RGBA PNG. With `num_channels=4`, the loader keeps an image whose file is `RGBA`, grayscale with alpha, or a palette with transparency as four channels, with the alpha plane as the fourth; with any other `num_channels` it converts every image to RGB, as before. Every image in the dataset must have the fourth channel: a file without an alpha plane, `CMYK` files included, loads as RGB and fails in the backbone with a channel mismatch. The fourth channel is treated as data, not as transparency: resizing, cropping and flipping handle each channel on its own, so the RGB values are kept wherever the fourth channel is zero.
-
-```python
-from rfdetr import RFDETRMedium
-
-model = RFDETRMedium(num_channels=4)
-model.train(dataset_dir="<DATASET_PATH>", epochs=50)
-```
-
-The pretrained 3-channel patch embedding is adapted to four channels by repeating its RGB kernels and scaling them by `3 / 4`, and the fourth channel is normalized with the first (red) mean and standard deviation. To fine-tune or predict from a checkpoint of such a run, pass the same `num_channels` with `pretrain_weights`; the checkpoint's own 4-channel patch embedding is loaded as it is. Loading it with a different `num_channels` raises a `ValueError` that names both counts.
-
-```python
-model = RFDETRMedium(num_channels=4, pretrain_weights="<CHECKPOINT_PATH>")
-```
-
-Four-channel loading covers COCO-format datasets only: YOLO-format datasets and WebDataset shards load RGB. Custom Albumentations or Kornia color transforms that require RGB input, such as `HueSaturationValue`, do not accept a four-channel image, and dataset sample grids (`save_dataset_grids`) support RGB only.
 
 ---
 
@@ -510,6 +495,34 @@ Shard visiting order is shuffled, and samples are shuffled again in a reservoir 
 Keypoint training rejects `dataset_file="webdataset"` with an explicit error. Its label space is inferred from a whole parsed COCO annotation file, which a shard index does not carry — use `coco`, `roboflow` or `yolo` for keypoints. Detection and segmentation splits are supported.
 
 Validation and test metrics on shards do not score crowd regions (`iscrowd: 1`): a detection on one counts as a false positive, where the loose-file `coco` loader ignores it as pycocotools does. Evaluate from the loose-file split when comparing against COCO numbers.
+
+---
+
+## Grayscale and Four-Channel Images
+
+Models take RGB images by default. Set `num_channels` on the model to train on grayscale or four-channel data. The dataset loaders of every format (COCO, YOLO and WebDataset) then decode each image for that channel count.
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall(num_channels=4)
+model.train(dataset_dir="<DATASET_PATH>", epochs=50)
+
+# Later: predict or fine-tune from that run.
+model = RFDETRSmall(num_channels=4, pretrain_weights="output/checkpoint_best_total.pth")
+```
+
+| `num_channels` | Images are loaded as | What the files must contain                                              |
+| -------------- | -------------------- | ------------------------------------------------------------------------ |
+| `1`            | Grayscale            | Any 8-bit image. Color images are converted to luminance.                |
+| `3` (default)  | RGB                  | Any image.                                                               |
+| `4`            | RGBA                 | A fourth channel in every file, for example a PNG with an alpha channel. |
+
+With `num_channels=4` the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (`ExtraSamples=1`) is un-premultiplied on read, so tag data planes `ExtraSamples=2`. 16-bit grayscale (`I;16`, `I`, `F`) is refused for the 1-channel target. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A `num_channels` other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a `ValueError`.
+
+The pretrained RGB filters are reused for the extra channel, and the fourth channel is normalized with the red mean and standard deviation, the same values `predict()` uses. A checkpoint saved from a four-channel model loads only into a model built with `num_channels=4`. With `freeze_encoder=True` or `backbone_lora=True` the patch embedding is frozen, so the filters of the extra channel keep that initialization and are not trained; a warning says so. Without either option the patch embedding still trains slowly: layer-wise decay puts it at the lowest rate, about 2% of `lr_encoder` with the default `lr_vit_layer_decay=0.8` and `lr_component_decay=0.7`.
+
+Color augmentations that need RGB input, such as `HueSaturationValue`, `ColorJitter` and `ToGray`, do not accept four-channel images. Geometric augmentations work. Pixel augmentations that accept any channel count, such as `RandomBrightnessContrast`, change the fourth channel as well. An Albumentations transform that changes the channel count now raises an error instead of silently continuing. `predict()` reads grayscale and RGB from files; pass four-channel input as an array or tensor.
 
 ---
 

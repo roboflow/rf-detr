@@ -20,7 +20,13 @@ import pytest
 from scripts import update_weekly_metrics
 
 
-def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads: int) -> object:
+def _metric(
+    week_start: date,
+    stars_total: int,
+    new_stars: int | None,
+    downloads: int,
+    used_by: int | None = None,
+) -> object:
     """Build one checkpoint for a Monday-to-Sunday week starting at ``week_start``.
 
     ``week_end`` is the only derived field; every value a test asserts on stays explicit at the call site. A case that
@@ -29,6 +35,8 @@ def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads
     Examples:
         >>> _metric(date(2026, 8, 24), stars_total=12_000, new_stars=None, downloads=70_000).week_end
         datetime.date(2026, 8, 30)
+        >>> _metric(date(2026, 8, 24), 12_000, None, 70_000, used_by=209).used_by
+        209
     """
     return update_weekly_metrics.WeeklyMetric(
         week_start=week_start,
@@ -36,6 +44,7 @@ def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads
         stars_total=stars_total,
         new_stars=new_stars,
         downloads=downloads,
+        used_by=used_by,
     )
 
 
@@ -211,6 +220,43 @@ class TestRecordWeek:
             _metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=80_000),
         )
 
+    def test_records_used_by_reading_with_the_week(self) -> None:
+        """A new week must carry the dependent-repository count read during its run."""
+        updated = update_weekly_metrics.record_week(
+            _state(),
+            start=date(2026, 8, 24),
+            end=date(2026, 8, 30),
+            stars_total=12_125,
+            downloads=80_000,
+            history_limit=52,
+            used_by=209,
+        )
+
+        assert updated.history[-1].used_by == 209
+
+    @pytest.mark.parametrize(
+        ("reading", "expected"),
+        [
+            pytest.param(215, 215, id="newer-reading-replaces"),
+            pytest.param(None, 209, id="failed-reading-keeps-recorded"),
+        ],
+    )
+    def test_same_period_rerun_refreshes_used_by_only_when_read(self, reading: int | None, expected: int) -> None:
+        """A rerun must take a fresh used-by reading and keep the recorded one when the scrape fails."""
+        current = _metric(date(2026, 8, 24), stars_total=12_100, new_stars=None, downloads=79_000, used_by=209)
+
+        updated = update_weekly_metrics.record_week(
+            _state(current),
+            start=date(2026, 8, 24),
+            end=date(2026, 8, 30),
+            stars_total=12_125,
+            downloads=80_000,
+            history_limit=52,
+            used_by=reading,
+        )
+
+        assert updated.history[-1].used_by == expected
+
     def test_same_period_rerun_keeps_delta_at_minimum_history_limit(self) -> None:
         """A rerun under ``--history-limit 1`` must keep the delta its predecessor established.
 
@@ -318,6 +364,40 @@ class TestSvgState:
 
         assert parsed == state
 
+    def test_used_by_round_trips_and_is_omitted_while_unknown(self) -> None:
+        """Used-by must persist in metadata, and a checkpoint without it must stay free of the key.
+
+        Omitting the key keeps every checkpoint written before the count existed byte-identical.
+        """
+        known = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209))
+        unknown = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000))
+
+        known_svg = update_weekly_metrics.render_svg(known, window_weeks=12)
+        unknown_svg = update_weekly_metrics.render_svg(unknown, window_weeks=12)
+
+        assert update_weekly_metrics.parse_state(known_svg, "roboflow/rf-detr", "rfdetr") == known
+        assert '"used_by":209' in known_svg
+        assert "used_by" not in unknown_svg
+
+    def test_parser_rejects_negative_used_by(self) -> None:
+        """A corrupt used-by value in embedded state must fail validation."""
+        svg = """<svg><metadata id="weekly-metrics-state">{
+            "schema_version": 1,
+            "repository": "roboflow/rf-detr",
+            "package": "rfdetr",
+            "history": [{
+                "week_start": "2026-08-24",
+                "week_end": "2026-08-30",
+                "stars_total": 12125,
+                "new_stars": 125,
+                "downloads": 80000,
+                "used_by": -1
+            }]
+        }</metadata></svg>"""
+
+        with pytest.raises(update_weekly_metrics.MetricsError, match="used_by must be a non-negative integer"):
+            update_weekly_metrics.parse_state(svg, "roboflow/rf-detr", "rfdetr")
+
     def test_parser_rejects_malformed_checkpoint_json(self) -> None:
         """Corrupt embedded state must fail closed before replacing SVG."""
         svg = '<svg><metadata id="weekly-metrics-state">{broken</metadata></svg>'
@@ -363,8 +443,8 @@ class TestSvgRendering:
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
 
-        assert "— baseline" in svg
-        assert "+0 new stars" not in svg
+        assert "star baseline of 12,125" in svg
+        assert "+0 new" not in svg
 
     def test_baseline_week_draws_no_download_mark(self) -> None:
         """A baseline week must draw no download point either, so both series start together.
@@ -396,6 +476,112 @@ class TestSvgRendering:
 
         assert "0 weekly downloads" in svg
 
+    @pytest.mark.parametrize(
+        ("used_by", "shown"),
+        [
+            pytest.param(1_209, "1.2k repos", id="known"),
+            pytest.param(None, "—</text>", id="unknown"),
+        ],
+    )
+    def test_used_by_card_shows_latest_reading_or_dash(self, used_by: int | None, shown: str) -> None:
+        """The used-by card must show the latest count, and a dash while no reading was ever captured."""
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000, used_by=used_by))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert "USED BY" in svg
+        assert shown in svg
+
+    def test_each_headline_metric_has_its_own_colour(self) -> None:
+        """Stars must be gold, used by purple and downloads blue, in the headline and in the chart.
+
+        Matching the card value to its chart series lets a reader follow one metric from the header to the plot.
+        """
+        state = _state(
+            _metric(date(2026, 8, 17), stars_total=12_000, new_stars=None, downloads=70_000),
+            _metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+        stars = update_weekly_metrics.STARS_COLOR
+        used_by = update_weekly_metrics.USED_BY_COLOR
+        downloads = update_weekly_metrics.DOWNLOADS_COLOR
+
+        assert f'fill="{stars}" font-size="28" font-weight="700">12.1k<' in svg
+        assert f'fill="{used_by}" font-size="28" font-weight="700">209 repos<' in svg
+        assert f'fill="{downloads}" font-size="28" font-weight="700">80k weekly downloads<' in svg
+        assert f'rx="4" fill="{stars}"/>' in svg
+        assert f'r="5" fill="{downloads}"' in svg
+        assert {stars, used_by, downloads} == {"#b8860b", "#8315f9", "#2a78d6"}
+
+    def test_card_widths_follow_their_content(self) -> None:
+        """A card holding a short count must be narrower than one holding a long value, and the row stays full.
+
+        The cards run stars, downloads, used by, so the downloads card is the widest and the stars card the narrowest.
+        """
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=114_513, used_by=209))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+        widths = [float(line.split('width="')[1].split('"')[0]) for line in svg.splitlines() if 'height="82"' in line]
+
+        assert len(widths) == 3
+        assert widths[0] < widths[2] < widths[1]
+        assert sum(widths) + 2 * 18 == pytest.approx(1088)
+
+    def test_card_label_is_left_aligned_and_value_centred(self) -> None:
+        """Each card's label must start at the card's padded left edge and its value sit at the card's middle."""
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=114_513, used_by=209))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+        lines = svg.splitlines()
+        for index, line in enumerate(lines):
+            if 'height="82"' not in line:
+                continue
+            left = float(line.split(' x="')[1].split('"')[0])
+            width = float(line.split('width="')[1].split('"')[0])
+            label, value = lines[index + 1 : index + 3]
+            assert "text-anchor" not in label
+            assert float(label.split(' x="')[1].split('"')[0]) == pytest.approx(left + 20, abs=0.1)
+            assert 'text-anchor="middle"' in value
+            assert float(value.split(' x="')[1].split('"')[0]) == pytest.approx(left + width / 2, abs=0.1)
+
+    def test_used_by_change_is_derived_from_consecutive_readings(self) -> None:
+        """The change needs a reading in both weeks and no gap between them, like a star delta."""
+        first, second, third, after_gap = (
+            _metric(date(2026, 8, 3), 100, None, 1, used_by=200),
+            _metric(date(2026, 8, 10), 110, 10, 1, used_by=209),
+            _metric(date(2026, 8, 17), 120, 10, 1),
+            _metric(date(2026, 8, 31), 130, None, 1, used_by=215),
+        )
+
+        changes = update_weekly_metrics.used_by_changes([first, second, third, after_gap])
+
+        assert changes == [None, 9, None, None]
+
+    def test_used_by_bars_sit_beside_star_bars_in_their_own_colour(self) -> None:
+        """Once a used-by change exists, its week draws a gold and a purple bar and the legend names both."""
+        state = _state(
+            _metric(date(2026, 8, 10), stars_total=12_000, new_stars=None, downloads=70_000, used_by=200),
+            _metric(date(2026, 8, 17), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert svg.count(f'rx="4" fill="{update_weekly_metrics.STARS_COLOR}"/>') == 1
+        assert svg.count(f'rx="4" fill="{update_weekly_metrics.USED_BY_COLOR}"/>') == 1
+        assert "NEW USED BY" in svg
+        assert "New used-by repos" in svg
+
+    def test_chart_without_used_by_change_keeps_a_single_centred_star_bar(self) -> None:
+        """With one used-by reading there is no change to draw, so no purple bar and no extra legend entry."""
+        state = _state(_metric(date(2026, 8, 17), stars_total=12_125, new_stars=125, downloads=80_000, used_by=209))
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert f'rx="4" fill="{update_weekly_metrics.USED_BY_COLOR}"' not in svg
+        assert "NEW USED BY" not in svg
+        assert "New used-by repos" not in svg
+
     def test_chart_uses_display_window_and_latest_summary(self) -> None:
         """Chart marks must show only configured recent periods plus latest totals."""
         state = _state(
@@ -407,10 +593,27 @@ class TestSvgRendering:
 
         assert 'id="weekly-stars-bars"' in svg
         assert 'id="weekly-downloads-line"' in svg
-        assert "+125 new stars" in svg
-        assert "80,000 weekly downloads" in svg
+        assert "+125 new GitHub stars" in svg
+        assert "WEEKLY STAR CHANGE" not in svg
+        assert "80k weekly downloads" in svg
         assert "Aug 30" in svg
         assert "Aug 23" not in svg
+
+    def test_drawn_counts_are_shortened_while_state_and_description_stay_exact(self) -> None:
+        """Cards and axis shorten large counts, yet the stored history and the accessible text keep every digit."""
+        state = _state(
+            _metric(date(2026, 8, 17), stars_total=10_000, new_stars=None, downloads=90_000),
+            _metric(date(2026, 8, 24), stars_total=10_135, new_stars=135, downloads=114_513, used_by=209),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert "114k weekly downloads" in svg
+        assert ">10.1k</text>" in svg
+        assert ">114k</text>" in svg
+        assert "114,513 PyPI downloads" in svg
+        assert '"downloads":114513' in svg
+        assert update_weekly_metrics.parse_state(svg, "roboflow/rf-detr", "rfdetr") == state
 
 
 class TestFetchJson:
@@ -496,6 +699,32 @@ class TestMetricsApis:
         assert request.full_url == "https://api.github.com/repos/roboflow/rf-detr"
         assert request.get_header("Authorization") == "Bearer secret-token"
         assert stars == 12_125
+
+    def test_fetch_used_by_reads_dependents_page_repository_count(self, mocker) -> None:
+        """The used-by count must come from the dependents page's repository tab, not its package tab."""
+        page = (
+            b"<script>const unrelated = '12 Repositories';</script>"
+            b'<a href="/somewhere-else">99 Repositories</a>'
+            b'<a href="/other/project/network/dependents?dependent_type=REPOSITORY">5 Repositories</a>'
+            b'<a href="https://example.com/roboflow/rf-detr/network/dependents?dependent_type=REPOSITORY">'
+            b"6 Repositories</a>"
+            b'<a href="/roboflow/rf-detr/network/dependents?dependent_type=REPOSITORY">'
+            b"<svg></svg>\n 1,209\n Repositories</a>"
+            b'<a href="/roboflow/rf-detr/network/dependents?dependent_type=PACKAGE">52 Packages</a>'
+        )
+        urlopen = mocker.patch("scripts.update_weekly_metrics.urlopen", return_value=io.BytesIO(page))
+
+        used_by = update_weekly_metrics.fetch_used_by("roboflow/rf-detr")
+
+        assert urlopen.call_args.args[0].full_url == "https://github.com/roboflow/rf-detr/network/dependents"
+        assert used_by == 1_209
+
+    def test_parse_used_by_rejects_page_without_repository_count(self) -> None:
+        """A changed page layout must raise instead of recording a wrong count."""
+        with pytest.raises(update_weekly_metrics.MetricsError, match="no repository count"):
+            update_weekly_metrics.parse_used_by(
+                "<html>Sign in to GitHub</html>", "/roboflow/rf-detr/network/dependents"
+            )
 
     def test_fetch_daily_downloads_reads_without_mirrors_series(self, mocker) -> None:
         """PyPI Stats response must become validated UTC daily counts."""
@@ -593,6 +822,29 @@ class TestMetricsApis:
 
 class TestMetricsUpdate:
     """Tests for complete local SVG update behavior."""
+
+    @pytest.fixture(autouse=True)
+    def used_by_page(self, mocker) -> MagicMock:
+        """Stub the dependents-page scrape so no update test reaches the network."""
+        return mocker.patch("scripts.update_weekly_metrics.fetch_used_by", return_value=209)
+
+    def test_update_records_used_by_and_survives_scrape_failure(
+        self, mocker, tmp_path: Path, used_by_page, capsys
+    ) -> None:
+        """A used-by reading must land in the SVG, and a scrape failure must warn without blocking the update."""
+        output = tmp_path / "metrics.svg"
+        daily_downloads = {date(2026, 8, 24) + timedelta(days=offset): 100 for offset in range(7)}
+        mocker.patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125)
+        mocker.patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads)
+
+        update_weekly_metrics.update_metrics(output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None)
+        recorded = update_weekly_metrics.load_state(output, "roboflow/rf-detr", "rfdetr").history[-1].used_by
+        used_by_page.side_effect = update_weekly_metrics.MetricsError("HTTP 429")
+        update_weekly_metrics.update_metrics(output, "roboflow/rf-detr", "rfdetr", 12, 104, date(2026, 9, 3), None)
+        kept = update_weekly_metrics.load_state(output, "roboflow/rf-detr", "rfdetr").history[-1].used_by
+
+        assert (recorded, kept) == (209, 209)
+        assert "used-by count unavailable: HTTP 429" in capsys.readouterr().err
 
     def test_first_update_writes_fetch_results_as_embedded_baseline(self, mocker, tmp_path: Path) -> None:
         """Missing output must produce one self-contained baseline observation."""
@@ -739,9 +991,13 @@ class TestMetricsUpdate:
             ).encode()
         )
 
+        dependents_response = io.BytesIO(
+            b'<a href="/roboflow/rf-detr/network/dependents?dependent_type=REPOSITORY">209 Repositories</a>'
+        )
+
         mock_datetime_cls = mocker.patch("datetime.datetime")
         mock_datetime_cls.now.return_value = frozen_now
-        mocker.patch("urllib.request.urlopen", side_effect=[github_response, pypi_response])
+        mocker.patch("urllib.request.urlopen", side_effect=[github_response, pypi_response, dependents_response])
         mocker.patch("sys.argv", ["update_weekly_metrics.py", "--output", str(output)])
 
         with pytest.raises(SystemExit) as exit_info:

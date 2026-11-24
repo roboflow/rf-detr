@@ -85,6 +85,50 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     return new_linear
 
 
+def _select_linear_rows(linear: nn.Linear, order: list[int]) -> nn.Linear:
+    """Return a new :class:`~torch.nn.Linear` whose row ``i`` is row ``order[i]`` of *linear*.
+
+    Args:
+        linear: Source linear layer.
+        order: The source row each output row takes; a row can be taken more than once or left out.
+
+    Returns:
+        A new layer with ``out_features == len(order)``, on the device and dtype of *linear*.
+
+    Raises:
+        ValueError: If *order* is empty or holds an index outside the rows of *linear*.
+
+    Examples:
+        >>> layer = nn.Linear(2, 3)
+        >>> picked = _select_linear_rows(layer, [2, 0, 0, 1])
+        >>> picked.out_features, bool((picked.weight[1] == layer.weight[0]).all())
+        (4, True)
+        >>> _select_linear_rows(layer, [3])
+        Traceback (most recent call last):
+        ...
+        ValueError: order must name 1 or more rows in range(3), got [3].
+    """
+    rows = linear.weight.shape[0]
+    if not order or min(order) < 0 or max(order) >= rows:
+        raise ValueError(f"order must name 1 or more rows in range({rows}), got {order}.")
+    index = torch.as_tensor(order, dtype=torch.long, device=linear.weight.device)
+    new_linear = nn.Linear(
+        linear.in_features,
+        len(order),
+        bias=linear.bias is not None,
+        device=linear.weight.device,
+        dtype=linear.weight.dtype,
+    )
+    with torch.no_grad():
+        new_linear.weight.copy_(linear.weight.index_select(0, index))
+        if linear.bias is not None and new_linear.bias is not None:
+            new_linear.bias.copy_(linear.bias.index_select(0, index))
+    new_linear.weight.requires_grad = linear.weight.requires_grad
+    if linear.bias is not None and new_linear.bias is not None:
+        new_linear.bias.requires_grad = linear.bias.requires_grad
+    return new_linear
+
+
 def _resize_parameter_rows(parameter: nn.Parameter, num_rows: int) -> nn.Parameter:
     """Return a parameter with the first dimension resized by tiling or truncating rows."""
     current_rows = parameter.shape[0]
@@ -139,12 +183,28 @@ class LWDETR(nn.Module):
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
-            num_classes: number of object classes
-            num_queries: number of object queries, ie detection slot. This is the maximal number of objects
-                         Conditional DETR can detect in a single image. For COCO, we recommend 100 queries.
+            segmentation_head: Mask head applied to the decoder outputs, or None for a model without masks.
+            num_classes: Number of outputs of the classification head: one more than the largest class id
+                         (``build_model`` passes ``args.num_classes + 1``).
+            num_queries: Number of object queries per group. This is the maximal number of objects the model can
+                         detect in a single image.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
-            group_detr: Number of groups to speed detr training. Default is 1.
-            lite_refpoint_refine: TODO
+            group_detr: Number of query groups. Training runs ``num_queries * group_detr`` queries, evaluation
+                         runs the first ``num_queries``. Default is 1.
+            two_stage: If True, the encoder output is scored with its own class and box heads (one copy per group),
+                         and the best scoring proposals initialize the decoder's reference points.
+            lite_refpoint_refine: If True, every decoder layer uses the initial reference points, and boxes are
+                         predicted from each layer's output afterwards. If False, the decoder shares the box head
+                         and refines the reference points after every layer.
+            bbox_reparam: If True, the box head predicts a center offset scaled by the reference box size and a
+                         log scale of its width and height. If False, it predicts an offset that is added to the
+                         reference box before a sigmoid.
+            use_grouppose_keypoints: If True, build the GroupPose keypoint head.
+            num_keypoints_per_class: Number of keypoints of each class, indexed by class id. It cannot have more
+                         entries than ``num_classes``. Only read by the keypoint head; the list is still stored in
+                         the ``_kp_active_mask`` buffer.
+            grouppose_keypoint_dim_downscale: Factor the hidden dimension is divided by to get the width of the
+                         keypoint head.
         """
         super().__init__()
         self.num_queries = num_queries
@@ -247,6 +307,29 @@ class LWDETR(nn.Module):
             assert self.transformer.enc_out_class_embed is not None
             self.transformer.enc_out_class_embed = nn.ModuleList(
                 [_resize_linear(cast(nn.Linear, m), num_classes) for m in self.transformer.enc_out_class_embed]
+            )
+
+    def reorder_detection_head(self, order: list[int]) -> None:
+        """Rebuild the classification head from its current rows so that row ``i`` takes the weights of row
+        ``order[i]``.
+
+        Replaces ``self.class_embed`` and, when the model uses two-stage detection, each ``enc_out_class_embed`` with a
+        new :class:`torch.nn.Linear` of ``len(order)`` outputs, for a checkpoint whose classes sit in other rows than
+        the model's. Moving the rows and resizing the head in one step lets the rows a smaller or larger head needs be
+        taken straight from the loaded ones, with no tiled copies or cut rows in between.
+
+        Args:
+            order: For each row of the new head, the row of the current head whose weights it takes; a row can be taken
+                more than once or left out.
+
+        Raises:
+            ValueError: If *order* is empty or holds an index outside the rows of the current head.
+        """
+        self.class_embed = _select_linear_rows(self.class_embed, order)
+        if self.two_stage:
+            assert self.transformer.enc_out_class_embed is not None
+            self.transformer.enc_out_class_embed = nn.ModuleList(
+                [_select_linear_rows(cast(nn.Linear, m), order) for m in self.transformer.enc_out_class_embed]
             )
 
     @staticmethod

@@ -18,13 +18,14 @@ from __future__ import annotations
 import copy
 import math
 import os
+import re
 from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
+from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -39,155 +40,14 @@ from rfdetr.utilities.state_dict import (
 
 logger = get_logger()
 
-__all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddings", "adapt_input_channels"]
+__all__ = ["adapt_input_channels", "apply_lora", "interpolate_position_embeddings", "load_pretrain_weights"]
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
-#: State-dict key suffix of the DINOv2 patch-embedding projection, whose second dimension is the input channel count.
-_PATCH_PROJ_KEY_SUFFIX = "patch_embeddings.projection.weight"
+_STEM_KEY_SUFFIX = "patch_embeddings.projection.weight"
 
 # Query-related parameters that LWDETR packs as nn.Embedding(num_queries * group_detr, ...).
 # Any new query parameter packed the same way must be added here.
 _QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
-
-
-def _adapt_input_conv(num_channels: int, conv_weight: Tensor) -> Tensor:
-    """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
-
-    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
-    original 3 channels.
-    Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
-    pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
-
-    Args:
-        num_channels: Target number of input channels.
-        conv_weight: Original weight tensor of shape ``[out_ch, 3, H, W]``.
-
-    Returns:
-        Adapted weight tensor of shape ``[out_ch, num_channels, H, W]``.
-
-    Examples:
-        >>> _adapt_input_conv(4, torch.ones(2, 3, 1, 1)).shape
-        torch.Size([2, 4, 1, 1])
-        >>> _adapt_input_conv(4, torch.ones(2, 3, 1, 1))[0, :, 0, 0].tolist()
-        [0.75, 0.75, 0.75, 0.75]
-    """
-    if num_channels == 3:
-        return conv_weight
-    if num_channels == 1:
-        return conv_weight.mean(dim=1, keepdim=True)
-    # General case: tile and scale
-    repeats = (num_channels + 2) // 3
-    weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
-    weight_out = weight_out * (3.0 / num_channels)
-    return weight_out
-
-
-def adapt_input_channels(model: torch.nn.Module, num_channels: int, *, encoder_name: str | None = None) -> None:
-    """Adapt the DINOv2 patch-embedding projection of *model* to a non-RGB channel count.
-
-    Replaces the 3-channel projection in place with a ``num_channels``-input ``Conv2d`` whose weights are derived
-    from the original ones (see :func:`_adapt_input_conv`). Does nothing for ``num_channels == 3``, or when the
-    projection is already ``num_channels`` wide, so calling it again never rescales weights that were adapted or
-    loaded before. The inference model builder and the training ``LightningModule`` both call it, so they build the
-    same stem.
-
-    Args:
-        model: Model whose ``backbone[0].encoder`` patch embedding is adapted in place. A PEFT-wrapped encoder
-            (``backbone_lora``) is supported.
-        num_channels: Number of input channels the model is configured for.
-        encoder_name: Configured encoder name (``ModelConfig.encoder``), used to reject a non-DINOv2 encoder by
-            name. When omitted, the encoder is rejected only if it has no DINOv2 patch embedding.
-
-    Raises:
-        ValueError: If ``num_channels != 3`` and the encoder is not a DINOv2 encoder.
-
-    Examples:
-        >>> from rfdetr.config import RFDETRNanoConfig
-        >>> from rfdetr.models import build_model_from_config
-        >>> model = build_model_from_config(RFDETRNanoConfig(pretrain_weights=None, device="cpu"))
-        >>> adapt_input_channels(model, 4, encoder_name="dinov2_windowed_small")
-        >>> model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection.in_channels
-        4
-    """
-    if num_channels == 3:
-        return
-    # Dispatch on the encoder name, as Backbone._build_encoder does: with backbone_lora the encoder is a PEFT
-    # wrapper, not a DinoV2 instance.
-    if encoder_name is not None and encoder_name.split("_")[0] != "dinov2":
-        raise ValueError(
-            f"num_channels={num_channels} is supported for DINOv2 encoders only, not encoder={encoder_name!r}."
-        )
-    # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
-    encoder = getattr(cast(Any, model).backbone[0], "encoder", None)
-    embeddings = getattr(getattr(encoder, "encoder", None), "embeddings", None)
-    patch_embeddings = getattr(embeddings, "patch_embeddings", None)
-    proj = getattr(patch_embeddings, "projection", None)
-    if patch_embeddings is None or proj is None:
-        raise ValueError(
-            f"num_channels={num_channels} is supported for DINOv2 encoders only, "
-            f"not encoder={encoder_name or type(encoder).__name__!r}."
-        )
-    if proj.weight.shape[1] == num_channels:
-        return
-    new_proj = copy.deepcopy(proj)
-    new_proj.in_channels = num_channels
-    new_proj.weight = torch.nn.Parameter(_adapt_input_conv(num_channels, proj.weight))
-    new_proj.weight.requires_grad = proj.weight.requires_grad
-    patch_embeddings.projection = new_proj
-    patch_embeddings.num_channels = num_channels
-
-
-def _checkpoint_stem_channels(checkpoint_state: dict[str, Any]) -> int | None:
-    """Return the input channel count of the patch-embedding projection stored in a checkpoint.
-
-    Args:
-        checkpoint_state: Model state dict from a checkpoint.
-
-    Returns:
-        The projection's input channel count, or ``None`` when the state dict holds no patch-embedding projection.
-
-    Examples:
-        >>> _checkpoint_stem_channels({"embeddings.patch_embeddings.projection.weight": torch.zeros(8, 4, 2, 2)})
-        4
-        >>> _checkpoint_stem_channels({"class_embed.weight": torch.zeros(2, 8)}) is None
-        True
-    """
-    for name, tensor in checkpoint_state.items():
-        if name.endswith(_PATCH_PROJ_KEY_SUFFIX) and getattr(tensor, "ndim", 0) == 4:
-            return int(tensor.shape[1])
-    return None
-
-
-def _align_stem_to_checkpoint(nn_model: torch.nn.Module, checkpoint_state: dict[str, Any], num_channels: int) -> None:
-    """Widen the model's patch-embedding projection before loading a checkpoint that is itself non-RGB.
-
-    :func:`adapt_input_channels` runs after the checkpoint load, because it derives the ``num_channels`` projection
-    from a 3-channel one. A checkpoint saved from a model trained with ``num_channels != 3`` already holds a
-    projection of that width, which a freshly built 3-channel projection cannot receive. When the checkpoint's width
-    equals the configured ``num_channels`` the model is adapted first, so the checkpoint's projection loads as it is
-    and the later :func:`adapt_input_channels` call does nothing.
-
-    Args:
-        nn_model: Model about to receive ``checkpoint_state``.
-        checkpoint_state: Model state dict from the checkpoint.
-        num_channels: Number of input channels the model is configured for.
-
-    Raises:
-        ValueError: If the checkpoint's projection is neither 3 channels wide nor ``num_channels`` wide.
-
-    Examples:
-        >>> _align_stem_to_checkpoint(torch.nn.Module(), {"class_embed.weight": torch.zeros(2, 8)}, num_channels=4)
-    """
-    checkpoint_channels = _checkpoint_stem_channels(checkpoint_state)
-    if checkpoint_channels is None or checkpoint_channels == 3:
-        return
-    if checkpoint_channels != num_channels:
-        raise ValueError(
-            f"The checkpoint was saved from a model with num_channels={checkpoint_channels}, but this model is "
-            f"configured with num_channels={num_channels}. Only a 3-channel checkpoint can be adapted to another "
-            f"channel count; pass num_channels={checkpoint_channels} to load this checkpoint."
-        )
-    adapt_input_channels(nn_model, checkpoint_channels)
 
 
 def _is_query_param(name: str) -> bool:
@@ -235,7 +95,8 @@ def _slice_query_param_per_group(
       drop tail groups; retained groups stay pretrained.
     * Either dimension expands, or one shrinks while the other expands →
       return whatever per-group sub-tensor can be built (``min(target, ckpt)`` along each axis). The result has fewer
-      rows than the model expects, so ``load_state_dict`` will raise a shape mismatch immediately.
+      rows than the model expects; ``load_pretrain_weights`` then pads a ``num_queries`` increase with
+      :func:`_pad_query_param_per_group` and rejects anything else.
 
     When the tensor's flat length disagrees with ``ckpt_num_queries * ckpt_group_detr`` (corrupt or unexpected
     checkpoint shape), fall back to the legacy flat slice so loading continues with the same behavior the codebase had
@@ -286,6 +147,55 @@ def _slice_query_param_per_group(
     keep_per_group = min(target_num_queries, ckpt_num_queries)
     pieces = [tensor[g * ckpt_num_queries : g * ckpt_num_queries + keep_per_group] for g in range(keep_groups)]
     return torch.cat(pieces, dim=0)
+
+
+def _pad_query_param_per_group(
+    tensor: torch.Tensor,
+    ckpt_num_queries: int,
+    target_num_queries: int,
+    target_group_detr: int,
+    fresh: torch.Tensor,
+) -> torch.Tensor:
+    """Grow a ``refpoint_embed`` / ``query_feat`` weight to more queries per group, keeping every pretrained row.
+
+    Each group of the result starts with the checkpoint's rows for that group; the remaining rows of the group come from
+    ``fresh``, the tensor the model initialised for itself. Appending the fresh rows flat would instead push the
+    checkpoint's second group into the new slots of the first, which is the group inference reads.
+
+    Args:
+        tensor: Checkpoint rows already cut to ``target_group_detr`` groups of ``ckpt_num_queries`` rows each.
+        ckpt_num_queries: Queries per group held by ``tensor``.
+        target_num_queries: Queries per group the model needs; at least ``ckpt_num_queries``.
+        target_group_detr: Number of groups in both ``tensor`` and the result.
+        fresh: The model's own tensor of shape ``(target_num_queries * target_group_detr, ...)``.
+
+    Returns:
+        A new tensor shaped like ``fresh``; ``fresh`` itself is not modified.
+
+    Raises:
+        ValueError: If the shapes of ``tensor`` and ``fresh`` do not match the stated layout.
+
+    Examples:
+        >>> pretrained = torch.tensor([[1.0], [2.0]])
+        >>> fresh = torch.tensor([[-1.0], [-2.0], [-3.0], [-4.0]])
+        >>> _pad_query_param_per_group(pretrained, 1, 2, 2, fresh).squeeze(-1).tolist()
+        [1.0, -2.0, 2.0, -4.0]
+    """
+    if ckpt_num_queries > target_num_queries:
+        raise ValueError(f"cannot pad {ckpt_num_queries} queries per group down to {target_num_queries}.")
+    if (
+        tensor.shape[0] != ckpt_num_queries * target_group_detr
+        or fresh.shape[0] != target_num_queries * target_group_detr
+    ):
+        raise ValueError(
+            f"cannot pad: got {tensor.shape[0]} pretrained and {fresh.shape[0]} fresh rows for "
+            f"{target_group_detr} groups of {ckpt_num_queries} -> {target_num_queries} queries."
+        )
+    padded = fresh.clone()
+    for group in range(target_group_detr):
+        start = group * target_num_queries
+        padded[start : start + ckpt_num_queries] = tensor[group * ckpt_num_queries : (group + 1) * ckpt_num_queries]
+    return padded
 
 
 def _filter_intentional_keys(keys: list[str]) -> list[str]:
@@ -455,6 +365,103 @@ def interpolate_position_embeddings(
         )
 
 
+def _class_rows_for_keypoint_schema(
+    checkpoint_schema: list[int], configured_schema: list[int], checkpoint_rows: int, head_rows: int
+) -> list[int] | None:
+    """Match each class-head row of the configured keypoint schema to the checkpoint row of the same class.
+
+    A keypoint schema gives the keypoint count of each class row; rows past it carry no-object logits. The preview
+    checkpoint's background-first ``[0, 17]`` keeps the person in row 1, while the active-first ``[17]`` puts it in row
+    0 and uses row 1 for no object, so loading one into the other has to move the rows. The classes with keypoints pair
+    up in order, and a pair keeps its row when the counts agree, or when each schema has a single class with keypoints,
+    whatever its count, since the keypoint rows are rebuilt for the configured schema anyway. Classes with keypoints
+    that the other schema lacks, and every keypoint-free row, the no-object rows included, take the checkpoint's
+    keypoint-free rows in order. When the head has more of them, as when the configured classes add box-only ones, the
+    extra rows repeat the checkpoint's last keypoint-free row, the no-object row of the preview checkpoint.
+
+    The order is taken over the checkpoint's own ``checkpoint_rows`` rows and gives the final ``head_rows`` rows, so a
+    head that grows or is cut afterwards needs no separate resize.
+
+    Args:
+        checkpoint_schema: ``num_keypoints_per_class`` of the checkpoint.
+        configured_schema: ``num_keypoints_per_class`` of the model.
+        checkpoint_rows: Rows in the checkpoint's class head, the no-object row included.
+        head_rows: Rows the model's class head is to have, the no-object row included.
+
+    Returns:
+        The checkpoint row each of the ``head_rows`` rows takes, the identity order when nothing moves, or ``None``
+        when no mapping exists: the paired classes with keypoints disagree on their counts, a schema is longer than its
+        head, or a row it needs is missing from the checkpoint.
+
+    Examples:
+        >>> _class_rows_for_keypoint_schema([0, 17], [17], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([17], [0, 17], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [17, 0], checkpoint_rows=2, head_rows=3)
+        [1, 0, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17, 4], [17, 4], checkpoint_rows=3, head_rows=3)
+        [1, 2, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [21], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [17, 4], checkpoint_rows=2, head_rows=3)
+        [1, 0, 0]
+        >>> _class_rows_for_keypoint_schema([0, 0, 17], [17], checkpoint_rows=3, head_rows=2)
+        [2, 0]
+        >>> _class_rows_for_keypoint_schema([17], [17], checkpoint_rows=2, head_rows=2)
+        [0, 1]
+        >>> _class_rows_for_keypoint_schema([17, 4], [4, 17], checkpoint_rows=3, head_rows=3) is None
+        True
+    """
+    checkpoint_kinds = [*checkpoint_schema, *[0] * (checkpoint_rows - len(checkpoint_schema))]
+    configured_kinds = [*configured_schema, *[0] * (head_rows - len(configured_schema))]
+    if len(checkpoint_kinds) != checkpoint_rows or len(configured_kinds) != head_rows:
+        return None
+    with_keypoints = [row for row, n in enumerate(checkpoint_kinds) if n]
+    without_keypoints = [row for row, n in enumerate(checkpoint_kinds) if not n]
+    checkpoint_counts = [checkpoint_kinds[row] for row in with_keypoints]
+    configured_counts = [n for n in configured_kinds if n]
+    only_one_each = len(checkpoint_counts) == len(configured_counts) == 1
+    if not only_one_each and any(a != b for a, b in zip(checkpoint_counts, configured_counts)):
+        return None
+    keypoint_rows = iter(with_keypoints)
+    spare = iter(without_keypoints)
+    order = []
+    for n in configured_kinds:
+        row = next(keypoint_rows, None) if n else None
+        if row is None:
+            row = next(spare, without_keypoints[-1] if without_keypoints else None)
+        if row is None:
+            return None
+        order.append(row)
+    return order
+
+
+def _reorder_class_names(class_names: list[str], order: list[int]) -> list[str]:
+    """Return *class_names* in the order of the class-head rows after they were reordered.
+
+    Args:
+        class_names: Class names of the checkpoint, the name of row ``i`` at index ``i``.
+        order: For each row of the new head, the checkpoint row it takes.
+
+    Returns:
+        The name of the checkpoint row each new row takes, for as many rows as there are names; an empty list when a
+        new row takes a row without a name, since the name of that class is unknown.
+
+    Examples:
+        >>> _reorder_class_names(["a", "b", "c"], [0, 2, 1, 3])
+        ['a', 'c', 'b']
+        >>> _reorder_class_names(["person"], [1, 0, 0])
+        []
+        >>> _reorder_class_names([], [1, 0])
+        []
+    """
+    taken = order[: len(class_names)]
+    if any(row >= len(class_names) for row in taken):
+        return []
+    return [class_names[row] for row in taken]
+
+
 def load_pretrain_weights(
     nn_model: LWDETR,
     model_config: ModelConfig,
@@ -518,7 +525,7 @@ def load_pretrain_weights(
     if not os.path.isfile(pretrain_weights):
         logger.warning("Pretrain weights not found after initial download; retrying.")
         download_pretrain_weights(pretrain_weights, redownload=True)
-    validate_pretrain_weights(pretrain_weights, strict=False)
+    validated_weights = validate_pretrain_weights(pretrain_weights, strict=False)
 
     # A failed read does not prove the file is a disposable published weight: it may be a user's checkpoint.
     checkpoint = _safe_torch_load(pretrain_weights, trust=trust)
@@ -617,70 +624,89 @@ def load_pretrain_weights(
     # structure when the checkpoint records its training-time num_queries / group_detr.
     # See _slice_query_param_per_group for why a flat slice is wrong with group_detr > 1.
     ckpt_args = checkpoint.get("args")
-    ckpt_num_queries_raw = _ckpt_args_get(ckpt_args, "num_queries") if ckpt_args is not None else None
-    ckpt_group_detr_raw = _ckpt_args_get(ckpt_args, "group_detr") if ckpt_args is not None else None
+    saved_config = checkpoint.get("model_config")
+    layout_source = (
+        saved_config
+        if isinstance(saved_config, dict) and {"num_queries", "group_detr"} <= saved_config.keys()
+        else ckpt_args
+    )
+    ckpt_num_queries_raw = _ckpt_args_get(layout_source, "num_queries") if layout_source is not None else None
+    ckpt_group_detr_raw = _ckpt_args_get(layout_source, "group_detr") if layout_source is not None else None
     try:
         ckpt_num_queries = int(ckpt_num_queries_raw) if ckpt_num_queries_raw is not None else None
         ckpt_group_detr = int(ckpt_group_detr_raw) if ckpt_group_detr_raw is not None else None
-    except (TypeError, ValueError):
-        logger.warning(
-            "load_pretrain_weights: checkpoint args.num_queries / args.group_detr not coercible "
-            "to int; falling back to legacy flat slice."
-        )
-        ckpt_num_queries = None
-        ckpt_group_detr = None
-    # When exactly one of the pair is present, infer the missing value from the
-    # first matching tensor's shape.  This handles PTL checkpoints where
-    # BestModelCallback writes TrainConfig.model_dump() into checkpoint["args"]
-    # but TrainConfig does not include num_queries (it lives on ModelConfig).
-    if (ckpt_num_queries is None) != (ckpt_group_detr is None):
-        _first_query_key = next(
-            (k for k in checkpoint["model"] if _is_query_param(k)),
-            None,
-        )
-        if _first_query_key is not None:
-            _n = checkpoint["model"][_first_query_key].shape[0]
-            _absent: str | None = None
-            if ckpt_num_queries is not None and ckpt_num_queries > 0 and _n % ckpt_num_queries == 0:
-                ckpt_group_detr = _n // ckpt_num_queries
-                _absent, _inferred, _known, _known_val = "group_detr", ckpt_group_detr, "num_queries", ckpt_num_queries
-            elif ckpt_group_detr is not None and ckpt_group_detr > 0 and _n % ckpt_group_detr == 0:
-                ckpt_num_queries = _n // ckpt_group_detr
-                _absent, _inferred, _known, _known_val = "num_queries", ckpt_num_queries, "group_detr", ckpt_group_detr
-            if _absent is not None:
-                logger.warning(
-                    "load_pretrain_weights: args.%s absent; inferred ckpt_%s=%d from tensor rows %d ÷ ckpt_%s=%d.",
-                    _absent,
-                    _absent,
-                    _inferred,
-                    _n,
-                    _known,
-                    _known_val,
-                )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Checkpoint query layout must contain integer num_queries and group_detr.") from exc
+
+    query_rows = [t.shape[0] for n, t in checkpoint["model"].items() if _is_query_param(n)]
+    # Only a checksum-verified published checkpoint establishes that its encoder heads are complete. Arbitrary
+    # checkpoints can omit trailing heads, so matching contiguous indices alone cannot prove the group count.
+    asset = ModelWeights.from_filename(os.path.basename(pretrain_weights))
+    known_published_weights = asset is not None and asset.md5_hash is not None and validated_weights is True
+    if ckpt_num_queries is None and ckpt_group_detr is None and query_rows and known_published_weights:
+        head_groups = {
+            int(match.group(1))
+            for name in checkpoint["model"]
+            if (match := re.search(r"(?:^|\.)enc_out_class_embed\.(\d+)\.weight$", name))
+        }
+        box_groups = {
+            int(match.group(1))
+            for name in checkpoint["model"]
+            if (match := re.search(r"(?:^|\.)enc_out_bbox_embed\.(\d+)\.layers\.0\.weight$", name))
+        }
+        if (
+            head_groups
+            and head_groups == box_groups == set(range(len(head_groups)))
+            and all(rows % len(head_groups) == 0 for rows in query_rows)
+        ):
+            ckpt_group_detr = len(head_groups)
+            ckpt_num_queries = query_rows[0] // ckpt_group_detr
+
+    if (ckpt_num_queries is None) != (ckpt_group_detr is None) and query_rows:
+        known = ckpt_num_queries if ckpt_num_queries is not None else ckpt_group_detr
+        if known is not None and known > 0 and query_rows[0] % known == 0:
+            if ckpt_num_queries is None:
+                ckpt_num_queries = query_rows[0] // known
+            else:
+                ckpt_group_detr = query_rows[0] // known
+
+    if ckpt_num_queries is not None and ckpt_group_detr is not None:
+        if (
+            ckpt_num_queries <= 0
+            or ckpt_group_detr <= 0
+            or any(rows != ckpt_num_queries * ckpt_group_detr for rows in query_rows)
+        ):
+            raise ValueError("Checkpoint query layout does not match the query tensor shapes.")
+
     target_query_rows = mc.num_queries * mc.group_detr
-    # Warn once (not once per suffix key) only when the fallback truncates a
-    # query tensor. Checkpoints without args.num_queries/args.group_detr
-    # (published legacy files and BestModelCallback output, whose args value is a
-    # TrainConfig dump lacking both fields) already have exactly the configured
-    # number of rows, so their flat slice is a data identity: it cannot reorder
-    # or drop rows, but it does not guarantee that the checkpoint's (num_queries,
-    # group_detr) factorization matches the target.
-    # The truncation scan is the last conjunct so the cheap scalar guards short-circuit
-    # it away on every load that cannot warn.
-    if (
-        mc.group_detr > 1
-        and (ckpt_num_queries is None or ckpt_group_detr is None)
-        and any(
-            tensor.shape[0] > target_query_rows for name, tensor in checkpoint["model"].items() if _is_query_param(name)
-        )
-    ):
-        logger.warning(
-            "load_pretrain_weights: checkpoint lacks args.num_queries / "
-            "args.group_detr; falling back to flat slice. With "
-            "group_detr=%d this may scramble per-group query structure if "
-            "the checkpoint was trained with group_detr > 1.",
-            mc.group_detr,
-        )
+    default_queries = type(mc).model_fields["num_queries"].default
+    default_groups = type(mc).model_fields["group_detr"].default
+    if (ckpt_num_queries is None or ckpt_group_detr is None) and query_rows:
+        # A row total has many possible factorizations. Do not silently reinterpret a custom checkpoint when growth
+        # requires padding, including when fewer target groups make the total appear to shrink.
+        if any(rows < target_query_rows for rows in query_rows) or (
+            mc.num_queries != default_queries or mc.group_detr != default_groups
+        ):
+            raise ValueError(
+                "Cannot change num_queries or group_detr because the checkpoint layout is unknown; "
+                "save model_config or use pretrain_weights=None."
+            )
+        if mc.group_detr > 1 and any(rows > target_query_rows for rows in query_rows):
+            logger.warning(
+                "load_pretrain_weights: checkpoint lacks query layout; falling back to flat slice. "
+                "With group_detr=%d this may scramble per-group query structure.",
+                mc.group_detr,
+            )
+    # Growing num_queries keeps the pretrained rows of every group and takes the extra rows from the model's own
+    # initialisation; group_detr cannot grow, because the extra groups would need encoder heads the checkpoint lacks.
+    can_pad_queries = (
+        ckpt_num_queries is not None
+        and ckpt_group_detr is not None
+        and ckpt_num_queries < mc.num_queries
+        and mc.group_detr <= ckpt_group_detr
+    )
+    fresh_state = nn_model.state_dict() if can_pad_queries else {}
+    padded_any = False
     for name in list(checkpoint["model"].keys()):
         if _is_query_param(name):
             tensor = checkpoint["model"][name]
@@ -692,6 +718,17 @@ def load_pretrain_weights(
                     target_num_queries=mc.num_queries,
                     target_group_detr=mc.group_detr,
                 )
+                fresh = fresh_state.get(name)
+                if (
+                    can_pad_queries
+                    and isinstance(fresh, torch.Tensor)
+                    and fresh.shape[0] == target_query_rows
+                    and fresh.shape[1:] == tensor.shape[1:]
+                ):
+                    checkpoint["model"][name] = _pad_query_param_per_group(
+                        checkpoint["model"][name], ckpt_num_queries, mc.num_queries, mc.group_detr, fresh
+                    )
+                    padded_any = True
             else:
                 # Checkpoint without args.num_queries/args.group_detr (published legacy files
                 # and BestModelCallback output, whose args value is a TrainConfig dump lacking
@@ -702,14 +739,36 @@ def load_pretrain_weights(
                 # is still reinterpreted under the target partition undetectably.
                 checkpoint["model"][name] = tensor[:target_query_rows]
 
+    if padded_any:
+        logger.warning(
+            "load_pretrain_weights: num_queries=%d exceeds the %d the checkpoint was trained with; the %d extra query "
+            "slots per group are untrained (initialised like a fresh model) and need fine-tuning before they add "
+            "useful detections.",
+            mc.num_queries,
+            ckpt_num_queries,
+            mc.num_queries - (ckpt_num_queries or 0),
+        )
+    # Anything still short could not be padded (group_detr growth, or a layout that cannot be recovered), and would
+    # surface later as a bare ``load_state_dict`` size mismatch. Fail here with the setting to change instead.
+    short_rows = {
+        name: tensor.shape[0]
+        for name, tensor in checkpoint["model"].items()
+        if _is_query_param(name) and tensor.shape[0] < target_query_rows
+    }
+    if short_rows:
+        raise ValueError(
+            f"Pretrained weights hold {min(short_rows.values())} query rows but the config needs "
+            f"{target_query_rows} (num_queries={mc.num_queries} x group_detr={mc.group_detr}). Pretrained weights "
+            "cannot grow group_detr, and num_queries only when the checkpoint layout is known: keep the defaults and "
+            "raise only num_select, or pass pretrain_weights=None to train with the larger layout from scratch."
+        )
+
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
 
-    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it.
-    # Without this, loading a bg-first checkpoint ([0, 17]) into a model configured with the
-    # active-first default ([17]) causes a semantic mismatch: the detection head is trimmed to 2
-    # rows but keeps background weights at row 0 — the slot active-first inference expects to be
-    # person — producing AP ≈ 0.0 on pretrained keypoint models.
-    # Mirrors the existing num_classes auto-align pattern (lines ~385-392).
+    # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it, so the model keeps
+    # the checkpoint's own class layout, as the background-first [0, 17] of the preview checkpoint against the
+    # active-first default [17]. An explicitly set schema is restored after the load below, which moves the class-head
+    # rows to match it. Mirrors the num_classes auto-align above.
     _user_overrode_kp_schema = "num_keypoints_per_class" in getattr(mc, "model_fields_set", set())
     if (
         not _user_overrode_kp_schema
@@ -783,29 +842,150 @@ def load_pretrain_weights(
         )
         checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
-    # A checkpoint trained with num_channels != 3 needs the projection widened before its weights can load.
-    _align_stem_to_checkpoint(nn_model, checkpoint["model"], mc.num_channels)
+    _widen_stem_for_checkpoint(nn_model, checkpoint["model"], mc)
     incompatible = _load_model_state(nn_model, checkpoint["model"], backbone_lora=mc.backbone_lora)
     _warn_on_partial_load(incompatible, pretrain_weights)
 
-    if should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+    restore_keypoint_schema = should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head")
+    if restore_keypoint_schema:
         logger.warning(
             "load_pretrain_weights: restoring configured keypoint schema %s after checkpoint load.",
             configured_keypoint_schema,
         )
         nn_model.reinitialize_keypoint_head(configured_keypoint_schema)
 
-    # If the user explicitly set a class count larger than the checkpoint,
-    # expand/reinitialize the head back to the configured size after load.
+    # Rows the class head is to end with: grown back to the configured class count when the user set one larger than the
+    # checkpoint's, and trimmed when a larger checkpoint is loaded into a smaller task-specific class count.
+    head_rows = checkpoint_num_classes
     if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode:
-        nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
-
-    # Only trim back down when loading a larger pretrain checkpoint into a
-    # smaller configured task-specific class count.
+        head_rows = configured_num_classes_plus_bg
     if num_classes + 1 < checkpoint_num_classes:
-        nn_model.reinitialize_detection_head(num_classes + 1)
+        head_rows = num_classes + 1
+
+    # The schema decides which class-head row is which class, so each final row takes the checkpoint row of its class.
+    # Left alone, [0, 17] loaded as [17] would start the person class from the checkpoint's background row, and a head
+    # grown for box-only classes would hold tiled copies of the checkpoint's rows. The rows are taken from the loaded
+    # head in one step, which also sizes it, so a cut can never remove a row the order needs.
+    class_rows = None
+    if restore_keypoint_schema and checkpoint_keypoint_schema:
+        class_rows = _class_rows_for_keypoint_schema(
+            checkpoint_keypoint_schema, configured_keypoint_schema, checkpoint_num_classes, head_rows
+        )
+        if class_rows is None and checkpoint_keypoint_schema != configured_keypoint_schema:
+            logger.warning(
+                "load_pretrain_weights: no class-head row mapping from checkpoint keypoint schema %s to configured "
+                "schema %s, so the class head keeps the checkpoint's rows in their order and the classes with "
+                "keypoints may start from the wrong rows. Use the checkpoint's own schema, or keep its classes with "
+                "keypoints in the same order.",
+                checkpoint_keypoint_schema,
+                configured_keypoint_schema,
+            )
+    if class_rows is not None and class_rows != list(range(checkpoint_num_classes)):
+        nn_model.reorder_detection_head(class_rows)
+        class_names = _reorder_class_names(class_names, class_rows)
+    elif head_rows != checkpoint_num_classes:
+        nn_model.reinitialize_detection_head(head_rows)
 
     return class_names
+
+
+def _adapt_input_conv(num_channels: int, conv_weight: Tensor) -> Tensor:
+    """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
+
+    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
+    original 3 channels.
+    Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
+    pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
+
+    Args:
+        num_channels: Target number of input channels.
+        conv_weight: Original weight tensor of shape ``[out_ch, 3, H, W]``.
+
+    Returns:
+        Adapted weight tensor of shape ``[out_ch, num_channels, H, W]``.
+    """
+    if num_channels == 3:
+        return conv_weight
+    if num_channels == 1:
+        return conv_weight.mean(dim=1, keepdim=True)
+    # General case: tile and scale
+    repeats = (num_channels + 2) // 3
+    weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
+    weight_out = weight_out * (3.0 / num_channels)
+    return weight_out
+
+
+def _patch_embeddings(nn_model: LWDETR) -> Any:
+    """Return the DINOv2 patch-embedding module of *nn_model* (the model's input stem).
+
+    Args:
+        nn_model: Model with a DINOv2 backbone, possibly wrapped by PEFT.
+
+    Returns:
+        The patch-embedding module, whose ``projection`` is the stem convolution.
+    """
+    backbone = cast(Backbone, nn_model.backbone[0])
+    # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
+    return cast(DinoV2, backbone.encoder).encoder.embeddings.patch_embeddings
+
+
+def adapt_input_channels(nn_model: LWDETR, num_channels: int, encoder: str) -> None:
+    """Rebuild the DINOv2 patch embedding of *nn_model* for *num_channels* input channels, in-place.
+
+    Shared by the prediction build and the training module, so both models take the same input.  A stem that already
+    has *num_channels* inputs is left alone, which makes a second call a no-op.
+
+    Args:
+        nn_model: Model whose patch embedding is adapted.
+        num_channels: Input channel count the model is configured for.
+        encoder: Configured encoder name (``ModelConfig.encoder``).
+
+    Raises:
+        ValueError: If *num_channels* is not 3 and *encoder* is not a DINOv2 encoder.
+    """
+    if num_channels == 3:
+        return
+    # Dispatch on the encoder name, as Backbone._build_encoder does: with backbone_lora the encoder is a PEFT
+    # wrapper, not a DinoV2 instance.
+    if encoder.split("_")[0] != "dinov2":
+        raise ValueError(f"num_channels={num_channels} is supported for DINOv2 encoders only, not encoder={encoder!r}.")
+    patch_embeddings = _patch_embeddings(nn_model)
+    proj = patch_embeddings.projection
+    if proj.in_channels == num_channels:
+        return
+    new_proj = copy.deepcopy(proj)
+    new_proj.in_channels = num_channels
+    new_proj.weight = torch.nn.Parameter(_adapt_input_conv(num_channels, proj.weight))
+    new_proj.weight.requires_grad = proj.weight.requires_grad
+    patch_embeddings.projection = new_proj
+    patch_embeddings.num_channels = num_channels
+
+
+def _widen_stem_for_checkpoint(nn_model: LWDETR, model_state: dict[str, Tensor], model_config: ModelConfig) -> None:
+    """Widen the model's stem before loading a checkpoint that was saved from an already widened model.
+
+    A 3-channel checkpoint needs nothing here: it loads into the 3-channel stem and is adapted afterwards.  A checkpoint
+    whose stem already has ``model_config.num_channels`` inputs comes from an earlier multi-channel run, so the model
+    is widened first and the trained filters of the extra channels load with the rest.
+
+    Args:
+        nn_model: Model about to receive *model_state*.
+        model_state: Checkpoint weights.
+        model_config: Configuration of *nn_model*.
+
+    Raises:
+        ValueError: If the checkpoint's stem is neither 3 channels wide nor ``model_config.num_channels`` wide.
+    """
+    stem = next((value for key, value in model_state.items() if key.endswith(_STEM_KEY_SUFFIX)), None)
+    if stem is None or stem.shape[1] == 3:
+        return
+    if stem.shape[1] != model_config.num_channels:
+        raise ValueError(
+            f"The checkpoint was saved from a model with num_channels={stem.shape[1]}, but this model is configured "
+            f"with num_channels={model_config.num_channels}. Only a 3-channel checkpoint can be adapted to another "
+            f"channel count; pass num_channels={stem.shape[1]} to load this checkpoint."
+        )
+    adapt_input_channels(nn_model, model_config.num_channels, model_config.encoder)
 
 
 def _load_model_state(nn_model: LWDETR, model_state: dict[str, Tensor], *, backbone_lora: bool) -> Any:

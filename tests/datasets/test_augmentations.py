@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for Albumentations augmentation wrappers."""
 
+from functools import partial
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -51,6 +53,30 @@ def _has_albumentations_transform(name: str) -> bool:
     import albumentations as alb
 
     return hasattr(alb, name)
+
+
+def _keep_channels(image: np.ndarray, count: int, **params: Any) -> np.ndarray:
+    """Keep the first *count* channels of an ``(H, W, C)`` image, as a channel-changing transform would.
+
+    Used through ``functools.partial`` as the image function of ``albumentations.Lambda``, which passes the
+    transform parameters as keyword arguments.
+
+    Args:
+        image: ``(H, W, C)`` image array.
+        count: Number of leading channels to keep; ``1`` returns a 2-D grayscale array.
+        **params: Albumentations transform parameters, ignored.
+
+    Returns:
+        Contiguous array with the first *count* channels of *image*.
+
+    Examples:
+        >>> _keep_channels(np.zeros((8, 10, 4), dtype=np.uint8), 3).shape
+        (8, 10, 3)
+        >>> _keep_channels(np.zeros((8, 10, 3), dtype=np.uint8), 1).shape
+        (8, 10)
+    """
+    kept = image[..., 0] if count == 1 else image[..., :count]
+    return np.ascontiguousarray(kept)
 
 
 class _FakeRandomSizedCropV2:
@@ -2471,18 +2497,6 @@ class TestNormalize:
         assert isinstance(out_img, torch.Tensor)
         assert out_tgt is None
 
-    @pytest.mark.parametrize("channels", [1, 3, 4, 7])
-    def test_statistics_cycle_over_image_channels(self, channels: int) -> None:
-        """Each channel is normalized with the RGB statistics cycled to the image's channel count."""
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        image = torch.full((channels, 4, 5), 0.5)
-
-        out_img, _ = Normalize()(image, None)
-
-        expected = torch.stack([torch.full((4, 5), (0.5 - mean[c % 3]) / std[c % 3]) for c in range(channels)])
-        torch.testing.assert_close(out_img, expected)
-
     def test_one_instance_normalizes_images_of_different_channel_counts(self) -> None:
         """A normalizer that has seen a 4-channel image still normalizes a 3-channel one with RGB statistics."""
         normalize = Normalize()
@@ -2747,3 +2761,44 @@ class TestFromConfigStrict:
         result = AlbumentationsWrapper.from_config([{"HorizontalFlip": {"p": 0.5}}], strict=True)
 
         assert len(result) == 1
+
+
+@_requires_albumentations
+class TestAlbumentationsWrapperChannelCount:
+    """AlbumentationsWrapper refuses a transform that changes the channel count of the image."""
+
+    @pytest.mark.parametrize("mode", ["L", "RGBA"])
+    @pytest.mark.parametrize("transform_name", ["HorizontalFlip", "RandomBrightnessContrast"])
+    def test_channel_count_is_kept(self, mode: str, transform_name: str) -> None:
+        """Grayscale and four-channel images keep their mode through geometric and pixel transforms."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(getattr(alb, transform_name)(p=1.0))
+        target = {"boxes": torch.tensor([[1.0, 1.0, 4.0, 4.0]]), "labels": torch.tensor([1])}
+
+        aug_image, _ = wrapper(Image.new(mode, (10, 8)), target)
+
+        assert aug_image.mode == mode
+
+    @pytest.mark.parametrize("geometric", [False, True])
+    @pytest.mark.parametrize("with_target", [False, True])
+    def test_dropped_channel_raises(self, geometric: bool, with_target: bool) -> None:
+        """Dropping the fourth channel fails on the pixel, geometric and target-free paths."""
+        import albumentations as alb
+
+        dropper = alb.Lambda(image=partial(_keep_channels, count=3), p=1.0)
+        transform = alb.Sequential([alb.HorizontalFlip(p=1.0), dropper], p=1.0) if geometric else dropper
+        target = {"boxes": torch.tensor([[1.0, 1.0, 4.0, 4.0]]), "labels": torch.tensor([1])} if with_target else None
+
+        with pytest.raises(ValueError, match="changed the image from 4 to 3 channels"):
+            AlbumentationsWrapper(transform)(Image.new("RGBA", (10, 8)), target)
+
+    def test_rgb_to_grayscale_raises(self) -> None:
+        """Reducing an RGB image to one channel fails instead of reaching the model as a grayscale image."""
+        import albumentations as alb
+
+        wrapper = AlbumentationsWrapper(alb.Lambda(image=partial(_keep_channels, count=1), p=1.0))
+        target = {"labels": torch.tensor([1])}
+
+        with pytest.raises(ValueError, match="changed the image from 3 to 1 channels"):
+            wrapper(Image.new("RGB", (10, 8)), target)

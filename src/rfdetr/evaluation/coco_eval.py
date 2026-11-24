@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import numbers
 import os
 from dataclasses import dataclass
 from typing import Any, cast
@@ -96,6 +97,42 @@ def _ensure_faster_coco(coco_gt: Any) -> COCO:
     if label2cat is not None:
         faster_coco.label2cat = copy.deepcopy(label2cat)
     return faster_coco
+
+
+def _renumber_zero_annotation_id(coco_gt: COCO) -> None:
+    """Give the ground-truth annotation with id 0 a fresh positive id, in place.
+
+    COCO evaluation records the ground-truth id each detection matched and reads 0 as "no match", so a detection
+    matched to annotation 0 would be scored as a false positive for every iou type (``bbox``, ``segm`` and
+    ``keypoints``).  YOLO-format datasets number annotations from 0.
+
+    Args:
+        coco_gt: Ground truth owned by the evaluator; its annotation index is rebuilt when an id changes.
+
+    Examples:
+        >>> coco_gt = COCO()
+        >>> annotations = [{"id": 0, "image_id": 1, "category_id": 1}, {"id": 5, "image_id": 1, "category_id": 1}]
+        >>> coco_gt.dataset = {"images": [{"id": 1}], "categories": [{"id": 1}], "annotations": annotations}
+        >>> coco_gt.createIndex()
+        >>> _renumber_zero_annotation_id(coco_gt)
+        >>> sorted(coco_gt.anns)
+        [5, 6]
+    """
+    ids: list[int] = []
+    zero_id_annotations: list[dict[str, Any]] = []
+    for annotation in coco_gt.dataset.get("annotations", []):
+        annotation_id = annotation.get("id")
+        # One predicate for both collections: NumPy integers count, bool does not.
+        if isinstance(annotation_id, numbers.Integral) and not isinstance(annotation_id, bool):
+            ids.append(int(annotation_id))
+            if int(annotation_id) == 0:
+                zero_id_annotations.append(annotation)
+    if not zero_id_annotations:
+        return
+    fresh_id = max(ids) + 1
+    for annotation in zero_id_annotations:
+        annotation["id"] = fresh_id
+    coco_gt.createIndex()
 
 
 def _backfill_num_keypoints(coco_gt: COCO) -> None:
@@ -383,6 +420,7 @@ class CocoEvaluator:
     ) -> None:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(_ensure_faster_coco(coco_gt))
+        _renumber_zero_annotation_id(coco_gt)
         resolved_keypoint_oks_sigmas = None
         keypoint_category_groups: list[_KeypointCategoryGroup] = []
         if "keypoints" in iou_types:

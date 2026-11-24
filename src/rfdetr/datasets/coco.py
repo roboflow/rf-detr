@@ -33,6 +33,7 @@ from torchvision.transforms.v2 import ToDtype, ToImage
 
 from rfdetr.config import AugmentationBackend, MultiScale
 from rfdetr.datasets._aug_utils import _warn_keypoint_hflip_disabled, resolve_keypoint_flip_pairs
+from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets._torchvision import (
     Compose,
     RandomChoice,
@@ -43,7 +44,7 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.io_utils import decode_pil_image
+from rfdetr.datasets.io_utils import _warn_if_labels_follow_stored_pixels, decode_pil_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
@@ -51,10 +52,6 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
-
-#: PIL modes with an alpha plane; a 4-channel dataset loads images in these modes as RGBA, keeping that plane as the
-#: fourth channel. ``CMYK`` is not one of them: converting it yields RGB and a constant plane, not a stored channel.
-_ALPHA_MODES = frozenset({"RGBA", "LA"})
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -706,9 +703,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, used to enable
             JPEG DCT-domain downscaling during decode (see :meth:`_decode_image`).  ``None`` (the default) decodes at
             full resolution.  :func:`draft_size_for_transforms` derives the value from the pipeline's scales.
-        num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  With ``4``,
-            an image file that has a fourth channel is loaded as RGBA instead of being converted to RGB (see
-            :meth:`_decode_image`).  Any other value, including the default ``3``, loads every image as RGB.
+        max_image_pixels: Decompression-bomb limit for the images this dataset reads, used when it is higher than
+            ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  ``3`` (the
+            default) loads RGB, ``1`` grayscale and ``4`` RGBA, for which every image must store a fourth channel.
     """
 
     def __init__(
@@ -722,12 +720,17 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         remap_category_ids: bool = False,
         cat2label: dict[int, int] | None = None,
         draft_size: int | None = None,
+        max_image_pixels: int | None = None,
         num_channels: int = 3,
     ) -> None:
+        image_mode(num_channels)  # refuse a channel count image files cannot supply before reading annotations
         super().__init__(img_folder, ann_file)
         self._transforms = transforms
         self._draft_size = draft_size
+        self._max_image_pixels = max_image_pixels
         self._num_channels = num_channels
+        # Set once a sample's boxes fit its quarter-turned photo only as stored; later samples are then not checked.
+        self._warned_stored_frame_labels = False
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         if cat2label is not None and not remap_category_ids:
@@ -770,11 +773,6 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
         """Decode one image through :func:`decode_pil_image`, drafting when ``draft_size`` is set.
 
-        With ``num_channels=4``, a file whose header reports an alpha plane (``RGBA``, ``LA``, or a palette with
-        transparency) is returned as full-size ``RGBA`` instead, so a channel stored next to RGB (for example motion
-        or optical flow in the alpha channel) reaches the model as the fourth channel. A file without an alpha plane,
-        ``CMYK`` included, is still returned as RGB.
-
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
         deliberately not named the same: it returns a decode scale alongside the image.
 
@@ -782,16 +780,24 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             image_id: COCO image id.
 
         Returns:
-            Decoded RGB or RGBA image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not
-            reduce.
+            Decoded image (RGB unless ``num_channels`` says otherwise) and its horizontal/vertical decode scales, both
+            ``1.0`` when the decoder did not reduce.
         """
-        path = Path(self.root) / self.coco.loadImgs(image_id)[0]["file_name"]
-        if self._num_channels == 4:
-            # Opening reads only the header; the pixels are decoded here only for a file with an alpha plane.
-            with Image.open(path) as image:
-                if image.mode in _ALPHA_MODES or (image.mode == "P" and "transparency" in image.info):
-                    return image.convert("RGBA"), (1.0, 1.0)
-        return decode_pil_image(path, self._draft_size)
+        return decode_pil_image(
+            self._image_path(image_id), self._draft_size, self._max_image_pixels, self._num_channels
+        )
+
+    def _image_path(self, image_id: int) -> Path:
+        """Return the file of a COCO image id, under the dataset's image folder.
+
+        Args:
+            image_id: COCO image id.
+
+        Returns:
+            Path of the image file.
+        """
+        file_name: str = self.coco.loadImgs(image_id)[0]["file_name"]
+        return Path(self.root) / file_name
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]
@@ -799,6 +805,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         annotations = self._load_target(image_id)
         if (x_scale, y_scale) != (1.0, 1.0):
             annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
+        if not self._warned_stored_frame_labels:
+            path = self._image_path(image_id)
+            self._warned_stored_frame_labels = _warn_if_labels_follow_stored_pixels(
+                path, annotations, img.size, label=str(path), max_image_pixels=self._max_image_pixels
+            )
         target = {"image_id": image_id, "annotations": annotations}
         img, target = self.prepare(img, target)
         if self._transforms is not None:

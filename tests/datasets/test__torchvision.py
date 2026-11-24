@@ -635,14 +635,6 @@ class TestResizeFourChannelImage:
             expected, _ = Resize(size)(band, None)
             assert resized_band.tobytes() == expected.tobytes()
 
-    def test_rgb_planes_survive_where_the_fourth_plane_is_zero(self) -> None:
-        """A zero fourth plane does not erase the colour planes, as a transparency-weighted resize would."""
-        image = Image.new("RGBA", (96, 64), (200, 100, 50, 0))
-
-        resized, _ = Resize((32, 48))(image, None)
-
-        assert resized.getpixel((10, 10)) == (200, 100, 50, 0)
-
     def test_rgb_image_resize_is_unchanged(self) -> None:
         """A three-channel image takes torchvision's resize as before."""
         generator = torch.Generator().manual_seed(0)

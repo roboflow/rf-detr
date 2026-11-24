@@ -23,6 +23,7 @@ from PIL import Image as PILImage
 
 from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference, _run_onnx_bound
 from tests._markers import _requires_onnx_and_onnxruntime
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 _INPUT_SHAPE = [1, 3, 224, 224]
 
@@ -116,6 +117,28 @@ class TestRunInferenceBasics:
         dets, _ = _run_inference(session, rgb_image)
 
         assert len(dets) == 0
+
+
+class TestRunInferenceExifOrientation:
+    """``_run_inference`` reads a tagged photo upright, as ``predict()`` reads a file."""
+
+    def test_returned_image_is_upright(self, tmp_path: Path) -> None:
+        """A photo stored 64 x 32 with EXIF orientation 6 comes back as ``ImageOps.exif_transpose`` shows it."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        _, image = _run_inference(_FakeSession(_make_boxes(), _make_logits()), photo)
+
+        np.testing.assert_array_equal(np.asarray(image), upright_reference(photo))
+
+    def test_boxes_are_in_the_upright_frame(self, tmp_path: Path) -> None:
+        """A centred box spans the upright 32 x 64 photo, not the stored 64 x 32 one."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        dets, _ = _run_inference(_FakeSession(_make_boxes(), _make_logits()), photo, threshold=0.3)
+
+        np.testing.assert_allclose(dets.xyxy[0], [14.4, 28.8, 17.6, 35.2], rtol=1e-5)
 
 
 class TestMulticlassSelection:

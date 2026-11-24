@@ -68,9 +68,12 @@ class RFDETRInference:
         | TFLite, LiteRT | ``auto``, ``cpu`` |
         | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only), ``cpu_and_gpu``, ``cpu_and_ne`` (preferences) |
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
-        | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+        | ExecuTorch | XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn``, TensorRT ``auto``/``cuda`` |
 
         The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
+
+        The ExecuTorch TensorRT delegate runs on the current CUDA device: ``auto`` and ``cuda`` mean that device, and
+        ``cuda:N`` is accepted only when ``N`` is the current CUDA device; any other index is refused.
 
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
@@ -402,8 +405,8 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         # No-op when load_pretrain_weights already wrapped the encoder to load a LoRA checkpoint.
         apply_lora(nn_model)
 
-    # Adapt patch-embedding projection for non-RGB channel counts; a no-op when a non-RGB checkpoint already set it.
-    adapt_input_channels(nn_model, model_config.num_channels, encoder_name=model_config.encoder)
+    # Adapt patch-embedding projection for non-RGB channel counts
+    adapt_input_channels(nn_model, model_config.num_channels, model_config.encoder)
 
     device = torch.device(args.device)
     # Keep the model on CPU here; predict() / export() move it lazily, while inference() moves only its snapshot.

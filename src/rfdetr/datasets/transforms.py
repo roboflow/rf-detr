@@ -19,7 +19,6 @@ from __future__ import annotations
 import inspect
 from collections.abc import Sequence
 from functools import cache
-from itertools import cycle, islice
 from typing import Any
 
 try:
@@ -40,6 +39,7 @@ from rfdetr.datasets._aug_utils import (
     HFLIP_TRANSFORM_NAMES,
     HORIZONTAL_FLIP_ALIAS_NAMES,
     IMAGE_LEVEL_TARGET_FIELDS,
+    cycle_channel_stats,
     filter_keypoint_hflip_augmentations,
 )
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
@@ -56,28 +56,9 @@ class Normalize:
     ) -> None:
         self._mean = tuple(mean)
         self._std = tuple(std)
-        # Built per channel count: an image with more channels than statistics reuses them by cycling, as
-        # ``RFDETR`` extends its ``means`` and ``stds`` for ``num_channels != 3``.
-        self._normalizers: dict[int, _TVNormalize] = {}
-
-    def _normalizer_for(self, channels: int) -> _TVNormalize:
-        """Return the normalizer for a ``channels``-channel image, cycling the configured statistics.
-
-        Args:
-            channels: Channel count of the image to normalize.
-
-        Returns:
-            A normalizer holding one mean and one standard deviation per channel.
-
-        Examples:
-            >>> Normalize()._normalizer_for(4).mean
-            [0.485, 0.456, 0.406, 0.485]
-        """
-        if channels not in self._normalizers:
-            mean = list(islice(cycle(self._mean), channels))
-            std = list(islice(cycle(self._std), channels))
-            self._normalizers[channels] = _TVNormalize(mean, std)
-        return self._normalizers[channels]
+        self._normalize = _TVNormalize(mean, std)
+        # Normalizers for other channel counts, built on first use.
+        self._cycled: dict[int, _TVNormalize] = {}
 
     def __call__(self, image: Tensor, target: dict[str, Any] | None = None) -> tuple[Tensor, dict[str, Any] | None]:
         """Normalize image and convert target coordinates to relative format.
@@ -85,11 +66,9 @@ class Normalize:
         Applies ImageNet-style channel normalization to the image, then converts
         bounding boxes from absolute xyxy pixel coordinates to normalized cxcywh
         format (divided by ``[w, h, w, h]``) and scales keypoint x/y by image
-        width/height respectively.
-
-        The configured statistics are cycled over the image's channels, so a
-        4-channel image reuses the first mean and standard deviation for its
-        fourth channel.
+        width/height respectively.  An image with another channel count than
+        the configured statistics reuses them in order, so a fourth channel is
+        normalized with the first mean and standard deviation.
 
         Args:
             image: CHW float tensor to normalize.
@@ -113,7 +92,15 @@ class Normalize:
             >>> normalize(torch.zeros(4, 64, 64), None)[0].shape
             torch.Size([4, 64, 64])
         """
-        image = self._normalizer_for(image.shape[-3])(image)
+        normalize = self._normalize
+        channels = image.shape[-3]
+        if channels != len(self._mean):
+            if channels not in self._cycled:
+                self._cycled[channels] = _TVNormalize(
+                    cycle_channel_stats(self._mean, channels), cycle_channel_stats(self._std, channels)
+                )
+            normalize = self._cycled[channels]
+        image = normalize(image)
         if target is None:
             return image, None
         target = target.copy()
@@ -427,6 +414,24 @@ def _normalize_albu_params(name: str, params: dict[str, Any], aug_cls: type) -> 
     return normalized_params
 
 
+def _image_channels(image: NDArray[Any]) -> int:
+    """Return the channel count of an image array, counting a 2-D grayscale array as one channel.
+
+    Args:
+        image: ``(H, W)`` grayscale or ``(H, W, C)`` image array.
+
+    Returns:
+        Number of channels of *image*.
+
+    Examples:
+        >>> _image_channels(np.zeros((8, 10), dtype=np.uint8))
+        1
+        >>> _image_channels(np.zeros((8, 10, 4), dtype=np.uint8))
+        4
+    """
+    return 1 if image.ndim == 2 else int(image.shape[-1])
+
+
 class AlbumentationsWrapper:
     """Wrapper to apply Albumentations transforms to (image, target) tuples.
 
@@ -482,6 +487,8 @@ class AlbumentationsWrapper:
                 "Install with: pip install 'rfdetr[augment]'"
             )
 
+        # Named in the error raised when the transform changes the channel count of the image.
+        self._transform_name = type(transform).__name__
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
         self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
@@ -549,6 +556,45 @@ class AlbumentationsWrapper:
 
         transform_type = "geometric" if self._is_geometric else "pixel-level"
         return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
+
+    def _image_from_output(self, image_in: NDArray[Any], augmented: dict[str, Any]) -> Image.Image:
+        """Convert the transformed image back to PIL, refusing a transform that changed its channel count.
+
+        The loaders decode every image to the model's channel count and ``Normalize`` reuses its statistics for any
+        width, so a channel dropped or added here would otherwise reach the model without an error.
+
+        Args:
+            image_in: ``(H, W)`` grayscale or ``(H, W, C)`` array passed to the transform.
+            augmented: Albumentations output holding the transformed ``"image"``.
+
+        Returns:
+            Transformed image as a PIL Image.
+
+        Raises:
+            ValueError: If the transformed image has another channel count than *image_in*, for example ``ToGray``
+                turning a four-channel image into three channels.
+
+        Examples:
+            >>> from albumentations import HorizontalFlip
+            >>> wrapper = AlbumentationsWrapper(HorizontalFlip(p=1.0))
+            >>> pixels = np.zeros((8, 10, 4), dtype=np.uint8)
+            >>> wrapper._image_from_output(pixels, {"image": pixels}).mode
+            'RGBA'
+            >>> wrapper._image_from_output(pixels, {"image": pixels[..., :3]})  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            ValueError: Albumentations transform HorizontalFlip changed the image from 4 to 3 channels...
+        """
+        image_out = augmented["image"]
+        channels_in = _image_channels(image_in)
+        channels_out = _image_channels(image_out)
+        if channels_out != channels_in:
+            raise ValueError(
+                f"Albumentations transform {self._transform_name} changed the image from {channels_in} to "
+                f"{channels_out} channels, but the model takes the channel count the images were loaded with. "
+                f"Remove it from aug_config or use a transform that keeps {channels_in}-channel images."
+            )
+        return Image.fromarray(image_out)
 
     @staticmethod
     def _boxes_to_numpy(boxes: Tensor | NDArray[Any]) -> NDArray[Any]:
@@ -1059,7 +1105,7 @@ class AlbumentationsWrapper:
                 target_out["keypoints"] = self._resolve_keypoint_swap(augmented, kept_idxs, keypoints_np)
             if masks_list is not None and "masks" in augmented:
                 target_out["masks"] = torch.as_tensor(masks_stack, dtype=torch.bool)
-        image_out = Image.fromarray(augmented["image"])
+        image_out = self._image_from_output(image_np, augmented)
         return image_out, target_out
 
     def __call__(
@@ -1098,7 +1144,7 @@ class AlbumentationsWrapper:
         Raises:
             TypeError: If target is not a dictionary (and not None).
             KeyError: If target doesn't contain 'labels' key.
-            ValueError: If boxes don't have shape (N, 4).
+            ValueError: If boxes don't have shape (N, 4), or the transform changed the number of image channels.
 
         Examples:
             >>> from albumentations import HorizontalFlip
@@ -1124,7 +1170,7 @@ class AlbumentationsWrapper:
                 )
             else:
                 augmented = self.transform(image=image_np)
-            return Image.fromarray(augmented["image"]), None
+            return self._image_from_output(image_np, augmented), None
 
         # === Input Validation ===
         if not isinstance(target, dict):
@@ -1151,7 +1197,7 @@ class AlbumentationsWrapper:
         else:
             # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
-            image_out = Image.fromarray(augmented["image"])
+            image_out = self._image_from_output(image_np, augmented)
             target_out = target.copy()
 
         # Ensure 'size' (if present) matches the transformed image size (h, w)

@@ -2258,6 +2258,43 @@ class TestOnTrainEpochStart:
         assert module._accumulated_box_normalizer is None
         assert real_param.grad is None or real_param.grad.abs().sum().item() == pytest.approx(0.0)
 
+    def test_forwards_current_epoch_to_datamodule_train_batch_sampler(self, tmp_path):
+        """A custom batch sampler on the datamodule must receive set_epoch(current_epoch) every epoch.
+
+        PTL never calls epoch hooks on a LightningDataModule itself, so RFDETRModelModule bridges the gap
+        from its own on_train_epoch_start: this is the only place WeightedMultiSourceBatchSampler's seeded
+        per-epoch reshuffle actually advances instead of reusing the first epoch's shuffle for the whole run.
+        """
+        module, *_ = _build_module(tmp_path=tmp_path)
+        fake_sampler = MagicMock()
+        fake_datamodule = MagicMock(train_batch_sampler=fake_sampler)
+        fake_trainer = MagicMock(datamodule=fake_datamodule)
+        module._trainer = fake_trainer
+        with patch.object(type(module), "current_epoch", new=3):
+            module.on_train_epoch_start()
+
+        fake_sampler.set_epoch.assert_called_once_with(3)
+
+    def test_is_noop_when_datamodule_has_no_custom_batch_sampler(self, tmp_path):
+        """build_train_sampler() returning None must not raise when there is no set_epoch to forward."""
+        module, *_ = _build_module(tmp_path=tmp_path)
+        fake_datamodule = MagicMock(train_batch_sampler=None)
+        fake_trainer = MagicMock(datamodule=fake_datamodule)
+        module._trainer = fake_trainer
+
+        module.on_train_epoch_start()  # must not raise
+
+        assert module._accumulated_box_normalizer is None
+
+    def test_is_noop_when_trainer_is_unattached(self, tmp_path):
+        """Calling on_train_epoch_start with no Trainer attached must not raise (matches the other cases in this
+        class)."""
+        module, *_ = _build_module(tmp_path=tmp_path)
+
+        module.on_train_epoch_start()  # must not raise RuntimeError from the unattached self.trainer property
+
+        assert module._accumulated_box_normalizer is None
+
 
 class TestRescaleAccumulatedGradients:
     """Direct contract tests for _rescale_accumulated_gradients."""
@@ -4270,3 +4307,74 @@ class TestManualOptLRSchedulerStepping:
         module.on_validation_epoch_end()
 
         scheduler.step.assert_not_called()
+
+
+_STEM_KEY = "model.backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
+
+
+def _real_module(tmp_path: Path, **model_overrides: Any) -> RFDETRModelModule:
+    """Build a real CPU Nano module without pretrained weights, applying *model_overrides* to its config.
+
+    Examples:
+        >>> _real_module(Path("."), num_channels=4)  # doctest: +SKIP
+        RFDETRModelModule(...)
+    """
+    model_config = RFDETRNanoConfig(**{"pretrain_weights": None, "device": "cpu", **model_overrides})
+    train_config = TrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+    return RFDETRModelModule(model_config, train_config)
+
+
+class TestStemChannels:
+    """A multi-channel module warns about a frozen stem and refuses a checkpoint with a narrower stem."""
+
+    @pytest.mark.parametrize(
+        ("num_channels", "freeze_encoder", "expected_warnings"),
+        [(4, True, 1), (4, False, 0), (3, True, 0)],
+    )
+    def test_frozen_stem_warning(
+        self, num_channels: int, freeze_encoder: bool, expected_warnings: int, tmp_path: Path, mocker
+    ) -> None:
+        """Only a frozen stem of a multi-channel model is reported, and the text makes no RGB-initialization claim."""
+        warning = mocker.patch("rfdetr.training.module_model.logger.warning")
+
+        _real_module(tmp_path, num_channels=num_channels, freeze_encoder=freeze_encoder)
+
+        frozen = [call for call in warning.call_args_list if "patch embedding is frozen" in call.args[0]]
+        assert len(frozen) == expected_warnings
+        assert all("RGB" not in call.args[0] for call in frozen)
+
+    def test_frozen_stem_warning_covers_a_widened_checkpoint(self, tmp_path: Path, mocker) -> None:
+        """A checkpoint that already carries the wide stem loads trained filters, and the warning still fires once."""
+        source = _real_module(tmp_path, num_channels=4)
+        checkpoint = tmp_path / "wide.pth"
+        torch.save({"model": source.model.state_dict()}, checkpoint)
+        warning = mocker.patch("rfdetr.training.module_model.logger.warning")
+
+        _real_module(tmp_path, num_channels=4, freeze_encoder=True, pretrain_weights=str(checkpoint))
+
+        frozen = [call for call in warning.call_args_list if "patch embedding is frozen" in call.args[0]]
+        assert len(frozen) == 1
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_resume_refuses_a_three_channel_stem(self, num_channels: int, tmp_path: Path) -> None:
+        """A checkpoint written before the stem was widened names the fresh-run workaround, not a size mismatch."""
+        module = _real_module(tmp_path, num_channels=num_channels)
+        narrow_stem = torch.zeros(8, 3, 2, 2)
+
+        with pytest.raises(ValueError, match="pretrain_weights=<this checkpoint>"):
+            module.on_load_checkpoint({"state_dict": {_STEM_KEY: narrow_stem}})
+
+    def test_resume_accepts_a_matching_stem(self, tmp_path: Path) -> None:
+        """A checkpoint saved by the same multi-channel module passes the stem check."""
+        module = _real_module(tmp_path, num_channels=4)
+        checkpoint = {"state_dict": {_STEM_KEY: module.state_dict()[_STEM_KEY]}}
+
+        module.on_load_checkpoint(checkpoint)
+
+        assert checkpoint["state_dict"][_STEM_KEY].shape[1] == 4
+
+    def test_resume_of_a_three_channel_module_is_unchanged(self, tmp_path: Path) -> None:
+        """A 3-channel module resumes a 3-channel checkpoint without the stem check intervening."""
+        module = _real_module(tmp_path)
+
+        module.on_load_checkpoint({"state_dict": {_STEM_KEY: module.state_dict()[_STEM_KEY]}})

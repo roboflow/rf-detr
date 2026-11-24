@@ -40,3 +40,8 @@ _IS_TFLITE_RUNTIME_INSTALLED = is_installed("tflite_runtime")
 _IS_TENSORFLOW_INSTALLED = is_installed("tensorflow")
 #: Whether the Core AI runtime package (``coreai``) that executes ``.aimodel`` assets is installed.
 _IS_COREAI_INSTALLED = is_installed("coreai")
+#: Whether Torch-TensorRT, which builds the engine of an ExecuTorch ``backend="tensorrt"`` export, is installed.
+_IS_TORCH_TENSORRT_INSTALLED = is_installed("torch_tensorrt")
+#: Whether the delegate package (``torch_tensorrt_executorch_runtime``) that ``torch-tensorrt[executorch]`` installs,
+#: and that a TensorRT ``.pte`` loads through, is installed. Torch-TensorRT alone does not bring it.
+_IS_TORCH_TENSORRT_EXECUTORCH_RUNTIME_INSTALLED = is_installed("torch_tensorrt_executorch_runtime")

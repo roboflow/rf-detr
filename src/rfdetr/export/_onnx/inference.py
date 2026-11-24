@@ -13,6 +13,7 @@ These functions handle session creation, image preprocessing, and detection deco
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -35,6 +36,7 @@ from rfdetr.export._runtime.adapters import (
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -105,8 +107,31 @@ def _run_onnx_bound(session: Any, input_name: str, batch: torch.Tensor, outputs:
     return results
 
 
+def _logical_cpu_count() -> int:
+    """Return the logical cores this process may run on, which is what a CPU thread pool should be sized to.
+
+    ``os.sched_getaffinity`` honours ``taskset`` and container CPU sets where the platform has it, so a pool is never
+    larger than the cores the process can use; elsewhere this is ``os.cpu_count``.
+
+    Returns:
+        The number of usable logical cores, at least 1.
+
+    Examples:
+        >>> _logical_cpu_count() >= 1
+        True
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return max(1, os.cpu_count() or 1)
+
+
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
-    """Load an ONNX artifact with provider and interface checks; it reads the ``num_threads`` option."""
+    """Load an ONNX artifact with provider and interface checks; it reads the ``num_threads`` option.
+
+    On the CPU provider an unset ``num_threads`` means every logical core the process may use. ONNX Runtime's own
+    default is the physical cores, which leaves the hyperthreads of a typical host idle during a batch-1 call. Pass
+    ``num_threads`` to choose another pool size. The CUDA provider keeps ONNX Runtime's default.
+    """
     num_threads = _thread_count_option("ONNX", _runtime_options("ONNX", options, ("num_threads",)))
     try:
         import onnxruntime as ort
@@ -129,6 +154,8 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
     requested: list[str | tuple[str, dict[str, Any]]] = (
         [(provider, {"device_id": device_id})] if provider == "CUDAExecutionProvider" else [provider]
     )
+    if provider == "CPUExecutionProvider" and num_threads is None:
+        num_threads = _logical_cpu_count()
     session = _create_onnx_session(
         path, providers=requested, **({} if num_threads is None else {"num_threads": num_threads})
     )
@@ -277,8 +304,9 @@ def _run_inference(
 
     **Input contract** (must match ``RFDETR.predict()`` preprocessing exactly):
 
-    - Image is opened with Pillow and converted to ``"RGB"`` (3-channel) or ``"L"``
-      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode and
+    - Image is opened with Pillow, turned upright for its EXIF orientation as ``predict()`` turns a file it reads,
+      and converted to ``"RGB"`` (3-channel) or ``"L"``
+      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode, turn and
       convert — never to resize.
     - Resize follows ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
       ``antialias=False`` — applied by :func:`~rfdetr.export._runtime.preprocess.preprocess_to_nchw` via
@@ -306,7 +334,7 @@ def _run_inference(
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes and ``pil_img`` is
-        the original PIL image at its original resolution.
+        the decoded PIL image at its original resolution, upright for its EXIF orientation, in the frame of the boxes.
 
     Examples:
         .. code-block:: python
@@ -321,7 +349,8 @@ def _run_inference(
     # ONNX NCHW: [batch, channels, height, width]
     _, channels, height, width = inputs[0].shape
 
-    with PILImage.open(image_path) as pil_img:
+    with PILImage.open(image_path) as opened:
+        pil_img = upright_image(opened, exif_orientation(opened))
         inp_tensor = preprocess_to_nchw(pil_img, height, width, channels)
 
     raw_outputs = _run_onnx_raw(session, input_name, inp_tensor)

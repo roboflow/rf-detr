@@ -86,19 +86,35 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
 # ---------------------------------------------------------------------------
 
 
-def test_train_fast_dev_run(tmp_path: Path, synthetic_shape_dataset_dir: Path) -> None:
+@pytest.mark.parametrize(
+    ("num_queries", "num_select"),
+    [
+        pytest.param(300, 300, id="default_queries"),
+        pytest.param(500, 800, id="larger_queries_and_select"),
+    ],
+)
+def test_train_fast_dev_run(
+    tmp_path: Path, synthetic_shape_dataset_dir: Path, num_queries: int, num_select: int
+) -> None:
     """Smoke-test the full PTL stack on a real synthetic dataset with fast_dev_run.
 
     Uses ``build_trainer(tc, mc, fast_dev_run=2)`` and ``trainer.fit(module, datamodule=datamodule)`` with a real model
     and real data (no mocking).  Only asserts the pipeline runs without error; convergence is tested by the GPU-only
     tests below.
+
+    The larger case grows ``num_queries`` above the default 300 and sets ``num_select`` above ``num_queries``,
+    exercising the validation-time top-k over more query/class pairs than there are queries. It trains from scratch, so
+    it needs no weight download; padding pretrained weights to more queries is unit-tested in
+    ``tests/models/test_weights.py``.
     """
     output_dir = tmp_path / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     num_classes = _read_num_classes(synthetic_shape_dataset_dir)
 
-    mc = RFDETRNanoConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
+    mc = RFDETRNanoConfig(
+        num_classes=num_classes, pretrain_weights=None, amp=False, num_queries=num_queries, num_select=num_select
+    )
     tc = TrainConfig(
         dataset_dir=str(synthetic_shape_dataset_dir),
         output_dir=str(output_dir),
