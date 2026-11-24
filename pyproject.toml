@@ -5,10 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rfdetr"
 version = "1.13.0.dev"
-description = "RF-DETR"
+description = "RF-DETR: real-time transformer for object detection, instance segmentation and keypoint detection"
 readme = "README.md"
 authors = [
     {name = "Roboflow, Inc", email = "develop@roboflow.com"}
+]
+maintainers = [
+    {name = "Jiri Borovec", email = "jiri@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.10"
@@ -33,7 +36,11 @@ classifiers = [
     "Operating System :: Unix",
     "Operating System :: MacOS"
 ]
-keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
+keywords = [
+    "machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow",
+    "computer-vision", "object-detection", "instance-segmentation", "keypoint-detection", "pose-estimation",
+    "real-time", "transformer", "pytorch", "fine-tuning", "ONNX", "TensorRT", "OpenVINO", "CoreML", "TFLite"
+]
 
 dependencies = [
     "requests",                        # weight download from remote URLs
