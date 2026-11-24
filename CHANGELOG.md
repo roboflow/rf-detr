@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- EXIF-tagged photos are read upright for training and `predict()`.
 - `CocoEvaluator` scores a ground-truth annotation with id 0 instead of counting its matched detection as a false positive, which understated keypoint AP on YOLO pose datasets and on COCO ground truth with an id-0 annotation. ([#1738](https://github.com/roboflow/rf-detr/pull/1738))
 - `TrainConfig` rejects a non-positive `lr_vit_layer_decay` and a negative `lr_component_decay`, naming the field. A negative ViT decay alternates the learning-rate sign across layers; a negative component decay reverses decoder updates. Zero component decay remains valid and sets encoder and decoder learning rates to zero while other parameters remain trainable. Rates above 1 remain valid. ([#1718](https://github.com/roboflow/rf-detr/pull/1718))
 - `download_pretrain_weights(path, redownload=True)` keeps the existing checkpoint if the replacement download fails or its checksum does not match. Cancelling the download removes the temporary file, and a successful replacement preserves the original file's permission bits on POSIX.
