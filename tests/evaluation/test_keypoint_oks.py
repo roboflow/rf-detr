@@ -411,6 +411,35 @@ class TestOKSValues:
         assert result["map_50"] == pytest.approx(1.0, abs=1e-3)
         assert result["map"] == pytest.approx(1.0, abs=1e-3)
 
+    def test_annotation_id_zero_is_scored(self) -> None:
+        """A perfect prediction for the annotation with id 0 still counts as a match.
+
+        COCO evaluation marks an unmatched detection with ground-truth id 0, so without renumbering the detection
+        matched to annotation 0 is scored as a false positive.  YOLO-format datasets number annotations from 0.
+        """
+        coco_gt = self._make_gt()
+        coco_gt.dataset["annotations"][0]["id"] = 0
+        coco_gt.createIndex()
+        metric = MetricKeypointOKS(coco_gt, keypoint_oks_sigmas=[self._SIGMA])
+        metric.update(_make_keypoint_prediction(1, [(self._GT_KP_X, self._GT_KP_Y)]))
+
+        result = metric.compute()
+
+        assert result["map"] == pytest.approx(1.0, abs=1e-3)
+        assert result["mar"] == pytest.approx(1.0, abs=1e-3)
+
+    def test_annotation_id_zero_is_kept_in_the_callers_ground_truth(self) -> None:
+        """Renumbering happens on the evaluator's own copy; the dataset's COCO object keeps its ids."""
+        coco_gt = self._make_gt()
+        coco_gt.dataset["annotations"][0]["id"] = 0
+        coco_gt.createIndex()
+        metric = MetricKeypointOKS(coco_gt, keypoint_oks_sigmas=[self._SIGMA])
+        metric.update(_make_keypoint_prediction(1, [(self._GT_KP_X, self._GT_KP_Y)]))
+
+        metric.compute()
+
+        assert list(coco_gt.anns) == [0]
+
     def test_no_predictions_gives_map_zero(self) -> None:
         """Empty prediction set must yield mAP = 0.0 (no true positives)."""
         coco_gt = self._make_gt()

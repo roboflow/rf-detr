@@ -90,6 +90,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 gpu_postprocess=gpu_postprocess,
             ),
             max_image_pixels=O365_MAX_IMAGE_PIXELS,
+            num_channels=getattr(args, "num_channels", 3),
         )
     else:
         dataset = CocoDetection(
@@ -107,6 +108,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 gpu_postprocess=gpu_postprocess,
             ),
             max_image_pixels=O365_MAX_IMAGE_PIXELS,
+            num_channels=getattr(args, "num_channels", 3),
         )
     return dataset
 
