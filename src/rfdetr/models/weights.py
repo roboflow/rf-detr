@@ -372,24 +372,26 @@ def _class_rows_for_keypoint_schema(
 
     A keypoint schema gives the keypoint count of each class row; rows past it carry no-object logits. The preview
     checkpoint's background-first ``[0, 17]`` keeps the person in row 1, while the active-first ``[17]`` puts it in row
-    0 and uses row 1 for no object, so loading one into the other has to move the rows. The classes with keypoints have
-    to come in the same order in both schemas, because their keypoint rows are not moved. Keypoint-free rows, the
-    no-object rows included, take the checkpoint's keypoint-free rows in order, and when the head has more of them, as
-    when the configured classes add box-only ones, the extra rows repeat the checkpoint's last keypoint-free row, the
-    no-object row of the preview checkpoint.
+    0 and uses row 1 for no object, so loading one into the other has to move the rows. The classes with keypoints pair
+    up in order, and a pair keeps its row when the counts agree, or when each schema has a single class with keypoints,
+    whatever its count, since the keypoint rows are rebuilt for the configured schema anyway. Classes with keypoints
+    that the other schema lacks, and every keypoint-free row, the no-object rows included, take the checkpoint's
+    keypoint-free rows in order. When the head has more of them, as when the configured classes add box-only ones, the
+    extra rows repeat the checkpoint's last keypoint-free row, the no-object row of the preview checkpoint.
 
-    The head has already been resized from ``checkpoint_rows`` to ``head_rows``, grown by tiling or cut, so only its
-    first ``min(checkpoint_rows, head_rows)`` rows still hold the checkpoint's rows.
+    The order is taken over the checkpoint's own ``checkpoint_rows`` rows and gives the final ``head_rows`` rows, so a
+    head that grows or is cut afterwards needs no separate resize.
 
     Args:
         checkpoint_schema: ``num_keypoints_per_class`` of the checkpoint.
         configured_schema: ``num_keypoints_per_class`` of the model.
         checkpoint_rows: Rows in the checkpoint's class head, the no-object row included.
-        head_rows: Rows in the model's class head after resizing, the no-object row included.
+        head_rows: Rows the model's class head is to have, the no-object row included.
 
     Returns:
-        The row each class-head row takes, or ``None`` when the classes with keypoints differ between the two schemas,
-        a row it needs was cut, or no row moves.
+        The checkpoint row each of the ``head_rows`` rows takes, the identity order when nothing moves, or ``None``
+        when no mapping exists: the paired classes with keypoints disagree on their counts, a schema is longer than its
+        head, or a row it needs is missing from the checkpoint.
 
     Examples:
         >>> _class_rows_for_keypoint_schema([0, 17], [17], checkpoint_rows=2, head_rows=2)
@@ -400,27 +402,64 @@ def _class_rows_for_keypoint_schema(
         [1, 0, 0]
         >>> _class_rows_for_keypoint_schema([0, 17, 4], [17, 4], checkpoint_rows=3, head_rows=3)
         [1, 2, 0]
-        >>> _class_rows_for_keypoint_schema([17], [17], checkpoint_rows=2, head_rows=2) is None
-        True
+        >>> _class_rows_for_keypoint_schema([0, 17], [21], checkpoint_rows=2, head_rows=2)
+        [1, 0]
+        >>> _class_rows_for_keypoint_schema([0, 17], [17, 4], checkpoint_rows=2, head_rows=3)
+        [1, 0, 0]
+        >>> _class_rows_for_keypoint_schema([0, 0, 17], [17], checkpoint_rows=3, head_rows=2)
+        [2, 0]
+        >>> _class_rows_for_keypoint_schema([17], [17], checkpoint_rows=2, head_rows=2)
+        [0, 1]
         >>> _class_rows_for_keypoint_schema([17, 4], [4, 17], checkpoint_rows=3, head_rows=3) is None
         True
     """
     checkpoint_kinds = [*checkpoint_schema, *[0] * (checkpoint_rows - len(checkpoint_schema))]
     configured_kinds = [*configured_schema, *[0] * (head_rows - len(configured_schema))]
+    if len(checkpoint_kinds) != checkpoint_rows or len(configured_kinds) != head_rows:
+        return None
+    with_keypoints = [row for row, n in enumerate(checkpoint_kinds) if n]
     without_keypoints = [row for row, n in enumerate(checkpoint_kinds) if not n]
-    if (
-        len(checkpoint_kinds) != checkpoint_rows
-        or len(configured_kinds) != head_rows
-        or [n for n in checkpoint_kinds if n] != [n for n in configured_kinds if n]
-        or (0 in configured_kinds and not without_keypoints)
-    ):
+    checkpoint_counts = [checkpoint_kinds[row] for row in with_keypoints]
+    configured_counts = [n for n in configured_kinds if n]
+    only_one_each = len(checkpoint_counts) == len(configured_counts) == 1
+    if not only_one_each and any(a != b for a, b in zip(checkpoint_counts, configured_counts)):
         return None
-    with_keypoints = iter([row for row, n in enumerate(checkpoint_kinds) if n])
+    keypoint_rows = iter(with_keypoints)
     spare = iter(without_keypoints)
-    order = [next(with_keypoints) if n else next(spare, without_keypoints[-1]) for n in configured_kinds]
-    if max(order) >= min(checkpoint_rows, head_rows) or order == list(range(head_rows)):
-        return None
+    order = []
+    for n in configured_kinds:
+        row = next(keypoint_rows, None) if n else None
+        if row is None:
+            row = next(spare, without_keypoints[-1] if without_keypoints else None)
+        if row is None:
+            return None
+        order.append(row)
     return order
+
+
+def _reorder_class_names(class_names: list[str], order: list[int]) -> list[str]:
+    """Return *class_names* in the order of the class-head rows after they were reordered.
+
+    Args:
+        class_names: Class names of the checkpoint, the name of row ``i`` at index ``i``.
+        order: For each row of the new head, the checkpoint row it takes.
+
+    Returns:
+        The name of the checkpoint row each new row takes, for as many rows as there are names; an empty list when a
+        new row takes a row without a name, since the name of that class is unknown.
+
+    Examples:
+        >>> _reorder_class_names(["a", "b", "c"], [0, 2, 1, 3])
+        ['a', 'c', 'b']
+        >>> _reorder_class_names(["person"], [1, 0, 0])
+        []
+        >>> _reorder_class_names([], [1, 0])
+        []
+    """
+    taken = order[: len(class_names)]
+    if any(row >= len(class_names) for row in taken):
+        return []
+    return [class_names[row] for row in taken]
 
 
 def load_pretrain_weights(
@@ -815,28 +854,37 @@ def load_pretrain_weights(
         )
         nn_model.reinitialize_keypoint_head(configured_keypoint_schema)
 
-    # If the user explicitly set a class count larger than the checkpoint,
-    # expand/reinitialize the head back to the configured size after load.
+    # Rows the class head is to end with: grown back to the configured class count when the user set one larger than the
+    # checkpoint's, and trimmed when a larger checkpoint is loaded into a smaller task-specific class count.
     head_rows = checkpoint_num_classes
     if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode:
-        nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
         head_rows = configured_num_classes_plus_bg
-
-    # Only trim back down when loading a larger pretrain checkpoint into a
-    # smaller configured task-specific class count.
     if num_classes + 1 < checkpoint_num_classes:
-        nn_model.reinitialize_detection_head(num_classes + 1)
         head_rows = num_classes + 1
 
-    # The schema decides which class-head row is which class, so once the head has its final size, each row takes the
-    # checkpoint row of its class. Left alone, [0, 17] loaded as [17] would start the person class from the
-    # checkpoint's background row, and a head grown for box-only classes would hold tiled copies of its rows.
+    # The schema decides which class-head row is which class, so each final row takes the checkpoint row of its class.
+    # Left alone, [0, 17] loaded as [17] would start the person class from the checkpoint's background row, and a head
+    # grown for box-only classes would hold tiled copies of the checkpoint's rows. The rows are taken from the loaded
+    # head in one step, which also sizes it, so a cut can never remove a row the order needs.
+    class_rows = None
     if restore_keypoint_schema and checkpoint_keypoint_schema:
         class_rows = _class_rows_for_keypoint_schema(
             checkpoint_keypoint_schema, configured_keypoint_schema, checkpoint_num_classes, head_rows
         )
-        if class_rows is not None:
-            nn_model.reorder_detection_head(class_rows)
+        if class_rows is None and checkpoint_keypoint_schema != configured_keypoint_schema:
+            logger.warning(
+                "load_pretrain_weights: no class-head row mapping from checkpoint keypoint schema %s to configured "
+                "schema %s, so the class head keeps the checkpoint's rows in their order and the classes with "
+                "keypoints may start from the wrong rows. Use the checkpoint's own schema, or keep its classes with "
+                "keypoints in the same order.",
+                checkpoint_keypoint_schema,
+                configured_keypoint_schema,
+            )
+    if class_rows is not None and class_rows != list(range(checkpoint_num_classes)):
+        nn_model.reorder_detection_head(class_rows)
+        class_names = _reorder_class_names(class_names, class_rows)
+    elif head_rows != checkpoint_num_classes:
+        nn_model.reinitialize_detection_head(head_rows)
 
     return class_names
 

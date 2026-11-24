@@ -85,6 +85,50 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     return new_linear
 
 
+def _select_linear_rows(linear: nn.Linear, order: list[int]) -> nn.Linear:
+    """Return a new :class:`~torch.nn.Linear` whose row ``i`` is row ``order[i]`` of *linear*.
+
+    Args:
+        linear: Source linear layer.
+        order: The source row each output row takes; a row can be taken more than once or left out.
+
+    Returns:
+        A new layer with ``out_features == len(order)``, on the device and dtype of *linear*.
+
+    Raises:
+        ValueError: If *order* is empty or holds an index outside the rows of *linear*.
+
+    Examples:
+        >>> layer = nn.Linear(2, 3)
+        >>> picked = _select_linear_rows(layer, [2, 0, 0, 1])
+        >>> picked.out_features, bool((picked.weight[1] == layer.weight[0]).all())
+        (4, True)
+        >>> _select_linear_rows(layer, [3])
+        Traceback (most recent call last):
+        ...
+        ValueError: order must name 1 or more rows in range(3), got [3].
+    """
+    rows = linear.weight.shape[0]
+    if not order or min(order) < 0 or max(order) >= rows:
+        raise ValueError(f"order must name 1 or more rows in range({rows}), got {order}.")
+    index = torch.as_tensor(order, dtype=torch.long, device=linear.weight.device)
+    new_linear = nn.Linear(
+        linear.in_features,
+        len(order),
+        bias=linear.bias is not None,
+        device=linear.weight.device,
+        dtype=linear.weight.dtype,
+    )
+    with torch.no_grad():
+        new_linear.weight.copy_(linear.weight.index_select(0, index))
+        if linear.bias is not None and new_linear.bias is not None:
+            new_linear.bias.copy_(linear.bias.index_select(0, index))
+    new_linear.weight.requires_grad = linear.weight.requires_grad
+    if linear.bias is not None and new_linear.bias is not None:
+        new_linear.bias.requires_grad = linear.bias.requires_grad
+    return new_linear
+
+
 def _resize_parameter_rows(parameter: nn.Parameter, num_rows: int) -> nn.Parameter:
     """Return a parameter with the first dimension resized by tiling or truncating rows."""
     current_rows = parameter.shape[0]
@@ -250,24 +294,27 @@ class LWDETR(nn.Module):
             )
 
     def reorder_detection_head(self, order: list[int]) -> None:
-        """Copy the classification head's rows in place so that row ``i`` takes the weights of row ``order[i]``.
+        """Rebuild the classification head from its current rows so that row ``i`` takes the weights of row
+        ``order[i]``.
 
-        Copies the rows of ``self.class_embed`` and, when the model uses two-stage detection, of each
-        ``enc_out_class_embed``, for a checkpoint whose classes sit in other rows than the model's.
+        Replaces ``self.class_embed`` and, when the model uses two-stage detection, each ``enc_out_class_embed`` with a
+        new :class:`torch.nn.Linear` of ``len(order)`` outputs, for a checkpoint whose classes sit in other rows than
+        the model's. Moving the rows and resizing the head in one step lets the rows a smaller or larger head needs be
+        taken straight from the loaded ones, with no tiled copies or cut rows in between.
 
         Args:
-            order: For each row of the head, the row whose weights it takes; a row can be taken more than once.
+            order: For each row of the new head, the row of the current head whose weights it takes; a row can be taken
+                more than once or left out.
+
+        Raises:
+            ValueError: If *order* is empty or holds an index outside the rows of the current head.
         """
-        heads = [self.class_embed]
+        self.class_embed = _select_linear_rows(self.class_embed, order)
         if self.two_stage:
             assert self.transformer.enc_out_class_embed is not None
-            heads += [cast(nn.Linear, m) for m in self.transformer.enc_out_class_embed]
-        with torch.no_grad():
-            for head in heads:
-                index = torch.as_tensor(order, device=head.weight.device)
-                head.weight.copy_(head.weight.index_select(0, index))
-                if head.bias is not None:
-                    head.bias.copy_(head.bias.index_select(0, index))
+            self.transformer.enc_out_class_embed = nn.ModuleList(
+                [_select_linear_rows(cast(nn.Linear, m), order) for m in self.transformer.enc_out_class_embed]
+            )
 
     @staticmethod
     def _create_kp_active_mask(num_keypoints_per_class: list[int]) -> Tensor:
