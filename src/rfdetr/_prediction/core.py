@@ -1111,7 +1111,11 @@ def _prepare_batch(
             if isinstance(img, Image.Image):
                 mode = "L" if context.config.num_channels == 1 else "RGB"
                 if img.mode != mode:
-                    img = img.convert(mode)
+                    # ``convert`` clips 16-bit grayscale to white; scale it to 8 bits first. The import
+                    # stays local so importing this module never pulls in the dataset package.
+                    from rfdetr.datasets._pillow_worker import to_8bit_grayscale
+
+                    img = to_8bit_grayscale(img).convert(mode)
             pil_image = isinstance(img, Image.Image)
             source_array: np.ndarray[Any, Any] | None = None
             if include_source_image:

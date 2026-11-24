@@ -11,6 +11,7 @@ import sys
 import warnings
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, PngImagePlugin
 
 #: EXIF orientation tag; the parent process turns the pixels upright, so this worker only reports it.
@@ -18,6 +19,10 @@ _ORIENTATION_TAG = 0x0112
 
 #: PIL mode an image is decoded to for each input channel count a dataset can supply.
 CHANNEL_MODES = {1: "L", 3: "RGB", 4: "RGBA"}
+
+#: Pillow modes that store 16-bit grayscale pixels. ``I;16`` is the mode Pillow reports for a 16-bit
+#: grayscale PNG; ``I;16B`` and ``I;16L`` are its explicit-endianness spellings.
+_SIXTEEN_BIT_GRAY_MODES = ("I;16", "I;16B", "I;16L")
 
 
 def image_mode(num_channels: int) -> str:
@@ -41,8 +46,54 @@ def image_mode(num_channels: int) -> str:
     return CHANNEL_MODES[num_channels]
 
 
+def to_8bit_grayscale(image: Image.Image) -> Image.Image:
+    """Return *image* as an 8-bit grayscale image, scaling 16-bit pixels instead of clipping them.
+
+    Pillow's ``convert("RGB")`` clips 16-bit grayscale values above 255 to white, so a 16-bit PNG
+    (X-ray, CT and thermal data) decoded straight to ``RGB`` comes out almost blank with no error.
+    Scaling those pixels by 1/257 first maps the full 16-bit range onto 0..255 and preserves the
+    dynamic range. Images that are already 8-bit, mode ``I`` pixels already in the 8-bit range, or
+    pixels outside the 16-bit range are returned unchanged.
+
+    Pillow reports a 16-bit grayscale PNG as mode ``I;16`` (``I;16B``/``I;16L`` for explicit
+    endianness) on recent releases, but as mode ``I`` on older ones, where the pixels still fit in
+    16 bits. Mode ``I`` is also genuine 32-bit integer data, so it is scaled only when the pixels
+    prove depth beyond 8 bits (every pixel in ``[0, 65535]`` with at least one above 255): values
+    already in ``[0, 255]`` pass through ``convert`` unchanged, so scaling them would only destroy
+    their levels. Genuinely deeper data keeps its mode and stays the caller's problem.
+
+    Args:
+        image: Opened image.
+
+    Returns:
+        An 8-bit ``"L"`` image for 16-bit grayscale input, else *image* unchanged.
+
+    Examples:
+        >>> np.asarray(to_8bit_grayscale(Image.fromarray(np.array([[0, 257, 65535]], dtype=np.uint16)))).tolist()
+        [[0, 1, 255]]
+        >>> to_8bit_grayscale(Image.new("RGB", (2, 2))).mode
+        'RGB'
+    """
+    if image.mode in _SIXTEEN_BIT_GRAY_MODES or image.mode == "I":
+        pixels = np.asarray(image)
+        if pixels.size == 0:
+            return image
+        if image.mode == "I":
+            # Mode ``I`` is also genuine 32-bit integer data: scale it only when the pixels prove
+            # depth beyond 8 bits. Values already in [0, 255] pass through ``convert`` unchanged,
+            # so scaling them would only destroy their levels ([0, 128, 255] would turn black).
+            if pixels.min() < 0 or pixels.max() <= 255 or pixels.max() > 65535:
+                return image
+        return Image.fromarray((pixels // 257).astype(np.uint8))
+    return image
+
+
 def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
     """Convert an opened image to *mode* without inventing a fourth channel or clipping deep grayscale.
+
+    16-bit grayscale is scaled to 8 bits first (see :func:`to_8bit_grayscale`), so it keeps its
+    dynamic range instead of clipping to white. Pixels deeper than 16 bits still refuse a
+    1-channel target, as before.
 
     Args:
         image: Opened image.
@@ -54,12 +105,13 @@ def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
 
     Raises:
         ValueError: If *mode* is ``RGBA`` and the image stores no fourth channel, or *mode* is ``L`` and the image
-            holds pixels deeper than 8 bits (``I;16``, ``I``, ``F``), which ``convert`` would saturate at 255.
+            holds ``I`` or ``F`` pixels deeper than 16 bits, which ``convert`` would saturate at 255.
 
     Examples:
         >>> convert_image(Image.new("LA", (2, 2)), "RGBA", "image").mode
         'RGBA'
     """
+    image = to_8bit_grayscale(image)
     if mode == "L" and _is_deep_gray(image.mode):
         raise ValueError(
             f"{name} stores {image.mode!r} pixels deeper than 8 bits, which a model with num_channels=1 cannot read "
