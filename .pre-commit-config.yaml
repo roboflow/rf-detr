@@ -18,7 +18,7 @@ repos:
       - id: check-case-conflict
       - id: check-added-large-files
         args: ["--maxkb=250", "--enforce-all"]
-        exclude: uv.lock
+        exclude: ^(uv\.lock|CHANGELOG\.md)$
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-sort-keys", "--indent=4"]
@@ -101,10 +101,10 @@ repos:
         files: ^tests/.*\.py$
         # Two groups of files stay out. Fake import finders and module-path lookups call find_spec on purpose:
         # test_detr_shim, test_fused_adamw_ema_routing, test_from_checkpoint, test_public_facades, test_export.
-        # test_tensorrt_int8 keeps one module-level importorskip("onnx"), because its parametrized cases build ONNX nodes at
+        # The test_tensorrt_int8_* modules keep one module-level importorskip("onnx") each, because their parametrized cases build ONNX nodes at
         # collection time; moving them behind local imports is a follow-up.
         exclude: >-
-          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/tensorrt/test_tensorrt_int8)\.py$
+          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/tensorrt/test_tensorrt_int8_(plan|graph|calibration))\.py$
 
       - id: mypy
         name: mypy

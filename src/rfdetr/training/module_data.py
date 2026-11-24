@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, MultiScale, TrainConfig
 from rfdetr.datasets import build_dataset
+from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
 from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
@@ -962,13 +963,13 @@ class RFDETRDataModule(LightningDataModule):
             import matplotlib.pyplot as plt
             import numpy as np
             import supervision as sv
-            import torchvision.transforms as T  # noqa: N812
         except ImportError as err:
             raise ImportError(
                 "RFDETRDataModule._show_samples() requires visualization dependencies. "
                 "Install them with `pip install 'rfdetr[visual]'`."
             ) from err
 
+        from rfdetr.datasets.save_grids import denormalize_for_display
         from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 
         if count <= 0:
@@ -991,10 +992,6 @@ class RFDETRDataModule(LightningDataModule):
                 "Point dataset_dir at the loose files the shards were packed from to visualize this split."
             )
 
-        inv_normalize = T.Normalize(
-            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
-            std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
-        )
         dataset_length = len(dataset)  # type: ignore[arg-type]
         rows = max(1, (min(count, dataset_length) + columns - 1) // columns)
         figure, axes = plt.subplots(rows, columns, figsize=figure_size or (5 * columns, 5 * rows))
@@ -1006,9 +1003,7 @@ class RFDETRDataModule(LightningDataModule):
         for axis, sample_index in zip(axes_array, range(min(count, dataset_length)), strict=False):
             image_tensor, target = dataset[sample_index]
             image_path = self._source_image_path(dataset, sample_index)
-            image = inv_normalize(image_tensor)
-            image_array = image.detach().cpu().numpy()
-            scene = np.ascontiguousarray((np.clip(image_array.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
+            scene = denormalize_for_display(image_tensor)
 
             size = target.get("size")
             if isinstance(size, torch.Tensor):
@@ -1136,7 +1131,12 @@ class RFDETRDataModule(LightningDataModule):
         if not AugmentationBackend.KORNIA._is_available():
             raise ImportError("Kornia augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
-        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
+        from rfdetr.datasets.kornia_transforms import (
+            IMAGENET_MEAN,
+            IMAGENET_STD,
+            build_kornia_pipeline,
+            build_normalize,
+        )
 
         pipeline_kwargs: dict[str, Any] = {"with_masks": True}
         if self.model_config.use_grouppose_keypoints:
@@ -1148,7 +1148,12 @@ class RFDETRDataModule(LightningDataModule):
             self.model_config.resolution,
             **pipeline_kwargs,
         )
-        self._kornia_normalize = build_normalize()
+        # Cycle the RGB statistics over the model's channels, as the CPU ``Normalize`` transform does.
+        num_channels = self.model_config.num_channels
+        self._kornia_normalize = build_normalize(
+            mean=cycle_channel_stats(IMAGENET_MEAN, num_channels),
+            std=cycle_channel_stats(IMAGENET_STD, num_channels),
+        )
         logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
 
     def on_after_batch_transfer(self, batch: tuple[Any, Any], dataloader_idx: int) -> tuple[Any, Any]:
