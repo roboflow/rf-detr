@@ -259,6 +259,22 @@ def test_o365_builder_raises_pixel_limit_for_its_dataset_only() -> None:
     assert captured["dataset_kwargs"]["max_image_pixels"] == O365_MAX_IMAGE_PIXELS
 
 
+@pytest.mark.parametrize(
+    "builder",
+    [
+        pytest.param(_call_coco_builder, id="coco"),
+        pytest.param(_call_roboflow_coco_builder, id="roboflow-coco"),
+        pytest.param(_call_yolo_builder, id="yolo"),
+        pytest.param(_call_o365_builder, id="o365"),
+    ],
+)
+def test_builder_passes_num_channels_to_its_dataset(builder: BuilderCall) -> None:
+    """Every builder tells its dataset how many channels the model takes (#1727)."""
+    captured = builder(_training_namespace(RFDETRSmallConfig(num_channels=4)))
+
+    assert captured["dataset_kwargs"]["num_channels"] == 4
+
+
 class TestConfigValuesReachTheTransformPipeline:
     """Builders must forward configured values instead of transform defaults."""
 

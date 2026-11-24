@@ -50,6 +50,12 @@ to Seg Large and Keypoint Preview on an RTX 5070 and a Tesla T4 with TensorRT 11
 * **A GELU never feeds an FP16 consumer from an INT8 multiply.** TensorRT 10.16 and 11.3 return NaN for an INT8
   ``MatMul`` -> bias -> GELU -> FP16 consumer chain, so an MLP's first projection is quantized only when its second one
   is.
+* **The MLPs of the first six PE-Core-T backbone blocks stay FP16.** Atto, Femto and Pico lost 7.0 to 8.7 AP in INT8
+  with the placement above, because the second MLP projection of block 3 reads a post-GELU activation whose maximum is
+  more than 50 times its typical range (:data:`_PE_FLOAT_MLP_BLOCKS`). Keeping ``fc1`` and ``fc2`` of blocks 0 to 5 in
+  FP16 and everything else as above lowered the loss to 0.2 to 0.6 AP in a CPU simulation of the plan (ONNX Runtime,
+  FP32 scales, val2017). The rule keys on the PE block names, so the DINOv2 backbones are unchanged. TensorRT accuracy
+  and speed of this placement are not yet measured.
 * **A detection model's backbone norms are smoothed.** A backbone ``LayerNormalization`` output is quantized per
   tensor, and its widest channels, several times wider than its median one, set the one INT8 step of every channel.
   SmoothQuant (:func:`measure_smoothing_scales`) divides each channel of the norm's scale and bias by a per-channel
@@ -76,6 +82,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
@@ -195,6 +202,19 @@ _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
 #: A patch embedding is quantized as a matrix multiply only when its flattened patch is a multiple of this; one that is
 #: not (the segmentation and keypoint models' 432 values) is a matrix multiply that stays FP16.
 _INT8_CONV_CHANNEL_MULTIPLE = 32
+
+#: ``fc1`` and ``fc2`` of a PE-Core-T backbone block (Atto, Femto, Pico), which names its blocks ``encoder/blocks.N``
+#: where the DINOv2 backbones use ``encoder/encoder/encoder/layer.N``; group 1 is the block index. The pattern matches
+#: no DINOv2 layer, so the rule it serves leaves Nano to Large and every segmentation and keypoint model alone.
+_PE_MLP_PROJECTION = re.compile(r"^/backbone/backbone\.0/encoder/blocks\.(\d+)/mlp/fc[12]/")
+
+#: Number of leading PE-Core-T backbone blocks whose MLP stays FP16. The second MLP projection of block 3 reads a
+#: post-GELU activation whose absolute maximum is 52 to 55 times its mean 99.9th percentile (blocks 2 and 4: 13 to 16
+#: times, every other block at most 5 times), so one per-tensor INT8 step is set by a few outlier channels. Clipping the
+#: range collapses AP, and neither smoothing nor bias correction touches it. Leaving the MLPs of blocks 0 to 5 in FP16
+#: lowered the loss on COCO val2017 from 7.0 to 8.5 AP to 0.2 to 0.6 AP for Atto, Femto and Pico (ONNX Runtime CPU
+#: simulation with FP32 scales; no TensorRT engine measured).
+_PE_FLOAT_MLP_BLOCKS = 6
 
 #: Ops that make a path a GELU.
 _GELU_OPS = frozenset({"Erf", "Gelu"})
@@ -808,6 +828,23 @@ def _feeds_gelu_into(node: Any, consumers: Mapping[str, list[Any]], initializers
     return found
 
 
+def _is_float_pe_mlp(name: str) -> bool:
+    """Return whether *name* is an MLP projection of a PE-Core-T backbone block that stays FP16.
+
+    Examples:
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/blocks.3/mlp/fc2/MatMul")
+        True
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/blocks.6/mlp/fc2/MatMul")
+        False
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/blocks.3/attn/qkv/MatMul")
+        False
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/encoder/encoder/layer.3/mlp/fc2/MatMul")
+        False
+    """
+    match = _PE_MLP_PROJECTION.match(name)
+    return match is not None and int(match.group(1)) < _PE_FLOAT_MLP_BLOCKS
+
+
 def plan_int8(model: Any) -> Int8Plan:
     """Decide which nodes of an FP32 RF-DETR graph get INT8 Q/DQ (see the module docstring for the rules).
 
@@ -865,6 +902,9 @@ def plan_int8(model: Any) -> Int8Plan:
             f"{len(unfused)} stay FP16 by shape (e.g. {unfused[0]!r}): INT8 attention needs a head size in "
             f"{sorted(_FUSED_INT8_HEAD_SIZES)} and at most {_INT8_ATTENTION_MAX_TOKENS} tokens"
         )
+
+    # The first MLPs of a PE-Core-T backbone carry the outlier activation that INT8 cannot represent (see the constant).
+    weighted -= {name for name in weighted if _is_float_pe_mlp(name)}
 
     # A projection feeding an FP16 consumer through a GELU comes back as NaN from TensorRT; dropping one projection can
     # expose another, so repeat until nothing changes.

@@ -1905,6 +1905,20 @@ class TestBackendResolution:
 
         assert "rfdetr[augment]" in str(exc_info.value)
 
+    def test_gpu_normalizer_cycles_statistics_over_model_channels(self, mocker, tmp_path):
+        """A 4-channel model gets four means and stds on the GPU path, as the CPU ``Normalize`` gives it (#1727)."""
+        model_config = _base_model_config(num_channels=4)
+        train_config = _base_train_config(tmp_path, augmentation_backend="auto")
+        dm = RFDETRDataModule(model_config, train_config)
+        mocker.patch("rfdetr.training.module_data._has_cuda_device", return_value=True)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: True)
+        mocker.patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", return_value=MagicMock())
+        build_normalize = mocker.patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock())
+
+        _setup_fit_with_fake_datasets(dm)
+
+        build_normalize.assert_called_once_with(mean=(0.485, 0.456, 0.406, 0.485), std=(0.229, 0.224, 0.225, 0.229))
+
     def test_cpu_backend_builds_no_pipeline(self, tmp_path):
         """Default cpu backend: _kornia_pipeline stays None."""
         dm = _setup_fit_with_fake_datasets(self._build_dm_with_backend(tmp_path, "cpu"))

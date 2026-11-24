@@ -96,13 +96,8 @@ train = [
     # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
     # falls back internally to the same SciPy solve the matcher would have called, so only speed
     # differs. Measurement evidence: .plans/active/plan-native-linear-assignment.md Phase M3 Item 2.
-    # TODO: pinned to the `0.1.0rc0` pre-release since the stable `0.1.0` (which will carry a
-    #   `>=0.1.0,<0.2.0` floor excluding the 0.0.x line, whose sdist compiled against nvcc) is not
-    #   on PyPI yet. A direct GitHub-archive-URL pin was used here previously — a public index
-    #   rejects that as a `Requires-Dist` entry, which would have failed at the PyPI upload step —
-    #   so this stays a normal PyPI version pin instead. Once 0.1.0 ships, replace this line with:
-    #   "torch-linear-assignment>=0.1.0,<0.2.0",
-    "torch-hungarian==0.1.0rc0",
+    # The `>=0.1.0` floor excludes the 0.0.x line, whose sdist compiled against nvcc.
+    "torch-linear-assignment>=0.1.0,<0.2.0",
     "roboflow",
 ]
 # Transformer Engine's PyTorch extension needs NVIDIA CUDA and a Linux x86-64 build environment.

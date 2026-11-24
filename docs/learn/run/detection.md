@@ -12,19 +12,21 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 <!-- COPIES: the three AP columns come from the results table of docs/cookbooks/coco-accuracy.ipynb (one run, provenance in the note below); params and resolution repeat the Detection table of docs/learn/benchmarks.md. -->
 
-|      Size       | PyTorch FP32 AP<sub>50:95</sub> | TensorRT FP16 AP<sub>50:95</sub> | TensorRT INT8 AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
-| :-------------: | :-----------------------------: | :------------------------------: | :------------------------------: | :--------: | :--------: | :--------: |
-|   Atto (A) △    |              30.7               |               30.6               |               23.7               |    7.4     |  380x380   |  PML 1.0   |
-|   Femto (F) △   |              37.6               |               37.6               |               28.9               |    7.9     |  384x384   |  PML 1.0   |
-|   Pico (P) △    |              41.7               |               41.6               |               33.2               |    8.4     |  560x560   |  PML 1.0   |
-|    Nano (N)     |              48.0               |               48.0               |               47.6               |    30.5    |  384x384   | Apache 2.0 |
-|    Small (S)    |              52.8               |               52.8               |               52.3               |    32.1    |  512x512   | Apache 2.0 |
-|   Medium (M)    |              54.7               |               54.6               |               54.0               |    33.7    |  576x576   | Apache 2.0 |
-|    Large (L)    |              56.6               |               56.5               |               56.2               |    33.9    |  704x704   | Apache 2.0 |
-|  XLarge (XL) △  |              58.7               |               58.7               |               58.3               |   126.4    |  700x700   |  PML 1.0   |
-| 2XLarge (2XL) △ |              60.1               |               60.0               |               59.6               |   126.9    |  880x880   |  PML 1.0   |
+|      Size       | FP32 AP<sub>50:95</sub> | FP16 AP<sub>50:95</sub> | INT8 AP<sub>50:95</sub> | Params (M) | Resolution |  License   |
+| :-------------: | :---------------------: | :---------------------: | :---------------------: | :--------: | :--------: | :--------: |
+|   Atto (A) △    |          30.7           |          30.7           |         30.4 ‡          |    7.4     |  380x380   |  PML 1.0   |
+|   Femto (F) △   |          37.6           |          37.6           |         37.4 ‡          |    7.9     |  384x384   |  PML 1.0   |
+|   Pico (P) △    |          41.7           |          41.6           |         41.0 ‡          |    8.4     |  560x560   |  PML 1.0   |
+|    Nano (N)     |          48.0           |          48.0           |          47.6           |    30.5    |  384x384   | Apache 2.0 |
+|    Small (S)    |          52.8           |          52.8           |          52.3           |    32.1    |  512x512   | Apache 2.0 |
+|   Medium (M)    |          54.7           |          54.6           |          54.0           |    33.7    |  576x576   | Apache 2.0 |
+|    Large (L)    |          56.6           |          56.5           |          56.2           |    33.9    |  704x704   | Apache 2.0 |
+|  XLarge (XL) △  |          58.7           |          58.7           |          58.3           |   126.4    |  700x700   |  PML 1.0   |
+| 2XLarge (2XL) △ |          60.1           |          60.0           |          59.6           |   126.9    |  880x880   |  PML 1.0   |
 
-> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`. Atto, Femto and Pico lose 7.0 to 8.7 AP in TensorRT INT8 against PyTorch FP32, so prefer FP16 engines for them.
+> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`.
+>
+> ‡ Atto, Femto and Pico were scored in a second run of `coco-accuracy.ipynb` limited to these three models, on the same GPU as the rest of the column (NVIDIA RTX PRO 6000 Blackwell Server Edition) on 2026-11-21, with `rfdetr` at commit `e4cadc4f`, `rfdetr_plus` 1.3.0, torch 2.14.1+cu130 and TensorRT 11.4.0.106, because their TensorRT INT8 placement changed: the MLPs of the first six PE-Core-T backbone blocks now stay FP16. The first INT8 placement for these sizes quantized those MLPs and lost 7.0, 8.7 and 8.5 AP against PyTorch FP32 (a development build, never released). With the placement that ships, INT8 is 0.3, 0.2 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.6 AP below TensorRT FP16. It is at most 9% faster than FP16 end to end ([latency below](#fastest-configuration-on-nvidia-gpus)), so prefer FP16 unless you need INT8 for another reason.
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
@@ -38,9 +40,9 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
     |      Size       | PyTorch CUDA graph FP16 |  TensorRT FP16  | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-------------: | :-----------------: | :---------------: | :-----------------: |
-    |   Atto (A) △    |       3.51 (5.56)       |   3.52 (4.07)   |   **3.22 (3.64)**   |         —         |          —          |
-    |   Femto (F) △   |       4.44 (6.10)       | **3.63 (4.15)** |   **3.62 (4.06)**   |         —         |          —          |
-    |   Pico (P) △    |       4.82 (6.14)       | **4.15 (4.54)** |   **4.24 (4.64)**   |         —         |          —          |
+    |   Atto (A) △    |       3.60 (4.24)       |   3.76 (4.17)   |     3.57 (4.22)     |    3.41 (3.91)    |   **3.23 (3.58)**   |
+    |   Femto (F) △   |       4.04 (4.56)       |   3.84 (4.54)   |   **3.69 (4.04)**   |  **3.62 (3.99)**  |   **3.57 (3.90)**   |
+    |   Pico (P) △    |       4.64 (4.98)       | **4.12 (4.59)** |     4.19 (4.54)     |  **4.03 (4.34)**  |   **3.92 (4.21)**   |
     |    Nano (N)     |       5.17 (5.90)       |   4.78 (5.61)   |     4.91 (5.42)     |  **4.61 (5.59)**  |   **4.44 (4.90)**   |
     |    Small (S)    |       7.99 (8.38)       |   6.88 (7.24)   |     7.03 (7.85)     |  **6.32 (6.99)**  |   **6.33 (6.65)**   |
     |   Medium (M)    |      10.04 (10.46)      |   8.50 (8.84)   |     8.83 (9.48)     |  **7.51 (7.89)**  |   **7.50 (8.05)**   |
@@ -52,9 +54,9 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
     |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
-    |   Atto (A) △    |     **2.60 (2.88)**     |  3.68 (3.98)  |     3.01 (3.52)     |         —         |          —          |
-    |   Femto (F) △   |     **2.95 (3.20)**     |  3.53 (3.96)  |     3.14 (3.50)     |         —         |          —          |
-    |   Pico (P) △    |     **3.13 (3.40)**     |  3.65 (4.26)  |     3.34 (3.65)     |         —         |          —          |
+    |   Atto (A) △    |     **2.44 (2.78)**     |  3.06 (3.40)  |     2.90 (3.19)     |    3.12 (3.47)    |     2.85 (3.10)     |
+    |   Femto (F) △   |     **2.80 (3.10)**     |  3.21 (3.51)  |     2.98 (3.20)     |    3.38 (4.32)    |     3.02 (3.53)     |
+    |   Pico (P) △    |     **3.00 (3.20)**     |  3.32 (3.59)  |     3.16 (3.85)     |    3.47 (3.81)    |   **3.11 (3.56)**   |
     |    Nano (N)     |     **3.20 (3.42)**     |  3.87 (4.14)  |     3.54 (3.89)     |    3.55 (4.13)    |     3.45 (4.06)     |
     |    Small (S)    |     **4.01 (4.33)**     |  4.23 (4.51)  |   **4.03 (4.31)**   |    4.12 (4.48)    |   **3.90 (4.21)**   |
     |   Medium (M)    |       4.81 (5.09)       |  4.82 (5.35)  |   **4.56 (5.09)**   |    4.74 (5.09)    |   **4.43 (4.87)**   |
@@ -66,9 +68,9 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
     |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |  TensorRT INT8  | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-----------: | :-----------------: | :-------------: | :-----------------: |
-    |   Atto (A) △    |     **3.18 (3.69)**     |  3.35 (3.64)  |   **3.10 (3.36)**   |        —        |          —          |
-    |   Femto (F) △   |     **3.33 (3.88)**     |  3.50 (3.78)  |   **3.22 (3.45)**   |        —        |          —          |
-    |   Pico (P) △    |       3.99 (4.39)       |  3.70 (4.32)  |   **3.41 (4.04)**   |        —        |          —          |
+    |   Atto (A) △    |     **3.08 (3.35)**     |  3.40 (3.80)  |   **3.23 (3.72)**   |   3.41 (4.14)   |   **3.08 (3.65)**   |
+    |   Femto (F) △   |     **3.25 (3.65)**     |  3.38 (3.76)  |   **3.11 (3.39)**   |   3.65 (4.59)   |   **3.12 (3.38)**   |
+    |   Pico (P) △    |       3.72 (4.00)       |  3.67 (4.05)  |   **3.34 (3.59)**   |   3.63 (4.15)   |   **3.27 (3.55)**   |
     |    Nano (N)     |     **3.35 (3.92)**     |  3.74 (4.17)  |   **3.44 (3.73)**   |   3.68 (4.10)   |     3.54 (4.18)     |
     |    Small (S)    |     **3.81 (4.43)**     |  4.03 (4.49)  |   **3.67 (3.97)**   |   4.00 (4.61)   |   **3.68 (4.16)**   |
     |   Medium (M)    |     **4.06 (4.64)**     |  4.38 (5.02)  |   **4.06 (4.38)**   |   4.31 (4.85)   |   **3.93 (4.33)**   |
@@ -80,9 +82,9 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
     |      Size       | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
     | :-------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
-    |   Atto (A) △    |       1.58 (1.66)       |  1.42 (1.47)  |   **1.25 (1.32)**   |       —       |          —          |
-    |   Femto (F) △   |       1.73 (1.77)       |  1.56 (1.63)  |   **1.36 (1.43)**   |       —       |          —          |
-    |   Pico (P) △    |       1.87 (1.93)       |  1.69 (1.74)  |   **1.46 (1.52)**   |       —       |          —          |
+    |   Atto (A) △    |       1.53 (1.60)       |  1.46 (1.53)  |   **1.27 (1.35)**   |  1.44 (1.51)  |   **1.25 (1.32)**   |
+    |   Femto (F) △   |       1.73 (1.78)       |  1.54 (1.62)  |   **1.34 (1.41)**   |  1.55 (1.62)  |   **1.29 (1.36)**   |
+    |   Pico (P) △    |       1.86 (1.90)       |  1.71 (1.83)  |     1.46 (1.53)     |  1.68 (1.77)  |   **1.39 (1.46)**   |
     |    Nano (N)     |       1.73 (1.82)       |  1.72 (1.79)  |     1.54 (1.62)     |  1.69 (1.77)  |   **1.43 (1.51)**   |
     |    Small (S)    |       2.07 (2.16)       |  1.94 (2.00)  |     1.73 (1.80)     |  1.87 (1.99)  |   **1.63 (1.70)**   |
     |   Medium (M)    |       2.23 (2.33)       |  2.07 (2.14)  |     1.84 (1.90)     |  1.96 (2.02)  |   **1.73 (1.81)**   |
@@ -92,9 +94,10 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 
 Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
-- Atto, Femto and Pico (no INT8 column) are fastest in FP16: PyTorch CUDA graph FP16 on the L4, TensorRT FP16 graph on every other GPU.
+- For Atto, Femto and Pico the best INT8 engine takes 0.91 to 1.01 times the time of the best FP16 engine, so INT8 and FP16 are tied on most GPUs. INT8 is clearly ahead only for Atto on the T4 (0.91) and Pico on the RTX PRO 6000 (0.95). On the L4, PyTorch CUDA graph FP16 is the fastest configuration for Atto and Femto.
+- The Atto, Femto and Pico rows are from a second run on 2026-11-21, after the INT8 placement of these sizes changed; all five configurations were timed again in it. The A100 of that run is the 80 GB part, the other sizes were timed on the 40 GB part. See [How the numbers were measured](latency.md#nvidia-gpus).
 - From Small up an INT8 engine is among the fastest on every GPU, except at Large on the A100, where FP16 graph alone is.
-- The 95th percentile stays within 1.21 times the median, except for PyTorch CUDA graph FP16 on the T4 at Atto, Femto and Pico (1.27 to 1.58 times).
+- The 95th percentile stays within 1.22 times the median, except for Femto on the L4 (1.28 times) and on the A100 (1.26 times).
 
 ## Fastest Configuration on Apple Silicon
 

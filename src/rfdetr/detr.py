@@ -39,6 +39,7 @@ from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets._keypoint_schema import (
     active_keypoint_counts,
     infer_coco_keypoint_schema,
@@ -765,12 +766,10 @@ class RFDETR:
         self.means = list(self.means)
         self.stds = list(self.stds)
 
-        # repeat means and stds for non-rgb images
+        # repeat means and stds for non-rgb images, the rule training normalization applies too
         if self.model_config.num_channels != 3:
-            from itertools import cycle
-
-            self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
-            self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
+            self.means = list(cycle_channel_stats(self.means, self.model_config.num_channels))
+            self.stds = list(cycle_channel_stats(self.stds, self.model_config.num_channels))
 
         self.model.inference_model = None
         self._is_optimized_for_inference = False
@@ -2146,6 +2145,7 @@ class RFDETR:
         coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
+        int8_keep_mlp_float: bool = False,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
@@ -2374,6 +2374,9 @@ class RFDETR:
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
                 Ignored for every other format.
+            int8_keep_mlp_float: For ONNX INT8, also keep GELU-fed weighted projections in float. This includes the
+                second layer of backbone MLPs and can include other projections, such as in segmentation heads.
+                Defaults to ``False``. Refused for ONNX without ``quantization="int8"`` and ignored for other formats.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -2533,6 +2536,7 @@ class RFDETR:
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
+            int8_keep_mlp_float=int8_keep_mlp_float,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
             trt_metadata=trt_metadata,

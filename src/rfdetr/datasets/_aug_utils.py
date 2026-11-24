@@ -200,3 +200,23 @@ def _filter_keypoint_hflip_item(
         return _DropAugmentation()
 
     return {**params, "transforms": filtered_transforms}
+
+
+def cycle_channel_stats(values: Sequence[float], num_channels: int) -> tuple[float, ...]:
+    """Repeat per-channel statistics until they cover *num_channels* channels.
+
+    The rule ``RFDETR.means`` and ``RFDETR.stds`` apply for prediction, so training normalizes a fourth channel with
+    the same value prediction does.
+
+    Args:
+        values: Per-channel means or standard deviations, usually the three ImageNet values.
+        num_channels: Channel count of the image to normalize.
+
+    Returns:
+        One value per channel, the first ``num_channels`` of *values* repeated in order.
+
+    Examples:
+        >>> cycle_channel_stats((0.1, 0.2, 0.3), 4)
+        (0.1, 0.2, 0.3, 0.1)
+    """
+    return tuple(values[index % len(values)] for index in range(num_channels))
