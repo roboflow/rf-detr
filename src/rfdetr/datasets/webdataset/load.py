@@ -28,6 +28,7 @@ import torch.utils.data
 from torch.utils.data import DataLoader
 
 from rfdetr.config import MultiScale
+from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets.coco import (
     ConvertCoco,
     draft_size_for_transforms,
@@ -179,6 +180,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             :func:`~rfdetr.datasets.io_utils.decode_pil_image_bytes` the same way the loose-file loaders apply it, or
             ``None`` to decode at full resolution. See :func:`~rfdetr.datasets.coco.draft_size_for_transforms`
             for when a non-``None`` value is actually correct — only the train split, never a mask dataset.
+        num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  ``3`` (the
+            default) loads RGB, ``1`` grayscale and ``4`` RGBA, for which every image must store a fourth channel.
     """
 
     def __init__(
@@ -193,8 +196,11 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         shard_shuffle: int = 0,
         seed: int = 0,
         draft_size: int | None = None,
+        num_channels: int = 3,
     ) -> None:
         super().__init__()
+        image_mode(num_channels)  # refuse a channel count image files cannot supply before reading the index
+        self._num_channels = num_channels
         self._shard_dir = Path(shard_dir)
         self._split = split
         self._transforms = transforms
@@ -320,6 +326,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
 
         Raises:
             KeyError: If the sample carries no recognised image member or no ``json`` sidecar.
+            ValueError: If the image member cannot supply ``num_channels`` channels; the message names the sample's
+                ``__key__`` and shard ``__url__`` and chains the decoder's error.
         """
         extension = next((candidate for candidate in IMAGE_EXTENSIONS if candidate in sample), None)
         if extension is None:
@@ -331,7 +339,14 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         if "json" not in sample:
             raise KeyError(f"WebDataset sample {sample.get('__key__', '?')} has no 'json' annotation sidecar.")
 
-        image, (x_scale, y_scale) = decode_pil_image_bytes(sample[extension], self._draft_size)
+        try:
+            image, (x_scale, y_scale) = decode_pil_image_bytes(
+                sample[extension], self._draft_size, num_channels=self._num_channels
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"WebDataset sample {sample.get('__key__', '?')} from shard {sample.get('__url__', '?')}: {exc}"
+            ) from exc
         metadata = json.loads(sample["json"])
         annotations = metadata["annotations"]
         if (x_scale, y_scale) != (1.0, 1.0):
@@ -808,6 +823,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         shard_shuffle=DEFAULT_SHARD_SHUFFLE if is_train else 0,
         seed=int(getattr(args, "seed", 0) or 0),
         draft_size=draft_size,
+        num_channels=getattr(args, "num_channels", 3),
     )
     if not is_train:
         # Evaluation indexes may omit categories; names must follow the same train-owned label space as labels.
